@@ -122,15 +122,23 @@ public class Conversation
         _messages.Add(userMessage);
         UpdateActivity();
 
-        // CONTEXT ASSEMBLY: Gather all available memory handles
-        var ragContext = AssembleRAGContext(options);
+        // CONTEXT ASSEMBLY: Use new Context Provider pattern for multi-agent scenarios
+        // Fall back to legacy approach for backward compatibility
+        var sharedRagContext = AssembleSharedRAGContext(options);
+        var legacyRagContext = _agents.Count > 1 ? null : AssembleRAGContext(options);
         
-        // Inject RAG context for agent capabilities
-        if (ragContext != null)
+        // Inject the appropriate RAG context for agent capabilities
+        if (sharedRagContext != null)
         {
             options ??= new ChatOptions();
             options.AdditionalProperties ??= new AdditionalPropertiesDictionary();
-            options.AdditionalProperties["RAGContext"] = ragContext;
+            options.AdditionalProperties["SharedRAGContext"] = sharedRagContext;
+        }
+        else if (legacyRagContext != null)
+        {
+            options ??= new ChatOptions();
+            options.AdditionalProperties ??= new AdditionalPropertiesDictionary();
+            options.AdditionalProperties["RAGContext"] = legacyRagContext;
         }
 
         // Inject project context for Memory CAG if available
@@ -168,19 +176,27 @@ public class Conversation
         _messages.Add(userMessage);
         UpdateActivity();
 
-        // CONTEXT ASSEMBLY: Gather all available memory handles
-        var ragContext = AssembleRAGContext(options);
+        // CONTEXT ASSEMBLY: Use new Context Provider pattern for multi-agent scenarios
+        // Fall back to legacy approach for backward compatibility
+        var sharedRagContext = AssembleSharedRAGContext(options);
+        var legacyRagContext = _agents.Count > 1 ? null : AssembleRAGContext(options);
         
-        // Inject RAG context for agent capabilities
-        if (ragContext != null)
+        // Inject the appropriate RAG context for agent capabilities
+        if (sharedRagContext != null)
         {
             options ??= new ChatOptions();
             options.AdditionalProperties ??= new AdditionalPropertiesDictionary();
-            options.AdditionalProperties["RAGContext"] = ragContext;
+            options.AdditionalProperties["SharedRAGContext"] = sharedRagContext;
+        }
+        else if (legacyRagContext != null)
+        {
+            options ??= new ChatOptions();
+            options.AdditionalProperties ??= new AdditionalPropertiesDictionary();
+            options.AdditionalProperties["RAGContext"] = legacyRagContext;
         }
 
         // Inject project context for Memory CAG if available
-        if (Metadata.TryGetValue("Project", out var obj) && obj is Project project)
+        if (Metadata.TryGetValue("Project", out var projectObj) && projectObj is Project project)
         {
             options ??= new ChatOptions();
             options.AdditionalProperties ??= new AdditionalPropertiesDictionary();
@@ -257,6 +273,10 @@ public class Conversation
     /// <summary>
     /// Assembles RAG context from all available memory sources
     /// </summary>
+    /// <summary>
+    /// LEGACY: Assembles full RAGContext with all agent memories (causes context leakage)
+    /// Use AssembleSharedRAGContext for new multi-agent workflows
+    /// </summary>
     private RAGContext? AssembleRAGContext(ChatOptions? options)
     {
         var agentMemories = new Dictionary<string, IKernelMemory?>();
@@ -310,6 +330,54 @@ public class Conversation
         return new RAGContext
         {
             AgentMemories = agentMemories,
+            ConversationMemory = conversationMemory,
+            ProjectMemory = projectMemory,
+            Configuration = config
+        };
+    }
+
+    /// <summary>
+    /// NEW: Context Provider Pattern - Assembles only shared memory resources
+    /// Eliminates context leakage by excluding agent-specific memories
+    /// Each agent will fetch its own memory when needed
+    /// </summary>
+    private SharedRAGContext? AssembleSharedRAGContext(ChatOptions? options)
+    {
+        IKernelMemory? conversationMemory = null;
+        IKernelMemory? projectMemory = null;
+
+        // Gather conversation memory (shared across all agents)
+        try
+        {
+            conversationMemory = this.GetOrCreateMemory();
+        }
+        catch
+        {
+            // Conversation may not have memory configured
+        }
+
+        // Gather project memory (shared across all conversations in project)
+        if (Metadata.TryGetValue("Project", out var obj) && obj is Project project)
+        {
+            try
+            {
+                projectMemory = project.GetOrCreateMemory();
+            }
+            catch
+            {
+                // Project may not have memory configured
+            }
+        }
+
+        // Only create context if at least one shared memory source is available
+        if (conversationMemory == null && projectMemory == null)
+            return null;
+
+        // Use default configuration for now
+        var config = new RAGConfiguration();
+        
+        return new SharedRAGContext
+        {
             ConversationMemory = conversationMemory,
             ProjectMemory = projectMemory,
             Configuration = config

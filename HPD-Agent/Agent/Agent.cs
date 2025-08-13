@@ -488,20 +488,54 @@ public class Agent : IChatClient, IAGUIAgent
             return messages; // RAG is not configured for this agent, continue normally.
         }
 
-        // Try to get the RAGContext that was assembled by the Conversation
-        RAGContext? ragContext = null;
-        if (options?.AdditionalProperties?.TryGetValue("RAGContext", out var contextObj) == true)
+        // Try to get the SharedRAGContext first (new Context Provider pattern)
+        if (options?.AdditionalProperties?.TryGetValue("SharedRAGContext", out var sharedContextObj) == true &&
+            sharedContextObj is SharedRAGContext sharedContext)
         {
-            ragContext = contextObj as RAGContext;
+            // NEW PATTERN: Agent assembles its own scoped context using shared resources
+            var scopedContext = AssembleScopedRAGContext(sharedContext);
+            return await ragCapability.ApplyRetrievalStrategyAsync(messages, scopedContext, cancellationToken);
         }
 
-        if (ragContext == null)
+        // Fallback to legacy RAGContext for backward compatibility
+        if (options?.AdditionalProperties?.TryGetValue("RAGContext", out var legacyContextObj) == true &&
+            legacyContextObj is RAGContext legacyContext)
         {
-            return messages; // No context was provided, so nothing to do.
+            // LEGACY PATTERN: Use pre-assembled context (may cause context leakage in multi-agent scenarios)
+            return await ragCapability.ApplyRetrievalStrategyAsync(messages, legacyContext, cancellationToken);
         }
 
-        // Use the capability to apply the retrieval strategy (this is the "Push" part)
-        return await ragCapability.ApplyRetrievalStrategyAsync(messages, ragContext, cancellationToken);
+        return messages; // No context was provided, so nothing to do.
+    }
+
+    /// <summary>
+    /// NEW: Agent assembles its own scoped RAG context by combining its memory with shared resources
+    /// This eliminates context leakage by ensuring agents only see their own specialized memory
+    /// </summary>
+    private RAGContext AssembleScopedRAGContext(SharedRAGContext sharedContext)
+    {
+        // Create agent-specific memories dictionary with ONLY this agent's memory
+        var agentMemories = new Dictionary<string, IKernelMemory?>();
+        
+        try
+        {
+            // Each agent fetches ONLY its own memory - no cross-contamination
+            agentMemories[this.Name] = this.GetOrCreateMemory();
+        }
+        catch
+        {
+            // Agent may not have memory configured
+            agentMemories[this.Name] = null;
+        }
+
+        // Combine agent's memory with shared resources from the conversation
+        return new RAGContext
+        {
+            AgentMemories = agentMemories, // SCOPED: Only this agent's memory
+            ConversationMemory = sharedContext.ConversationMemory, // SHARED: From conversation
+            ProjectMemory = sharedContext.ProjectMemory, // SHARED: From project (if any)
+            Configuration = sharedContext.Configuration
+        };
     }
 
     /// <summary>

@@ -276,12 +276,12 @@ static Agent? CreateChatAgent(Project project)
         Console.WriteLine("Apple Intelligence is available. Using Apple Intelligence provider.");
         return AgentBuilder.Create()
             .WithConfiguration(configuration)
-            .WithProvider(ChatProvider.OpenRouter, "qwen/qwen3-coder:free")
+            .WithProvider(ChatProvider.OpenRouter, "google/gemini-2.5-pro")
             .WithName("InteractiveChatAgent")
             .WithInstructions(@"You are an expert AI math assistant. Always be clear, concise, and helpful. Provide code examples when possible. Answer as if you are mentoring a developer.")
+            .WithFilter(new LoggingAiFunctionFilter())
             .WithMemoryCagCapability(project.AgentMemoryCagManager)
             .WithPlugin<MathPlugin>(new MathPluginMetadataContext())
-            .WithFilter(new LoggingAiFunctionFilter())
             .WithElevenLabsAudio(
                 configuration["ElevenLabs:ApiKey"], 
                 configuration["ElevenLabs:DefaultVoiceId"]) // Read both from config

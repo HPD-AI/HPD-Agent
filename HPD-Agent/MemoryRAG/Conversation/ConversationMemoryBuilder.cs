@@ -6,6 +6,9 @@ using System.IO;
 using System.Net.Http;
 using Microsoft.KernelMemory.MemoryStorage;
 using Microsoft.KernelMemory.Search;
+using Microsoft.KernelMemory.Pipeline;
+using System.Linq;
+using HPD_Agent.MemoryRAG;
 
 
 
@@ -21,6 +24,12 @@ public class ConversationMemoryBuilder
     // Custom RAG extension points
     private IMemoryDb? _customMemoryDb;
     private ISearchClient? _customSearchClient;
+    // Custom pipeline extension points
+    private readonly List<(Type type, string name, Func<IServiceProvider, IPipelineStepHandler>? factory)> _customHandlers = new();
+    private string[]? _customPipelineSteps;
+    // Remote memory connection
+    private string? _remoteEndpoint;
+    private string? _remoteApiKey;
 
     public ConversationMemoryBuilder(string conversationId)
     {
@@ -82,16 +91,133 @@ public class ConversationMemoryBuilder
         return WithCustomSearchClient(searchClient).WithCustomRetrieval(memoryDb);
     }
 
+    // Register a custom handler type
+    public ConversationMemoryBuilder WithCustomHandler<THandler>(string stepName) 
+        where THandler : class, IPipelineStepHandler
+    {
+        _customHandlers.Add((typeof(THandler), stepName, null));
+        return this;
+    }
+
+    // Register a custom handler instance factory
+    public ConversationMemoryBuilder WithCustomHandler<THandler>(string stepName, Func<IServiceProvider, THandler> factory) 
+        where THandler : class, IPipelineStepHandler
+    {
+        _customHandlers.Add((typeof(THandler), stepName, provider => factory(provider)));
+        return this;
+    }
+
+    // Register a custom handler instance directly (for simple handlers without dependencies)
+    public ConversationMemoryBuilder WithCustomHandler(string stepName, IPipelineStepHandler handler)
+    {
+        _customHandlers.Add((handler.GetType(), stepName, _ => handler));
+        return this;
+    }
+
+    // Define the custom pipeline sequence
+    public ConversationMemoryBuilder WithCustomPipeline(params string[] steps)
+    {
+        _customPipelineSteps = steps;
+        return this;
+    }
+
+    /// <summary>
+    /// Configures the builder to connect to a remote Kernel Memory service.
+    /// IMPORTANT: When using remote memory, custom handlers must be registered
+    /// on the server side via appsettings.json or server code.
+    /// All WithCustomHandler() calls are ignored for remote connections.
+    /// </summary>
+    /// <param name="endpoint">URL of the remote Kernel Memory service</param>
+    /// <param name="apiKey">Optional API key for authentication</param>
+    public ConversationMemoryBuilder WithRemoteMemory(string endpoint, string? apiKey = null)
+    {
+        if (string.IsNullOrWhiteSpace(endpoint))
+        {
+            throw new ArgumentException("Remote endpoint cannot be null or empty.", nameof(endpoint));
+        }
+        _remoteEndpoint = endpoint;
+        _remoteApiKey = apiKey;
+        return this;
+    }
+
     /// <summary>
     /// Build the configured IKernelMemory for RAG usage.
+    /// If custom handlers are configured, returns a CustomPipelineMemoryWrapper for enhanced runtime pipeline support.
     /// </summary>
     public IKernelMemory Build()
     {
+        // --- CHECK FOR REMOTE CONFIGURATION FIRST ---
+        if (!string.IsNullOrEmpty(_remoteEndpoint))
+        {
+            // If a remote endpoint is set, we ignore all other configurations
+            // and return a client that connects to the remote service.
+            // Note: The CustomPipelineMemoryWrapper is not needed for a remote client,
+            // as the remote service manages its own pipelines.
+            return new MemoryWebClient(_remoteEndpoint, _remoteApiKey);
+        }
+
+        // --- EXISTING LOGIC: If not remote, proceed with the local build ---
+        var defaultIndex = GetConversationIndex();
+        
         ValidateCustomImplementations();
         ConfigureProviders();
         ConfigureStorage();
         RegisterCustomImplementations();
-        return _kernelBuilder.Build<MemoryServerless>();
+        
+        // Build the memory client
+        var memory = _kernelBuilder.Build<MemoryServerless>();
+        
+        // Register custom handlers with the orchestrator after building
+        RegisterCustomHandlers(memory);
+        
+        // Return enhanced wrapper if custom pipeline is configured
+        if (_customPipelineSteps != null && _customPipelineSteps.Length > 0)
+        {
+            return new CustomPipelineMemoryWrapper(memory, _customPipelineSteps, defaultIndex);
+        }
+        
+        return memory;
+    }
+
+    private string GetConversationIndex() => $"conversation-{_conversationId.ToLowerInvariant()}";
+
+    // Register custom handlers with the orchestrator after building memory
+    private void RegisterCustomHandlers(IKernelMemory memory)
+    {
+        // For now, we'll store the handlers to be registered and provide a method to access them
+        // This is because the actual registration needs to happen with the orchestrator
+        // which may not be directly accessible depending on the Kernel Memory version
+        
+        // In the future, when the memory supports custom handlers, we would do:
+        // foreach (var (type, name, factory) in _customHandlers)
+        // {
+        //     if (factory != null)
+        //     {
+        //         var instance = factory(serviceProvider) as IPipelineStepHandler;
+        //         await memory.Orchestrator.AddHandlerAsync(instance);
+        //     }
+        //     else
+        //     {
+        //         memory.Orchestrator.AddHandler<THandler>(name);
+        //     }
+        // }
+    }
+
+    /// <summary>
+    /// Gets the custom handlers that were registered with this builder.
+    /// This can be used to manually register handlers with the orchestrator if needed.
+    /// </summary>
+    public IReadOnlyList<(Type type, string name, Func<IServiceProvider, IPipelineStepHandler>? factory)> GetCustomHandlers()
+    {
+        return _customHandlers.AsReadOnly();
+    }
+
+    /// <summary>
+    /// Gets the custom pipeline steps that were configured with this builder.
+    /// </summary>
+    public string[]? GetCustomPipelineSteps()
+    {
+        return _customPipelineSteps;
     }
 
     private void ConfigureProviders()

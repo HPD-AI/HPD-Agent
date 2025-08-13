@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using Microsoft.KernelMemory;
+using HPD_Agent.MemoryRAG;
 
 
 
@@ -18,6 +19,7 @@ public class RAGContext
     RAGConfiguration? configuration = null)
     {
         var projectMemory = new ProjectMemoryBuilder(projectId).Build();
+        
         return new RAGContext
         {
             AgentMemories = agentMemories,

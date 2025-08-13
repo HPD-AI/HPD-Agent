@@ -1,0 +1,75 @@
+using System.ComponentModel;
+
+/// <summary>
+/// Simple math plugin for testing plugin registration and invocation.
+/// </summary>
+public class MathPluginContext : IPluginMetadataContext
+{
+    private readonly Dictionary<string, object> _properties = new();
+
+    public MathPluginContext(long maxValue = 1000, bool allowNegative = true)
+    {
+        _properties["maxValue"] = maxValue;
+        _properties["allowNegative"] = allowNegative;
+    }
+
+    public T GetProperty<T>(string propertyName, T defaultValue = default)
+    {
+        // If no properties are set, allow all functions by returning default values that pass all conditions
+        if (_properties.Count == 0)
+        {
+            if (propertyName == "allowNegative" && typeof(T) == typeof(bool))
+                return (T)(object)true;
+            if (propertyName == "maxValue" && typeof(T) == typeof(long))
+                return (T)(object)long.MaxValue;
+        }
+        if (_properties.TryGetValue(propertyName, out var value))
+        {
+            if (value is T typedValue)
+                return typedValue;
+            if (typeof(T) == typeof(string))
+                return (T)(object)value.ToString()!;
+        }
+        return defaultValue;
+    }
+
+    public bool HasProperty(string propertyName) => _properties.ContainsKey(propertyName);
+    public IEnumerable<string> GetPropertyNames() => _properties.Keys;
+}
+
+public class MathPlugin
+{
+    [AIFunction, Description("Adds two numbers and returns the sum.")]
+    public long Add(
+        [Description("First addend.")] long a,
+        [Description("Second addend.")] long b)
+        => a + b;
+
+    [AIFunction, Description("Multiplies two numbers and returns the product.")]
+    public long Multiply(
+        [Description("First factor.")] long a,
+        [Description("Second factor.")] long b)
+        => a * b;
+
+    [AIFunction, ConditionalFunction("context.allowNegative == false"), Description("Returns the absolute value. Only available if negatives are not allowed.")]
+    public long Abs(
+        [Description("Input value.")] long value)
+        => Math.Abs(value);
+
+    [AIFunction, ConditionalFunction("context.maxValue > 1000"), Description("Squares a number. Only available if maxValue > 1000.")]
+    public long Square(
+        [Description("Input value.")] long value)
+        => value * value;
+
+    [AIFunction, ConditionalFunction("context.allowNegative == true"), Description("Subtracts b from a. Only available if negatives are allowed.")]
+    public long Subtract(
+        [Description("Minuend.")] long a,
+        [Description("Subtrahend.")] long b)
+        => a - b;
+
+    [AIFunction, ConditionalFunction("context.maxValue < 500"), Description("Returns the minimum of two numbers. Only available if maxValue < 500.")]
+    public long Min(
+        [Description("First value.")] long a,
+        [Description("Second value.")] long b)
+        => Math.Min(a, b);
+}

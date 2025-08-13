@@ -1,0 +1,58 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <RootNamespace>HPD_Agent</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <NoWarn>HPDAUDIO001;MEAI001</NoWarn>
+    
+    <!-- Enable Swift Interop Support -->
+    <EnableSwiftInterop>true</EnableSwiftInterop>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RuntimeIdentifier>osx-arm64</RuntimeIdentifier>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Core AI Framework -->
+    <PackageReference Include="Microsoft.Extensions.AI" Version="9.7.1" />
+    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="9.7.1" />
+    <PackageReference Include="Microsoft.Extensions.AI.AzureAIInference" Version="9.7.1-preview.1.25365.4" />
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="9.7.1-preview.1.25365.4" />
+    
+    <!-- Dependency Injection & Configuration -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.4" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.4" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="9.0.4" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="9.0.4" />
+    <PackageReference Include="Microsoft.KernelMemory" Version="0.98.250508.3" />
+    <PackageReference Include="OllamaSharp" Version="5.3.4" />
+    
+    <!-- JSON & Serialization (use version required by Extensions.AI) -->
+    <PackageReference Include="System.Text.Json" Version="9.0.7" />
+    
+    <!-- Async Utilities (use version required by Extensions.AI) -->
+    <PackageReference Include="System.Threading.Channels" Version="9.0.7" />
+    
+    <!-- Source Generation -->
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" Version="3.3.4" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" PrivateAssets="all" />
+    <PackageReference Include="Google.Apis.CustomSearchAPI.v1" Version="1.68.0.3520" />
+
+    <!-- Text Extraction -->
+    <PackageReference Include="UTF.Unknown" Version="2.5.1" />
+  </ItemGroup>
+
+
+  <ItemGroup>
+    <!-- Reference the source generator project -->
+    <Analyzer Include="..\HPD-Agent.SourceGenerator\bin\Debug\netstandard2.0\HPD-Agent.SourceGenerator.dll" Condition="Exists('..\HPD-Agent.SourceGenerator\bin\Debug\netstandard2.0\HPD-Agent.SourceGenerator.dll')" />
+    <ProjectReference Include="..\HPD-Agent.SourceGenerator\HPD-Agent.SourceGenerator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <!-- No longer need AGUI project reference since we have AOT-compatible types -->
+
+</Project>

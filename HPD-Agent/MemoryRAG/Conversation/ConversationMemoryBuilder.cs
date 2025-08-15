@@ -20,6 +20,7 @@ public class ConversationMemoryBuilder
     private readonly IKernelMemoryBuilder _kernelBuilder;
     private readonly string _conversationId;
     private readonly ConversationMemoryConfig _config;
+    private ConversationUploadStrategy _uploadStrategy = ConversationUploadStrategy.RAG; // Default to RAG
 
     // Custom RAG extension points
     private IMemoryDb? _customMemoryDb;
@@ -39,6 +40,17 @@ public class ConversationMemoryBuilder
     }
 
     // Core configuration:
+    public ConversationMemoryBuilder WithUploadStrategy(ConversationUploadStrategy strategy)
+    {
+        _uploadStrategy = strategy;
+        return this;
+    }
+
+    /// <summary>
+    /// Internal property to be read by the Conversation class
+    /// </summary>
+    internal ConversationUploadStrategy UploadStrategy => _uploadStrategy;
+
     public ConversationMemoryBuilder WithEmbeddingProvider(MemoryEmbeddingProvider provider, string? model = null)
     {
         _config.EmbeddingProvider = provider;
@@ -142,10 +154,17 @@ public class ConversationMemoryBuilder
 
     /// <summary>
     /// Build the configured IKernelMemory for RAG usage.
+    /// Returns null if the strategy is DirectInjection, as no memory instance is needed.
     /// If custom handlers are configured, returns a CustomPipelineMemoryWrapper for enhanced runtime pipeline support.
     /// </summary>
-    public IKernelMemory Build()
+    public IKernelMemory? Build()
     {
+        // If strategy is DirectInjection, no need to build the memory stack.
+        if (_uploadStrategy == ConversationUploadStrategy.DirectInjection)
+        {
+            return null;
+        }
+
         // --- CHECK FOR REMOTE CONFIGURATION FIRST ---
         if (!string.IsNullOrEmpty(_remoteEndpoint))
         {

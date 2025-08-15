@@ -30,14 +30,19 @@ internal class FunctionInfo
     public bool HasContextAwareMetadata => Description.Contains("{context.");
     
     /// <summary>
-    /// Conditional expression for function inclusion (null if always included)
+    /// V2 property-based conditional expression (null if not conditional)
     /// </summary>
-    public string? ConditionalExpression { get; set; }
+    public string? ConditionalExpressionV2 { get; set; }
+    
+    /// <summary>
+    /// Type name of the context for V2 conditional expressions
+    /// </summary>
+    public string? ConditionalContextTypeName { get; set; }
     
     /// <summary>
     /// Whether this function has a conditional inclusion requirement
     /// </summary>
-    public bool IsConditional => !string.IsNullOrEmpty(ConditionalExpression);
+    public bool IsConditional => !string.IsNullOrEmpty(ConditionalExpressionV2);
 
     public string FunctionName => CustomName ?? Name;
 

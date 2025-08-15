@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using System.Threading.Tasks;
 using Microsoft.KernelMemory;
+using HPD_Agent.MemoryRAG;
+using System.Threading;
 
 /// <summary>
 /// Represents a project containing conversations and scoped memories.
@@ -38,6 +40,7 @@ public class Project
     // Memory management
     private IKernelMemory? _memory;
     private ProjectMemoryBuilder? _memoryBuilder;
+    private ProjectDocumentStrategy _documentStrategy = ProjectDocumentStrategy.DirectInjection; // Default to DirectInjection for CAG-only scenarios
 
     /// <summary>Constructor initializes project, memory and document managers.</summary>
     public Project(string name, string? storageDirectory = null)
@@ -65,20 +68,32 @@ public class Project
     }
 
     /// <summary>
-    /// Gets or creates the memory instance for this project
+    /// Gets or creates the RAG memory instance for this project.
+    /// Returns null if no memory builder has been explicitly configured.
     /// </summary>
-    /// <returns>The kernel memory instance</returns>
-    public IKernelMemory GetOrCreateMemory()
+    /// <returns>The kernel memory instance, or null if not configured</returns>
+    public IKernelMemory? GetOrCreateMemory()
     {
-        if (_memory != null) return _memory;
-        
-        if (_memoryBuilder == null)
+        if (_documentStrategy == ProjectDocumentStrategy.DirectInjection)
         {
-            // Create default memory builder if none provided
-            _memoryBuilder = new ProjectMemoryBuilder(Id);
+            return null; // No RAG memory needed for DirectInjection
         }
         
-        return _memory ??= _memoryBuilder.Build();
+        if (_memory != null) return _memory;
+        
+        // Only create memory if explicitly configured via SetMemoryBuilder
+        if (_memoryBuilder == null)
+        {
+            return null; // No memory builder configured - return null instead of creating default
+        }
+        
+        var builtMemory = _memoryBuilder.Build();
+        if (builtMemory == null)
+        {
+            throw new InvalidOperationException("Memory builder returned null. This should not happen with RAG strategy.");
+        }
+        
+        return _memory = builtMemory;
     }
     
     /// <summary>
@@ -88,6 +103,7 @@ public class Project
     public void SetMemoryBuilder(ProjectMemoryBuilder builder)
     {
         _memoryBuilder = builder ?? throw new ArgumentNullException(nameof(builder));
+        _documentStrategy = builder.DocumentStrategy; // Track the strategy
         _memory = null; // Clear existing memory to force rebuild with new builder
     }
 
@@ -138,12 +154,62 @@ public class Project
     /// <summary>Gets the number of conversations.</summary>
     public int ConversationCount => Conversations.Count;
 
-    /// <summary>Upload a document from local file path.</summary>
-    public Task<ProjectDocument> UploadDocumentAsync(string filePath, string? description = null)
-        => DocumentManager.UploadDocumentAsync(filePath, description);
+    /// <summary>
+    /// Uploads a shared document to the project using the configured strategy.
+    /// </summary>
+    /// <param name="filePath">Path to the document file</param>
+    /// <param name="description">Optional description for the document</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Project document metadata</returns>
+    public async Task<ProjectDocument> UploadDocumentAsync(string filePath, string? description = null, CancellationToken cancellationToken = default)
+    {
+        switch (_documentStrategy)
+        {
+            case ProjectDocumentStrategy.RAG:
+                var memory = GetOrCreateMemory();
+                if (memory != null)
+                {
+                    await memory.ImportDocumentAsync(filePath, tags: new() { { "project", this.Id } }, cancellationToken: cancellationToken);
+                }
+                // We still use DocumentManager to track metadata, even in RAG mode
+                return await DocumentManager.UploadDocumentAsync(filePath, description, cancellationToken);
 
-    /// <summary>Upload a document from URL.</summary>
-    public Task<ProjectDocument> UploadDocumentFromUrlAsync(string url, string? description = null)
-        => DocumentManager.UploadDocumentFromUrlAsync(url, description);
+            case ProjectDocumentStrategy.DirectInjection:
+                // Use the existing ProjectDocumentManager to handle the upload and storage for injection
+                return await DocumentManager.UploadDocumentAsync(filePath, description, cancellationToken);
+            
+            default:
+                throw new InvalidOperationException($"Invalid document strategy configured for the project: {_documentStrategy}");
+        }
+    }
+
+    /// <summary>
+    /// Uploads a shared document from URL to the project using the configured strategy.
+    /// </summary>
+    /// <param name="url">URL of the document to upload</param>
+    /// <param name="description">Optional description for the document</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Project document metadata</returns>
+    public async Task<ProjectDocument> UploadDocumentFromUrlAsync(string url, string? description = null, CancellationToken cancellationToken = default)
+    {
+        switch (_documentStrategy)
+        {
+            case ProjectDocumentStrategy.RAG:
+                var memory = GetOrCreateMemory();
+                if (memory != null)
+                {
+                    await memory.ImportWebPageAsync(url, tags: new() { { "project", this.Id } }, cancellationToken: cancellationToken);
+                }
+                // We still use DocumentManager to track metadata, even in RAG mode
+                return await DocumentManager.UploadDocumentFromUrlAsync(url, description, cancellationToken);
+
+            case ProjectDocumentStrategy.DirectInjection:
+                // Use the existing ProjectDocumentManager to handle the upload and storage for injection
+                return await DocumentManager.UploadDocumentFromUrlAsync(url, description, cancellationToken);
+            
+            default:
+                throw new InvalidOperationException($"Invalid document strategy configured for the project: {_documentStrategy}");
+        }
+    }
 }
 

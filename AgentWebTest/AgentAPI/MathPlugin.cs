@@ -3,26 +3,24 @@ using System.ComponentModel;
 /// <summary>
 /// Simple math plugin for testing plugin registration and invocation.
 /// </summary>
-public class MathPluginContext : IPluginMetadataContext
+public class MathPluginMetadataContext : IPluginMetadataContext
 {
     private readonly Dictionary<string, object> _properties = new();
 
-    public MathPluginContext(long maxValue = 1000, bool allowNegative = true)
+    public MathPluginMetadataContext(long maxValue = 1000, bool allowNegative = true)
     {
         _properties["maxValue"] = maxValue;
         _properties["allowNegative"] = allowNegative;
+        MaxValue = maxValue;
+        AllowNegative = allowNegative;
     }
+
+    // ✅ V2: Strongly-typed properties for compile-time validation
+    public long MaxValue { get; }
+    public bool AllowNegative { get; }
 
     public T GetProperty<T>(string propertyName, T defaultValue = default)
     {
-        // If no properties are set, allow all functions by returning default values that pass all conditions
-        if (_properties.Count == 0)
-        {
-            if (propertyName == "allowNegative" && typeof(T) == typeof(bool))
-                return (T)(object)true;
-            if (propertyName == "maxValue" && typeof(T) == typeof(long))
-                return (T)(object)long.MaxValue;
-        }
         if (_properties.TryGetValue(propertyName, out var value))
         {
             if (value is T typedValue)
@@ -51,23 +49,23 @@ public class MathPlugin
         [Description("Second factor.")] long b)
         => a * b;
 
-    [AIFunction, ConditionalFunction("context.allowNegative == false"), Description("Returns the absolute value. Only available if negatives are not allowed.")]
+    [AIFunction, ConditionalFunction<MathPluginMetadataContext>("AllowNegative == false"), Description("Returns the absolute value. Only available if negatives are not allowed.")]
     public long Abs(
         [Description("Input value.")] long value)
         => Math.Abs(value);
 
-    [AIFunction, ConditionalFunction("context.maxValue > 1000"), Description("Squares a number. Only available if maxValue > 1000.")]
+    [AIFunction, ConditionalFunction<MathPluginMetadataContext>("MaxValue > 1000"), Description("Squares a number. Only available if maxValue > 1000.")]
     public long Square(
         [Description("Input value.")] long value)
         => value * value;
 
-    [AIFunction, ConditionalFunction("context.allowNegative == true"), Description("Subtracts b from a. Only available if negatives are allowed.")]
+    [AIFunction, ConditionalFunction<MathPluginMetadataContext>("AllowNegative == true"), Description("Subtracts b from a. Only available if negatives are allowed.")]
     public long Subtract(
         [Description("Minuend.")] long a,
         [Description("Subtrahend.")] long b)
         => a - b;
 
-    [AIFunction, ConditionalFunction("context.maxValue < 500"), Description("Returns the minimum of two numbers. Only available if maxValue < 500.")]
+    [AIFunction, ConditionalFunction<MathPluginMetadataContext>("MaxValue < 500"), Description("Returns the minimum of two numbers. Only available if maxValue < 500.")]
     public long Min(
         [Description("First value.")] long a,
         [Description("Second value.")] long b)

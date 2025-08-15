@@ -274,14 +274,38 @@ static Agent? CreateChatAgent(Project project)
             .Build();
 
         Console.WriteLine("Apple Intelligence is available. Using Apple Intelligence provider.");
+
+        // Prepare connectors and a WebSearchPlugin instance (using Tavily for testing)
+        var yourConnectors = new IWebSearchConnector[]
+        {
+            new TavilyConnector(new TavilyConfig { ApiKey = configuration["Tavily:ApiKey"] ?? "dummy" })
+        };
+
+        var webSearchContext = new WebSearchContext(yourConnectors, "tavily");
+        var webSearchPlugin = new WebSearchPlugin(webSearchContext);
+
+        // Check if your generated registration exists and works
+        try
+        {
+            var functions = WebSearchPluginRegistration.CreatePlugin(webSearchPlugin, webSearchContext);
+            Console.WriteLine($"Generated {functions.Count} functions:");
+            foreach (var f in functions)
+                Console.WriteLine($"- {f.Name}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Plugin registration failed: {ex.Message}");
+            // This would explain why you're seeing hardcoded functions
+        }
+
         return AgentBuilder.Create()
             .WithConfiguration(configuration)
             .WithProvider(ChatProvider.OpenRouter, "google/gemini-2.5-pro")
             .WithName("InteractiveChatAgent")
             .WithInstructions(@"You are an expert AI math assistant. Always be clear, concise, and helpful. Provide code examples when possible. Answer as if you are mentoring a developer.")
             .WithFilter(new LoggingAiFunctionFilter())
-            .WithMemoryCagCapability(project.AgentMemoryCagManager)
             .WithPlugin<MathPlugin>(new MathPluginMetadataContext())
+            .WithPlugin(webSearchPlugin, webSearchContext)
             .WithElevenLabsAudio(
                 configuration["ElevenLabs:ApiKey"], 
                 configuration["ElevenLabs:DefaultVoiceId"]) // Read both from config

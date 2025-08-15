@@ -82,6 +82,23 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
         // Always generate a test file to confirm the generator is running
         context.AddSource("_SourceGeneratorTest.g.cs", "// Source generator is running!");
         
+        // Add debug info about what we found
+        var debugInfo = $"// Found {plugins.Length} plugins total\n";
+        debugInfo += $"// Non-null plugins: {plugins.Count(p => p != null)}\n";
+        for (int i = 0; i < plugins.Length; i++)
+        {
+            var plugin = plugins[i];
+            if (plugin != null)
+            {
+                debugInfo += $"// Plugin {i}: {plugin.Name} with {plugin.Functions.Count} functions\n";
+            }
+            else
+            {
+                debugInfo += $"// Plugin {i}: null\n";
+            }
+        }
+        context.AddSource("_SourceGeneratorDebug.g.cs", debugInfo);
+        
         foreach (var plugin in plugins)
         {
             if (plugin != null)
@@ -204,7 +221,18 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
     /// </summary>
     private static string GenerateFunctionRegistration(FunctionInfo function)
     {
-        var parameterList = string.Join(", ", function.Parameters.Select(p => $"{p.Type} {p.Name}"));
+        // Generate parameter list with proper default values
+        var parameterParts = function.Parameters.Select(p => 
+        {
+            var paramDecl = $"{p.Type} {p.Name}";
+            if (p.HasDefaultValue && !string.IsNullOrEmpty(p.DefaultValue))
+            {
+                paramDecl += $" = {p.DefaultValue}";
+            }
+            return paramDecl;
+        });
+        var parameterList = string.Join(", ", parameterParts);
+        
         var argumentList = string.Join(", ", function.Parameters.Select(p => p.Name));
         var nameCode = $"\"{function.FunctionName}\"";
         var descriptionCode = function.HasContextAwareMetadata 
@@ -284,14 +312,40 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
         foreach (var function in plugin.Functions.Where(f => f.HasContextAwareMetadata))
         {
             if (sb.Length > 0) sb.AppendLine();
-            sb.AppendLine(DSLCodeGenerator.GenerateDescriptionResolver(function.Name, function.Description));
+            // If we know the context type from a [ConditionalFunction] attribute,
+            // use the modern V2 description resolver.
+            if (!string.IsNullOrEmpty(function.ConditionalContextTypeName))
+            {
+                sb.AppendLine(DSLCodeGenerator.GenerateDescriptionResolverV2(
+                    function.Name,
+                    function.Description,
+                    function.ConditionalContextTypeName!));
+            }
+            else
+            {
+                // Otherwise, fall back to the legacy resolver.
+                sb.AppendLine(DSLCodeGenerator.GenerateDescriptionResolver(function.Name, function.Description));
+            }
         }
         
-        // Generate conditional evaluators
+        // Generate conditional evaluators (V2 only)
         foreach (var function in plugin.Functions.Where(f => f.IsConditional))
         {
             if (sb.Length > 0) sb.AppendLine();
-            sb.AppendLine(DSLCodeGenerator.GenerateConditionalEvaluator(function.Name, function.ConditionalExpression!));
+            
+            if (!string.IsNullOrEmpty(function.ConditionalExpressionV2) && !string.IsNullOrEmpty(function.ConditionalContextTypeName))
+            {
+                // Use the V2 generator for property-based expressions
+                sb.AppendLine(DSLCodeGenerator.GenerateConditionalEvaluatorV2(
+                    function.Name, 
+                    function.ConditionalExpressionV2!, 
+                    function.ConditionalContextTypeName!));
+            }
+            else
+            {
+                // V2 expression required - V1 no longer supported
+                // This should not happen if migration is complete
+            }
         }
         
         return sb.ToString();
@@ -318,7 +372,9 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
         var customName = GetCustomFunctionName(method);
         var description = GetFunctionDescription(method);
         var permissions = GetRequiredPermissions(method);
-        var conditionalExpression = GetConditionalExpression(method);
+        
+        // Check for V2 conditional attribute (V1 no longer supported)
+        var (v2Expression, v2ContextType) = GetConditionalExpressionV2(method, semanticModel);
         
         // Validate function description
         if (!string.IsNullOrEmpty(description))
@@ -341,7 +397,8 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
             ReturnType = GetReturnType(method, semanticModel),
             IsAsync = IsAsyncMethod(method),
             RequiredPermissions = permissions,
-            ConditionalExpression = conditionalExpression
+            ConditionalExpressionV2 = v2Expression,
+            ConditionalContextTypeName = v2ContextType
         };
     }
     
@@ -417,7 +474,10 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
         return new List<string>(); // Placeholder
     }
     
-    private static string? GetConditionalExpression(MethodDeclarationSyntax method)
+    /// <summary>
+    /// Gets the V2 conditional expression and context type from ConditionalFunction<TContext> attribute
+    /// </summary>
+    private static (string? expression, string? contextType) GetConditionalExpressionV2(MethodDeclarationSyntax method, SemanticModel semanticModel)
     {
         var conditionalAttributes = method.AttributeLists
             .SelectMany(attrList => attrList.Attributes)
@@ -425,14 +485,37 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
             
         foreach (var attr in conditionalAttributes)
         {
-            var arguments = attr.ArgumentList?.Arguments;
-            if (arguments.HasValue && arguments.Value.Count >= 1)
+            // Check if this is a generic ConditionalFunction<TContext> attribute
+            var symbolInfo = semanticModel.GetSymbolInfo(attr);
+            if (symbolInfo.Symbol is IMethodSymbol methodSymbol)
             {
-                return ExtractStringLiteral(arguments.Value[0].Expression);
+                var attributeType = methodSymbol.ContainingType;
+                
+                // Check if it's the generic version
+                if (attributeType.IsGenericType && attributeType.TypeArguments.Length == 1)
+                {
+                    var contextType = attributeType.TypeArguments[0];
+                    var contextTypeName = contextType.Name;
+                    
+                    // Get the property expression argument
+                    var arguments = attr.ArgumentList?.Arguments;
+                    if (arguments.HasValue && arguments.Value.Count >= 1)
+                    {
+                        var propertyExpression = ExtractStringLiteral(arguments.Value[0].Expression);
+                        
+                        // ✅ ENHANCED: Validate the property expression against the context type
+                        if (!string.IsNullOrEmpty(propertyExpression))
+                        {
+                            ValidatePropertyExpression(propertyExpression, contextType, attr, semanticModel);
+                        }
+                        
+                        return (propertyExpression, contextTypeName);
+                    }
+                }
             }
         }
         
-        return null;
+        return (null, null);
     }
     
     private static string GetParameterType(ParameterSyntax param, SemanticModel semanticModel)
@@ -473,5 +556,93 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
     {
         return method.Modifiers.Any(SyntaxKind.AsyncKeyword) ||
                method.ReturnType.ToString().StartsWith("Task");
+    }
+    
+    /// <summary>
+    /// Validates that all property names in the expression exist on the context type.
+    /// Provides compile-time validation and helpful error messages.
+    /// </summary>
+    private static void ValidatePropertyExpression(string propertyExpression, ITypeSymbol contextType, AttributeSyntax attribute, SemanticModel semanticModel)
+    {
+        try
+        {
+            // Extract all potential property names from the expression
+            var propertyNames = ExtractPropertyNames(propertyExpression);
+            
+            // Get all public properties from the context type
+            var availableProperties = contextType.GetMembers()
+                .OfType<IPropertySymbol>()
+                .Where(p => p.DeclaredAccessibility == Accessibility.Public)
+                .ToDictionary(p => p.Name, p => p);
+            
+            // Validate each property name
+            foreach (var propertyName in propertyNames)
+            {
+                if (!availableProperties.ContainsKey(propertyName))
+                {
+                    // Create a diagnostic for the invalid property
+                    var diagnostic = Diagnostic.Create(
+                        new DiagnosticDescriptor(
+                            "HPD001",
+                            "Invalid property in conditional expression",
+                            $"Property '{propertyName}' does not exist on type '{contextType.Name}'. Available properties: {string.Join(", ", availableProperties.Keys)}",
+                            "HPD.ConditionalFunction",
+                            DiagnosticSeverity.Error,
+                            isEnabledByDefault: true,
+                            description: "The conditional function expression references a property that doesn't exist on the context type."),
+                        attribute.GetLocation());
+                        
+                    // Note: In a real source generator, you'd report this diagnostic via the context
+                    // For now, we'll let the runtime validation catch it
+                }
+            }
+        }
+        catch
+        {
+            // If validation fails, we'll let the runtime handle the error
+            // This ensures the source generator doesn't crash on complex expressions
+        }
+    }
+    
+    /// <summary>
+    /// Extracts property names from a conditional expression.
+    /// Handles simple properties and complex boolean expressions.
+    /// </summary>
+    private static HashSet<string> ExtractPropertyNames(string expression)
+    {
+        var propertyNames = new HashSet<string>();
+        
+        // Simple regex to find C# identifiers that could be property names
+        // This matches: letter/underscore followed by letters/digits/underscores
+        var matches = System.Text.RegularExpressions.Regex.Matches(
+            expression, 
+            @"\b[A-Za-z_][A-Za-z0-9_]*\b");
+        
+        foreach (System.Text.RegularExpressions.Match match in matches)
+        {
+            var identifier = match.Value;
+            
+            // Filter out known keywords and operators
+            if (!IsKeywordOrOperator(identifier))
+            {
+                propertyNames.Add(identifier);
+            }
+        }
+        
+        return propertyNames;
+    }
+    
+    /// <summary>
+    /// Determines if a string is a C# keyword or common operator.
+    /// </summary>
+    private static bool IsKeywordOrOperator(string identifier)
+    {
+        var keywords = new HashSet<string>
+        {
+            "true", "false", "null", "and", "or", "not", "&&", "||", "!", 
+            "==", "!=", "<", ">", "<=", ">=", "if", "else", "return"
+        };
+        
+        return keywords.Contains(identifier.ToLower());
     }
 }

@@ -1,13 +1,15 @@
-/// <summary>
-/// Represents the result of processing a document upload for conversation injection
-/// </summary>
-public class ConversationDocumentUpload
+namespace HPD_Agent.MemoryCAG
 {
-    /// <summary>Original filename from upload</summary>
-    public string FileName { get; set; } = string.Empty;
-    
-    /// <summary>Extracted text content to append to message</summary>
-    public string ExtractedText { get; set; } = string.Empty;
+    /// <summary>
+    /// Represents the result of processing a document upload for conversation injection
+    /// </summary>
+    public class ConversationDocumentUpload
+    {
+        /// <summary>Original filename from upload</summary>
+        public string FileName { get; set; } = string.Empty;
+        
+        /// <summary>Extracted text content to append to message</summary>
+        public string ExtractedText { get; set; } = string.Empty;
     
     /// <summary>MIME type detected by TextExtractionUtility</summary>
     public string MimeType { get; set; } = string.Empty;
@@ -29,4 +31,5 @@ public class ConversationDocumentUpload
     
     /// <summary>Decoder used for extraction</summary>
     public string? DecoderUsed { get; set; }
+}
 }

@@ -28,6 +28,8 @@ using HPD_Agent.MemoryRAG;
         // Remote memory connection
         private string? _remoteEndpoint;
         private string? _remoteApiKey;
+        // Document strategy configuration
+        private ProjectDocumentStrategy _documentStrategy = ProjectDocumentStrategy.RAG; // Default to RAG
 
         public ProjectMemoryBuilder(string projectId)
         {
@@ -74,8 +76,34 @@ using HPD_Agent.MemoryRAG;
             return this;
         }
 
-        public IKernelMemory Build()
+        /// <summary>
+        /// Configures the document strategy for the project
+        /// </summary>
+        /// <param name="strategy">The document handling strategy</param>
+        /// <returns>The builder instance for method chaining</returns>
+        public ProjectMemoryBuilder WithDocumentStrategy(ProjectDocumentStrategy strategy)
         {
+            _documentStrategy = strategy;
+            return this;
+        }
+
+        /// <summary>
+        /// Internal property to be read by the Project class
+        /// </summary>
+        internal ProjectDocumentStrategy DocumentStrategy => _documentStrategy;
+
+        /// <summary>
+        /// Builds the configured IKernelMemory for RAG usage.
+        /// Returns null if the strategy is DirectInjection.
+        /// </summary>
+        public IKernelMemory? Build()
+        {
+            // Return null for DirectInjection strategy to optimize resource allocation
+            if (_documentStrategy == ProjectDocumentStrategy.DirectInjection)
+            {
+                return null;
+            }
+
             // --- CHECK FOR REMOTE CONFIGURATION FIRST ---
             if (!string.IsNullOrEmpty(_remoteEndpoint))
             {

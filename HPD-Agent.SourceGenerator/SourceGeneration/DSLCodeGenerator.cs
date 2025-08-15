@@ -1,10 +1,13 @@
 // Updated DSL Code Generator - now works with any context type
+using System;
+using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using System.Linq;
+using System.Linq.Expressions;
 internal static class DSLCodeGenerator
 {
     private static readonly Regex PropertyExtractor = new(@"context\.([a-zA-Z_][a-zA-Z0-9_]*)", RegexOptions.Compiled);
-    private static readonly Regex TernaryExtractor = new(@"context\.([a-zA-Z_][a-zA-Z0-9_]*)\s*\?\s*'([^']*)'\s*:\s*'([^']*)'", RegexOptions.Compiled);
+    private static readonly Regex TernaryExtractor = new(@"context\.([a-zA-Z_][a-zA-Z0-9_]*)\s*\?\s*['""]([^'""]*)['""]??\s*:\s*['""]([^'""]*)['""]", RegexOptions.Compiled);
     private static readonly Regex HelperExtractor = new(@"([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_]*)\(context\)", RegexOptions.Compiled);
     
     /// <summary>
@@ -113,196 +116,147 @@ internal static class DSLCodeGenerator
     }
     
     /// <summary>
-    /// Generates a conditional evaluation method for a function
+    /// Generates a conditional evaluation method for a function from a type-safe expression tree (V2).
+    /// This is far simpler and more robust than V1's string parsing.
     /// </summary>
-    public static string GenerateConditionalEvaluator(string functionName, string condition)
+    public static string GenerateConditionalEvaluator(string functionName, Expression conditionExpression, string contextTypeName)
     {
-        var evaluatorCode = GenerateConditionEvaluationCode(condition);
-        
+        // Cast to LambdaExpression to access Body and Parameters
+        if (conditionExpression is not LambdaExpression lambdaExpression)
+        {
+            throw new ArgumentException("Condition expression must be a lambda expression", nameof(conditionExpression));
+        }
+
+        // The Body of the expression is converted directly to a C# string.
+        // This is far simpler and more robust than V1's string parsing.
+        var conditionCode = lambdaExpression.Body.ToString();
+
+        // The parameter name in the lambda (e.g., "ctx") needs to be replaced
+        // with the variable name used in the generated method ("context").
+        var parameterName = lambdaExpression.Parameters[0].Name;
+        var finalConditionCode = conditionCode.Replace(parameterName + ".", "context.");
+
         return $$"""
         /// <summary>
-        /// Evaluates the conditional expression for {{functionName}}
+        /// Evaluates the conditional expression for {{functionName}} using a pre-compiled expression.
         /// </summary>
-        private static bool Evaluate{{functionName}}Condition(IPluginMetadataContext? context)
+        private static bool Evaluate{{functionName}}Condition({{contextTypeName}}? context)
         {
-            // If no context provided, include function by default (treat as unconditional)
+            // If no context is provided, default to including the function (no filtering).
             if (context == null) return true;
             
             try
             {
-                {{evaluatorCode}}
+                return {{finalConditionCode}};
             }
-            catch (Exception)
+            catch
             {
-                // Log error and default to false for security
-                return false;
+                // In case of any unexpected error during evaluation, default to false.
+                return false; 
             }
         }
         """;
     }
     
-    private static string GenerateConditionEvaluationCode(string condition)
+    /// <summary>
+    /// Generates a conditional evaluation method for a function from a type-safe property expression (V2).
+    /// </summary>
+    public static string GenerateConditionalEvaluatorV2(string functionName, string propertyExpression, string contextTypeName)
     {
-        // Handle different expression patterns
-        if (IsBooleanProperty(condition))
+        // Convert property-based expression to context property access
+        // For example: "HasTavilyProvider" becomes "context.HasTavilyProvider"
+        // For complex expressions: "HasBraveProvider && HasBingProvider" becomes "context.HasBraveProvider && context.HasBingProvider"
+        var conditionCode = ConvertPropertyExpressionToCode(propertyExpression);
+
+        return $$"""
+        /// <summary>
+        /// Evaluates the conditional expression for {{functionName}} using V2 property-based logic.
+        /// </summary>
+        private static bool Evaluate{{functionName}}Condition(IPluginMetadataContext? context)
         {
-            return GenerateBooleanPropertyCheck(condition);
-        }
-        
-        if (IsComparisonExpression(condition))
-        {
-            return GenerateComparisonCheck(condition);
-        }
-        
-        if (IsLogicalExpression(condition))
-        {
-            return GenerateLogicalExpressionCheck(condition);
-        }
-        
-        // Fallback for complex expressions
-        return GenerateComplexExpressionCheck(condition);
-    }
-    
-    private static bool IsBooleanProperty(string condition)
-    {
-        // Matches: context.propertyName or !context.propertyName
-        return Regex.IsMatch(condition, @"^!?context\.[a-zA-Z_][a-zA-Z0-9_]*$");
-    }
-    
-    private static string GenerateBooleanPropertyCheck(string condition)
-    {
-        var isNegated = condition.StartsWith("!");
-        var propertyName = isNegated ? condition.Substring(9) : condition.Substring(8); // Remove "context." or "!context."
-        
-        if (isNegated)
-        {
-            return "return context.GetProperty<bool>(\"" + propertyName + "\") != true;";
-        }
-        else
-        {
-            return "return context.GetProperty<bool>(\"" + propertyName + "\") == true;";
-        }
-    }
-    
-    private static bool IsComparisonExpression(string condition)
-    {
-        // Matches: context.property == 'value' or context.property > 100
-        return Regex.IsMatch(condition, @"context\.[a-zA-Z_][a-zA-Z0-9_]*\s*(==|!=|>|<|>=|<=)\s*('.*'|\d+)");
-    }
-    
-    private static string GenerateComparisonCheck(string condition)
-    {
-        var match = Regex.Match(condition, @"context\.([a-zA-Z_][a-zA-Z0-9_]*)\s*(==|!=|>|<|>=|<=)\s*('(.*)' |(\d+))");
-        
-        var propertyName = match.Groups[1].Value;
-        var operatorSymbol = match.Groups[2].Value;
-        var isStringValue = match.Groups[4].Success;
-        var value = isStringValue ? match.Groups[4].Value : match.Groups[5].Value;
-        
-        if (isStringValue)
-        {
-            return operatorSymbol switch
-            {
-                "==" => "return context.GetProperty<string>(\"" + propertyName + "\") == \"" + value + "\";",
-                "!=" => "return context.GetProperty<string>(\"" + propertyName + "\") != \"" + value + "\";",
-                _ => "return false; // Unsupported string comparison operator"
-            };
-        }
-        else
-        {
-            return operatorSymbol switch
-            {
-                "==" => "return context.GetProperty<int>(\"" + propertyName + "\") == " + value + ";",
-                "!=" => "return context.GetProperty<int>(\"" + propertyName + "\") != " + value + ";",
-                ">" => "return context.GetProperty<int>(\"" + propertyName + "\") > " + value + ";",
-                "<" => "return context.GetProperty<int>(\"" + propertyName + "\") < " + value + ";",
-                ">=" => "return context.GetProperty<int>(\"" + propertyName + "\") >= " + value + ";",
-                "<=" => "return context.GetProperty<int>(\"" + propertyName + "\") <= " + value + ";",
-                _ => "return false; // Unsupported numeric comparison operator"
-            };
-        }
-    }
-    
-    private static bool IsLogicalExpression(string condition)
-    {
-        // Matches expressions with && or ||
-        return condition.Contains("&&") || condition.Contains("||");
-    }
-    
-    private static string GenerateLogicalExpressionCheck(string condition)
-    {
-        // Simple implementation for now - handle && and || at top level
-        if (condition.Contains("&&"))
-        {
-            var parts = condition.Split(new[] { "&&" }, StringSplitOptions.RemoveEmptyEntries);
-            var checks = parts.Select(part => GenerateSimpleConditionCheck(part.Trim())).ToArray();
-            return "return " + string.Join(" && ", checks) + ";";
-        }
-        else if (condition.Contains("||"))
-        {
-            var parts = condition.Split(new[] { "||" }, StringSplitOptions.RemoveEmptyEntries);
-            var checks = parts.Select(part => GenerateSimpleConditionCheck(part.Trim())).ToArray();
-            return "return " + string.Join(" || ", checks) + ";";
-        }
-        
-        return "return false; // Unsupported logical expression";
-    }
-    
-    private static string GenerateSimpleConditionCheck(string condition)
-    {
-        if (IsBooleanProperty(condition))
-        {
-            var isNegated = condition.StartsWith("!");
-            var propertyName = isNegated ? condition.Substring(9) : condition.Substring(8);
+            // If no context is provided, default to including the function (no filtering).
+            if (context == null) return true;
             
-            if (isNegated)
-            {
-                return "(context.GetProperty<bool>(\"" + propertyName + "\") != true)";
-            }
-            else
-            {
-                return "(context.GetProperty<bool>(\"" + propertyName + "\") == true)";
-            }
-        }
-        
-        if (IsComparisonExpression(condition))
-        {
-            var match = Regex.Match(condition, @"context\.([a-zA-Z_][a-zA-Z0-9_]*)\s*(==|!=|>|<|>=|<=)\s*('(.*)' |(\d+))");
-            var propertyName = match.Groups[1].Value;
-            var operatorSymbol = match.Groups[2].Value;
-            var isStringValue = match.Groups[4].Success;
-            var value = isStringValue ? match.Groups[4].Value : match.Groups[5].Value;
+            // Safely cast to the expected context type
+            if (context is not {{contextTypeName}} typedContext) return false;
             
-            if (isStringValue)
+            try
             {
-                return operatorSymbol switch
-                {
-                    "==" => "(context.GetProperty<string>(\"" + propertyName + "\") == \"" + value + "\")",
-                    "!=" => "(context.GetProperty<string>(\"" + propertyName + "\") != \"" + value + "\")",
-                    _ => "false"
-                };
+                return {{conditionCode.Replace("context.", "typedContext.")}};
             }
-            else
+            catch
             {
-                return operatorSymbol switch
-                {
-                    "==" => "(context.GetProperty<int>(\"" + propertyName + "\") == " + value + ")",
-                    "!=" => "(context.GetProperty<int>(\"" + propertyName + "\") != " + value + ")",
-                    ">" => "(context.GetProperty<int>(\"" + propertyName + "\") > " + value + ")",
-                    "<" => "(context.GetProperty<int>(\"" + propertyName + "\") < " + value + ")",
-                    ">=" => "(context.GetProperty<int>(\"" + propertyName + "\") >= " + value + ")",
-                    "<=" => "(context.GetProperty<int>(\"" + propertyName + "\") <= " + value + ")",
-                    _ => "false"
-                };
+                // In case of any unexpected error during evaluation, default to false.
+                return false; 
+            }
+        }
+        """;
+    }
+
+    /// <summary>
+    /// Converts a property expression to context-based C# code using a robust regex approach.
+    /// This method correctly handles whitespace and complex expressions.
+    /// </summary>
+    private static string ConvertPropertyExpressionToCode(string propertyExpression)
+    {
+        // This regex reliably finds all potential C# identifiers.
+        var identifierRegex = new System.Text.RegularExpressions.Regex(@"\b[A-Za-z_][A-Za-z0-9_]*\b");
+
+        // We must filter out language keywords and literals to isolate property names.
+        var keywords = new HashSet<string> { "true", "false", "null" };
+
+        var result = identifierRegex.Replace(propertyExpression, match =>
+        {
+            var identifier = match.Value;
+
+            // If the found identifier is a property (i.e., not a keyword),
+            // then prepend it with "context." to form a valid member access expression.
+            if (!keywords.Contains(identifier))
+            {
+                return $"context.{identifier}";
+            }
+
+            // Otherwise, it's a keyword like "true" or "false", so leave it unchanged.
+            return identifier;
+        });
+
+        return result;
+    }
+
+    /// <summary>
+    /// Generates a V2 description resolver that uses direct property access on a typed context.
+    /// </summary>
+    public static string GenerateDescriptionResolverV2(string name, string template, string contextTypeName)
+    {
+        var expressions = ExtractDSLExpressions(template);
+        var replacements = new List<string>();
+
+        foreach (var expression in expressions)
+        {
+            var cleaned = expression.Trim().TrimStart('{').TrimEnd('}');
+            var match = PropertyExtractor.Match(cleaned);
+            if (match.Success)
+            {
+                var propertyName = match.Groups[1].Value;
+                // Generate replacement code using direct property access on the typed context.
+                replacements.Add($"template = template.Replace(\"{expression}\", typedContext.{propertyName}?.ToString() ?? \"\");");
             }
         }
         
-        return "false";
-    }
-    
-    private static string GenerateComplexExpressionCheck(string condition)
-    {
-        // For now, just return false for unsupported expressions
-        return "return false; // Complex expression not yet supported: " + condition;
+        return $$"""
+        private static string Resolve{{name}}Description(IPluginMetadataContext? context)
+        {
+            var template = @"{{template}}";
+
+            // If the context is null or not the expected type, return the unresolved template.
+            if (context is not {{contextTypeName}} typedContext)
+            {
+                return template; 
+            }
+
+            {{string.Join("\n            ", replacements)}}
+            return template;
+        }
+        """;
     }
 }

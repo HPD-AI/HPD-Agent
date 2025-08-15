@@ -145,17 +145,18 @@ public class Agent : IChatClient, IAGUIAgent
     #region Memory Management
 
     /// <summary>
-    /// Gets or creates the memory instance for this agent
+    /// Gets or creates the memory instance for this agent.
+    /// Returns null if no memory builder has been explicitly configured.
     /// </summary>
-    /// <returns>The kernel memory instance</returns>
-    public IKernelMemory GetOrCreateMemory()
+    /// <returns>The kernel memory instance, or null if not configured</returns>
+    public IKernelMemory? GetOrCreateMemory()
     {
         if (_memory != null) return _memory;
         
+        // Only create memory if explicitly configured via SetMemoryBuilder
         if (_memoryBuilder == null)
         {
-            // Create default memory builder if none provided
-            _memoryBuilder = new AgentMemoryBuilder(_name);
+            return null; // No memory builder configured - return null instead of creating default
         }
         
         return _memory ??= _memoryBuilder.Build();

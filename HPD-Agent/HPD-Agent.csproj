@@ -49,7 +49,6 @@
 
   <ItemGroup>
     <!-- Reference the source generator project -->
-    <Analyzer Include="..\HPD-Agent.SourceGenerator\bin\Debug\netstandard2.0\HPD-Agent.SourceGenerator.dll" Condition="Exists('..\HPD-Agent.SourceGenerator\bin\Debug\netstandard2.0\HPD-Agent.SourceGenerator.dll')" />
     <ProjectReference Include="..\HPD-Agent.SourceGenerator\HPD-Agent.SourceGenerator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
 

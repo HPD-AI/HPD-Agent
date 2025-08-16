@@ -306,6 +306,8 @@ static Agent? CreateChatAgent(Project project)
             .WithFilter(new LoggingAiFunctionFilter())
             .WithPlugin<MathPlugin>(new MathPluginMetadataContext())
             .WithPlugin(webSearchPlugin, webSearchContext)
+            .WithMemoryCagCapability(project.AgentMemoryCagManager)
+            .WithMCP(Path.Combine(Directory.GetCurrentDirectory(), "MCP.json"))
             .WithElevenLabsAudio(
                 configuration["ElevenLabs:ApiKey"], 
                 configuration["ElevenLabs:DefaultVoiceId"]) // Read both from config

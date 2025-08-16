@@ -9,6 +9,7 @@ using System.Diagnostics.CodeAnalysis;
 using Microsoft.KernelMemory;
 using OllamaSharp;
 using HPD_Agent.MemoryRAG;
+using HPD_Agent.MCP;
 
 /// <summary>
 /// Builder for creating dual interface agents with sophisticated capabilities
@@ -50,6 +51,11 @@ public class AgentBuilder
     private AgentMemoryBuilder? _agentMemoryBuilder;
     private RetrievalStrategy _ragStrategy = RetrievalStrategy.Push; // Default to Push
     private RAGConfiguration _ragConfiguration = new();
+
+    // MCP configuration fields
+    private MCPClientManager? _mcpClientManager;
+    private string? _mcpManifestPath;
+    private string? _mcpManifestContent;
 
     /// <summary>
     /// Sets the system instructions/persona for the agent
@@ -357,6 +363,52 @@ public class AgentBuilder
         return this;
     }
     
+    // MCP Integration Methods
+    
+    /// <summary>
+    /// Enables MCP support with the specified manifest file
+    /// </summary>
+    /// <param name="manifestPath">Path to the MCP manifest JSON file</param>
+    /// <param name="options">Optional MCP configuration options</param>
+    public AgentBuilder WithMCP(string manifestPath, MCPOptions? options = null)
+    {
+        if (string.IsNullOrWhiteSpace(manifestPath))
+            throw new ArgumentException("Manifest path cannot be null or empty", nameof(manifestPath));
+
+        _mcpManifestPath = manifestPath;
+        _mcpClientManager = new MCPClientManager(_logger?.CreateLogger<MCPClientManager>() ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<MCPClientManager>.Instance, options);
+        
+        return this;
+    }
+
+    /// <summary>
+    /// Enables MCP support with fluent configuration
+    /// </summary>
+    /// <param name="manifestPath">Path to the MCP manifest JSON file</param>
+    /// <param name="configure">Configuration action for MCP options</param>
+    public AgentBuilder WithMCP(string manifestPath, Action<MCPOptions> configure)
+    {
+        var options = new MCPOptions();
+        configure(options);
+        return WithMCP(manifestPath, options);
+    }
+
+    /// <summary>
+    /// Enables MCP support with manifest content directly
+    /// </summary>
+    /// <param name="manifestContent">JSON content of the MCP manifest</param>
+    /// <param name="options">Optional MCP configuration options</param>
+    public AgentBuilder WithMCPContent(string manifestContent, MCPOptions? options = null)
+    {
+        if (string.IsNullOrWhiteSpace(manifestContent))
+            throw new ArgumentException("Manifest content cannot be null or empty", nameof(manifestContent));
+
+        _mcpManifestContent = manifestContent;
+        _mcpClientManager = new MCPClientManager(_logger?.CreateLogger<MCPClientManager>() ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<MCPClientManager>.Instance, options);
+        
+        return this;
+    }
+    
     // Future capability methods:
     // public DualInterfaceAgentBuilder WithAudioCapabilities(AudioConfiguration config) { ... }
     // public DualInterfaceAgentBuilder WithMemorySystem(MemoryConfiguration config) { ... }
@@ -408,6 +460,39 @@ public class AgentBuilder
         // Register function-to-plugin mappings for scoped filters
         // Register function-to-plugin mappings for scoped filters using same contexts
         RegisterFunctionPluginMappings(pluginFunctions);
+        
+        // Load MCP tools if configured
+        if (_mcpClientManager != null)
+        {
+            try
+            {
+                List<AIFunction> mcpTools;
+                if (!string.IsNullOrEmpty(_mcpManifestPath))
+                {
+                    mcpTools = _mcpClientManager.LoadToolsFromManifestAsync(_mcpManifestPath).GetAwaiter().GetResult();
+                }
+                else if (!string.IsNullOrEmpty(_mcpManifestContent))
+                {
+                    mcpTools = _mcpClientManager.LoadToolsFromManifestContentAsync(_mcpManifestContent).GetAwaiter().GetResult();
+                }
+                else
+                {
+                    throw new InvalidOperationException("MCP client manager is configured but no manifest path or content provided");
+                }
+                
+                // Add MCP tools to plugin functions list for consistent handling
+                pluginFunctions.AddRange(mcpTools);
+                
+                var logger = _logger?.CreateLogger<AgentBuilder>();
+                logger?.LogInformation("Successfully integrated {Count} MCP tools into agent", mcpTools.Count);
+            }
+            catch (Exception ex)
+            {
+                var logger = _logger?.CreateLogger<AgentBuilder>();
+                logger?.LogError(ex, "Failed to load MCP tools: {Error}", ex.Message);
+                throw new InvalidOperationException("Failed to initialize MCP integration", ex);
+            }
+        }
         
         var mergedOptions = MergePluginFunctions(_defaultChatOptions, pluginFunctions);
 
@@ -471,6 +556,12 @@ public class AgentBuilder
         if (audioCapability != null)
         {
             agent.AddCapability("Audio", audioCapability);
+        }
+
+        // Attach MCP capability if configured
+        if (_mcpClientManager != null)
+        {
+            agent.AddCapability("MCP", _mcpClientManager);
         }
 
         return agent;

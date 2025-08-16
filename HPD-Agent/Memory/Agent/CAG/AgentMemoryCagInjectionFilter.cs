@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.AI;
+using System.Text;
 
 
 /// <summary>
@@ -69,13 +70,22 @@ public class AgentMemoryCagInjectionFilter : IPromptFilter
 
     private string BuildMemoryTag(List<AgentCagMemory> memories)
     {
-        var tag = "[AGENT_MEMORY_START]";
+        var sb = new StringBuilder();
+        sb.AppendLine("[AGENT_MEMORY_START]");
+        sb.AppendLine("NOTE: To edit or delete a memory, call the memory management functions with the memory Id field below (UpdateMemoryAsync / DeleteMemoryAsync).\n");
+
         foreach (var m in memories)
         {
-            tag += $"\n[MEMORY[{m.Id}]]{m.Content}[/MEMORY]";
+            // Include explicit Id and Title so the agent can reference the memory when calling update/delete
+            sb.AppendLine("---");
+            sb.AppendLine($"Id: {m.Id}");
+            sb.AppendLine($"Title: {m.Title}");
+            sb.AppendLine("Content:");
+            sb.AppendLine(m.Content);
         }
-        tag += "\n[AGENT_MEMORY_END]";
-        return tag;
+
+        sb.AppendLine("[AGENT_MEMORY_END]");
+        return sb.ToString();
     }
 
     private IEnumerable<ChatMessage> InjectMemories(IEnumerable<ChatMessage> messages, string memoryContext)

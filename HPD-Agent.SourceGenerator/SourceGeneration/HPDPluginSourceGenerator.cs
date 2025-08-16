@@ -16,7 +16,7 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
 {
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
-        // Find all classes with [AIPlugin] attribute
+        // Find all classes containing AIFunction methods
         var pluginClasses = context.SyntaxProvider
             .CreateSyntaxProvider(
                 predicate: static (node, ct) => IsPluginClass(node, ct),
@@ -29,7 +29,7 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
     }
     
     /// <summary>
-    /// Determines if a syntax node represents a plugin class.
+    /// Determines if a syntax node represents a plugin class (contains AIFunction methods).
     /// </summary>
     private static bool IsPluginClass(SyntaxNode node, CancellationToken cancellationToken = default)
     {
@@ -66,7 +66,6 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
         return new PluginInfo
         {
             Name = classDecl.Identifier.ValueText,
-            PluginName = classDecl.Identifier.ValueText, // Use class name as plugin name
             Description = $"Plugin containing {functions.Count} AI functions.", // Auto-generated description
             Namespace = namespaceName,
             Functions = functions!

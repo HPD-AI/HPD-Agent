@@ -22,24 +22,22 @@
     <PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="9.7.1" />
     <PackageReference Include="Microsoft.Extensions.AI.AzureAIInference" Version="9.7.1-preview.1.25365.4" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="9.7.1-preview.1.25365.4" />
-    
+
+    <PackageReference Include="OllamaSharp" Version="5.3.4" />
+
+
     <!-- Dependency Injection & Configuration -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.4" />
     <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.4" />
     <PackageReference Include="Microsoft.Extensions.Configuration" Version="9.0.4" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="9.0.4" />
-    <PackageReference Include="OllamaSharp" Version="5.3.4" />
+
     
     <!-- JSON & Serialization (use version required by Extensions.AI) -->
     <PackageReference Include="System.Text.Json" Version="9.0.7" />
     
     <!-- Async Utilities (use version required by Extensions.AI) -->
     <PackageReference Include="System.Threading.Channels" Version="9.0.7" />
-    
-    <!-- Source Generation -->
-    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" Version="3.3.4" PrivateAssets="all" />
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" PrivateAssets="all" />
-    <PackageReference Include="Google.Apis.CustomSearchAPI.v1" Version="1.68.0.3520" />
 
     <!-- Text Extraction -->
     <PackageReference Include="UTF.Unknown" Version="2.5.1" />

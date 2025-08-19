@@ -14,7 +14,7 @@ public class Agent : IChatClient, IAGUIAgent
     private readonly AGUIEventConverter _eventConverter;
     private readonly IReadOnlyList<IAiFunctionFilter> _aiFunctionFilters;
     private readonly ScopedFilterManager? _scopedFilterManager;
-    private readonly ContextualFunctionSelector? _contextualSelector;
+    //private readonly ContextualFunctionSelector? _contextualSelector;
     private readonly Dictionary<string, object> _capabilities = new();
     private readonly List<IPromptFilter> _promptFilters;
     // Memory management
@@ -67,7 +67,7 @@ public class Agent : IChatClient, IAGUIAgent
         string? systemInstructions,
         List<IPromptFilter> promptFilters,
         ScopedFilterManager scopedFilterManager,
-        ContextualFunctionSelector? contextualSelector,
+        //ContextualFunctionSelector? contextualSelector,
         int maxFunctionCalls = 10)
     {
         _baseClient = baseClient ?? throw new ArgumentNullException(nameof(baseClient));
@@ -77,7 +77,7 @@ public class Agent : IChatClient, IAGUIAgent
         _scopedFilterManager = scopedFilterManager ?? throw new ArgumentNullException(nameof(scopedFilterManager));
         _aiFunctionFilters = new List<IAiFunctionFilter>(); // Will use scoped filters instead
         _promptFilters = promptFilters?.ToList() ?? new List<IPromptFilter>();
-        _contextualSelector = contextualSelector;
+        //_contextualSelector = contextualSelector;
         _maxFunctionCalls = maxFunctionCalls;
         _eventConverter = new AGUIEventConverter();
     }
@@ -115,7 +115,7 @@ public class Agent : IChatClient, IAGUIAgent
     /// <summary>
     /// Contextual function selector for intelligent function filtering
     /// </summary>
-    public ContextualFunctionSelector? ContextualSelector => _contextualSelector;
+    //public ContextualFunctionSelector? ContextualSelector => _contextualSelector;
 
     #region Capability Management
 
@@ -163,7 +163,7 @@ public class Agent : IChatClient, IAGUIAgent
         var effectiveOptions = MergeOptions(options);
         
         // Apply contextual function filtering if configured
-        effectiveOptions = await ApplyContextualFiltering(effectiveMessages, effectiveOptions, cancellationToken);
+        //effectiveOptions = await ApplyContextualFiltering(effectiveMessages, effectiveOptions, cancellationToken);
         // Apply prompt filters
         effectiveMessages = await ApplyPromptFilters(effectiveMessages, effectiveOptions, cancellationToken);
         
@@ -189,7 +189,7 @@ public class Agent : IChatClient, IAGUIAgent
         var effectiveOptions = MergeOptions(options);
         
         // Apply contextual function filtering if configured
-        effectiveOptions = await ApplyContextualFiltering(effectiveMessages, effectiveOptions, cancellationToken);
+        //effectiveOptions = await ApplyContextualFiltering(effectiveMessages, effectiveOptions, cancellationToken);
 
         // Apply prompt filters (including Memory CAG)
         effectiveMessages = await ApplyPromptFilters(effectiveMessages, effectiveOptions, cancellationToken);
@@ -728,6 +728,8 @@ public class Agent : IChatClient, IAGUIAgent
     /// <summary>
     /// Applies contextual function filtering to chat options if configured
     /// </summary>
+    /// 
+    /*
     private async Task<ChatOptions?> ApplyContextualFiltering(
         IEnumerable<ChatMessage> messages,
         ChatOptions? options,
@@ -758,7 +760,8 @@ public class Agent : IChatClient, IAGUIAgent
         };
     }
 
-
+    */
+    
     /// <summary>
     /// Prepends system instructions to the message list if configured
     /// </summary>
@@ -768,7 +771,7 @@ public class Agent : IChatClient, IAGUIAgent
             return messages;
 
         var messagesList = messages.ToList();
-        
+
         // Check if there's already a system message
         if (messagesList.Any(m => m.Role == ChatRole.System))
             return messagesList;

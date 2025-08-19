@@ -29,7 +29,6 @@ public class AgentBuilder
     private readonly List<IAiFunctionFilter> _globalFilters = new();
     private readonly ScopedFilterManager _scopedFilterManager = new();
     private readonly BuilderScopeContext _scopeContext = new();
-    private ContextualFunctionConfig? _contextualConfig;
     private readonly List<IPromptFilter> _promptFilters = new();
     
     // Function calling configuration
@@ -206,17 +205,6 @@ public class AgentBuilder
     }
 
     #endregion
-    
-    /// <summary>
-    /// Configures contextual function selection using vector similarity search
-    /// </summary>
-    /// <param name="configure">Configuration action for contextual function selection</param>
-    public AgentBuilder WithContextualFunctions(Action<ContextualFunctionConfig> configure)
-    {
-        _contextualConfig = new ContextualFunctionConfig();
-        configure(_contextualConfig);
-        return this;
-    }
 
     /// <summary>
     /// Adds a prompt filter instance
@@ -498,12 +486,6 @@ public class AgentBuilder
         
         var mergedOptions = MergePluginFunctions(_defaultChatOptions, pluginFunctions);
 
-        // Create and initialize the new contextual function selector if configured
-        ContextualFunctionSelector? selector = null;
-        if (_contextualConfig != null)
-        {
-            selector = BuildContextualFunctionSelector(pluginFunctions);
-        }
 
         var agent = new Agent(
             _baseClient,
@@ -511,8 +493,7 @@ public class AgentBuilder
             mergedOptions,
             _systemInstructions,
             _promptFilters,
-            _scopedFilterManager, 
-            selector,
+            _scopedFilterManager,
             _maxFunctionCalls);
 
         // Attach audio capability if configured
@@ -532,87 +513,6 @@ public class AgentBuilder
     }
     
     #region Helper Methods
-
-    /// <summary>
-    /// Constructs and initializes the ContextualFunctionSelector based on the provided configuration.
-    /// </summary>
-    private ContextualFunctionSelector? BuildContextualFunctionSelector(List<AIFunction> allFunctions)
-    {
-        if (_contextualConfig == null) return null;
-
-        // 1. Get the Embedding Generator
-        IEmbeddingGenerator<string, Embedding<float>> embeddingGenerator;
-        if (_contextualConfig.UseRegisteredGenerator)
-        {
-            if (_serviceProvider == null)
-                throw new InvalidOperationException("A service provider must be registered with WithServiceProvider() to use a registered embedding generator.");
-            
-            embeddingGenerator = _serviceProvider.GetService<IEmbeddingGenerator<string, Embedding<float>>>() 
-                ?? throw new InvalidOperationException("No IEmbeddingGenerator registered in the service provider.");
-        }
-        else if (_contextualConfig.EmbeddingGeneratorFactory != null)
-        {
-            // This part is more complex if middleware is involved. For now, we'll assume a direct factory.
-            // A full implementation would use EmbeddingGeneratorBuilder here.
-            embeddingGenerator = _contextualConfig.EmbeddingGeneratorFactory(_serviceProvider!);
-        }
-        else
-        {
-            throw new InvalidOperationException("No embedding generator configured for contextual functions. Use WithEmbeddingGenerator() or UseRegisteredEmbeddingGenerator().");
-        }
-
-        // 2. Create the Vector Store
-        IVectorStore vectorStore;
-        switch (_contextualConfig.VectorStoreType)
-        {
-            case VectorStoreType.InMemory:
-                vectorStore = new InMemoryVectorStore(_contextualConfig.InMemoryConfig 
-                    ?? new InMemoryVectorStoreConfig());
-                break;
-            // Add cases for Qdrant, AzureAISearch etc. here in the future
-            case VectorStoreType.Qdrant:
-            case VectorStoreType.AzureAISearch:
-            case VectorStoreType.Chroma:
-            case VectorStoreType.PostgreSQL:
-            default:
-                throw new NotSupportedException($"Vector store type '{_contextualConfig.VectorStoreType}' is not yet supported.");
-        }
-
-        // 3. Create and Initialize the Selector
-        var selector = new ContextualFunctionSelector(
-            embeddingGenerator,
-            vectorStore,
-            _contextualConfig,
-            _logger?.CreateLogger<ContextualFunctionSelector>());
-
-        try
-        {
-            // Initialize synchronously for the build process
-            selector.InitializeAsync(allFunctions).GetAwaiter().GetResult();
-
-            // Register plugin names for metadata
-            var pluginRegistrations = _pluginManager.GetPluginRegistrations();
-            foreach (var registration in pluginRegistrations)
-            {
-                // This logic needs refinement to accurately map function to plugin
-                // For now, we assume a naming convention or similar mapping
-                var functionsForPlugin = allFunctions
-                    .Where(f => f.Name.Contains(registration.PluginType.Name, StringComparison.OrdinalIgnoreCase));
-
-                foreach (var function in functionsForPlugin)
-                {
-                    selector.RegisterFunctionPlugin(function.Name, registration.PluginType.Name);
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger?.CreateLogger<AgentBuilder>().LogWarning(ex, "Failed to initialize contextual function selector. It will be disabled.");
-            return null;
-        }
-
-        return selector;
-    }
     
     /// <summary>Create audio capability during build</summary>
     private AudioCapability? CreateAudioCapability(Agent agent)

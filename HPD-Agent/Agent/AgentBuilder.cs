@@ -30,6 +30,7 @@ public class AgentBuilder
     private readonly ScopedFilterManager _scopedFilterManager = new();
     private readonly BuilderScopeContext _scopeContext = new();
     private readonly List<IPromptFilter> _promptFilters = new();
+    private IAiFunctionFilter? _permissionFilter; // Dedicated permission filter
     
     // Function calling configuration
     private int _maxFunctionCalls = 10; // Default to 10
@@ -50,6 +51,9 @@ public class AgentBuilder
     private MCPClientManager? _mcpClientManager;
     private string? _mcpManifestPath;
     private string? _mcpManifestContent;
+
+    // Permission system integration
+    private ContinuationPermissionManager? _continuationPermissionManager;
 
     /// <summary>
     /// Sets the system instructions/persona for the agent
@@ -101,7 +105,12 @@ public class AgentBuilder
     /// </summary>
     public AgentBuilder WithFilter(IAiFunctionFilter filter)
     {
-        if (filter != null)
+        if (filter is FunctionPermissionFilter pFilter)
+        {
+            // Store permission filter separately
+            _permissionFilter = pFilter;
+        }
+        else if (filter != null)
         {
             _scopedFilterManager.AddFilter(filter, _scopeContext.CurrentScope, _scopeContext.CurrentTarget);
         }
@@ -494,6 +503,8 @@ public class AgentBuilder
             _systemInstructions,
             _promptFilters,
             _scopedFilterManager,
+            _permissionFilter, // Pass permission filter
+            _continuationPermissionManager,
             _maxFunctionCalls);
 
         // Attach audio capability if configured
@@ -761,4 +772,10 @@ public class AgentBuilder
     internal IConfiguration? Configuration => _configuration;
 
     #endregion
+
+    public AgentBuilder WithContinuationManager(ContinuationPermissionManager manager)
+    {
+        _continuationPermissionManager = manager;
+        return this;
+    }
 }

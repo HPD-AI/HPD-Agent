@@ -31,6 +31,10 @@ internal class FunctionInfo
     public string ReturnType { get; set; } = string.Empty;
     public bool IsAsync { get; set; }
     public List<string> RequiredPermissions { get; set; } = new();
+    /// <summary>
+    /// Whether the function is marked with [RequiresPermission].
+    /// </summary>
+    public bool RequiresPermission { get; set; }
     
     /// <summary>
     /// Context type name from [AIFunction&lt;TContext&gt;] (null for non-generic)

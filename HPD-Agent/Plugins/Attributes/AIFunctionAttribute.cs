@@ -37,23 +37,3 @@ public sealed class AIFunctionAttribute : Attribute
     public string? Description { get; set; }
 }
 
-/// <summary>
-/// Specifies that a function requires specific permissions to be executed.
-/// </summary>
-[AttributeUsage(AttributeTargets.Method, AllowMultiple = true)]
-public sealed class RequiresPermissionAttribute : Attribute
-{
-    /// <summary>
-    /// The required permission string.
-    /// </summary>
-    public string Permission { get; }
-    
-    /// <summary>
-    /// Initializes a new instance of the RequiresPermissionAttribute.
-    /// </summary>
-    /// <param name="permission">The required permission</param>
-    public RequiresPermissionAttribute(string permission)
-    {
-        Permission = permission ?? throw new ArgumentNullException(nameof(permission));
-    }
-}

@@ -32,7 +32,7 @@ public class HPDAIFunctionFactory
     /// <summary>
     /// AIFunction implementation that includes parameter descriptions in its JSON schema and supports invocation filters.
     /// </summary>
-    private class HPDAIFunction : AIFunction
+    public class HPDAIFunction : AIFunction
     {
         private readonly MethodInfo _method;
         private readonly object? _target;
@@ -45,6 +45,7 @@ public class HPDAIFunctionFactory
             _method = method ?? throw new ArgumentNullException(nameof(method));
             _target = target;
             _options = options;
+            HPDOptions = options;
 
             _jsonSchema = new Lazy<JsonElement>(() => CreateJsonSchema());
             _returnJsonSchema = new Lazy<JsonElement?>(() => CreateReturnJsonSchema());
@@ -53,6 +54,11 @@ public class HPDAIFunctionFactory
             Description = options.Description ??
                 method.GetCustomAttribute<System.ComponentModel.DescriptionAttribute>()?.Description ?? "";
         }
+
+        /// <summary>
+        /// Exposes the HPDAIFunctionFactoryOptions used to create this function.
+        /// </summary>
+        public HPDAIFunctionFactoryOptions HPDOptions { get; }
 
         public override string Name { get; }
         public override string Description { get; }
@@ -373,6 +379,10 @@ public class HPDAIFunctionFactoryOptions
     /// Parameter descriptions mapped by parameter name.
     /// </summary>
     public Dictionary<string, string>? ParameterDescriptions { get; set; }
+    /// <summary>
+    /// Whether the function requires user permission before execution.
+    /// </summary>
+    public bool RequiresPermission { get; set; }
 }
 
 /// <summary>

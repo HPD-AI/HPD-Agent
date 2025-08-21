@@ -362,8 +362,8 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
         sb.AppendLine("new HPDAIFunctionFactoryOptions");
         sb.AppendLine("                            {");
         sb.AppendLine($"                                Name = {nameCode},");
-        sb.AppendLine($"                                Description = {descriptionCode}");
-        
+        sb.AppendLine($"                                Description = {descriptionCode},");
+        sb.AppendLine($"                                RequiresPermission = {function.RequiresPermission.ToString().ToLower()}");
         if (hasParameterDescriptions)
         {
             sb.AppendLine(",");
@@ -374,8 +374,6 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
             {
                 var param = descriptionsWithValues[i];
                 var comma = i < descriptionsWithValues.Count - 1 ? "," : "";
-                
-                // ✅ FIX: Resolve dynamic parameter descriptions
                 var paramDescCode = param.HasDynamicDescription 
                     ? $"Resolve{function.Name}Parameter{param.Name}Description(context)"
                     : $"\"{param.Description}\"";
@@ -383,7 +381,6 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
             }
             sb.AppendLine("                                }");
         }
-        
         sb.AppendLine("                            }");
         return sb.ToString();
     }
@@ -490,6 +487,7 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
         // Get function metadata
         var conditionalExpression = GetConditionalExpression(method);
         
+        var requiresPermission = GetRequiresPermission(method);
         var functionInfo = new FunctionInfo
         {
             Name = method.Identifier.ValueText,
@@ -499,6 +497,7 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
             ReturnType = GetReturnType(method, semanticModel),
             IsAsync = IsAsyncMethod(method),
             RequiredPermissions = permissions,
+            RequiresPermission = requiresPermission,
             ContextTypeName = contextTypeName,
             ConditionalExpression = conditionalExpression
         };
@@ -1043,6 +1042,14 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
                 isEnabledByDefault: true),
             location.GetLocation());
         context.ReportDiagnostic(diagnostic);
+    }
+
+    // Helper to detect [RequiresPermission] attribute
+    private static bool GetRequiresPermission(MethodDeclarationSyntax method)
+    {
+        return method.AttributeLists
+            .SelectMany(attrList => attrList.Attributes)
+            .Any(attr => attr.Name.ToString().Contains("RequiresPermission"));
     }
 }
 

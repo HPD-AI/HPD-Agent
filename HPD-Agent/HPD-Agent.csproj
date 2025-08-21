@@ -13,7 +13,6 @@
     <!-- Enable Swift Interop Support -->
     <EnableSwiftInterop>true</EnableSwiftInterop>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <RuntimeIdentifier>osx-arm64</RuntimeIdentifier>
   </PropertyGroup>
 
   <ItemGroup>

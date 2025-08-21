@@ -14,6 +14,8 @@ public class Agent : IChatClient, IAGUIAgent
     private readonly AGUIEventConverter _eventConverter;
     private readonly IReadOnlyList<IAiFunctionFilter> _aiFunctionFilters;
     private readonly ScopedFilterManager? _scopedFilterManager;
+    private readonly IAiFunctionFilter? _permissionFilter;
+    private readonly ContinuationPermissionManager? _continuationPermissionManager;
     //private readonly ContextualFunctionSelector? _contextualSelector;
     private readonly Dictionary<string, object> _capabilities = new();
     private readonly List<IPromptFilter> _promptFilters;
@@ -61,25 +63,27 @@ public class Agent : IChatClient, IAGUIAgent
     /// Initializes a new Agent instance with prompt filters, scoped manager, and contextual selector
     /// </summary>
     public Agent(
-        IChatClient baseClient,
-        string name,
-        ChatOptions? defaultOptions,
-        string? systemInstructions,
-        List<IPromptFilter> promptFilters,
-        ScopedFilterManager scopedFilterManager,
-        //ContextualFunctionSelector? contextualSelector,
-        int maxFunctionCalls = 10)
+    IChatClient baseClient,
+    string name,
+    ChatOptions? defaultOptions,
+    string? systemInstructions,
+    List<IPromptFilter> promptFilters,
+    ScopedFilterManager scopedFilterManager,
+    IAiFunctionFilter? permissionFilter,
+    ContinuationPermissionManager? continuationPermissionManager,
+    int maxFunctionCalls = 10)
     {
         _baseClient = baseClient ?? throw new ArgumentNullException(nameof(baseClient));
         _name = name ?? throw new ArgumentNullException(nameof(name));
         _defaultOptions = defaultOptions;
         _systemInstructions = systemInstructions;
         _scopedFilterManager = scopedFilterManager ?? throw new ArgumentNullException(nameof(scopedFilterManager));
-        _aiFunctionFilters = new List<IAiFunctionFilter>(); // Will use scoped filters instead
-        _promptFilters = promptFilters?.ToList() ?? new List<IPromptFilter>();
-        //_contextualSelector = contextualSelector;
-        _maxFunctionCalls = maxFunctionCalls;
-        _eventConverter = new AGUIEventConverter();
+        _aiFunctionFilters = new List<IAiFunctionFilter>();
+    _promptFilters = promptFilters?.ToList() ?? new List<IPromptFilter>();
+    _permissionFilter = permissionFilter; // <-- Ensure this assignment is present
+    _continuationPermissionManager = continuationPermissionManager;
+    _maxFunctionCalls = maxFunctionCalls;
+    _eventConverter = new AGUIEventConverter();
     }
 
     /// <summary>
@@ -426,6 +430,7 @@ public class Agent : IChatClient, IAGUIAgent
         var resultMessages = new List<ChatMessage>();
 
         // Process each function call through the filter pipeline
+
         foreach (var functionCall in functionCallContents)
         {
             var toolCallRequest = new ToolCallRequest
@@ -433,61 +438,57 @@ public class Agent : IChatClient, IAGUIAgent
                 FunctionName = functionCall.Name,
                 Arguments = functionCall.Arguments ?? new Dictionary<string, object?>()
             };
-            
-            // Create a temporary conversation for the filter context
+
             var tempConversation = new Conversation();
-            foreach (var msg in messages)
+            foreach (var msg in messages) { tempConversation.AddMessage(msg); }
+
+            var context = new AiFunctionContext(tempConversation, toolCallRequest)
             {
-                tempConversation.AddMessage(msg);
-            }
-            
-            var context = new AiFunctionContext(tempConversation, toolCallRequest);
-            
-            // Build and execute the filter pipeline
+                Function = FindFunction(toolCallRequest.FunctionName, options?.Tools)
+            };
+
+            // The final step in the pipeline is the actual function invocation.
             Func<AiFunctionContext, Task> finalInvoke = async (ctx) =>
             {
-                var function = FindFunction(ctx.ToolCallRequest.FunctionName, options?.Tools);
-                if (function != null)
+                if (ctx.Function is null)
                 {
-                    try
-                    {
-                        var args = new AIFunctionArguments(ctx.ToolCallRequest.Arguments);
-                        ctx.Result = await function.InvokeAsync(args, cancellationToken);
-                    }
-                    catch (Exception ex)
-                    {
-                        ctx.Result = $"Error invoking function: {ex.Message}";
-                    }
+                    ctx.Result = $"Function '{ctx.ToolCallRequest.FunctionName}' not found.";
+                    return;
                 }
-                else
+                try
                 {
-                    ctx.Result = $"Function '{ctx.ToolCallRequest.FunctionName}' not found";
+                    var args = new AIFunctionArguments(ctx.ToolCallRequest.Arguments);
+                    ctx.Result = await ctx.Function.InvokeAsync(args, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    ctx.Result = $"Error invoking function: {ex.Message}";
                 }
             };
 
             var pipeline = finalInvoke;
-            
-            // Get applicable filters - use scoped filters if available, otherwise use legacy global filters
-            IEnumerable<IAiFunctionFilter> applicableFilters;
-            if (_scopedFilterManager != null)
-            {
-                applicableFilters = _scopedFilterManager.GetApplicableFilters(functionCall.Name);
-            }
-            else
-            {
-                applicableFilters = _aiFunctionFilters;
-            }
-            
-            // Build filter pipeline by reversing the order
+
+            // Get all standard applicable filters.
+            var applicableFilters = _scopedFilterManager?.GetApplicableFilters(functionCall.Name)
+                                    ?? Enumerable.Empty<IAiFunctionFilter>();
+
+            // Wrap standard filters first.
             foreach (var filter in applicableFilters.Reverse())
             {
                 var previous = pipeline;
                 pipeline = ctx => filter.InvokeAsync(ctx, previous);
             }
-            
+
+            // *** CRITICAL: Wrap the permission filter last, so it runs FIRST. ***
+            if (_permissionFilter != null)
+            {
+                var previous = pipeline;
+                pipeline = ctx => _permissionFilter.InvokeAsync(ctx, previous);
+            }
+
+            // Execute the full pipeline.
             await pipeline(context);
-            
-            // Add function result to the result messages
+
             var functionResult = new FunctionResultContent(functionCall.CallId, context.Result);
             var functionMessage = new ChatMessage(ChatRole.Tool, new AIContent[] { functionResult });
             resultMessages.Add(functionMessage);
@@ -911,4 +912,39 @@ public class Agent : IChatClient, IAGUIAgent
         return EventSerialization.SerializeEvent(aguiEvent);
     }
     #endregion
+
+    private string ExtractConversationId(IEnumerable<ChatMessage> messages)
+    {
+        if (messages.Any())
+            return messages.First().MessageId ?? "temp_conv_id";
+        return "unknown_conv_id";
+    }
+
+    private string? ExtractProjectId(ChatOptions? options)
+    {
+        if (options?.AdditionalProperties?.TryGetValue("Project", out var projectObj) == true && projectObj is Project project)
+            return project.Id;
+        return null;
+    }
+
+    private static string[] GetCompletedFunctionNames(List<ChatMessage> responseMessages)
+    {
+        var completedCallIds = responseMessages
+            .Where(m => m.Role == ChatRole.Tool)
+            .SelectMany(m => m.Contents.OfType<FunctionResultContent>())
+            .Select(fr => fr.CallId)
+            .ToHashSet();
+
+        return responseMessages
+            .SelectMany(m => m.Contents.OfType<FunctionCallContent>())
+            .Where(fc => completedCallIds.Contains(fc.CallId))
+            .Select(fc => fc.Name)
+            .Distinct()
+            .ToArray();
+    }
+
+    private static string[] GetPlannedFunctionNames(List<FunctionCallContent>? functionCallContents)
+    {
+        return functionCallContents?.Select(fc => fc.Name).ToArray() ?? Array.Empty<string>();
+    }
 }

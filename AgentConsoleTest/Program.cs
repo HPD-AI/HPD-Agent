@@ -50,6 +50,7 @@ static (Project, Conversation, Agent) CreateAIAssistant(IConfiguration config)
         .WithElevenLabsAudio()
         .WithMCP("./MCP.json")
         .WithMaxFunctionCalls(6)
+        .WithFullPermissions(new ConsolePermissionHandler())
         .Build();
 
     // 🎯 Project with smart defaults

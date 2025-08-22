@@ -17,14 +17,11 @@ Console.WriteLine($"📁 Project: {project.Name}\n");
 // 🎯 Simple chat loop
 await RunInteractiveChat(conversation);
 
-// ✨ CLEAN FACTORY METHOD: Fixed compilation issues
+// ✨ NEW CONFIG-FIRST APPROACH: Using AgentConfig pattern
 static (Project, Conversation, Agent) CreateAIAssistant(IConfiguration config)
 {
     // � Get API keys from configuration
-    var openRouterKey = config["OpenRouter:ApiKey"];
-    if (string.IsNullOrWhiteSpace(openRouterKey))
-        throw new InvalidOperationException("OpenRouter API key not configured. Set 'OpenRouter:ApiKey' in appsettings.json");
-
+    // API keys will be resolved from appsettings.json automatically
     var tavilyKey = config["Tavily:ApiKey"];
     if (string.IsNullOrWhiteSpace(tavilyKey))
         throw new InvalidOperationException("Tavily API key not configured. Set 'Tavily:ApiKey' in appsettings.json");
@@ -37,19 +34,43 @@ static (Project, Conversation, Agent) CreateAIAssistant(IConfiguration config)
         }, 
         "tavily"));
 
-    var agent = AgentBuilder.Create()
-        .WithName("AI Assistant")
-        .WithProvider(ChatProvider.OpenRouter, "google/gemini-2.5-pro", openRouterKey)
-        .WithInstructions("You are a helpful AI assistant with memory, knowledge base, and web search capabilities.")
+    // ✨ CREATE AGENT CONFIG OBJECT FIRST
+    var agentConfig = new AgentConfig
+    {
+        Name = "AI Assistant",
+        SystemInstructions = "You are a helpful AI assistant with memory, knowledge base, and web search capabilities.",
+        MaxFunctionCalls = 6,
+        MaxConversationHistory = 20,
+        Provider = new ProviderConfig
+        {
+            Provider = ChatProvider.OpenRouter,
+            ModelName = "google/gemini-2.5-pro"
+            // No ApiKey here - will use appsettings.json via ResolveApiKey
+        },
+        InjectedMemory = new InjectedMemoryConfig
+        {
+            StorageDirectory = "./agent-memory-storage",
+            MaxTokens = 6000,
+            EnableAutoEviction = true,
+            AutoEvictionThreshold = 85
+        },
+        Mcp = new McpConfig
+        {
+            ManifestPath = "./MCP.json"
+        },
+        Audio = new AudioConfig
+        {
+            // ElevenLabs will be configured from environment variables
+        }
+    };
+
+    // ✨ BUILD AGENT FROM CONFIG + FLUENT PLUGINS/FILTERS
+    var agent = new AgentBuilder(agentConfig)
+        .WithConfiguration(config) // Pass appsettings.json for API key resolution
         .WithFilter(new LoggingAiFunctionFilter())
-        .WithInjectedMemory(opts => opts
-            .WithStorageDirectory("./agent-memory-storage")
-            .WithMaxTokens(6000))
         .WithPlugin<MathPlugin>()
         .WithPlugin(webSearchPlugin)  // ✨ Fixed: Use instance instead of generic
-        .WithElevenLabsAudio()
-        .WithMCP("./MCP.json")
-        .WithMaxFunctionCalls(6)
+        .WithElevenLabsAudio() // Will use environment variables or config
         .WithFullPermissions(new ConsolePermissionHandler())
         .Build();
 
@@ -59,6 +80,12 @@ static (Project, Conversation, Agent) CreateAIAssistant(IConfiguration config)
 
     // 💬 Conversation just works
     var conversation = project.CreateConversation();
+    
+    // ✨ Show config info
+    Console.WriteLine($"✨ Agent created with config-first pattern!");
+    Console.WriteLine($"📋 Config: {agentConfig.Name} - {agentConfig.Provider?.ModelName}");
+    Console.WriteLine($"🧠 Memory: {agentConfig.InjectedMemory?.StorageDirectory}");
+    Console.WriteLine($"🔧 Max Function Calls: {agentConfig.MaxFunctionCalls}");
     
     return (project, conversation, agent);
 }

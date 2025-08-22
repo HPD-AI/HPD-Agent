@@ -765,8 +765,8 @@ public class AgentBuilder
         if (!string.IsNullOrEmpty(apiKeyFromEnv))
             return apiKeyFromEnv;
         
-        // 4. Fallback to generic environment variable names
-        var genericEnvKey = $"{provider.ToString().ToUpper()}_API_KEY";
+        // 4. Fallback to generic environment variable names (AOT-safe)
+        var genericEnvKey = GetGenericEnvironmentVariableName(provider);
         var genericApiKey = GetEnvironmentVariable(genericEnvKey);
         if (!string.IsNullOrEmpty(genericApiKey))
             return genericApiKey;
@@ -783,7 +783,8 @@ public class AgentBuilder
         ChatProvider.OpenAI => "OpenAI:ApiKey", 
         ChatProvider.AzureOpenAI => "AzureOpenAI:ApiKey",
         ChatProvider.Ollama => "Ollama:ApiKey",
-        _ => $"{provider}:ApiKey"
+        ChatProvider.AppleIntelligence => "AppleIntelligence:ApiKey",
+        _ => "Unknown:ApiKey" // AOT-safe fallback
     };
     
     private static string GetEnvironmentVariableName(ChatProvider provider) => provider switch
@@ -792,7 +793,21 @@ public class AgentBuilder
         ChatProvider.OpenAI => "OPENAI_API_KEY",
         ChatProvider.AzureOpenAI => "AZURE_OPENAI_API_KEY", 
         ChatProvider.Ollama => "OLLAMA_API_KEY",
-        _ => $"{provider.ToString().ToUpper()}_API_KEY"
+        ChatProvider.AppleIntelligence => "APPLE_INTELLIGENCE_API_KEY",
+        _ => "UNKNOWN_API_KEY" // AOT-safe fallback
+    };
+
+    /// <summary>
+    /// AOT-safe method to get generic environment variable names
+    /// </summary>
+    private static string GetGenericEnvironmentVariableName(ChatProvider provider) => provider switch
+    {
+        ChatProvider.OpenRouter => "OPENROUTER_API_KEY",
+        ChatProvider.OpenAI => "OPENAI_API_KEY",
+        ChatProvider.AzureOpenAI => "AZUREOPENAI_API_KEY",
+        ChatProvider.Ollama => "OLLAMA_API_KEY",
+        ChatProvider.AppleIntelligence => "APPLEINTELLIGENCE_API_KEY",
+        _ => "GENERIC_API_KEY" // AOT-safe fallback
     };
     
     private IChatClient CreateClientFromProvider(ChatProvider provider, string modelName, string? apiKey)

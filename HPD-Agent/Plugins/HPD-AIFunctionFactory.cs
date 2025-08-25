@@ -514,6 +514,15 @@ public class HPDAIFunctionFactory
                    (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Nullable<>));
         }
 
+        /// <summary>
+        /// Generates helpful retry guidance from validation errors.
+        /// </summary>
+        private static string GenerateValidationRetryGuidance(IEnumerable<FluentValidation.Results.ValidationFailure> errors)
+        {
+            var suggestions = errors.Select(error => $"- {error.PropertyName}: {error.ErrorMessage}");
+            return $"Please correct these validation issues and try again:\n{string.Join("\n", suggestions)}";
+        }
+
         protected override async ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken)
         {
             // Deserialize arguments to DTO
@@ -534,8 +543,22 @@ public class HPDAIFunctionFactory
                 var validationResult = await _validator.ValidateAsync(dto, cancellationToken);
                 if (!validationResult.IsValid)
                 {
-                    var errors = string.Join(", ", validationResult.Errors.Select(e => e.ErrorMessage));
-                    throw new ArgumentException($"Validation failed: {errors}");
+                    // Return structured validation response instead of throwing
+                    return new
+                    {
+                        success = false,
+                        error_type = "validation_failed",
+                        function_name = Name,
+                        validation_errors = validationResult.Errors.Select(error => new
+                        {
+                            property = error.PropertyName,
+                            attempted_value = error.AttemptedValue,
+                            error_message = error.ErrorMessage,
+                            error_code = error.ErrorCode,
+                            severity = error.Severity.ToString()
+                        }).ToArray(),
+                        retry_guidance = GenerateValidationRetryGuidance(validationResult.Errors)
+                    };
                 }
             }
 

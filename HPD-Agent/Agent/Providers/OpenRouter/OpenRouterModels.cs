@@ -41,6 +41,9 @@ public class OpenRouterRequest
 
     [JsonPropertyName("reasoning")]
     public OpenRouterReasoning? Reasoning { get; set; }
+
+    [JsonPropertyName("include_reasoning")]
+    public bool? IncludeReasoning { get; set; } = true; // CRITICAL: Request reasoning tokens
 }
 
 /// <summary>

@@ -7,10 +7,11 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Generic;
+using System.Linq;
 
 /// <summary>
 /// A modern, unified AIFunctionFactory that prioritizes delegate-based invocation 
-/// for performance and AOT-compatibility, with a reflection-based fallback.
+/// for performance and AOT-compatibility.
 /// </summary>
 public class HPDAIFunctionFactory
 {
@@ -27,53 +28,24 @@ public class HPDAIFunctionFactory
         return new HPDAIFunction(invocation, options ?? _defaultOptions);
     }
 
-    /// <summary>
-    /// [Legacy] Creates an AIFunction using reflection.
-    /// </summary>
-    public static AIFunction Create(Delegate method, HPDAIFunctionFactoryOptions? options = null)
-    {
-        return new HPDAIFunction(method.Method, method.Target, options ?? _defaultOptions);
-    }
 
     /// <summary>
-    /// [Legacy] Creates an AIFunction using reflection.
-    /// </summary>
-    public static AIFunction Create(MethodInfo method, object? target, HPDAIFunctionFactoryOptions? options = null)
-    {
-        return new HPDAIFunction(method, target, options ?? _defaultOptions);
-    }
-
-    /// <summary>
-    /// A unified AIFunction that supports both delegate and reflection-based invocation.
+    /// Modern AIFunction implementation using delegate-based invocation with validation.
     /// </summary>
     public class HPDAIFunction : AIFunction
     {
-        private readonly Func<AIFunctionArguments, CancellationToken, Task<object?>>? _invocationHandler;
+        private readonly Func<AIFunctionArguments, CancellationToken, Task<object?>> _invocationHandler;
         private readonly MethodInfo? _method;
-        private readonly object? _target;
 
         // Constructor for the modern, delegate-based approach
         public HPDAIFunction(Func<AIFunctionArguments, CancellationToken, Task<object?>> invocationHandler, HPDAIFunctionFactoryOptions options)
         {
             _invocationHandler = invocationHandler ?? throw new ArgumentNullException(nameof(invocationHandler));
             _method = invocationHandler.Method; // For metadata
-            _target = invocationHandler.Target;
             HPDOptions = options;
 
             JsonSchema = options.SchemaProvider?.Invoke() ?? default;
-            Name = options.Name ?? _method.Name;
-            Description = options.Description ?? "";
-        }
-
-        // Constructor for the legacy, reflection-based approach
-        public HPDAIFunction(MethodInfo method, object? target, HPDAIFunctionFactoryOptions options)
-        {
-            _method = method ?? throw new ArgumentNullException(nameof(method));
-            _target = target;
-            HPDOptions = options;
-
-            JsonSchema = options.SchemaProvider?.Invoke() ?? default;
-            Name = options.Name ?? method.Name;
+            Name = options.Name ?? _method?.Name ?? "Unknown";
             Description = options.Description ?? "";
         }
 
@@ -85,73 +57,151 @@ public class HPDAIFunctionFactory
 
         protected override async ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken)
         {
-            // 1. Prioritize the fast, pre-compiled delegate if it exists.
-            if (_invocationHandler != null)
+            // 1. Robustly get the JSON arguments for validation.
+            JsonElement jsonArgs;
+            var existingJson = arguments.GetJson();
+            if (existingJson.ValueKind != JsonValueKind.Undefined)
             {
-                return await _invocationHandler(arguments, cancellationToken).ConfigureAwait(false);
+                jsonArgs = existingJson;
             }
-
-            // 2. Fallback to the slower, reflection-based invocation if no delegate was provided.
-            if (_method == null)
+            else
             {
-                throw new InvalidOperationException("AIFunction is not configured for invocation.");
+                // If no raw JSON is available, serialize the arguments dictionary.
+                var argumentsDict = arguments.Where(kvp => kvp.Key != "__raw_json__").ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+                var jsonString = JsonSerializer.Serialize(argumentsDict);
+                jsonArgs = JsonDocument.Parse(jsonString).RootElement;
             }
             
-            var parameters = _method.GetParameters();
-            var args = new object?[parameters.Length];
-            for (int i = 0; i < parameters.Length; i++)
+            // 2. Use the validator.
+            var validationErrors = HPDOptions.Validator?.Invoke(jsonArgs);
+
+            if (validationErrors != null && validationErrors.Count > 0)
             {
-                var param = parameters[i];
-                if (param.ParameterType == typeof(CancellationToken))
+                // 3. Return structured error on failure.
+                var errorResponse = new ValidationErrorResponse();
+                foreach (var error in validationErrors)
                 {
-                    args[i] = cancellationToken;
-                }
-                else if (param.ParameterType == typeof(AIFunctionArguments))
-                {
-                    args[i] = arguments;
-                }
-                else if (param.ParameterType == typeof(IServiceProvider))
-                {
-                    args[i] = arguments.Services;
-                }
-                else
-                {
-                    if (!arguments.TryGetValue(param.Name!, out var value))
+                    if (jsonArgs.TryGetProperty(error.Property, out var propertyNode))
                     {
-                        if (param.HasDefaultValue)
-                        {
-                            args[i] = param.DefaultValue;
-                            continue;
-                        }
-                        throw new ArgumentException($"Required parameter '{param.Name}' was not provided.");
+                        error.AttemptedValue = propertyNode.Clone();
                     }
-                    args[i] = value;
+                    errorResponse.Errors.Add(error);
                 }
+                return errorResponse; 
             }
 
-            var result = _method.Invoke(_target, args);
-            if (result is Task task)
-            {
-                await task.ConfigureAwait(true);
-                var taskType = task.GetType();
-                if (taskType.IsGenericType)
-                {
-                    return taskType.GetProperty("Result")?.GetValue(task);
-                }
-                return null;
-            }
-            return result;
+            // 4. Invoke the function using the delegate approach only.
+            arguments.SetJson(jsonArgs); 
+            return await _invocationHandler(arguments, cancellationToken).ConfigureAwait(false);
         }
     }
 }
 
-// Options class remains the same
+/// <summary>
+/// Extensions to AIFunctionArguments for JSON handling.
+/// </summary>
+public static class AIFunctionArgumentsExtensions
+{
+    private static readonly string JsonKey = "__raw_json__";
+    
+    /// <summary>
+    /// Gets the raw JSON element from the arguments.
+    /// </summary>
+    public static JsonElement GetJson(this AIFunctionArguments arguments)
+    {
+        if (arguments.TryGetValue(JsonKey, out var value) && value is JsonElement element)
+        {
+            return element;
+        }
+        return default;
+    }
+    
+    /// <summary>
+    /// Sets the raw JSON element in the arguments.
+    /// </summary>
+    public static void SetJson(this AIFunctionArguments arguments, JsonElement json)
+    {
+        arguments[JsonKey] = json;
+    }
+}
+
 public class HPDAIFunctionFactoryOptions
 {
     public string? Name { get; set; }
     public string? Description { get; set; }
     public Dictionary<string, string>? ParameterDescriptions { get; set; }
     public bool RequiresPermission { get; set; }
-    public Func<string, (bool IsValid, string ErrorMessage)>? Validator { get; set; }
+    
+    // The validator now returns a list of detailed, structured errors.
+    public Func<JsonElement, List<ValidationError>>? Validator { get; set; }
+    
     public Func<JsonElement>? SchemaProvider { get; set; }
+}
+
+/// <summary>
+/// A structured response sent to the AI when function argument validation fails.
+/// </summary>
+public class ValidationErrorResponse
+{
+    [JsonPropertyName("error_type")]
+    public string ErrorType { get; set; } = "validation_error";
+
+    [JsonPropertyName("errors")]
+    public List<ValidationError> Errors { get; set; } = new();
+
+    [JsonPropertyName("retry_guidance")]
+    public string RetryGuidance { get; set; } = "The provided arguments are invalid. Please review the errors, correct the arguments based on the function schema, and try again.";
+}
+
+/// <summary>
+/// Describes a single validation error for a specific property, matching pydantic-ai's structure.
+/// </summary>
+public class ValidationError
+{
+    [JsonPropertyName("property")]
+    public string Property { get; set; } = "";
+
+    [JsonPropertyName("attempted_value")]
+    public object? AttemptedValue { get; set; }
+
+    [JsonPropertyName("error_message")]
+    public string ErrorMessage { get; set; } = "";
+    
+    [JsonPropertyName("error_code")]
+    public string ErrorCode { get; set; } = "";
+}
+
+
+// </summary>
+[JsonSourceGenerationOptions(
+    WriteIndented = true, 
+    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+)]
+// --- Framework-specific types ---
+[JsonSerializable(typeof(ValidationErrorResponse))]
+[JsonSerializable(typeof(ValidationError))]
+[JsonSerializable(typeof(List<ValidationError>))]
+
+// --- Common primitive and collection types for AI function return values ---
+[JsonSerializable(typeof(string))]
+[JsonSerializable(typeof(int))]
+[JsonSerializable(typeof(long))]
+[JsonSerializable(typeof(double))]
+[JsonSerializable(typeof(float))]
+[JsonSerializable(typeof(bool))]
+[JsonSerializable(typeof(decimal))]
+[JsonSerializable(typeof(Guid))]
+[JsonSerializable(typeof(DateTime))]
+[JsonSerializable(typeof(DateTimeOffset))]
+[JsonSerializable(typeof(object))]
+[JsonSerializable(typeof(JsonElement))]
+[JsonSerializable(typeof(Dictionary<string, object>))]
+[JsonSerializable(typeof(IDictionary<string, object>))]
+[JsonSerializable(typeof(List<string>))]
+[JsonSerializable(typeof(List<int>))]
+[JsonSerializable(typeof(List<double>))]
+[JsonSerializable(typeof(List<object>))]
+public partial class HPDJsonContext : JsonSerializerContext
+{
 }

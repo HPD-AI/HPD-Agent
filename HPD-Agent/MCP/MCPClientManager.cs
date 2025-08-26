@@ -182,6 +182,8 @@ public class MCPClientManager : IDisposable
                     Name = originalAIFunction.Name,
                     Description = originalAIFunction.Description,
                     RequiresPermission = true,
+                    // MCP tools don't have validation since they're external - just pass through
+                    Validator = _ => new List<ValidationError>()
                 };
 
                 // Attempt to copy schema information if the external tool exposes it

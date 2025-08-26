@@ -41,9 +41,9 @@ public class MathPlugin
     [AIFunction<MathPluginMetadataContext>]
     [AIDescription("Adds two numbers and returns the sum.")]
     [RequiresPermission]
-    public long Add(
-        [AIDescription("First addend.")] long a,
-        [AIDescription("Second addend.")] long b)
+    public decimal Add(
+        [AIDescription("First addend.")] decimal a,
+        [AIDescription("Second addend.")] decimal b)
         => a + b;
 
     [AIFunction<MathPluginMetadataContext>]

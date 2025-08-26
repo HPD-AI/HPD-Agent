@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using static HPDAIFunctionFactory;
 
 /// <summary>
@@ -33,6 +34,13 @@ using static HPDAIFunctionFactory;
 [JsonSerializable(typeof(float))]
 [JsonSerializable(typeof(bool))]
 [JsonSerializable(typeof(long))]
+[JsonSerializable(typeof(decimal))]
+[JsonSerializable(typeof(System.Text.Json.JsonElement))]
 internal partial class OpenRouterJsonContext : JsonSerializerContext
 {
+    /// <summary>
+    /// Combined type info resolver that includes both OpenRouter and HPD types
+    /// </summary>
+    public static IJsonTypeInfoResolver Combined { get; } = 
+        JsonTypeInfoResolver.Combine(Default, HPDJsonContext.Default);
 }

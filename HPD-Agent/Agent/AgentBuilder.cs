@@ -401,36 +401,6 @@ public class AgentBuilder
         return this;
     }
 
-    /// <summary>
-    /// Registers a raw function directly (manual registration, not via plugin), using HPDAIFunctionFactory for enhanced metadata.
-    /// Note: Filters are now applied at the conversation level, not per function.
-    /// </summary>
-    public AgentBuilder WithFunction(Delegate method, string? name = null, string? description = null, Dictionary<string, string>? parameterDescriptions = null)
-    {
-        if (method == null) throw new ArgumentNullException(nameof(method));
-        // Get or create default chat options
-        if (_config.Provider == null)
-            _config.Provider = new ProviderConfig();
-        if (_config.Provider.DefaultChatOptions == null)
-            _config.Provider.DefaultChatOptions = new ChatOptions();
-        var tools = _config.Provider.DefaultChatOptions.Tools?.ToList() ?? new List<AITool>();
-        var options = new HPDAIFunctionFactoryOptions
-        {
-            Name = name ?? method.Method.Name,
-            Description = description,
-            ParameterDescriptions = parameterDescriptions
-        };
-        
-        var function = HPDAIFunctionFactory.Create(method, options);
-        tools.Add(function);
-        _config.Provider.DefaultChatOptions.Tools = tools;
-        
-        // Set scope context for subsequent filter registrations
-        var functionName = name ?? method.Method.Name;
-        _scopeContext.SetFunctionScope(functionName);
-        
-        return this;
-    }
     
     // MCP Integration Methods
     

@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
+using System.Linq;
 
 Console.WriteLine("🚀 HPD-Agent Console Test");
 
@@ -9,16 +10,31 @@ var config = new ConfigurationBuilder()
     .Build();
 
 // ✨ ONE-LINER: Create complete AI assistant
-var (project, conversation, agent) = CreateAIAssistant(config);
+var (project, conversation, agent) = await CreateAIAssistant(config);
 
 Console.WriteLine($"✅ AI Assistant ready: {agent.Name}");
 Console.WriteLine($"📁 Project: {project.Name}\n");
+
+// Debug: list registered tools (plugins + MCP tools)
+var registeredTools = agent.DefaultOptions?.Tools;
+if (registeredTools != null && registeredTools.Count > 0)
+{
+    Console.WriteLine("🔧 Registered tools:");
+    foreach (var t in registeredTools.OfType<AIFunction>())
+    {
+        Console.WriteLine($" - {t.Name} : {t.Description}");
+    }
+}
+else
+{
+    Console.WriteLine("🔧 No registered tools found on the agent.");
+}
 
 // 🎯 Simple chat loop
 await RunInteractiveChat(conversation);
 
 // ✨ NEW CONFIG-FIRST APPROACH: Using AgentConfig pattern
-static (Project, Conversation, Agent) CreateAIAssistant(IConfiguration config)
+static async Task<(Project, Conversation, Agent)> CreateAIAssistant(IConfiguration config)
 {
     // ✨ CREATE AGENT CONFIG OBJECT FIRST
     var agentConfig = new AgentConfig
@@ -58,10 +74,17 @@ static (Project, Conversation, Agent) CreateAIAssistant(IConfiguration config)
         .WithPlugin<MathPlugin>()
         .WithElevenLabsAudio() // Will use environment variables or config
         .WithFullPermissions(new ConsolePermissionHandler())
+        .WithMCP(agentConfig.Mcp.ManifestPath)
         .Build();
+    
+        var mcpReport = await MCPRegistrationDebugger.DiagnoseMCPIssuesAsync(
+            new AgentBuilder(agentConfig).WithAPIConfiguration(config),
+            agentConfig.Mcp.ManifestPath
+        );
+        mcpReport.PrintReport();
 
-    // 🎯 Project with smart defaults
-    var project = Project.Create("AI Chat Session");
+// 🎯 Project with smart defaults
+var project = Project.Create("AI Chat Session");
 
     // 💬 Conversation just works
     var conversation = project.CreateConversation(agent);

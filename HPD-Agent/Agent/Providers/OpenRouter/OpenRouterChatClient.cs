@@ -15,7 +15,8 @@ public sealed class OpenRouterChatClient : IChatClient
     private readonly Uri _apiEndpoint;
     private readonly HttpClient _httpClient;
     private readonly OpenRouterConfig _config;
-    private readonly OpenRouterJsonContext _jsonContext;
+    private readonly JsonSerializerOptions _jsonOptions;
+    private readonly JsonSerializerOptions _openRouterOptions;
 
     /// <summary>Initializes a new instance of the <see cref="OpenRouterChatClient"/> class.</summary>
     /// <param name="config">The configuration for OpenRouter.</param>
@@ -42,7 +43,15 @@ public sealed class OpenRouterChatClient : IChatClient
         
         _metadata = new ChatClientMetadata("openrouter", _apiEndpoint, config.ModelName);
         
-        _jsonContext = OpenRouterJsonContext.Default;
+        _jsonOptions = new JsonSerializerOptions
+        {
+            TypeInfoResolver = OpenRouterJsonContext.Combined
+        };
+        
+        _openRouterOptions = new JsonSerializerOptions
+        {
+            TypeInfoResolver = OpenRouterJsonContext.Default
+        };
     }
 
     /// <inheritdoc />
@@ -53,7 +62,7 @@ public sealed class OpenRouterChatClient : IChatClient
             throw new ArgumentNullException(nameof(messages));
 
         var requestPayload = CreateRequestPayload(messages, options, stream: false);
-        var content = new StringContent(JsonSerializer.Serialize(requestPayload, _jsonContext.OpenRouterRequest), Encoding.UTF8, "application/json");
+        var content = new StringContent(JsonSerializer.Serialize(requestPayload, _openRouterOptions), Encoding.UTF8, "application/json");
         
         var request = new HttpRequestMessage(HttpMethod.Post, _apiEndpoint)
         {
@@ -71,7 +80,7 @@ public sealed class OpenRouterChatClient : IChatClient
         }
 
         var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        var result = JsonSerializer.Deserialize(json, _jsonContext.OpenRouterResponse);
+        var result = JsonSerializer.Deserialize<OpenRouterResponse>(json, _openRouterOptions);
         
         if (result == null)
         {
@@ -118,17 +127,12 @@ public sealed class OpenRouterChatClient : IChatClient
             throw new ArgumentNullException(nameof(messages));
 
         var requestPayload = CreateRequestPayload(messages, options, stream: true);
-        var content = new StringContent(JsonSerializer.Serialize(requestPayload, _jsonContext.OpenRouterRequest), Encoding.UTF8, "application/json");
+        var content = new StringContent(JsonSerializer.Serialize(requestPayload, _openRouterOptions), Encoding.UTF8, "application/json");
         
-        var request = new HttpRequestMessage(HttpMethod.Post, _apiEndpoint)
-        {
-            Content = content
-        };
-        
+        var request = new HttpRequestMessage(HttpMethod.Post, _apiEndpoint) { Content = content };
         AddOpenRouterHeaders(request);
 
-        using var httpResponse = await _httpClient.SendAsync(
-            request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+        using var httpResponse = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
         
         if (!httpResponse.IsSuccessStatusCode)
         {
@@ -136,7 +140,6 @@ public sealed class OpenRouterChatClient : IChatClient
             throw new HttpRequestException($"OpenRouter API error: {httpResponse.StatusCode}, {error}");
         }
 
-        // We'll need to generate a response ID to use for all chunks
         var responseId = Guid.NewGuid().ToString("N");
         var messageId = Guid.NewGuid().ToString("N");
         
@@ -144,44 +147,37 @@ public sealed class OpenRouterChatClient : IChatClient
         using var streamReader = new StreamReader(httpResponseStream);
         
         string? role = null;
+        bool hasYieldedAnyContent = false;
+        var reasoningBuffer = new StringBuilder(); // Buffer reasoning tokens
 
         while (await streamReader.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
         {
             if (string.IsNullOrEmpty(line) || line == "data: [DONE]")
                 continue;
                 
-            // Parse SSE format - "data: {...}"
             if (line.StartsWith("data: "))
                 line = line.Substring(6);
             
-            OpenRouterResponse? chunk = null;
+            OpenRouterResponse? chunk;
             try
             {
-                chunk = JsonSerializer.Deserialize(line, _jsonContext.OpenRouterResponse);
+                chunk = JsonSerializer.Deserialize<OpenRouterResponse>(line, _openRouterOptions);
             }
             catch (JsonException)
             {
-                // Skip malformed chunks
                 continue;
             }
             
-            if (chunk == null || chunk.Choices == null || chunk.Choices.Count == 0)
+            if (chunk?.Choices == null || chunk.Choices.Count == 0)
                 continue;
                 
             var choice = chunk.Choices[0];
             var delta = choice.Delta;
             
-            if (delta == null)
-                continue;
-                
-            // Get role if present in this chunk
-            if (delta.Role != null)
-            {
+            if (delta?.Role != null)
                 role = delta.Role;
-            }
             
-            // Create and yield the update
-            ChatResponseUpdate update = new()
+            var update = new ChatResponseUpdate
             {
                 ResponseId = responseId,
                 MessageId = messageId,
@@ -191,38 +187,110 @@ public sealed class OpenRouterChatClient : IChatClient
                 CreatedAt = chunk.Created.HasValue ? DateTimeOffset.FromUnixTimeSeconds(chunk.Created.Value) : null
             };
             
-            // Add content if present in this chunk
-            if (delta.Content != null)
+            bool hasContentThisChunk = false;
+
+            // Handle regular content
+            if (!string.IsNullOrEmpty(delta?.Content))
             {
                 update.Contents.Add(new TextContent(delta.Content));
+                hasContentThisChunk = true;
             }
             
-            // Add reasoning content if present in this chunk
-            if (delta.Reasoning.HasValue && delta.Reasoning.Value.ValueKind == JsonValueKind.String)
+            // Handle reasoning content - CRITICAL FIX
+            if (delta?.Reasoning.HasValue == true)
             {
-                update.Contents.Add(new TextReasoningContent(delta.Reasoning.Value.GetString()));
+                string? reasoningText = null;
+                
+                if (delta.Reasoning.Value.ValueKind == JsonValueKind.String)
+                {
+                    reasoningText = delta.Reasoning.Value.GetString();
+                }
+                else
+                {
+                    reasoningText = JsonSerializer.Serialize(delta.Reasoning.Value, _jsonOptions);
+                }
+                
+                if (!string.IsNullOrEmpty(reasoningText))
+                {
+                    reasoningBuffer.Append(reasoningText);
+                    update.Contents.Add(new TextReasoningContent(reasoningText));
+                    hasContentThisChunk = true;
+                }
             }
             
-            // Handle tool calls if present
-            if (delta.ToolCalls != null && delta.ToolCalls.Count > 0)
+            // Handle tool calls
+            if (delta?.ToolCalls != null && delta.ToolCalls.Count > 0)
             {
                 foreach (var toolCall in delta.ToolCalls)
                 {
-                    if (toolCall.Function != null && toolCall.Function.Name != null)
+                    if (toolCall.Function?.Name != null)
                     {
                         var arguments = toolCall.Function.Arguments ?? "{}";
-                        // FIX: Use AOT-safe deserialization
-                        var args = JsonSerializer.Deserialize(arguments, _jsonContext.DictionaryStringObject);
+                        var args = JsonSerializer.Deserialize<Dictionary<string, object?>>(arguments, _jsonOptions);
                         update.Contents.Add(new FunctionCallContent(
-                            toolCall.Id ?? Guid.NewGuid().ToString("N").Substring(0, 8),
+                            toolCall.Id ?? Guid.NewGuid().ToString("N")[..8],
                             toolCall.Function.Name,
                             args
                         ));
+                        hasContentThisChunk = true;
                     }
                 }
             }
             
-            yield return update;
+            // Yield update if it has content
+            if (hasContentThisChunk)
+            {
+                hasYieldedAnyContent = true;
+                yield return update;
+            }
+            
+            // Handle completion
+            if (choice.FinishReason != null)
+            {
+                // If we completed but never yielded content, provide fallback
+                if (!hasYieldedAnyContent)
+                {
+                    var fallbackContent = reasoningBuffer.Length > 0 
+                        ? $"[Reasoning completed: {reasoningBuffer.Length} reasoning tokens generated]\n\nThe model completed its analysis using internal reasoning but generated no visible output. For math problems like '(x-6)(x-5)(x-34) = 98', this often indicates the model spent its effort on internal calculation without showing work."
+                        : "[Model completed processing but generated no visible output. This can occur with reasoning models on complex tasks.]";
+                    
+                    yield return new ChatResponseUpdate
+                    {
+                        ResponseId = responseId,
+                        MessageId = messageId,
+                        Role = new ChatRole(role ?? "assistant"),
+                        Contents = { new TextContent(fallbackContent) },
+                        ModelId = chunk.Model ?? options?.ModelId ?? _metadata.DefaultModelId,
+                        CreatedAt = chunk.Created.HasValue ? DateTimeOffset.FromUnixTimeSeconds(chunk.Created.Value) : null
+                    };
+                    hasYieldedAnyContent = true;
+                }
+                
+                // Yield finish reason
+                yield return new ChatResponseUpdate
+                {
+                    ResponseId = responseId,
+                    MessageId = messageId,
+                    Role = new ChatRole(role ?? "assistant"),
+                    FinishReason = ToFinishReason(choice.FinishReason),
+                    ModelId = chunk.Model ?? options?.ModelId ?? _metadata.DefaultModelId,
+                    CreatedAt = chunk.Created.HasValue ? DateTimeOffset.FromUnixTimeSeconds(chunk.Created.Value) : null
+                };
+                break;
+            }
+        }
+        
+        // Final safety net
+        if (!hasYieldedAnyContent)
+        {
+            yield return new ChatResponseUpdate
+            {
+                ResponseId = responseId,
+                MessageId = messageId,
+                Role = new ChatRole("assistant"),
+                Contents = { new TextContent("[No visible output generated - this can happen with reasoning models on complex tasks]") },
+                ModelId = options?.ModelId ?? _metadata.DefaultModelId
+            };
         }
     }
 
@@ -284,18 +352,17 @@ public sealed class OpenRouterChatClient : IChatClient
 
         List<AIContent> contents = new();
 
-        // Add any tool calls
-        if (message.ToolCalls != null && message.ToolCalls.Count > 0)
+        // Handle tool calls
+        if (message.ToolCalls?.Count > 0)
         {
             foreach (var toolCall in message.ToolCalls)
             {
-                if (toolCall.Function != null && toolCall.Function.Name != null)
+                if (toolCall.Function?.Name != null)
                 {
                     var arguments = toolCall.Function.Arguments ?? "{}";
-                    // FIX: Use AOT-safe deserialization
                     var args = JsonSerializer.Deserialize(arguments, OpenRouterJsonContext.Default.DictionaryStringObject);
                     contents.Add(new FunctionCallContent(
-                        toolCall.Id ?? Guid.NewGuid().ToString("N").Substring(0, 8),
+                        toolCall.Id ?? Guid.NewGuid().ToString("N")[..8],
                         toolCall.Function.Name,
                         args
                     ));
@@ -303,21 +370,47 @@ public sealed class OpenRouterChatClient : IChatClient
             }
         }
 
-        // Add reasoning content if present
-        if (message.Reasoning.HasValue && message.Reasoning.Value.ValueKind == JsonValueKind.String)
+        // Handle reasoning content - CRITICAL FIX
+        if (message.Reasoning.HasValue)
         {
-            contents.Add(new TextReasoningContent(message.Reasoning.Value.GetString()));
-        }
-        else if (message.Reasoning.HasValue)
-        {
-            // Handle cases where reasoning might be a complex object by serializing it
-            contents.Add(new TextReasoningContent(JsonSerializer.Serialize(message.Reasoning.Value, OpenRouterJsonContext.Default.JsonElement)));
+            string? reasoningText = null;
+            
+            if (message.Reasoning.Value.ValueKind == JsonValueKind.String)
+            {
+                reasoningText = message.Reasoning.Value.GetString();
+            }
+            else
+            {
+                reasoningText = JsonSerializer.Serialize(message.Reasoning.Value, OpenRouterJsonContext.Default.JsonElement);
+            }
+            
+            if (!string.IsNullOrEmpty(reasoningText))
+            {
+                contents.Add(new TextReasoningContent(reasoningText));
+            }
         }
 
-        // Add text content if present or if no tool calls/reasoning
-        if (!string.IsNullOrEmpty(message.Content) || contents.Count == 0)
+        // Handle text content
+        if (!string.IsNullOrEmpty(message.Content))
         {
-            contents.Insert(0, new TextContent(message.Content ?? string.Empty));
+            contents.Add(new TextContent(message.Content));
+        }
+        
+        // CRITICAL: Fallback for reasoning-only responses
+        if (contents.Count == 0 || (contents.Count == 1 && contents[0] is TextContent tc && string.IsNullOrEmpty(tc.Text)))
+        {
+            var fallbackText = message.Reasoning.HasValue 
+                ? "[Response generated using internal reasoning - no visible completion content produced]"
+                : "[Model completed but generated no output]";
+                
+            contents.Clear();
+            contents.Add(new TextContent(fallbackText));
+        }
+        
+        // If only reasoning content, add explanatory text
+        if (contents.Count == 1 && contents[0] is TextReasoningContent)
+        {
+            contents.Insert(0, new TextContent("[Internal reasoning completed - see reasoning content below]"));
         }
 
         return new ChatMessage(new ChatRole(message.Role ?? "assistant"), contents) 
@@ -334,7 +427,8 @@ public sealed class OpenRouterChatClient : IChatClient
             Messages = messages.Select(m => ToOpenRouterMessage(m)).ToList(),
             Stream = stream,
             Temperature = options?.Temperature ?? _config.Temperature,
-            MaxTokens = options?.MaxOutputTokens ?? _config.MaxTokens
+            MaxTokens = options?.MaxOutputTokens ?? _config.MaxTokens,
+            IncludeReasoning = true // CRITICAL: Always request reasoning tokens for GPT-5 and reasoning models
         };
 
         if (options != null)
@@ -390,7 +484,7 @@ public sealed class OpenRouterChatClient : IChatClient
             {
                 try
                 {
-                    request.Reasoning = JsonSerializer.Deserialize(jsonElement.GetRawText(), _jsonContext.OpenRouterReasoning);
+                    request.Reasoning = JsonSerializer.Deserialize<OpenRouterReasoning>(jsonElement.GetRawText(), _openRouterOptions);
                 }
                 catch (JsonException)
                 {
@@ -429,7 +523,7 @@ public sealed class OpenRouterChatClient : IChatClient
                 {
                     Name = fc.Name,
                     // FIX: Use AOT-safe serialization
-                    Arguments = JsonSerializer.Serialize(fc.Arguments, _jsonContext.DictionaryStringObject)
+                    Arguments = JsonSerializer.Serialize(fc.Arguments, _jsonOptions)
                 }
             }).ToList();
         }
@@ -441,7 +535,7 @@ public sealed class OpenRouterChatClient : IChatClient
             // For function results, we need to set the role to "tool"
             result.Role = "tool";
             // FIX: Use AOT-safe serialization for object
-            result.Content = JsonSerializer.Serialize(functionResults.Result, _jsonContext.Object);
+            result.Content = JsonSerializer.Serialize(functionResults.Result, _jsonOptions);
             result.ToolCallId = functionResults.CallId;
         }
         

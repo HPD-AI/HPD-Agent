@@ -107,6 +107,16 @@ internal class ParameterInfo
     /// Whether this parameter has dynamic description templates
     /// </summary>
     public bool HasDynamicDescription => Description.Contains("{context.");
+    
+    /// <summary>
+    /// Whether this parameter should be serialized (not special framework types)
+    /// </summary>
+    public bool IsSerializable => Type != "CancellationToken" && Type != "AIFunctionArguments" && Type != "IServiceProvider";
+    
+    /// <summary>
+    /// Whether this parameter is nullable (simple heuristic)
+    /// </summary>
+    public bool IsNullable => Type.EndsWith("?");
 }
 
 /// <summary>

@@ -269,30 +269,50 @@ $@"    /// <summary>
 
         if (!relevantParams.Any())
         {
-            return $"        private static Func<string, (bool IsValid, string ErrorMessage)>? Create{function.Name}Validator() => null;";
+            return $"        private static Func<JsonElement, List<ValidationError>>? Create{function.Name}Validator() => (args) => new List<ValidationError>();";
         }
 
         var dtoName = $"{function.Name}Args";
-        // Using default serialization for validation; no source-generated context available here
-        var contextName = (string?)null; // unused but kept to minimize template diff
-
         var sb = new StringBuilder();
-        sb.AppendLine($"        private static Func<string, (bool IsValid, string ErrorMessage)> Create{function.Name}Validator()");
+        sb.AppendLine($"        private static Func<JsonElement, List<ValidationError>> Create{function.Name}Validator()");
         sb.AppendLine("        {");
         sb.AppendLine("            return (jsonArgs) =>");
         sb.AppendLine("            {");
+        sb.AppendLine("                var errors = new List<ValidationError>();");
         sb.AppendLine("                try");
         sb.AppendLine("                {");
-        sb.AppendLine($"                    JsonSerializer.Deserialize(jsonArgs, typeof({dtoName}));");
-        sb.AppendLine("                    return (true, string.Empty);");
+        sb.AppendLine("                    var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };");
+        sb.AppendLine($"                    var dto = jsonArgs.Deserialize<{dtoName}>(options);");
+        
+        // Add null checks for required properties
+        foreach (var param in relevantParams.Where(p => !IsNullableParameter(p) && !p.HasDefaultValue))
+        {
+            sb.AppendLine($"                    if (dto.{param.Name} == null)");
+            sb.AppendLine("                    {");
+            sb.AppendLine("                        errors.Add(new ValidationError {");
+            sb.AppendLine($"                            Property = \"{param.Name}\",");
+            sb.AppendLine($"                            ErrorMessage = \"Property '{param.Name}' is required and cannot be null.\",");
+            sb.AppendLine("                            ErrorCode = \"missing_required_property\"");
+            sb.AppendLine("                        });");
+            sb.AppendLine("                    }");
+        }
+
         sb.AppendLine("                }");
         sb.AppendLine("                catch (JsonException ex)");
         sb.AppendLine("                {");
-        sb.AppendLine($"                    return (false, $\"JSON argument validation failed for '{function.FunctionName}': {{ex.Message}}\");");
+        sb.AppendLine("                    string propertyName = ex.Path ?? \"Unknown\";");
+        sb.AppendLine("                    errors.Add(new ValidationError { Property = propertyName, ErrorMessage = ex.Message, ErrorCode = \"type_conversion_error\" });");
         sb.AppendLine("                }");
+        sb.AppendLine("                return errors;");
         sb.AppendLine("            };");
         sb.AppendLine("        }");
         return sb.ToString();
+    }
+    
+    private static bool IsNullableParameter(ParameterInfo param)
+    {
+        // Simple heuristic - check if type ends with ?
+        return param.Type.EndsWith("?");
     }
 
     private static string GenerateFunctionRegistration(FunctionInfo function, PluginInfo plugin)
@@ -306,8 +326,6 @@ $@"    /// <summary>
             .Where(p => p.Type != "CancellationToken" && p.Type != "AIFunctionArguments" && p.Type != "IServiceProvider").ToList();
         
         var dtoName = relevantParams.Any() ? $"{function.Name}Args" : "object";
-        // No source-generated context here; default serializer will be used
-        var contextName = "null";
         
         var invocationArgs = string.Join(", ", function.Parameters.Select(p =>
         {
@@ -319,7 +337,8 @@ $@"    /// <summary>
 
         string asyncKeyword = function.IsAsync ? "async" : "";
         string awaitKeyword = function.IsAsync ? "await" : "";
-        string returnType = function.IsAsync ? "Task<object?>" : "object?";
+        string returnType = "Task<object?>";
+        string returnWrapper = function.IsAsync ? "" : "Task.FromResult";
         
         string schemaProviderCode = "() => { ";
         if (relevantParams.Any())
@@ -353,20 +372,29 @@ $@"    /// <summary>
         string invocationLogic;
         if (relevantParams.Any())
         {
+            string returnStatement = function.IsAsync 
+                ? $"return ({awaitKeyword} instance.{function.Name}({invocationArgs})) as object;"
+                : $"return {returnWrapper}(({awaitKeyword} instance.{function.Name}({invocationArgs})) as object);";
+                
             invocationLogic = 
 $@"({asyncKeyword} (arguments, cancellationToken) =>
             {{
-                var jsonArgs = JsonSerializer.Serialize(arguments);
-                var args = ({dtoName})JsonSerializer.Deserialize(jsonArgs, typeof({dtoName}));
-                return {awaitKeyword} instance.{function.Name}({invocationArgs});
+                var jsonArgs = arguments.GetJson();
+                var options = new JsonSerializerOptions {{ PropertyNameCaseInsensitive = true }};
+                var args = jsonArgs.Deserialize<{dtoName}>(options);
+                {returnStatement}
             }})";
         }
         else
         {
+            string returnStatement = function.IsAsync 
+                ? $"return ({awaitKeyword} instance.{function.Name}({invocationArgs})) as object;"
+                : $"return {returnWrapper}(({awaitKeyword} instance.{function.Name}({invocationArgs})) as object);";
+                
             invocationLogic = 
 $@"({asyncKeyword} (arguments, cancellationToken) =>
             {{
-                return {awaitKeyword} instance.{function.Name}({invocationArgs});
+                {returnStatement}
             }})";
         }
 

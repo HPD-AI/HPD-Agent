@@ -72,8 +72,9 @@ projectsApi.MapPost("/{projectId}/conversations", (string projectId, CreateConve
     if (pm.GetProject(projectId) is not { } project)
         return Results.NotFound();
     
-    // ✨ SIMPLE: Just create conversation - project handles agent setup
-    var conversation = project.CreateConversation();
+    // ✨ CLEAN: Create agent and conversation together
+    var agent = pm.CreateAgent();
+    var conversation = project.CreateConversation(agent);
     if (!string.IsNullOrEmpty(request.Name))
         conversation.AddMetadata("DisplayName", request.Name);
     
@@ -111,12 +112,7 @@ agentApi.MapPost("/projects/{projectId}/conversations/{conversationId}/chat",
     return Results.Ok(ToAgentResponse(response));
 });
 
-// ✨ SIMPLIFIED: Streaming with new unified API
-// 🚀 NEW IMPLEMENTATION: Demonstrates the dramatic simplification
-// - 85% reduction in boilerplate code (from ~30 lines to ~6 lines)
-// - Automatic SSE formatting and error handling
-// - Consistent with console app simplicity
-// - Built-in orchestration and context handling
+// ✨ SIMPLIFIED: Streaming with default Microsoft.Extensions.AI approach
 agentApi.MapPost("/projects/{projectId}/conversations/{conversationId}/stream", 
     async (string projectId, string conversationId, StreamRequest request, ProjectManager pm, HttpContext context) =>
 {
@@ -127,18 +123,57 @@ agentApi.MapPost("/projects/{projectId}/conversations/{conversationId}/stream",
         return;
     }
 
-    // 1. Prepare the response with the new helper
-    context.PrepareForSseStreaming();
+    // Prepare SSE headers (CORS handled by middleware)
+    context.Response.Headers.Append("Content-Type", "text/event-stream");
+    context.Response.Headers.Append("Cache-Control", "no-cache");
+    context.Response.Headers.Append("Connection", "keep-alive");
 
     var userMessage = request.Messages.FirstOrDefault()?.Content ?? "";
 
-    // 2. Call the new high-level method on the conversation
-    // All complexity (headers, SSE formatting, error handling) is now encapsulated
-    await conversation.StreamResponseAsync(userMessage, context.Response.Body, null, context.RequestAborted);
+    var writer = new StreamWriter(context.Response.Body, leaveOpen: true);
+
+    try
+    {
+        // Use default streaming from conversation
+        await foreach (var update in conversation.SendStreamingAsync(userMessage, null, context.RequestAborted))
+        {
+            // Extract text content and stream it
+            if (update.Contents != null)
+            {
+                foreach (var content in update.Contents.OfType<TextContent>())
+                {
+                    if (!string.IsNullOrEmpty(content.Text))
+                    {
+                        var response = new StreamContentResponse(content.Text);
+                        await writer.WriteAsync($"data: {System.Text.Json.JsonSerializer.Serialize(response, AppJsonSerializerContext.Default.StreamContentResponse)}\n\n");
+                        await writer.FlushAsync();
+                    }
+                }
+            }
+
+            // Handle finish
+            if (update.FinishReason != null)
+            {
+                var response = new StreamFinishResponse(true, update.FinishReason.ToString());
+                await writer.WriteAsync($"data: {System.Text.Json.JsonSerializer.Serialize(response, AppJsonSerializerContext.Default.StreamFinishResponse)}\n\n");
+                await writer.FlushAsync();
+                break;
+            }
+        }
+    }
+    catch (Exception ex)
+    {
+        var response = new StreamErrorResponse(ex.Message);
+        await writer.WriteAsync($"data: {System.Text.Json.JsonSerializer.Serialize(response, AppJsonSerializerContext.Default.StreamErrorResponse)}\n\n");
+        await writer.FlushAsync();
+    }
+    finally
+    {
+        await writer.DisposeAsync();
+    }
 });
 
-// 🚀 WEBSOCKET: Real-time bi-directional streaming
-// ✨ NEW TRANSPORT: WebSocket support with the same simplicity as SSE
+// 🚀 WEBSOCKET: Real-time bi-directional streaming using default approach
 agentApi.MapGet("/projects/{projectId}/conversations/{conversationId}/ws", 
     async (string projectId, string conversationId, HttpContext context, ProjectManager pm) =>
 {
@@ -163,8 +198,45 @@ agentApi.MapGet("/projects/{projectId}/conversations/{conversationId}/ws",
             var receiveResult = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
             var userMessage = System.Text.Encoding.UTF8.GetString(buffer, 0, receiveResult.Count);
 
-            // ✨ ONE LINE: The conversation handles the entire WebSocket stream
-            await conversation.StreamResponseToWebSocketAsync(userMessage, webSocket, null, CancellationToken.None);
+            // Use default streaming and send over WebSocket
+            await foreach (var update in conversation.SendStreamingAsync(userMessage, null, CancellationToken.None))
+            {
+                if (update.Contents != null)
+                {
+                    foreach (var content in update.Contents.OfType<TextContent>())
+                    {
+                        if (!string.IsNullOrEmpty(content.Text))
+                        {
+                            var response = new StreamContentResponse(content.Text);
+                            var message = System.Text.Json.JsonSerializer.Serialize(response, AppJsonSerializerContext.Default.StreamContentResponse);
+                            var messageBytes = System.Text.Encoding.UTF8.GetBytes(message);
+                            await webSocket.SendAsync(
+                                new ArraySegment<byte>(messageBytes),
+                                System.Net.WebSockets.WebSocketMessageType.Text,
+                                true,
+                                CancellationToken.None);
+                        }
+                    }
+                }
+
+                if (update.FinishReason != null)
+                {
+                    var response = new StreamFinishResponse(true, update.FinishReason.ToString());
+                    var finishMessage = System.Text.Json.JsonSerializer.Serialize(response, AppJsonSerializerContext.Default.StreamFinishResponse);
+                    var finishBytes = System.Text.Encoding.UTF8.GetBytes(finishMessage);
+                    await webSocket.SendAsync(
+                        new ArraySegment<byte>(finishBytes),
+                        System.Net.WebSockets.WebSocketMessageType.Text,
+                        true,
+                        CancellationToken.None);
+                    break;
+                }
+            }
+
+            await webSocket.CloseAsync(
+                System.Net.WebSockets.WebSocketCloseStatus.NormalClosure,
+                "Completed",
+                CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -188,9 +260,13 @@ agentApi.MapPost("/projects/{projectId}/conversations/{conversationId}/stt",
     if (pm.GetConversation(projectId, conversationId) is not { } conversation)
         return Results.NotFound();
 
-    // 🎯 SIMPLE: Get project agent's audio capability
+    // 🎯 SIMPLE: Create agent for audio capability
     var project = pm.GetProject(projectId);
-    if (project?.Agent?.Audio is not { } audio)
+    if (project == null)
+        return Results.NotFound();
+        
+    var agent = pm.CreateAgent();
+    if (agent.Audio is not { } audio)
         return Results.BadRequest(new ErrorResponse("Audio not available"));
 
     using var audioStream = new MemoryStream();
@@ -248,40 +324,44 @@ public class ProjectManager
     [RequiresUnreferencedCode("Creates agent with reflection-based plugin registration")]
     public Project CreateProject(string name, string description = "")
     {
-        // 🚀 ONE-LINER: Create project with full AI assistant
-        var project = CreateAIProject(name, description);
+        // 🚀 CLEAN: Create project without agent coupling
+        var project = CreateSimpleProject(name, description);
         _projects[project.Id] = project;
         return project;
     }
 
-    // ✨ SIMPLIFIED: Clean project creation
-    [RequiresUnreferencedCode("AgentBuilder.Build uses reflection for plugin registration")]
-    private Project CreateAIProject(string name, string description)
+    // ✨ CLEAN: Just create projects, agents created per conversation
+    private Project CreateSimpleProject(string name, string description)
     {
-        // 🎯 Simple by default, powerful when needed
-        // Read provider keys from configuration instead of hard-coding secrets.
-        var openRouterKey = _config["OpenRouter:ApiKey"] ?? _config["ApiKeys:OpenRouter"];
-        if (string.IsNullOrWhiteSpace(openRouterKey))
-            throw new InvalidOperationException("OpenRouter API key not configured. Set 'OpenRouter:ApiKey' or 'ApiKeys:OpenRouter' in configuration.");
-
-        var agent = AgentBuilder.Create()
-            .WithName("AI Assistant")
-            .WithProvider(ChatProvider.OpenRouter, "google/gemini-2.5-pro", openRouterKey)
-        .WithInstructions("You are a helpful AI assistant with memory, knowledge base, and web search capabilities.")
-        .WithInjectedMemory(opts => opts
-            .WithStorageDirectory("./agent-memory-storage")
-            .WithMaxTokens(6000))
-        .WithPlugin<MathPlugin>()
-        .WithElevenLabsAudio()
-        .WithMCP("./MCP.json")
-        .WithMaxFunctionCalls(6)
-        .Build();
-
-
         var project = Project.Create(name);
         project.Description = description;
-        
         return project;
+    }
+
+    // ✨ CLEAN: Agent creation separated from project creation
+    [RequiresUnreferencedCode("AgentBuilder.Build uses reflection for plugin registration")]
+    public Agent CreateAgent()
+    {
+        // ✨ Load configuration from appsettings.json
+        var config = new ConfigurationBuilder()
+            .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+            .Build();
+
+        return AgentBuilder.Create()
+            .WithAPIConfiguration(config)
+            .WithName("AI Assistant")
+            .WithProvider(ChatProvider.OpenRouter, "google/gemini-2.5-pro")
+            .WithInstructions("You are a helpful AI assistant with memory, knowledge base, and web search capabilities.")
+            .WithInjectedMemory(opts => opts
+                .WithStorageDirectory("./agent-memory-storage")
+                .WithMaxTokens(6000))
+            .WithFilter(new LoggingAiFunctionFilter())
+            .WithTavilyWebSearch()    
+            .WithPlugin<MathPlugin>()
+            .WithElevenLabsAudio()
+            .WithMCP("./MCP.json")
+            .WithMaxFunctionCalls(6)
+            .Build();
     }
 
     public Project? GetProject(string projectId) => _projects.GetValueOrDefault(projectId);

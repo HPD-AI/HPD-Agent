@@ -53,8 +53,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../HPD-Agent.SourceGenerator/HPD-Agent.SourceGenerator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../Reference/AG-UI/AGUIDotnet/AGUIDotnet.csproj" />
   </ItemGroup>
-
-  <!-- No longer need AGUI project reference since we have AOT-compatible types -->
 
 </Project>

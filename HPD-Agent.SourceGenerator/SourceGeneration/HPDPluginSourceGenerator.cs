@@ -176,7 +176,7 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
         sb.AppendLine("using System.Threading;");
         sb.AppendLine("using System.Threading.Tasks;");
         sb.AppendLine("using System.Text.Json;");
-    sb.AppendLine("using System.Text.Json.Nodes;");
+        sb.AppendLine("using System.Text.Json.Nodes;");
         sb.AppendLine("using System.Text.Json.Serialization;");
         sb.AppendLine("using System.Text.Json.Serialization.Metadata;");
         sb.AppendLine("using Microsoft.Extensions.AI;");
@@ -207,6 +207,15 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
         {
             sb.AppendLine();
             sb.AppendLine(GenerateSchemaValidator(function, plugin));
+            
+            // Generate manual JSON parser for AOT compatibility
+            var relevantParams = function.Parameters
+                .Where(p => p.Type != "CancellationToken" && p.Type != "AIFunctionArguments" && p.Type != "IServiceProvider").ToList();
+            if (relevantParams.Any())
+            {
+                sb.AppendLine();
+                sb.AppendLine(GenerateJsonParser(function, plugin));
+            }
         }
         
         if (plugin.RequiresContext || plugin.Functions.Any(f => f.IsConditional))
@@ -255,10 +264,9 @@ $@"    /// <summary>
             sb.AppendLine();
         }
 
-        // Note: Do NOT emit a JsonSerializerContext here. The System.Text.Json source generator
-        // does not process attributes emitted by another source generator in the same compilation,
-        // causing abstract member implementation errors. We rely on default serialization for
-        // these generated DTOs instead.
+        // Note: We cannot generate JsonSerializerContext here because the System.Text.Json source generator
+        // doesn't process attributes from other source generators in the same compilation.
+        // Instead, we'll use JsonSerializerOptions with TypeInfoResolver for AOT compatibility.
 
         return sb.ToString();
     }
@@ -282,8 +290,7 @@ $@"    /// <summary>
         sb.AppendLine("                var errors = new List<ValidationError>();");
         sb.AppendLine("                try");
         sb.AppendLine("                {");
-        sb.AppendLine("                    var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };");
-        sb.AppendLine($"                    var dto = jsonArgs.Deserialize<{dtoName}>(options);");
+        sb.AppendLine($"                    var dto = Parse{dtoName}(jsonArgs);");
         
         // Add null checks for required properties
         foreach (var param in relevantParams.Where(p => !IsNullableParameter(p) && !p.HasDefaultValue))
@@ -381,8 +388,7 @@ $@"    /// <summary>
 $@"({asyncKeyword} (arguments, cancellationToken) =>
             {{
                 var jsonArgs = arguments.GetJson();
-                var options = new JsonSerializerOptions {{ PropertyNameCaseInsensitive = true }};
-                var args = jsonArgs.Deserialize<{dtoName}>(options);
+                var args = Parse{dtoName}(jsonArgs);
                 {returnStatement}
             }})";
         }
@@ -1103,6 +1109,153 @@ private static string GenerateContextResolutionMethods(PluginInfo plugin)
             .Any(attr => attr.Name.ToString().Contains("RequiresPermission"));
     }
 
+    /// <summary>
+    /// Generates a manual JSON parser for AOT compatibility - no reflection needed!
+    /// </summary>
+    private static string GenerateJsonParser(FunctionInfo function, PluginInfo plugin)
+    {
+        var dtoName = $"{function.Name}Args";
+        var relevantParams = function.Parameters
+            .Where(p => p.Type != "CancellationToken" && p.Type != "AIFunctionArguments" && p.Type != "IServiceProvider").ToList();
+        
+        var sb = new StringBuilder();
+        sb.AppendLine($"        /// <summary>");
+        sb.AppendLine($"        /// Manual JSON parser for {dtoName} - fully AOT compatible");
+        sb.AppendLine($"        /// </summary>");
+        sb.AppendLine($"        private static {dtoName} Parse{dtoName}(JsonElement json)");
+        sb.AppendLine("        {");
+        sb.AppendLine($"            var result = new {dtoName}();");
+        sb.AppendLine();
+        
+        foreach (var param in relevantParams)
+        {
+            sb.AppendLine($"            // Parse {param.Name}");
+            sb.AppendLine($"            if (json.TryGetProperty(\"{param.Name}\", out var {param.Name}Prop) || ");
+            sb.AppendLine($"                json.TryGetProperty(\"{ToCamelCase(param.Name)}\", out {param.Name}Prop) ||");
+            sb.AppendLine($"                json.TryGetProperty(\"{param.Name.ToLower()}\", out {param.Name}Prop))");
+            sb.AppendLine("            {");
+            
+            // Generate parsing logic based on type
+            sb.AppendLine(GeneratePropertyParser(param, $"{param.Name}Prop", $"result.{param.Name}"));
+            
+            sb.AppendLine("            }");
+            
+            // Add default value handling if needed
+            if (!IsNullableParameter(param) && !param.HasDefaultValue)
+            {
+                sb.AppendLine("            else");
+                sb.AppendLine("            {");
+                sb.AppendLine($"                throw new JsonException($\"Required property '{param.Name}' not found\");");
+                sb.AppendLine("            }");
+            }
+            sb.AppendLine();
+        }
+        
+        sb.AppendLine("            return result;");
+        sb.AppendLine("        }");
+        
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Generates property parsing code based on the parameter type
+    /// </summary>
+    private static string GeneratePropertyParser(ParameterInfo param, string jsonPropertyVar, string targetVar)
+    {
+        var sb = new StringBuilder();
+        var type = param.Type.TrimEnd('?');
+        var isNullable = param.Type.EndsWith("?");
+        
+        // Handle null values for nullable types
+        if (isNullable)
+        {
+            sb.AppendLine($"                if ({jsonPropertyVar}.ValueKind == JsonValueKind.Null)");
+            sb.AppendLine($"                {{");
+            sb.AppendLine($"                    {targetVar} = null;");
+            sb.AppendLine($"                }}");
+            sb.AppendLine($"                else");
+            sb.AppendLine($"                {{");
+        }
+        
+        var indent = isNullable ? "    " : "";
+        
+        switch (type)
+        {
+            case "string":
+                sb.AppendLine($"{indent}                {targetVar} = {jsonPropertyVar}.GetString(){(isNullable ? "" : " ?? string.Empty")};");
+                break;
+                
+            case "int" or "Int32":
+                sb.AppendLine($"{indent}                {targetVar} = {jsonPropertyVar}.GetInt32();");
+                break;
+                
+            case "long" or "Int64":
+                sb.AppendLine($"{indent}                {targetVar} = {jsonPropertyVar}.GetInt64();");
+                break;
+                
+            case "double" or "Double":
+                sb.AppendLine($"{indent}                {targetVar} = {jsonPropertyVar}.GetDouble();");
+                break;
+                
+            case "float" or "Single":
+                sb.AppendLine($"{indent}                {targetVar} = (float){jsonPropertyVar}.GetDouble();");
+                break;
+                
+            case "bool" or "Boolean":
+                sb.AppendLine($"{indent}                {targetVar} = {jsonPropertyVar}.GetBoolean();");
+                break;
+                
+            case "decimal" or "Decimal":
+                sb.AppendLine($"{indent}                {targetVar} = {jsonPropertyVar}.GetDecimal();");
+                break;
+                
+            case "DateTime":
+                sb.AppendLine($"{indent}                {targetVar} = {jsonPropertyVar}.GetDateTime();");
+                break;
+                
+            case "DateTimeOffset":
+                sb.AppendLine($"{indent}                {targetVar} = {jsonPropertyVar}.GetDateTimeOffset();");
+                break;
+                
+            case "Guid":
+                sb.AppendLine($"{indent}                {targetVar} = {jsonPropertyVar}.GetGuid();");
+                break;
+                
+            default:
+                // For complex types, arrays, or unknown types, fall back to ToString or throw
+                if (type.StartsWith("List<") || type.StartsWith("IList<") || type.EndsWith("[]"))
+                {
+                    // Handle arrays/lists
+                    sb.AppendLine($"{indent}                // TODO: Implement array parsing for {type}");
+                    sb.AppendLine($"{indent}                throw new NotSupportedException($\"Array parsing for type {type} not yet implemented\");");
+                }
+                else
+                {
+                    // For other complex types
+                    sb.AppendLine($"{indent}                // Complex type - needs custom parsing");
+                    sb.AppendLine($"{indent}                {targetVar} = JsonSerializer.Deserialize<{type}>({jsonPropertyVar}.GetRawText());");
+                }
+                break;
+        }
+        
+        if (isNullable)
+        {
+            sb.AppendLine($"                }}");
+        }
+        
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Converts a string to camelCase
+    /// </summary>
+    private static string ToCamelCase(string str)
+    {
+        if (string.IsNullOrEmpty(str) || char.IsLower(str[0]))
+            return str;
+        
+        return char.ToLower(str[0]) + str.Substring(1);
+    }
 
 
 }

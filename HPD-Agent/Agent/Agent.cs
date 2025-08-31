@@ -2,6 +2,7 @@
 using System.Threading.Channels;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using AGUIDotnet.Events;
 
 /// <summary>
 /// Agent facade that delegates to specialized components for clean separation of concerns.
@@ -17,7 +18,8 @@ public class Agent : IChatClient
     // Specialized component fields for delegation
     private readonly MessageProcessor _messageProcessor;
     private readonly FunctionCallProcessor _functionCallProcessor;
-    private readonly StreamingManager _streamingManager;
+    private readonly AgentTurn _agentTurn;
+    private readonly ToolScheduler _toolScheduler;
     private readonly AGUIEventHandler _aguiEventHandler;
     private readonly CapabilityManager _capabilityManager;
     private readonly ContinuationPermissionManager? _continuationPermissionManager;
@@ -51,8 +53,9 @@ public class Agent : IChatClient
         _maxFunctionCalls = config.MaxFunctionCalls;
         _messageProcessor = new MessageProcessor(config.SystemInstructions, mergedOptions ?? config.Provider?.DefaultChatOptions, promptFilters);
         _functionCallProcessor = new FunctionCallProcessor(scopedFilterManager, permissionFilter, new List<IAiFunctionFilter>(), _continuationPermissionManager, config.MaxFunctionCalls);
-        _streamingManager = new StreamingManager(_baseClient, _functionCallProcessor, config.MaxFunctionCalls);
-        _aguiEventHandler = new AGUIEventHandler(_baseClient, _messageProcessor, _name, config);
+        _agentTurn = new AgentTurn(_baseClient);
+        _toolScheduler = new ToolScheduler(_functionCallProcessor);
+        _aguiEventHandler = new AGUIEventHandler(this, _baseClient, _messageProcessor, _name, config);
         _capabilityManager = new CapabilityManager();
         _continuationPermissionManager = continuationPermissionManager;
     }
@@ -130,22 +133,77 @@ public class Agent : IChatClient
         ChatOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        // Use MessageProcessor
+        // Use the unified streaming approach and collect all updates
+        var allUpdates = new List<ChatResponseUpdate>();
+        
+        var turnResult = await ExecuteStreamingTurnAsync(messages, options, cancellationToken);
+        
+        // Consume the entire stream
+        await foreach (var update in turnResult.ResponseStream.WithCancellation(cancellationToken))
+        {
+            allUpdates.Add(update);
+        }
+        
+        // Wait for final history to ensure turn is complete
+        await turnResult.FinalHistory;
+        
+        // Construct and return the final response
+        return ConstructChatResponseFromUpdates(allUpdates);
+    }
+
+    /// <summary>
+    /// Streams native AG-UI BaseEvent objects directly from the agent's core loop
+    /// </summary>
+    public IAsyncEnumerable<BaseEvent> StreamEventsAsync(
+        IEnumerable<ChatMessage> messages,
+        ChatOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        var turnHistory = new List<ChatMessage>();
+        var historyCompletionSource = new TaskCompletionSource<IReadOnlyList<ChatMessage>>();
+        
+        // Prepare messages using MessageProcessor
         var conversation = new Conversation(this);
         messages.ToList().ForEach(m => conversation.AddMessage(m));
-
+        
+        return PrepareAndStreamEventsAsync(messages, options, turnHistory, historyCompletionSource, cancellationToken);
+    }
+    
+    private async IAsyncEnumerable<BaseEvent> PrepareAndStreamEventsAsync(
+        IEnumerable<ChatMessage> messages,
+        ChatOptions? options,
+        List<ChatMessage> turnHistory,
+        TaskCompletionSource<IReadOnlyList<ChatMessage>> historyCompletionSource,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var conversation = new Conversation(this);
+        messages.ToList().ForEach(m => conversation.AddMessage(m));
+        
         var (effectiveMessages, effectiveOptions) = await _messageProcessor.PrepareMessagesAsync(
             messages, options, conversation, _name, cancellationToken);
-
-        var response = await _baseClient.GetResponseAsync(effectiveMessages, effectiveOptions, cancellationToken);
-
-        // Use FunctionCallProcessor
-        if (_scopedFilterManager != null)
+        
+        await foreach (var baseEvent in RunAgenticLoopCore(effectiveMessages, effectiveOptions, turnHistory, historyCompletionSource, cancellationToken))
         {
-            response = await _functionCallProcessor.ProcessResponseWithFiltersAsync(response, effectiveMessages, effectiveOptions, _baseClient, cancellationToken);
+            yield return baseEvent;
         }
+    }
 
-        return response;
+    /// <summary>
+    /// Executes a streaming turn for the agent, returning both the stream and final history
+    /// </summary>
+    public async Task<StreamingTurnResult> ExecuteStreamingTurnAsync(
+        IEnumerable<ChatMessage> messages,
+        ChatOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        // Create a TaskCompletionSource for the final history
+        var historyCompletionSource = new TaskCompletionSource<IReadOnlyList<ChatMessage>>();
+        
+        // Create the streaming enumerable
+        var responseStream = RunAgenticLoopAsync(messages, options, historyCompletionSource, cancellationToken);
+        
+        // Return the result containing both stream and history task
+        return new StreamingTurnResult(responseStream, historyCompletionSource.Task);
     }
 
     /// <inheritdoc />
@@ -154,24 +212,292 @@ public class Agent : IChatClient
         ChatOptions? options = null,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        // Use MessageProcessor
-        var conversation = new Conversation(this);
-        messages.ToList().ForEach(m => conversation.AddMessage(m));
-
-        var (effectiveMessages, effectiveOptions) = await _messageProcessor.PrepareMessagesAsync(
-            messages, options, conversation, _name, cancellationToken);
-
-        bool needsFilterProcessing = _scopedFilterManager != null &&
-                                   effectiveOptions?.Tools?.Any() == true;
-
-        // Delegate to StreamingManager
-        await foreach (var update in _streamingManager.GetStreamingResponseAsync(effectiveMessages, effectiveOptions, needsFilterProcessing, cancellationToken))
+        // Simply delegate to ExecuteStreamingTurnAsync and return the stream part
+        var result = await ExecuteStreamingTurnAsync(messages, options, cancellationToken);
+        await foreach (var update in result.ResponseStream.WithCancellation(cancellationToken))
         {
             yield return update;
         }
     }
 
+    /// <summary>
+    /// Core agentic loop that handles streaming with tool execution
+    /// </summary>
+    private async IAsyncEnumerable<ChatResponseUpdate> RunAgenticLoopAsync(
+        IEnumerable<ChatMessage> messages,
+        ChatOptions? options,
+        TaskCompletionSource<IReadOnlyList<ChatMessage>> historyCompletionSource,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var turnHistory = new List<ChatMessage>();
+        
+        // Convert BaseEvent stream to ChatResponseUpdate stream for IChatClient compatibility
+        await foreach (var baseEvent in RunAgenticLoopCore(messages, options, turnHistory, historyCompletionSource, cancellationToken))
+        {
+            // Only convert events that map to the chat protocol
+            switch (baseEvent)
+            {
+                case TextMessageContentEvent textEvent:
+                    yield return new ChatResponseUpdate
+                    {
+                        Contents = [new TextContent(textEvent.Delta)]
+                    };
+                    break;
+                    
+                // StepStartedEvent is for UI observability only - ignore in chat adapter
+                case StepStartedEvent:
+                    break;
+                    
+                // ToolCallStartEvent is for UI observability only - ignore in chat adapter  
+                case ToolCallStartEvent:
+                    break;
+                    
+                case ToolCallEndEvent:
+                    // ToolCallEndEvent is for UI notification only
+                    break;
+            }
+        }
+    }
+    
+    private async IAsyncEnumerable<BaseEvent> RunAgenticLoopCore(
+        IEnumerable<ChatMessage> messages,
+        ChatOptions? options,
+        List<ChatMessage> turnHistory,
+        TaskCompletionSource<IReadOnlyList<ChatMessage>> historyCompletionSource,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        // Generate a message ID for this turn
+        var messageId = Guid.NewGuid().ToString();
+        
+        // Collect all response updates to build final history
+        var responseUpdates = new List<ChatResponseUpdate>();
+        
+        // Prepare messages using MessageProcessor
+        var conversation = new Conversation(this);
+        messages.ToList().ForEach(m => conversation.AddMessage(m));
+        
+        var (effectiveMessages, effectiveOptions) = await _messageProcessor.PrepareMessagesAsync(
+            messages, options, conversation, _name, cancellationToken);
+        
+        var currentMessages = effectiveMessages.ToList();
+        
+        // Main agentic loop
+        for (int iteration = 0; iteration < _maxFunctionCalls; iteration++)
+        {
+            var toolRequests = new List<FunctionCallContent>();
+            var assistantContents = new List<AIContent>();
+            bool streamFinished = false;
+            
+            // Run turn and collect events
+            await foreach (var update in _agentTurn.RunAsync(currentMessages, effectiveOptions, cancellationToken))
+            {
+                // Store update for building final history
+                responseUpdates.Add(update);
+                
+                // Process contents and emit appropriate BaseEvent objects
+                if (update.Contents != null)
+                {
+                    foreach (var content in update.Contents)
+                    {
+                        if (content is TextReasoningContent reasoning && !string.IsNullOrEmpty(reasoning.Text))
+                        {
+                            // Emit step started event for reasoning (visible to UI, NOT saved to history)
+                            yield return new StepStartedEvent
+                            {
+                                StepId = Guid.NewGuid().ToString(),
+                                StepName = "Reasoning",
+                                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                                Type = EventTypes.STEP_STARTED
+                            };
+                            
+                            // Emit the reasoning text as content (for UI visibility)
+                            yield return new TextMessageContentEvent 
+                            { 
+                                MessageId = messageId, 
+                                Delta = reasoning.Text,
+                                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                                Type = EventTypes.TEXT_MESSAGE_CONTENT
+                            };
+                            
+                            // CRITICAL: Do NOT add reasoning to assistantContents (not saved to history)
+                        }
+                        else if (content is TextContent textContent && !string.IsNullOrEmpty(textContent.Text))
+                        {
+                            // Regular text content - add to history
+                            assistantContents.Add(textContent);
+                            
+                            // Emit text content event
+                            yield return new TextMessageContentEvent 
+                            { 
+                                MessageId = messageId, 
+                                Delta = textContent.Text,
+                                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                                Type = EventTypes.TEXT_MESSAGE_CONTENT
+                            };
+                        }
+                        else if (content is FunctionCallContent functionCall)
+                        {
+                            toolRequests.Add(functionCall);
+                            assistantContents.Add(functionCall);
+                        }
+                    }
+                }
+                
+                // Check for stream completion
+                if (update.FinishReason != null)
+                {
+                    streamFinished = true;
+                }
+            }
+            
+            // If there are tool requests, execute them
+            if (toolRequests.Count > 0)
+            {
+                // Create assistant message with tool calls
+                var assistantMessage = new ChatMessage(ChatRole.Assistant, assistantContents);
+                currentMessages.Add(assistantMessage);
+                turnHistory.Add(assistantMessage);
+                
+                // Emit tool call start events
+                foreach (var toolRequest in toolRequests)
+                {
+                    yield return new ToolCallStartEvent 
+                    { 
+                        ToolCallId = toolRequest.CallId, 
+                        ToolCallName = toolRequest.Name,
+                        ParentMessageId = messageId,
+                        Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                        Type = EventTypes.TOOL_CALL_START
+                    };
+                }
+                
+                // Execute tools
+                var toolResultMessage = await _toolScheduler.ExecuteToolsAsync(
+                    currentMessages, toolRequests, effectiveOptions, cancellationToken);
+                
+                // Add tool results to history
+                currentMessages.Add(toolResultMessage);
+                turnHistory.Add(toolResultMessage);
+                
+                // Emit tool call end events
+                foreach (var content in toolResultMessage.Contents)
+                {
+                    if (content is FunctionResultContent result)
+                    {
+                        yield return new ToolCallEndEvent 
+                        { 
+                            ToolCallId = result.CallId,
+                            Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                            Type = EventTypes.TOOL_CALL_END
+                        };
+                    }
+                }
+                
+                // Update response history for final assembly
+                var toolUpdate = new ChatResponseUpdate
+                {
+                    Contents = toolResultMessage.Contents.ToList()
+                };
+                responseUpdates.Add(toolUpdate);
+                
+                // Update options for next iteration to allow the model to choose not to call tools
+                effectiveOptions = effectiveOptions == null
+                    ? new ChatOptions { ToolMode = ChatToolMode.Auto }
+                    : new ChatOptions
+                    {
+                        Tools = effectiveOptions.Tools,
+                        ToolMode = ChatToolMode.Auto,
+                        AllowMultipleToolCalls = effectiveOptions.AllowMultipleToolCalls,
+                        MaxOutputTokens = effectiveOptions.MaxOutputTokens,
+                        Temperature = effectiveOptions.Temperature,
+                        TopP = effectiveOptions.TopP,
+                        FrequencyPenalty = effectiveOptions.FrequencyPenalty,
+                        PresencePenalty = effectiveOptions.PresencePenalty,
+                        ResponseFormat = effectiveOptions.ResponseFormat,
+                        Seed = effectiveOptions.Seed,
+                        StopSequences = effectiveOptions.StopSequences,
+                        ModelId = effectiveOptions.ModelId,
+                        AdditionalProperties = effectiveOptions.AdditionalProperties
+                    };
+                
+                // Continue to next iteration
+            }
+            else if (streamFinished)
+            {
+                // No tools called and stream finished - we're done
+                if (assistantContents.Any())
+                {
+                    var assistantMessage = new ChatMessage(ChatRole.Assistant, assistantContents);
+                    turnHistory.Add(assistantMessage);
+                }
+                break;
+            }
+        }
+        
+        // Build the complete history including the final assistant message
+        if (responseUpdates.Any())
+        {
+            var finalResponse = ConstructChatResponseFromUpdates(responseUpdates);
+            var finalAssistantMessage = finalResponse.Messages.First();
+            
+            // Only add if we don't already have this assistant message
+            // (in case it was already added during tool execution)
+            if (!turnHistory.Any() || turnHistory.Last().Role != ChatRole.Assistant || 
+                !turnHistory.Last().Contents.SequenceEqual(finalAssistantMessage.Contents))
+            {
+                turnHistory.Add(finalAssistantMessage);
+            }
+        }
+        
+        // Set the final complete history
+        historyCompletionSource.SetResult(turnHistory);
+    }
 
+    /// <summary>
+    /// Constructs a final ChatResponse from collected streaming updates
+    /// </summary>
+    private static ChatResponse ConstructChatResponseFromUpdates(List<ChatResponseUpdate> updates)
+    {
+        // Collect all content from the updates
+        var allContents = new List<AIContent>();
+        ChatFinishReason? finishReason = null;
+        string? modelId = null;
+        string? responseId = null;
+        DateTimeOffset? createdAt = null;
+        
+        foreach (var update in updates)
+        {
+            if (update.Contents != null)
+            {
+                allContents.AddRange(update.Contents);
+            }
+            
+            if (update.FinishReason != null)
+                finishReason = update.FinishReason;
+                
+            if (update.ModelId != null)
+                modelId = update.ModelId;
+                
+            if (update.ResponseId != null)
+                responseId = update.ResponseId;
+                
+            if (update.CreatedAt != null)
+                createdAt = update.CreatedAt;
+        }
+        
+        // Create a ChatMessage from the collected content
+        var chatMessage = new ChatMessage(ChatRole.Assistant, allContents)
+        {
+            MessageId = responseId
+        };
+        
+        return new ChatResponse(chatMessage)
+        {
+            FinishReason = finishReason,
+            ModelId = modelId,
+            CreatedAt = createdAt
+        };
+    }
 
     /// <inheritdoc />
     object? IChatClient.GetService(Type serviceType, object? serviceKey)
@@ -332,183 +658,6 @@ public static class ChatResponseExtensions
     }
 }
 
-#region Streaming Manager
-/// <summary>
-/// Manages all streaming logic for the agent, including simple and interleaved streaming with function calls.
-/// </summary>
-public class StreamingManager
-{
-    private readonly IChatClient _baseClient;
-    private readonly FunctionCallProcessor _functionCallProcessor;
-    private readonly int _maxFunctionCalls;
-
-    public StreamingManager(IChatClient baseClient, FunctionCallProcessor functionCallProcessor, int maxFunctionCalls)
-    {
-        _baseClient = baseClient ?? throw new ArgumentNullException(nameof(baseClient));
-        _functionCallProcessor = functionCallProcessor ?? throw new ArgumentNullException(nameof(functionCallProcessor));
-        _maxFunctionCalls = maxFunctionCalls;
-    }
-
-    /// <summary>
-    /// Main streaming method that decides between simple and interleaved streaming
-    /// </summary>
-    public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-        IEnumerable<ChatMessage> messages,
-        ChatOptions? options,
-        bool needsFilterProcessing,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        if (needsFilterProcessing)
-        {
-            await foreach (var update in GetInterleavedStreamingResponseAsync(messages, options, cancellationToken))
-            {
-                yield return update;
-            }
-        }
-        else
-        {
-            await foreach (var update in _baseClient.GetStreamingResponseAsync(messages, options, cancellationToken))
-            {
-                yield return update;
-            }
-        }
-    }
-
-    /// <summary>
-    /// Provides true interleaved streaming that emits text immediately and pauses for tool execution
-    /// </summary>
-    private async IAsyncEnumerable<ChatResponseUpdate> GetInterleavedStreamingResponseAsync(
-        IEnumerable<ChatMessage> messages,
-        ChatOptions? options,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        var currentMessages = messages.ToList();
-        var operationTracker = new OperationTracker();
-
-        for (int iteration = 0; iteration < _maxFunctionCalls; iteration++)
-        {
-            var completedFunctionCalls = new List<FunctionCallContent>();
-            var hasStreamedContent = false;
-            var streamFinished = false;
-
-            // Stream the response and immediately process function calls as they appear
-            await foreach (var update in _baseClient.GetStreamingResponseAsync(currentMessages, options, cancellationToken))
-            {
-                if (update.Contents != null)
-                {
-                    var textContent = new List<AIContent>();
-                    var functionCalls = new List<FunctionCallContent>();
-
-                    // Separate text content from function calls
-                    foreach (var content in update.Contents)
-                    {
-                        if (content is FunctionCallContent funcCall)
-                        {
-                            functionCalls.Add(funcCall);
-                        }
-                        else
-                        {
-                            textContent.Add(content);
-                        }
-                    }
-
-                    // Emit text content immediately
-                    if (textContent.Any())
-                    {
-                        yield return new ChatResponseUpdate
-                        {
-                            Contents = textContent,
-                            AdditionalProperties = update.AdditionalProperties
-                        };
-                        hasStreamedContent = true;
-                    }
-
-                    // Process function calls immediately when they appear
-                    if (functionCalls.Any())
-                    {
-                        // Use OperationTracker
-                        operationTracker.TrackFunctionCall(functionCalls.Select(fc => fc.Name), iteration + 1);
-
-                        // Execute function calls immediately using FunctionCallProcessor
-                        var functionCallMessages = await _functionCallProcessor.ProcessFunctionCallsAsync(currentMessages, options, functionCalls, cancellationToken);
-
-                        // Emit function call results immediately
-                        foreach (var funcMessage in functionCallMessages)
-                        {
-                            foreach (var content in funcMessage.Contents)
-                            {
-                                yield return new ChatResponseUpdate
-                                {
-                                    Contents = [content]
-                                };
-                            }
-                        }
-
-                        // Add function results to message history for continuation
-                        currentMessages.AddRange(functionCallMessages);
-                        completedFunctionCalls.AddRange(functionCalls);
-                    }
-                }
-
-                // Check if stream finished (finish reason present)
-                if (update.FinishReason != null)
-                {
-                    streamFinished = true;
-
-                    // Emit finish reason
-                    yield return new ChatResponseUpdate
-                    {
-                        Contents = [],
-                        FinishReason = update.FinishReason,
-                        AdditionalProperties = update.AdditionalProperties
-                    };
-                }
-            }
-
-            // If no function calls were made, or stream finished naturally, we're done
-            if (!completedFunctionCalls.Any() || streamFinished)
-            {
-                break;
-            }
-
-            // If we had function calls, continue with next iteration
-            // Update options for next turn (allow model to not call tools)
-            options = options == null
-                ? new ChatOptions()
-                : new ChatOptions
-                {
-                    Tools = options.Tools,
-                    ToolMode = AutoChatToolMode.Auto, // Allow model to choose
-                    AllowMultipleToolCalls = options.AllowMultipleToolCalls,
-                    MaxOutputTokens = options.MaxOutputTokens,
-                    Temperature = options.Temperature,
-                    TopP = options.TopP,
-                    FrequencyPenalty = options.FrequencyPenalty,
-                    PresencePenalty = options.PresencePenalty,
-                    ResponseFormat = options.ResponseFormat,
-                    Seed = options.Seed,
-                    StopSequences = options.StopSequences,
-                    ModelId = options.ModelId,
-                    AdditionalProperties = options.AdditionalProperties
-                };
-        }
-
-        // Use OperationTracker to get metadata
-        var finalMetadata = operationTracker.GetMetadata();
-        yield return new ChatResponseUpdate
-        {
-            Contents = [],
-            AdditionalProperties = new AdditionalPropertiesDictionary
-            {
-                [Agent.OperationHadFunctionCallsKey] = finalMetadata.HadFunctionCalls,
-                [Agent.OperationFunctionCallsKey] = finalMetadata.FunctionCalls.ToArray(),
-                [Agent.OperationFunctionCallCountKey] = finalMetadata.FunctionCallCount
-            }
-        };
-    }
-}
-#endregion
-
 #region AGUI Event Handling
 
 /// <summary>
@@ -517,6 +666,7 @@ public class StreamingManager
 /// </summary>
 public class AGUIEventHandler : IAGUIAgent
 {
+    private readonly Agent _agent;
     private readonly IChatClient _baseClient;
     private readonly MessageProcessor _messageProcessor;
     private readonly string _agentName;
@@ -524,11 +674,13 @@ public class AGUIEventHandler : IAGUIAgent
     private readonly AGUIEventConverter _eventConverter;
 
     public AGUIEventHandler(
+        Agent agent,
         IChatClient baseClient,
         MessageProcessor messageProcessor,
         string agentName,
         AgentConfig? config = null)
     {
+        _agent = agent ?? throw new ArgumentNullException(nameof(agent));
         _baseClient = baseClient ?? throw new ArgumentNullException(nameof(baseClient));
         _messageProcessor = messageProcessor ?? throw new ArgumentNullException(nameof(messageProcessor));
         _agentName = agentName ?? throw new ArgumentNullException(nameof(agentName));
@@ -553,29 +705,17 @@ public class AGUIEventHandler : IAGUIAgent
             var messages = _eventConverter.ConvertToExtensionsAI(input);
             var chatOptions = _eventConverter.ConvertToExtensionsAIChatOptions(input, _config?.Provider?.DefaultChatOptions);
 
-            // Use MessageProcessor for message preparation
-            var conversation = new Conversation();
-            messages.ToList().ForEach(m => conversation.AddMessage(m));
-            var (effectiveMessages, effectiveOptions) = await _messageProcessor.PrepareMessagesAsync(
-                messages, chatOptions, conversation, _agentName, cancellationToken);
-
             // Generate message ID for this response
             var messageId = Guid.NewGuid().ToString();
 
             // Emit message start
             await events.WriteAsync(AGUIEventConverter.LifecycleEvents.CreateTextMessageStart(messageId), cancellationToken);
 
-            // Use the base client directly for streaming
-            await foreach (var update in _baseClient.GetStreamingResponseAsync(
-                effectiveMessages, effectiveOptions, cancellationToken))
+            // Use the agent's native BaseEvent stream directly
+            await foreach (var baseEvent in _agent.StreamEventsAsync(messages, chatOptions, cancellationToken))
             {
-                // Convert each update to AGUI events
-                var agUIEvents = _eventConverter.ConvertToAGUIEvents(update, messageId, emitBackendToolCalls: true);
-
-                foreach (var eventItem in agUIEvents)
-                {
-                    await events.WriteAsync(eventItem, cancellationToken);
-                }
+                // Write native events directly to the channel
+                await events.WriteAsync(baseEvent, cancellationToken);
             }
 
             // Emit message end
@@ -611,8 +751,8 @@ public class AGUIEventHandler : IAGUIAgent
         var messages = _eventConverter.ConvertToExtensionsAI(input);
         var chatOptions = _eventConverter.ConvertToExtensionsAIChatOptions(input, _config?.Provider?.DefaultChatOptions);
 
-        var selfGeneratedStream = _baseClient.GetStreamingResponseAsync(
-            messages, chatOptions, cancellationToken);
+        var turnResult = await _agent.ExecuteStreamingTurnAsync(messages, chatOptions, cancellationToken);
+        var selfGeneratedStream = turnResult.ResponseStream;
 
         await StreamAGUIResponseAsync(input, selfGeneratedStream, responseStream, cancellationToken);
     }
@@ -630,8 +770,8 @@ public class AGUIEventHandler : IAGUIAgent
         var messages = _eventConverter.ConvertToExtensionsAI(input);
         var chatOptions = _eventConverter.ConvertToExtensionsAIChatOptions(input, _config?.Provider?.DefaultChatOptions);
 
-        var selfGeneratedStream = _baseClient.GetStreamingResponseAsync(
-            messages, chatOptions, cancellationToken);
+        var turnResult = await _agent.ExecuteStreamingTurnAsync(messages, chatOptions, cancellationToken);
+        var selfGeneratedStream = turnResult.ResponseStream;
 
         await StreamToWebSocketAsync(input, selfGeneratedStream, webSocket, cancellationToken);
     }

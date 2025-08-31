@@ -192,8 +192,9 @@ public class Conversation
         UpdateActivity();
         
 
-        // Inject project context for Memory CAG if available
+        // Inject project context AND agent tools
         options = InjectProjectContextIfNeeded(options);
+        options = InjectAgentToolsIfNeeded(options);
         
         // Delegate response generation to orchestrator
         var finalResponse = await _orchestrator.OrchestrateAsync(_messages, _agents, this.Id, options, cancellationToken);
@@ -293,6 +294,45 @@ public class Conversation
         return options;
     }
 
+    /// <summary>
+    /// Merges agent tools into ChatOptions to ensure function calling works
+    /// </summary>
+    private ChatOptions? InjectAgentToolsIfNeeded(ChatOptions? options)
+    {
+        var primaryAgent = _agents.FirstOrDefault();
+        if (primaryAgent?.DefaultOptions?.Tools?.Any() == true)
+        {
+            options ??= new ChatOptions();
+            
+            // Start with existing tools (if any)
+            var existingTools = options.Tools?.ToList() ?? new List<AITool>();
+            var agentTools = primaryAgent.DefaultOptions.Tools;
+            
+            // Add agent tools that aren't already present (avoid duplicates)
+            foreach (var agentTool in agentTools)
+            {
+                if (agentTool is AIFunction af)
+                {
+                    // Check if this tool name already exists
+                    bool alreadyExists = existingTools.OfType<AIFunction>()
+                        .Any(existing => existing.Name == af.Name);
+                    
+                    if (!alreadyExists)
+                    {
+                        existingTools.Add(agentTool);
+                    }
+                }
+            }
+            
+            options.Tools = existingTools;
+            options.ToolMode = ChatToolMode.Auto; // Enable function calling
+            
+            // Successfully injected {agentTools.Count} agent tools. Total tools now: {existingTools.Count}
+        }
+        
+        return options;
+    }
+
 
     /// <summary>
     /// Stream a conversation turn
@@ -307,36 +347,30 @@ public class Conversation
         UpdateActivity();
 
 
-        // Inject project context for Memory CAG if available
-        if (Metadata.TryGetValue("Project", out var projectObj) && projectObj is Project project)
-        {
-            options ??= new ChatOptions();
-            options.AdditionalProperties ??= new AdditionalPropertiesDictionary();
-            options.AdditionalProperties["Project"] = project;
-        }
+        // Inject project context AND agent tools
+        options = InjectProjectContextIfNeeded(options);
+        options = InjectAgentToolsIfNeeded(options);
         
-        // ✅ FIXED: Call the streaming orchestrator directly
-        var streamingResponse = _orchestrator.OrchestrateStreamingAsync(_messages, _agents, this.Id, options, cancellationToken);
-
-        var responseUpdates = new List<ChatResponseUpdate>();
+        // ✅ FIXED: Call the streaming orchestrator and get StreamingTurnResult
+        var turnResult = _orchestrator.OrchestrateStreamingAsync(_messages, _agents, this.Id, options, cancellationToken);
         
-        // Stream the response to caller and collect updates
-        await foreach (var update in streamingResponse.WithCancellation(cancellationToken))
+        // Stream the response to caller
+        await foreach (var update in turnResult.ResponseStream.WithCancellation(cancellationToken))
         {
-            responseUpdates.Add(update);
             yield return update;
         }
         
-        // Construct final response from all updates
-        var finalResponse = ConstructChatResponseFromUpdates(responseUpdates);
+        // ✅ CRUCIAL: Wait for final history and add it to conversation history
+        var finalHistory = await turnResult.FinalHistory;
+        _messages.AddRange(finalHistory);
+        UpdateActivity();
 
-        // ✅ COMMIT response to history FIRST
-        if (finalResponse != null)
+        // ✅ THEN run filters on the completed turn (using last message as the response)
+        var lastMessage = finalHistory.LastOrDefault();
+        if (lastMessage != null)
         {
-            _messages.AddMessages(finalResponse);
-            UpdateActivity();
-
-            // ✅ THEN run filters on the completed turn
+            // Convert the final history messages to a ChatResponse for filter compatibility
+            var finalResponse = new ChatResponse(lastMessage);
             var agentMetadata = CollectAgentMetadata(finalResponse);
             var context = new ConversationFilterContext(this, userMessage, finalResponse, agentMetadata, options, cancellationToken);
             await ApplyConversationFilters(context);
@@ -344,8 +378,19 @@ public class Conversation
     }
 
     /// <summary>
-    /// Initiates an AG-UI streaming response for web clients and writes the SSE events 
-    /// directly to the provided output stream. Respects orchestration strategy and context assembly.
+    /// PLACEHOLDER: Streaming response for web clients using AGUI/SSE format
+    /// 
+    /// PURPOSE: This method should provide Server-Sent Events (SSE) streaming for web clients
+    /// that expect AGUI protocol events (run_started, text_message_content, run_finished, etc.).
+    /// 
+    /// INTENDED FUNCTIONALITY:
+    /// - Convert SendStreamingAsync output to AGUI SSE format
+    /// - Write events directly to HTTP response stream for real-time web UI updates  
+    /// - Handle AGUI tool call events (ToolCallStart, ToolCallArgs, ToolCallEnd)
+    /// - Maintain conversation history like other send methods
+    /// 
+    /// CURRENT STATUS: Placeholder implementation - use SendStreamingAsync instead
+    /// TODO: Implement proper AGUI SSE conversion when SendStreamingAsync is working correctly
     /// </summary>
     public async Task StreamResponseAsync(
         string message,
@@ -353,40 +398,30 @@ public class Conversation
         ChatOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        var userMessage = new ChatMessage(ChatRole.User, message);
-        _messages.Add(userMessage);
-        UpdateActivity();
-
-        if (Metadata.TryGetValue("Project", out var obj) && obj is Project project)
-        {
-            options ??= new ChatOptions();
-            options.AdditionalProperties ??= new AdditionalPropertiesDictionary();
-            options.AdditionalProperties["Project"] = project;
-        }
-
-        var primaryAgent = _agents.FirstOrDefault();
-        if (primaryAgent == null)
-        {
-            throw new InvalidOperationException("No agent is available to handle the streaming request.");
-        }
-
-        var runInput = AGUIEventConverter.CreateRunAgentInput(this, _messages, options);
-        // Call the orchestrator to get the fully orchestrated stream.
-        var orchestratedStream = _orchestrator.OrchestrateStreamingAsync(_messages, _agents, this.Id, options, cancellationToken);
-
-        // Pass the orchestrated stream to the agent's NEW overload.
-        await primaryAgent.StreamAGUIResponseAsync(runInput, orchestratedStream, responseStream, cancellationToken);
-
-        // (Post-turn filter logic remains the same)
-        var agentMetadata = CollectAgentMetadata();
-        var context = new ConversationFilterContext(this, userMessage, new ChatResponse([]), agentMetadata, options, cancellationToken);
-        await ApplyConversationFilters(context);
+        // PLACEHOLDER: For now, just write a simple response to avoid breaking callers
+        using var writer = new StreamWriter(responseStream, leaveOpen: true);
+        await writer.WriteAsync("data: {\"error\":\"StreamResponseAsync not implemented - use SendStreamingAsync\"}\n\n");
+        await writer.FlushAsync();
+        
+        // TODO: Implement AGUI SSE streaming when ready
+        throw new NotImplementedException("StreamResponseAsync is a placeholder. Use SendStreamingAsync for now.");
     }
 
     /// <summary>
-    /// Initiates an AG-UI streaming response and sends the events over a WebSocket connection.
-    /// This is the recommended method for real-time, bi-directional web applications.
-    /// Respects orchestration strategy and context assembly like StreamResponseAsync.
+    /// PLACEHOLDER: WebSocket streaming response for real-time web applications
+    /// 
+    /// PURPOSE: This method should provide WebSocket-based streaming for web clients
+    /// that need bi-directional real-time communication with AGUI protocol support.
+    /// 
+    /// INTENDED FUNCTIONALITY:
+    /// - Convert SendStreamingAsync output to AGUI WebSocket messages
+    /// - Send events over WebSocket connection for real-time updates
+    /// - Support bi-directional communication (client can send interrupts/cancellations)
+    /// - Handle AGUI tool call events and user interactions
+    /// - Maintain conversation history like other send methods
+    /// 
+    /// CURRENT STATUS: Placeholder implementation - use SendStreamingAsync instead  
+    /// TODO: Implement proper AGUI WebSocket streaming when SendStreamingAsync is working correctly
     /// </summary>
     public async Task StreamResponseToWebSocketAsync(
         string message,
@@ -394,34 +429,16 @@ public class Conversation
         ChatOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        var userMessage = new ChatMessage(ChatRole.User, message);
-        _messages.Add(userMessage);
-        UpdateActivity();
-
-        if (Metadata.TryGetValue("Project", out var obj) && obj is Project project)
-        {
-            options ??= new ChatOptions();
-            options.AdditionalProperties ??= new AdditionalPropertiesDictionary();
-            options.AdditionalProperties["Project"] = project;
-        }
-
-        var primaryAgent = _agents.FirstOrDefault();
-        if (primaryAgent == null)
-        {
-            throw new InvalidOperationException("No agent is available to handle the WebSocket streaming request.");
-        }
-
-        var runInput = AGUIEventConverter.CreateRunAgentInput(this, _messages, options);
-        // Call the orchestrator to get the fully orchestrated stream.
-        var orchestratedStream = _orchestrator.OrchestrateStreamingAsync(_messages, _agents, this.Id, options, cancellationToken);
-
-        // Pass the orchestrated stream to the agent's NEW overload.
-        await primaryAgent.StreamToWebSocketAsync(runInput, orchestratedStream, webSocket, cancellationToken);
-
-        // (Post-turn filter logic remains the same)
-        var agentMetadata = CollectAgentMetadata();
-        var context = new ConversationFilterContext(this, userMessage, new ChatResponse([]), agentMetadata, options, cancellationToken);
-        await ApplyConversationFilters(context);
+        // PLACEHOLDER: Send error message over WebSocket to avoid breaking callers
+        var errorMessage = System.Text.Encoding.UTF8.GetBytes("{\"error\":\"StreamResponseToWebSocketAsync not implemented - use SendStreamingAsync\"}");
+        await webSocket.SendAsync(
+            new ArraySegment<byte>(errorMessage), 
+            System.Net.WebSockets.WebSocketMessageType.Text, 
+            true, 
+            cancellationToken);
+        
+        // TODO: Implement AGUI WebSocket streaming when ready
+        throw new NotImplementedException("StreamResponseToWebSocketAsync is a placeholder. Use SendStreamingAsync for now.");
     }
 
 
@@ -518,48 +535,7 @@ public class Conversation
         return string.Join(" ", textContents);
     }
     
-    private static ChatResponse ConstructChatResponseFromUpdates(List<ChatResponseUpdate> updates)
-    {
-        // Collect all content from the updates
-        var allContents = new List<AIContent>();
-        ChatFinishReason? finishReason = null;
-        string? modelId = null;
-        string? responseId = null;
-        DateTimeOffset? createdAt = null;
-        
-        foreach (var update in updates)
-        {
-            if (update.Contents != null)
-            {
-                allContents.AddRange(update.Contents);
-            }
-            
-            if (update.FinishReason != null)
-                finishReason = update.FinishReason;
-                
-            if (update.ModelId != null)
-                modelId = update.ModelId;
-                
-            if (update.ResponseId != null)
-                responseId = update.ResponseId;
-                
-            if (update.CreatedAt != null)
-                createdAt = update.CreatedAt;
-        }
-        
-        // Create a ChatMessage from the collected content
-        var chatMessage = new ChatMessage(ChatRole.Assistant, allContents)
-        {
-            MessageId = responseId
-        };
-        
-        return new ChatResponse(chatMessage)
-        {
-            FinishReason = finishReason,
-            ModelId = modelId,
-            CreatedAt = createdAt
-        };
-    }
+    
     
 
     #endregion
@@ -587,9 +563,13 @@ internal class SimpleOrchestrationWrapper : IChatClient
         return _orchestrator.OrchestrateAsync(messages.ToList(), _agents, _conversationId, options, cancellationToken);
     }
 
-    public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+    public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        return _orchestrator.OrchestrateStreamingAsync(messages.ToList(), _agents, _conversationId, options, cancellationToken);
+        var turnResult = _orchestrator.OrchestrateStreamingAsync(messages.ToList(), _agents, _conversationId, options, cancellationToken);
+        await foreach (var update in turnResult.ResponseStream.WithCancellation(cancellationToken))
+        {
+            yield return update;
+        }
     }
 
     public void Dispose() { }

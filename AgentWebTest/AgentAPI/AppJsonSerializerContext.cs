@@ -29,9 +29,19 @@ using Microsoft.AspNetCore.Mvc;
 [JsonSerializable(typeof(ProjectDto[]))]
 [JsonSerializable(typeof(ConversationDto[]))]
 
+// Streaming response types for AOT compatibility
+[JsonSerializable(typeof(StreamContentResponse))]
+[JsonSerializable(typeof(StreamFinishResponse))]
+[JsonSerializable(typeof(StreamErrorResponse))]
+
 // 🎯 LIBRARY MAGIC: All AG-UI events handled automatically by StreamAGUIResponseAsync()
 // No need to manually list BaseEvent, TextMessageContentEvent, ToolCallStartEvent, etc.
 // The library uses its own AGUIJsonContext.Default for AG-UI events internally
 internal partial class AppJsonSerializerContext : JsonSerializerContext
 {
 }
+
+// Streaming response types for AOT compatibility
+public record StreamContentResponse(string content);
+public record StreamFinishResponse(bool finished, string reason);
+public record StreamErrorResponse(string error);

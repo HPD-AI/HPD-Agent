@@ -29,8 +29,8 @@ public interface IOrchestrator
     /// <param name="conversationId">Optional conversation identifier for stateful orchestrators.</param>
     /// <param name="options">Optional chat settings.</param>
     /// <param name="cancellationToken">A cancellation token.</param>
-    /// <returns>An async enumerable that yields streaming response updates.</returns>
-    IAsyncEnumerable<ChatResponseUpdate> OrchestrateStreamingAsync(
+    /// <returns>A StreamingTurnResult containing both the response stream and final turn history.</returns>
+    StreamingTurnResult OrchestrateStreamingAsync(
         IReadOnlyList<ChatMessage> history,
         IReadOnlyList<Agent> agents,
         string? conversationId = null,

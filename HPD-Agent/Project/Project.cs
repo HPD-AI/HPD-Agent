@@ -32,8 +32,6 @@ public class Project
     /// <summary>Document manager for this project</summary>
     public ProjectDocumentManager DocumentManager { get; }
 
-    /// <summary>The agent instance for this project with memory capability</summary>
-    public Agent? Agent { get; private set; }
 
     // Static factory methods for progressive disclosure
 
@@ -72,20 +70,7 @@ public class Project
     }
 
 
-    /// <summary>Creates a conversation using the project's agent</summary>
-    public Conversation CreateConversation()
-    {
-        if (Agent == null)
-            throw new InvalidOperationException("Agent must be set before creating conversations");
-
-        var conv = new Conversation(Agent);
-        conv.AddMetadata("Project", this);
-        Conversations.Add(conv);
-        UpdateActivity();
-        return conv;
-    }
-
-    // Keep the old method for backward compatibility
+    /// <summary>Creates a conversation with the specified agent</summary>
     public Conversation CreateConversation(Agent agent)
     {
         var conv = new Conversation(agent);

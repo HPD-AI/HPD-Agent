@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using System.Linq;
+using AGUIDotnet.Events;
 
 Console.WriteLine("🚀 HPD-Agent Console Test");
 
@@ -115,19 +116,26 @@ static async Task RunInteractiveChat(Conversation conversation)
 
         try
         {
-            // 🎯 Handle special commands with progressive disclosure
-            var response = input.ToLower() switch
+            Console.Write("AI: ");
+            
+            // 🎯 Handle special commands with streaming
+            switch (input.ToLower())
             {
-                "audio" => await HandleAudioCommand(conversation),
-                "memory" => await conversation.SendAsync("Show me my stored memories"),
-                var cmd when cmd.StartsWith("remember ") => 
-                    await conversation.SendAsync($"Please remember this: {input[9..]}"),
-                _ => await conversation.SendAsync(input)
-            };
-
-            // ✨ Fixed: Proper text extraction from ChatResponse
-            var responseText = ExtractTextFromResponse(response);
-            Console.WriteLine($"AI: {responseText}\n");
+                case "audio":
+                    await HandleAudioCommandStreaming(conversation);
+                    break;
+                case "memory":
+                    await StreamResponse(conversation, "Show me my stored memories");
+                    break;
+                case var cmd when cmd.StartsWith("remember "):
+                    await StreamResponse(conversation, $"Please remember this: {input[9..]}");
+                    break;
+                default:
+                    await StreamResponse(conversation, input);
+                    break;
+            }
+            
+            Console.WriteLine(); // Add newline after streaming
         }
         catch (Exception ex)
         {
@@ -136,16 +144,93 @@ static async Task RunInteractiveChat(Conversation conversation)
     }
 }
 
-// ✨ Helper method to extract text from ChatResponse (fix CS1061)
-static string ExtractTextFromResponse(ChatResponse response)
+// ✨ NEW: Stream response with full transparency and tool visibility
+static async Task StreamResponse(Conversation conversation, string message)
 {
-    var lastMessage = response.Messages.LastOrDefault(m => m.Role == ChatRole.Assistant);
-    var textContent = lastMessage?.Contents.OfType<TextContent>().FirstOrDefault()?.Text;
-    return textContent ?? "No response received.";
+    var agent = GetAgentFromConversation(conversation);
+    
+    if (agent != null)
+    {
+        // Use enhanced streaming with full transparency
+        await StreamWithToolVisibility(agent, message);
+    }
+    else
+    {
+        // Fallback to basic streaming
+        await foreach (var update in conversation.SendStreamingAsync(message))
+        {
+            if (update.Contents?.FirstOrDefault() is TextContent text && !string.IsNullOrEmpty(text.Text))
+            {
+                Console.Write(text.Text);
+            }
+        }
+    }
 }
 
-// ✨ SIMPLIFIED AUDIO: Fixed TextExtractionUtility requirement (fix CS7036)
-static async Task<ChatResponse> HandleAudioCommand(Conversation conversation)
+// ✨ NEW: Complete transparency with native TextReasoningContent support
+static async Task StreamWithToolVisibility(Agent agent, string message)
+{
+    var messages = new[] { new ChatMessage(ChatRole.User, message) };
+    bool inToolCall = false;
+    string currentToolName = "";
+    
+    await foreach (var evt in agent.StreamEventsAsync(messages))
+    {
+        switch (evt)
+        {
+            case StepStartedEvent step:
+                // Show reasoning step indicator (ephemeral, not saved to history)
+                Console.Write($"\n💭 {step.StepName}: ");
+                break;
+                
+            case TextMessageContentEvent text:
+                // Show ALL text content as it streams (reasoning + final content)
+                Console.Write(text.Delta);
+                break;
+                
+            case ToolCallStartEvent toolStart:
+                if (!inToolCall)
+                {
+                    Console.Write($"\n🔧 {toolStart.ToolCallName}...");
+                    currentToolName = toolStart.ToolCallName;
+                    inToolCall = true;
+                }
+                break;
+                
+            case ToolCallEndEvent toolEnd:
+                if (inToolCall)
+                {
+                    Console.Write($" ✅");
+                    inToolCall = false;
+                    currentToolName = "";
+                }
+                break;
+        }
+    }
+}
+
+// Helper to extract agent from conversation
+static Agent? GetAgentFromConversation(Conversation conversation)
+{
+    try
+    {
+        // Use reflection to access private _agents field
+        var field = typeof(Conversation).GetField("_agents", 
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        if (field?.GetValue(conversation) is List<Agent> agents)
+        {
+            return agents.FirstOrDefault();
+        }
+    }
+    catch
+    {
+        // Fallback - couldn't access agents
+    }
+    return null;
+}
+
+// ✨ NEW: Streaming audio handler  
+static async Task HandleAudioCommandStreaming(Conversation conversation)
 {
     Console.Write("Enter audio file path: ");
     var path = Console.ReadLine();
@@ -155,12 +240,15 @@ static async Task<ChatResponse> HandleAudioCommand(Conversation conversation)
         // ✨ Create TextExtractionUtility instance for document processing
         var textExtractor = new TextExtractionUtility();
         
-        // 🎯 Upload audio, get intelligent response
-        return await conversation.SendWithDocumentsAsync(
-            "Please transcribe this audio and provide a helpful response", 
-            [path],
-            textExtractor);
+        // 🎯 Process documents, then stream response
+        var uploads = await conversation.ProcessDocumentUploadsAsync([path], textExtractor);
+        var enhancedMessage = ConversationDocumentHelper.FormatMessageWithDocuments(
+            "Please transcribe this audio and provide a helpful response", uploads);
+        
+        await StreamResponse(conversation, enhancedMessage);
     }
-    
-    return await conversation.SendAsync("No valid audio file provided.");
+    else
+    {
+        await StreamResponse(conversation, "No valid audio file provided.");
+    }
 }

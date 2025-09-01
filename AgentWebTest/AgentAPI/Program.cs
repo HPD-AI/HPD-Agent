@@ -2,6 +2,8 @@ using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
 using System.Diagnostics.CodeAnalysis;
 using System.Collections.Concurrent;
+using A2A;
+using A2A.AspNetCore;
 
 var builder = WebApplication.CreateSlimBuilder(args);
 
@@ -43,6 +45,17 @@ app.UseCors("AllowFrontend");
 
 // 🚀 WEBSOCKET SUPPORT: Enable WebSocket middleware
 app.UseWebSockets();
+
+// 🎯 A2A INTEGRATION: Set up A2A protocol support
+var projectManager = app.Services.GetRequiredService<ProjectManager>();
+var agent = projectManager.CreateAgent();
+var taskManager = new TaskManager(taskStore: new InMemoryTaskStore());
+var a2aHandler = new A2AHandler(agent, taskManager);
+
+var agentPath = "/a2a-agent"; // Define a unique path for the A2A endpoint
+
+// Map the A2A endpoints
+app.MapA2A(taskManager, agentPath);
 
 // 🎯 CLEAN PROJECT API
 var projectsApi = app.MapGroup("/projects").WithTags("Projects");
@@ -331,6 +344,25 @@ public class ProjectManager
     // ✨ CLEAN: Agent creation separated from project creation
     [RequiresUnreferencedCode("AgentBuilder.Build uses reflection for plugin registration")]
     public Agent CreateAgent()
+    {
+        return CreateAndCacheAgent();
+    }
+
+    // Cache the agent instance for A2A integration
+    private Agent? _cachedAgent;
+    
+    [RequiresUnreferencedCode("AgentBuilder.Build uses reflection for plugin registration")]
+    private Agent CreateAndCacheAgent()
+    {
+        if (_cachedAgent != null)
+            return _cachedAgent;
+
+        _cachedAgent = CreateAgentInternal();
+        return _cachedAgent;
+    }
+
+    [RequiresUnreferencedCode("AgentBuilder.Build uses reflection for plugin registration")]
+    private Agent CreateAgentInternal()
     {
         // ✨ Load configuration from appsettings.json
         var config = new ConfigurationBuilder()

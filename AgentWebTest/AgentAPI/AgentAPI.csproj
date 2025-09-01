@@ -13,4 +13,8 @@
     <ProjectReference Include="..\..\HPD-Agent.SourceGenerator\HPD-Agent.SourceGenerator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="A2A.AspNetCore" Version="0.1.0-preview.2" />
+  </ItemGroup>
+
 </Project>

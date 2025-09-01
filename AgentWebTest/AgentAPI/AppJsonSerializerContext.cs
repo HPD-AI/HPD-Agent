@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 using System.Collections.Generic;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.AI;
+using A2A;
 
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
@@ -60,6 +61,17 @@ using Microsoft.Extensions.AI;
 [JsonSerializable(typeof(CustomEvent))]
 [JsonSerializable(typeof(RawEvent))]
 [JsonSerializable(typeof(MessagesSnapshotEvent))]
+
+// A2A protocol types for JSON serialization
+[JsonSerializable(typeof(AgentCard))]
+[JsonSerializable(typeof(AgentSkill))]
+[JsonSerializable(typeof(AgentCapabilities))]
+[JsonSerializable(typeof(AgentTask))]
+[JsonSerializable(typeof(Message))]
+[JsonSerializable(typeof(Artifact))]
+[JsonSerializable(typeof(List<AgentSkill>))]
+[JsonSerializable(typeof(List<string>))]
+[JsonSerializable(typeof(string[]))]
 internal partial class AppJsonSerializerContext : JsonSerializerContext
 {
 }

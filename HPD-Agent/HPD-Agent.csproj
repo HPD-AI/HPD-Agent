@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <!-- Core AI Framework -->
+    <PackageReference Include="A2A" Version="0.1.0-preview.2" />
     <PackageReference Include="Microsoft.Extensions.AI" Version="9.7.1" />
     <PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="9.7.1" />
     <PackageReference Include="Microsoft.Extensions.AI.AzureAIInference" Version="9.7.1-preview.1.25365.4" />
@@ -26,12 +27,11 @@
 
 
     <!-- Dependency Injection & Configuration -->
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.4" />
-    <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.4" />
-    <PackageReference Include="Microsoft.Extensions.Configuration" Version="9.0.4" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="9.0.4" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.6" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.6" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="9.0.6" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="9.0.6" />
 
-    
     <!-- JSON & Serialization (use version required by Extensions.AI) -->
     <PackageReference Include="System.Text.Json" Version="9.0.7" />
     
@@ -49,6 +49,8 @@
     
     <!-- JSON Schema -->
     <PackageReference Include="JsonSchema.Net.Generation" Version="4.1.1" />
+
+
   </ItemGroup>
 
   <ItemGroup>

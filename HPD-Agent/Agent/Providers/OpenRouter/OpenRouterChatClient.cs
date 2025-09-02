@@ -45,7 +45,9 @@ public sealed class OpenRouterChatClient : IChatClient
         
         _jsonOptions = new JsonSerializerOptions
         {
-            TypeInfoResolver = OpenRouterJsonContext.Combined
+            TypeInfoResolver = System.Text.Json.Serialization.Metadata.JsonTypeInfoResolver.Combine(
+                OpenRouterJsonContext.Default, 
+                HPDJsonContext.Default)
         };
         
         _openRouterOptions = new JsonSerializerOptions

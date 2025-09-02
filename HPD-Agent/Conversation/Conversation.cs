@@ -30,6 +30,8 @@ public class Conversation
 
     public IReadOnlyList<ChatMessage> Messages => _messages.AsReadOnly();
     public IReadOnlyDictionary<string, object> Metadata => _metadata.AsReadOnly();
+    /// <summary>Gets the primary agent in this conversation, or null if no agents are present.</summary>
+    public Agent? PrimaryAgent => _agents.FirstOrDefault();
     /// <summary>Add metadata key/value to this conversation.</summary>
     public void AddMetadata(string key, object value)
     {

@@ -197,7 +197,9 @@ public class ValidationError
 [JsonSerializable(typeof(object))]
 [JsonSerializable(typeof(JsonElement))]
 [JsonSerializable(typeof(Dictionary<string, object>))]
+[JsonSerializable(typeof(Dictionary<string, object?>))]
 [JsonSerializable(typeof(IDictionary<string, object>))]
+[JsonSerializable(typeof(IDictionary<string, object?>))]
 [JsonSerializable(typeof(List<string>))]
 [JsonSerializable(typeof(List<int>))]
 [JsonSerializable(typeof(List<double>))]
@@ -209,6 +211,39 @@ public class ValidationError
 [JsonSerializable(typeof(System.Text.Json.Nodes.JsonObject))]
 [JsonSerializable(typeof(System.Text.Json.Nodes.JsonArray))]
 [JsonSerializable(typeof(System.Text.Json.Nodes.JsonValue))]
+
+// --- Agent configuration types ---
+[JsonSerializable(typeof(AgentConfig))]
+[JsonSerializable(typeof(ProviderConfig))]
+[JsonSerializable(typeof(ChatProvider))]
+[JsonSerializable(typeof(InjectedMemoryConfig))]
+[JsonSerializable(typeof(McpConfig))]
+[JsonSerializable(typeof(AudioConfig))]
+[JsonSerializable(typeof(WebSearchConfig))]
+
+// --- Conversation and messaging types ---
+[JsonSerializable(typeof(ChatMessage))]
+[JsonSerializable(typeof(ChatRole))]
+[JsonSerializable(typeof(List<ChatMessage>))]
+[JsonSerializable(typeof(ChatResponse))]
+[JsonSerializable(typeof(ChatOptions))]
+[JsonSerializable(typeof(Dictionary<string, object>))]
+
+// --- Extensions.AI types for conversation support ---
+[JsonSerializable(typeof(Microsoft.Extensions.AI.ChatMessage))]
+[JsonSerializable(typeof(Microsoft.Extensions.AI.ChatRole))]
+[JsonSerializable(typeof(Microsoft.Extensions.AI.ChatOptions))]
+[JsonSerializable(typeof(Microsoft.Extensions.AI.UsageDetails))]
+[JsonSerializable(typeof(Microsoft.Extensions.AI.AdditionalPropertiesDictionary))]
+[JsonSerializable(typeof(Microsoft.Extensions.AI.ChatFinishReason))]
+[JsonSerializable(typeof(Microsoft.Extensions.AI.TextContent))]
+[JsonSerializable(typeof(Microsoft.Extensions.AI.FunctionCallContent))]
+[JsonSerializable(typeof(Microsoft.Extensions.AI.FunctionResultContent))]
+[JsonSerializable(typeof(Microsoft.Extensions.AI.AIContent))]
+[JsonSerializable(typeof(List<Microsoft.Extensions.AI.ChatMessage>))]
+[JsonSerializable(typeof(List<Microsoft.Extensions.AI.AIContent>))]
+[JsonSerializable(typeof(IList<Microsoft.Extensions.AI.ChatMessage>))]
+[JsonSerializable(typeof(IEnumerable<Microsoft.Extensions.AI.ChatMessage>))]
 public partial class HPDJsonContext : JsonSerializerContext
 {
 }

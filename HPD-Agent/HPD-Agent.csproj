@@ -10,6 +10,10 @@
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
     <NoWarn>HPDAUDIO001;MEAI001</NoWarn>
     
+    <!-- Enable Native Library Export for FFI -->
+    <OutputType>Library</OutputType>
+    <EnableUnmanagedCallersOnlyAttribute>true</EnableUnmanagedCallersOnlyAttribute>
+    
     <!-- Enable Swift Interop Support -->
     <EnableSwiftInterop>true</EnableSwiftInterop>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>

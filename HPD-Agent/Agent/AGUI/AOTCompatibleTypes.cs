@@ -185,6 +185,9 @@ public sealed record StepFinishedEvent : BaseEvent
     [JsonPropertyName("stepId")]
     public required string StepId { get; init; }
     
+    [JsonPropertyName("stepName")]
+    public required string StepName { get; init; }
+    
     [JsonPropertyName("result")]
     public JsonElement? Result { get; init; }
 }

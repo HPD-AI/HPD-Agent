@@ -296,10 +296,13 @@ public class Agent : IChatClient
                     {
                         if (content is TextReasoningContent reasoning && !string.IsNullOrEmpty(reasoning.Text))
                         {
+                            // Generate a consistent step ID for start and finish events
+                            var stepId = Guid.NewGuid().ToString();
+                            
                             // Emit step started event for reasoning (visible to UI, NOT saved to history)
                             yield return new StepStartedEvent
                             {
-                                StepId = Guid.NewGuid().ToString(),
+                                StepId = stepId,
                                 StepName = "Reasoning",
                                 Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                                 Type = "STEP_STARTED"
@@ -312,6 +315,15 @@ public class Agent : IChatClient
                                 Delta = reasoning.Text,
                                 Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                                 Type = "TEXT_MESSAGE_CONTENT"
+                            };
+                            
+                            // Emit step finished event for reasoning
+                            yield return new StepFinishedEvent
+                            {
+                                StepId = stepId,
+                                StepName = "Reasoning",
+                                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                                Type = "STEP_FINISHED"
                             };
                             
                             // CRITICAL: Do NOT add reasoning to assistantContents (not saved to history)

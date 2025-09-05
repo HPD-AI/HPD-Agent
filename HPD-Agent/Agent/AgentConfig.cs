@@ -34,6 +34,12 @@ public class AgentConfig
     /// Configuration for web search capabilities.
     /// </summary>
     public WebSearchConfig? WebSearch { get; set; }
+
+    /// <summary>
+    /// Plugin-specific configurations for context-aware function filtering.
+    /// Key is plugin name, value contains dynamic context properties.
+    /// </summary>
+    public Dictionary<string, PluginConfiguration>? PluginConfigurations { get; set; }
 }
 
 #region Supporting Configuration Classes

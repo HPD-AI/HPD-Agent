@@ -24,6 +24,7 @@ mod tests {
                 api_key: Some("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".to_string()),
                 endpoint: Some("https://openrouter.ai/api/v1".to_string()),
             }),
+            plugin_configurations: None,
         };
         
         let config_json = serde_json::to_string(&config).unwrap();
@@ -173,6 +174,7 @@ mod tests {
                 api_key: Some("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".to_string()),
                 endpoint: Some("https://openrouter.ai/api/v1".to_string()),
             }),
+            plugin_configurations: None,
         };
         
         // Verify configuration is correct

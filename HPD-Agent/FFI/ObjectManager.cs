@@ -23,4 +23,14 @@ internal static class ObjectManager
     {
         s_liveObjects.TryRemove(handle, out _);
     }
+
+    public static bool Replace(IntPtr handle, object newObj)
+    {
+        if (s_liveObjects.ContainsKey(handle))
+        {
+            s_liveObjects[handle] = newObj;
+            return true;
+        }
+        return false;
+    }
 }

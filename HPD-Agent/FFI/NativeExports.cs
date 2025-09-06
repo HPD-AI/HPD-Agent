@@ -1,7 +1,10 @@
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Channels;
 using Microsoft.Extensions.AI;
+using AGUIDotnet.Types;
+using AGUIDotnet.Events;
 
 namespace HPD_Agent.FFI;
 
@@ -316,24 +319,51 @@ public static partial class NativeExports
                     throw new InvalidOperationException("No agents in conversation.");
                 }
 
-                // FIXED: Use agent streaming but with conversation's complete message history
-                // Include all conversation history with the new message
+                // Use the full AGUI streaming pipeline with proper lifecycle events
                 var allMessages = conversation.Messages.ToList();
                 allMessages.Add(new ChatMessage(ChatRole.User, message));
                 
-                // Stream using the agent's method with full conversation context
-                await foreach (var responseUpdate in primaryAgent.GetStreamingResponseAsync(allMessages))
+                // Generate IDs for AGUI protocol
+                var messageId = Guid.NewGuid().ToString();
+                var runId = Guid.NewGuid().ToString();
+                var threadId = Guid.NewGuid().ToString();
+                
+                var callbackDelegate = Marshal.GetDelegateForFunctionPointer<StreamCallback>(callback);
+                
+                // 1. Emit RUN_STARTED
+                var runStartedJson = $"{{\"type\":\"RUN_STARTED\",\"runId\":\"{runId}\",\"threadId\":\"{threadId}\",\"timestamp\":{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}}}";
+                var runStartedPtr = Marshal.StringToCoTaskMemAnsi(runStartedJson);
+                callbackDelegate(context, runStartedPtr);
+                Marshal.FreeCoTaskMem(runStartedPtr);
+                
+                // 2. Emit TEXT_MESSAGE_START
+                var messageStartJson = $"{{\"type\":\"TEXT_MESSAGE_START\",\"messageId\":\"{messageId}\",\"timestamp\":{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}}}";
+                var messageStartPtr = Marshal.StringToCoTaskMemAnsi(messageStartJson);
+                callbackDelegate(context, messageStartPtr);
+                Marshal.FreeCoTaskMem(messageStartPtr);
+                
+                // 3. Stream the actual agent response using StreamEventsAsync for full AGUI events
+                await foreach (var baseEvent in primaryAgent.StreamEventsAsync(allMessages, null))
                 {
-                    // Convert ChatResponseUpdate to AGUI event format
-                    string eventJson = ConvertChatResponseUpdateToAGUIEvent(responseUpdate);
+                    // Serialize the full BaseEvent using the agent's serializer
+                    string eventJson = primaryAgent.SerializeEvent(baseEvent);
                     
                     var eventJsonPtr = Marshal.StringToCoTaskMemAnsi(eventJson);
-                    
-                    var callbackDelegate = Marshal.GetDelegateForFunctionPointer<StreamCallback>(callback);
                     callbackDelegate(context, eventJsonPtr);
-                    
                     Marshal.FreeCoTaskMem(eventJsonPtr);
                 }
+                
+                // 4. Emit TEXT_MESSAGE_END
+                var messageEndJson = $"{{\"type\":\"TEXT_MESSAGE_END\",\"messageId\":\"{messageId}\",\"timestamp\":{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}}}";
+                var messageEndPtr = Marshal.StringToCoTaskMemAnsi(messageEndJson);
+                callbackDelegate(context, messageEndPtr);
+                Marshal.FreeCoTaskMem(messageEndPtr);
+                
+                // 5. Emit RUN_FINISHED
+                var runFinishedJson = $"{{\"type\":\"RUN_FINISHED\",\"runId\":\"{runId}\",\"threadId\":\"{threadId}\",\"timestamp\":{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}}}";
+                var runFinishedPtr = Marshal.StringToCoTaskMemAnsi(runFinishedJson);
+                callbackDelegate(context, runFinishedPtr);
+                Marshal.FreeCoTaskMem(runFinishedPtr);
                 
                 var endCallback = Marshal.GetDelegateForFunctionPointer<StreamCallback>(callback);
                 endCallback(context, IntPtr.Zero);

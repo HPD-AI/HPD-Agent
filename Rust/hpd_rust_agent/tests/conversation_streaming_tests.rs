@@ -42,16 +42,61 @@ async fn collect_streaming_response(
             while let Some(event_json) = stream.next().await {
                 chunks.push(event_json.clone());
                 
+                // 🔍 DEBUG: Log every single event received
+                println!("\n🔍 [DEBUG] Raw Event: {}", event_json);
+                
                 // Try to parse the JSON to extract text content
                 if let Ok(event) = serde_json::from_str::<Value>(&event_json) {
                     if let Some(event_type) = event.get("type").and_then(|t| t.as_str()) {
+                        println!("📡 [DEBUG] Event Type: {}", event_type);
+                        
+                        // Log additional event data for debugging
+                        if let Some(timestamp) = event.get("timestamp") {
+                            println!("⏰ [DEBUG] Timestamp: {}", timestamp);
+                        }
+                        if let Some(message_id) = event.get("messageId").or_else(|| event.get("message_id")) {
+                            println!("📝 [DEBUG] Message ID: {}", message_id);
+                        }
+                        if let Some(step_id) = event.get("stepId").or_else(|| event.get("step_id")) {
+                            println!("🔄 [DEBUG] Step ID: {}", step_id);
+                        }
+                        
                         match event_type {
                             "TEXT_MESSAGE_CONTENT" => {
-                                if let Some(content) = event.get("content").and_then(|t| t.as_str()) {
+                                // Try both "content" and "delta" fields for compatibility
+                                let content = event.get("content")
+                                    .or_else(|| event.get("delta"))
+                                    .and_then(|t| t.as_str());
+                                    
+                                if let Some(content) = content {
+                                    println!("💬 [DEBUG] Content Length: {} chars", content.len());
                                     final_response.push_str(content);
                                     print!("{}", content);
                                     std::io::Write::flush(&mut std::io::stdout()).unwrap();
                                 }
+                            }
+                            "RUN_STARTED" => {
+                                println!("🚀 [DEBUG] Run started");
+                            }
+                            "TEXT_MESSAGE_START" => {
+                                println!("📝 [DEBUG] Text message started");
+                            }
+                            "STEP_STARTED" => {
+                                if let Some(step_name) = event.get("stepName").or_else(|| event.get("step_name")) {
+                                    println!("🔄 [DEBUG] Step started: {}", step_name);
+                                }
+                            }
+                            "STEP_FINISHED" => {
+                                if let Some(step_name) = event.get("stepName").or_else(|| event.get("step_name")) {
+                                    println!("✅ [DEBUG] Step finished: {}", step_name);
+                                }
+                            }
+                            "TEXT_MESSAGE_END" => {
+                                println!("🏁 [DEBUG] Text message ended");
+                            }
+                            "RUN_FINISHED" => {
+                                println!("✅ [DEBUG] Run finished");
+                                break;
                             }
                             "STEP_COMPLETED" | "CONVERSATION_ENDED" => {
                                 println!("\n✅ Streaming completed");
@@ -61,24 +106,26 @@ async fn collect_streaming_response(
                                 let error_msg = event.get("message")
                                     .and_then(|m| m.as_str())
                                     .unwrap_or("Unknown error");
+                                println!("❌ [DEBUG] Error event: {}", error_msg);
                                 return Err(format!("Streaming error: {}", error_msg));
                             }
-                            "FUNCTION_CALL_STARTED" => {
-                                if let Some(function_name) = event.get("function_name").and_then(|f| f.as_str()) {
+                            "FUNCTION_CALL_STARTED" | "TOOL_CALL_START" => {
+                                if let Some(function_name) = event.get("function_name").or_else(|| event.get("functionName")).and_then(|f| f.as_str()) {
                                     println!("\n🔧 Function call: {}", function_name);
                                 }
                             }
-                            "FUNCTION_CALL_COMPLETED" => {
+                            "FUNCTION_CALL_COMPLETED" | "TOOL_CALL_END" => {
                                 if let Some(result) = event.get("result") {
                                     println!("✅ Function result: {:?}", result);
                                 }
                             }
                             _ => {
-                                // Other event types
-                                // println!("\n📡 Event: {}", event_type);
+                                println!("🔍 [DEBUG] Other event type: {}", event_type);
                             }
                         }
                     }
+                } else {
+                    println!("⚠️ [DEBUG] Failed to parse event JSON: {}", event_json);
                 }
             }
             

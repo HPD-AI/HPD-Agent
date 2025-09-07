@@ -319,14 +319,10 @@ public static partial class NativeExports
                     throw new InvalidOperationException("No agents in conversation.");
                 }
 
-                // CRITICAL: Add the user message to the conversation's state FIRST
-                var userMessage = new ChatMessage(ChatRole.User, message);
-                conversation.AddMessage(userMessage);
-                
                 // Generate IDs for AGUI protocol
                 var messageId = Guid.NewGuid().ToString();
                 var runId = Guid.NewGuid().ToString();
-                var threadId = Guid.NewGuid().ToString();
+                var threadId = conversation.Id; // Use conversation ID to maintain thread continuity
                 
                 var callbackDelegate = Marshal.GetDelegateForFunctionPointer<StreamCallback>(callback);
                 

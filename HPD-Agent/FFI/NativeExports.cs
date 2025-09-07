@@ -319,9 +319,9 @@ public static partial class NativeExports
                     throw new InvalidOperationException("No agents in conversation.");
                 }
 
-                // Use the full AGUI streaming pipeline with proper lifecycle events
-                var allMessages = conversation.Messages.ToList();
-                allMessages.Add(new ChatMessage(ChatRole.User, message));
+                // CRITICAL: Add the user message to the conversation's state FIRST
+                var userMessage = new ChatMessage(ChatRole.User, message);
+                conversation.AddMessage(userMessage);
                 
                 // Generate IDs for AGUI protocol
                 var messageId = Guid.NewGuid().ToString();
@@ -342,15 +342,28 @@ public static partial class NativeExports
                 callbackDelegate(context, messageStartPtr);
                 Marshal.FreeCoTaskMem(messageStartPtr);
                 
-                // 3. Stream the actual agent response using StreamEventsAsync for full AGUI events
-                await foreach (var baseEvent in primaryAgent.StreamEventsAsync(allMessages, null))
+                // 3. Use streaming with the conversation's actual message history
+                var finalResponseMessages = new List<ChatMessage>();
+                await foreach (var update in conversation.SendStreamingAsync(message, null))
                 {
-                    // Serialize the full BaseEvent using the agent's serializer
-                    string eventJson = primaryAgent.SerializeEvent(baseEvent);
+                    // Convert ChatResponseUpdate to AGUI event and stream it
+                    string eventJson = ConvertChatResponseUpdateToAGUIEvent(update);
                     
                     var eventJsonPtr = Marshal.StringToCoTaskMemAnsi(eventJson);
                     callbackDelegate(context, eventJsonPtr);
                     Marshal.FreeCoTaskMem(eventJsonPtr);
+                    
+                    // Collect response content for final state update
+                    if (update.Contents != null)
+                    {
+                        foreach (var content in update.Contents)
+                        {
+                            if (content is TextContent textContent)
+                            {
+                                // This will be handled by the Conversation.SendStreamingAsync method
+                            }
+                        }
+                    }
                 }
                 
                 // 4. Emit TEXT_MESSAGE_END

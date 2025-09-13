@@ -156,14 +156,34 @@ public class Agent : IChatClient
     {
         var turnHistory = new List<ChatMessage>();
         var historyCompletionSource = new TaskCompletionSource<IReadOnlyList<ChatMessage>>();
-        
+
         // Prepare messages using MessageProcessor
         var conversation = new Conversation(this);
         messages.ToList().ForEach(m => conversation.AddMessage(m));
-        
+
         return PrepareAndStreamEventsAsync(messages, options, turnHistory, historyCompletionSource, cancellationToken);
     }
-    
+
+    /// <summary>
+    /// Executes a streaming turn that returns BaseEvents and final history
+    /// </summary>
+    public async Task<StreamingEventResult> ExecuteStreamingEventsAsync(
+        IEnumerable<ChatMessage> messages,
+        ChatOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        // Create a TaskCompletionSource for the final history
+        var historyCompletionSource = new TaskCompletionSource<IReadOnlyList<ChatMessage>>();
+        var turnHistory = new List<ChatMessage>();
+
+        // Create the event stream
+        var eventStream = PrepareAndStreamEventsAsync(
+            messages, options, turnHistory, historyCompletionSource, cancellationToken);
+
+        // Return both stream and history task
+        return new StreamingEventResult(eventStream, historyCompletionSource.Task);
+    }
+
     private async IAsyncEnumerable<BaseEvent> PrepareAndStreamEventsAsync(
         IEnumerable<ChatMessage> messages,
         ChatOptions? options,
@@ -1089,6 +1109,30 @@ public class StreamingTurnResult
         Task<IReadOnlyList<ChatMessage>> finalHistory)
     {
         ResponseStream = responseStream ?? throw new ArgumentNullException(nameof(responseStream));
+        FinalHistory = finalHistory ?? throw new ArgumentNullException(nameof(finalHistory));
+    }
+}
+
+/// <summary>
+/// Result of streaming BaseEvents with final history tracking
+/// </summary>
+public class StreamingEventResult
+{
+    /// <summary>
+    /// The stream of BaseEvents for full transparency
+    /// </summary>
+    public IAsyncEnumerable<BaseEvent> EventStream { get; }
+
+    /// <summary>
+    /// Task that completes with the final turn history once streaming is done
+    /// </summary>
+    public Task<IReadOnlyList<ChatMessage>> FinalHistory { get; }
+
+    public StreamingEventResult(
+        IAsyncEnumerable<BaseEvent> eventStream,
+        Task<IReadOnlyList<ChatMessage>> finalHistory)
+    {
+        EventStream = eventStream ?? throw new ArgumentNullException(nameof(eventStream));
         FinalHistory = finalHistory ?? throw new ArgumentNullException(nameof(finalHistory));
     }
 }

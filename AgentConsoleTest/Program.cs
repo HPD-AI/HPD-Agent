@@ -147,89 +147,26 @@ static async Task RunInteractiveChat(Conversation conversation)
     }
 }
 
-// ✨ NEW: Stream response with full transparency and tool visibility
 static async Task StreamResponse(Conversation conversation, string message)
 {
-    var agent = GetAgentFromConversation(conversation);
-    
-    if (agent != null)
-    {
-        // Use enhanced streaming with full transparency
-        await StreamWithToolVisibility(agent, message);
-    }
-    else
-    {
-        // Fallback to basic streaming
-        await foreach (var update in conversation.SendStreamingAsync(message))
-        {
-            if (update.Contents?.FirstOrDefault() is TextContent text && !string.IsNullOrEmpty(text.Text))
-            {
-                Console.Write(text.Text);
-            }
-        }
-    }
-}
-
-// ✨ NEW: Complete transparency with native TextReasoningContent support
-static async Task StreamWithToolVisibility(Agent agent, string message)
-{
-    var messages = new[] { new ChatMessage(ChatRole.User, message) };
-    bool inToolCall = false;
-    string currentToolName = "";
-    
-    await foreach (var evt in agent.StreamEventsAsync(messages))
+    await foreach (var evt in conversation.SendStreamingAsync(message))
     {
         switch (evt)
         {
             case StepStartedEvent step:
-                // Show reasoning step indicator (ephemeral, not saved to history)
                 Console.Write($"\n💭 {step.StepName}: ");
                 break;
-                
             case TextMessageContentEvent text:
-                // Show ALL text content as it streams (reasoning + final content)
                 Console.Write(text.Delta);
                 break;
-                
             case ToolCallStartEvent toolStart:
-                if (!inToolCall)
-                {
-                    Console.Write($"\n🔧 {toolStart.ToolCallName}...");
-                    currentToolName = toolStart.ToolCallName;
-                    inToolCall = true;
-                }
+                Console.Write($"\n🔧 {toolStart.ToolCallName}...");
                 break;
-                
             case ToolCallEndEvent toolEnd:
-                if (inToolCall)
-                {
-                    Console.Write($" ✅");
-                    inToolCall = false;
-                    currentToolName = "";
-                }
+                Console.Write(" ✅");
                 break;
         }
     }
-}
-
-// Helper to extract agent from conversation
-static Agent? GetAgentFromConversation(Conversation conversation)
-{
-    try
-    {
-        // Use reflection to access private _agents field
-        var field = typeof(Conversation).GetField("_agents", 
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        if (field?.GetValue(conversation) is List<Agent> agents)
-        {
-            return agents.FirstOrDefault();
-        }
-    }
-    catch
-    {
-        // Fallback - couldn't access agents
-    }
-    return null;
 }
 
 // ✨ NEW: Streaming audio handler  

@@ -12,14 +12,14 @@ public class Conversation
     protected readonly List<ChatMessage> _messages = new();
     protected readonly Dictionary<string, object> _metadata = new();
     // Orchestration strategy and agents
-    private IOrchestrator _orchestrator;
+    private IOrchestrator? _orchestrator;
     /// <summary>
     /// Gets or sets the orchestration strategy for this conversation. Allows runtime switching.
     /// </summary>
-    public IOrchestrator Orchestrator
+    public IOrchestrator? Orchestrator
     {
         get => _orchestrator;
-        set => _orchestrator = value ?? throw new ArgumentNullException(nameof(value));
+        set => _orchestrator = value;
     }
     private readonly List<Agent> _agents;
     // Conversation filter list
@@ -49,9 +49,8 @@ public class Conversation
     public Conversation(IEnumerable<IAiFunctionFilter>? filters = null)
     {
         _filters = filters?.ToList() ?? new List<IAiFunctionFilter>();
-        // Default to direct orchestrator for simple flows
-        this._orchestrator = new DirectOrchestrator();
-        this._agents = new List<Agent>();
+        _orchestrator = null;  // No default orchestrator
+        _agents = new List<Agent>();
     }
 
     /// <summary>
@@ -66,11 +65,20 @@ public class Conversation
     /// <summary>
     /// Creates a conversation with a custom orchestration strategy and agent list
     /// </summary>
-    public Conversation(IOrchestrator orchestrator, IEnumerable<Agent> agents, IEnumerable<IAiFunctionFilter>? filters = null)
+    public Conversation(IOrchestrator? orchestrator, IEnumerable<Agent> agents, IEnumerable<IAiFunctionFilter>? filters = null)
         : this(filters)
     {
-        _orchestrator = orchestrator ?? throw new ArgumentNullException(nameof(orchestrator));
+        // Allow null orchestrator for single-agent scenarios
+        _orchestrator = orchestrator;  // Can be null now
         _agents = agents?.ToList() ?? throw new ArgumentNullException(nameof(agents));
+        
+        // Validate: if multiple agents, orchestrator is required
+        if (_agents.Count > 1 && _orchestrator == null)
+        {
+            throw new ArgumentException(
+                "An orchestrator is required for conversations with multiple agents", 
+                nameof(orchestrator));
+        }
     }
 
     /// <summary>
@@ -79,10 +87,17 @@ public class Conversation
     public Conversation(Project project, IEnumerable<Agent> agents, ConversationDocumentHandling documentHandling, IEnumerable<IAiFunctionFilter>? filters = null)
         : this(filters)
     {
-        _orchestrator = new DirectOrchestrator(); // Default orchestrator
         _agents = agents?.ToList() ?? throw new ArgumentNullException(nameof(agents));
         _uploadStrategy = documentHandling;
         AddMetadata("Project", project);
+        
+        // Validate: if multiple agents, orchestrator is required (will be set later)
+        if (_agents.Count > 1 && _orchestrator == null)
+        {
+            throw new ArgumentException(
+                "An orchestrator is required for conversations with multiple agents. " +
+                "Use the constructor that accepts an IOrchestrator parameter.");
+        }
     }
 
     /// <summary>
@@ -91,9 +106,16 @@ public class Conversation
     public Conversation(IEnumerable<Agent> agents, ConversationDocumentHandling documentHandling, IEnumerable<IAiFunctionFilter>? filters = null)
         : this(filters)
     {
-        _orchestrator = new DirectOrchestrator(); // Default orchestrator
         _agents = agents?.ToList() ?? throw new ArgumentNullException(nameof(agents));
         _uploadStrategy = documentHandling;
+        
+        // Validate: if multiple agents, orchestrator is required (will be set later)
+        if (_agents.Count > 1 && _orchestrator == null)
+        {
+            throw new ArgumentException(
+                "An orchestrator is required for conversations with multiple agents. " +
+                "Use the constructor that accepts an IOrchestrator parameter.");
+        }
     }
 
     // Static factory methods for progressive disclosure
@@ -192,20 +214,41 @@ public class Conversation
         var userMessage = new ChatMessage(ChatRole.User, message);
         _messages.Add(userMessage);
         UpdateActivity();
-        
 
-        // Inject project context AND agent tools
+        // Inject context and tools
         options = InjectProjectContextIfNeeded(options);
         options = InjectAgentToolsIfNeeded(options);
-        
-        // Delegate response generation to orchestrator
-        var finalResponse = await _orchestrator.OrchestrateAsync(_messages, _agents, this.Id, options, cancellationToken);
 
-        // ✅ COMMIT response to history FIRST
+        ChatResponse finalResponse;
+
+        if (_agents.Count == 0)
+        {
+            throw new InvalidOperationException("No agents configured for this conversation");
+        }
+        else if (_agents.Count == 1)
+        {
+            // DIRECT PATH - Single agent, no orchestration needed
+            finalResponse = await _agents[0].GetResponseAsync(_messages, options, cancellationToken);
+        }
+        else
+        {
+            // ORCHESTRATED PATH - Multiple agents require orchestration
+            if (_orchestrator == null)
+            {
+                throw new InvalidOperationException(
+                    $"Multi-agent conversations ({_agents.Count} agents) require an orchestrator. " +
+                    "Please provide an IOrchestrator implementation when creating the conversation.");
+            }
+
+            finalResponse = await _orchestrator.OrchestrateAsync(
+                _messages, _agents, this.Id, options, cancellationToken);
+        }
+
+        // Commit response to history
         _messages.AddMessages(finalResponse);
         UpdateActivity();
 
-        // ✅ THEN run filters on the completed turn
+        // Apply filters
         var agentMetadata = CollectAgentMetadata(finalResponse);
         var context = new ConversationFilterContext(this, userMessage, finalResponse, agentMetadata, options, cancellationToken);
         await ApplyConversationFilters(context);
@@ -266,9 +309,9 @@ public class Conversation
     }
 
     /// <summary>
-    /// Stream a conversation turn
+    /// Stream a conversation turn with full event transparency
     /// </summary>
-    public async IAsyncEnumerable<ChatResponseUpdate> SendStreamingAsync(
+    public async IAsyncEnumerable<BaseEvent> SendStreamingAsync(
         string message,
         ChatOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -277,34 +320,53 @@ public class Conversation
         _messages.Add(userMessage);
         UpdateActivity();
 
-
         // Inject project context AND agent tools
         options = InjectProjectContextIfNeeded(options);
         options = InjectAgentToolsIfNeeded(options);
-        
-        // ✅ FIXED: Call the streaming orchestrator and get StreamingTurnResult
-        var turnResult = await _orchestrator.OrchestrateStreamingAsync(_messages, _agents, this.Id, options, cancellationToken);
-        
-        // Stream the response to caller
-        await foreach (var update in turnResult.ResponseStream.WithCancellation(cancellationToken))
-        {
-            yield return update;
-        }
-        
-        // ✅ CRUCIAL: Wait for final history and add it to conversation history
-        var finalHistory = await turnResult.FinalHistory;
-        _messages.AddRange(finalHistory);
-        UpdateActivity();
 
-        // ✅ THEN run filters on the completed turn (using last message as the response)
-        var lastMessage = finalHistory.LastOrDefault();
-        if (lastMessage != null)
+        if (_agents.Count == 0)
         {
-            // Convert the final history messages to a ChatResponse for filter compatibility
-            var finalResponse = new ChatResponse(lastMessage);
-            var agentMetadata = CollectAgentMetadata(finalResponse);
-            var context = new ConversationFilterContext(this, userMessage, finalResponse, agentMetadata, options, cancellationToken);
-            await ApplyConversationFilters(context);
+            throw new InvalidOperationException("No agents configured for this conversation");
+        }
+        else if (_agents.Count == 1)
+        {
+            // DIRECT PATH - Single agent
+            var result = await _agents[0].ExecuteStreamingEventsAsync(_messages, options, cancellationToken);
+
+            // Stream the events
+            await foreach (var evt in result.EventStream.WithCancellation(cancellationToken))
+            {
+                yield return evt;
+            }
+
+            // Wait for final history and update conversation
+            var finalHistory = await result.FinalHistory;
+            _messages.AddRange(finalHistory);
+            UpdateActivity();
+
+            // Apply filters on the completed turn
+            var lastMessage = finalHistory.LastOrDefault();
+            if (lastMessage != null)
+            {
+                var finalResponse = new ChatResponse(lastMessage);
+                var agentMetadata = CollectAgentMetadata(finalResponse);
+                var context = new ConversationFilterContext(this, userMessage, finalResponse, agentMetadata, options, cancellationToken);
+                await ApplyConversationFilters(context);
+            }
+        }
+        else
+        {
+            // ORCHESTRATED PATH - Multi-agent
+            if (_orchestrator == null)
+            {
+                throw new InvalidOperationException(
+                    $"Multi-agent conversations ({_agents.Count} agents) require an orchestrator.");
+            }
+
+            // For now, throw not implemented since orchestrator needs updating
+            throw new NotImplementedException(
+                "Multi-agent BaseEvent streaming not yet implemented. " +
+                "IOrchestrator needs to be updated to support BaseEvent streaming.");
         }
     }
 

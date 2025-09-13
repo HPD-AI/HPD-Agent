@@ -202,15 +202,15 @@ agentApi.MapGet("/projects/{projectId}/conversations/{conversationId}/ws",
             var userMessage = System.Text.Encoding.UTF8.GetString(buffer, 0, receiveResult.Count);
 
             // Use default streaming and send over WebSocket
-            await foreach (var update in conversation.SendStreamingAsync(userMessage, null, CancellationToken.None))
+            bool isFinished = false;
+            await foreach (var evt in conversation.SendStreamingAsync(userMessage, null, CancellationToken.None))
             {
-                if (update.Contents != null)
+                switch (evt)
                 {
-                    foreach (var content in update.Contents.OfType<TextContent>())
-                    {
-                        if (!string.IsNullOrEmpty(content.Text))
+                    case TextMessageContentEvent textEvent:
+                        if (!string.IsNullOrEmpty(textEvent.Delta))
                         {
-                            var response = new StreamContentResponse(content.Text);
+                            var response = new StreamContentResponse(textEvent.Delta);
                             var message = System.Text.Json.JsonSerializer.Serialize(response, AppJsonSerializerContext.Default.StreamContentResponse);
                             var messageBytes = System.Text.Encoding.UTF8.GetBytes(message);
                             await webSocket.SendAsync(
@@ -219,21 +219,25 @@ agentApi.MapGet("/projects/{projectId}/conversations/{conversationId}/ws",
                                 true,
                                 CancellationToken.None);
                         }
-                    }
-                }
+                        break;
 
-                if (update.FinishReason != null)
-                {
-                    var response = new StreamFinishResponse(true, update.FinishReason.ToString());
-                    var finishMessage = System.Text.Json.JsonSerializer.Serialize(response, AppJsonSerializerContext.Default.StreamFinishResponse);
-                    var finishBytes = System.Text.Encoding.UTF8.GetBytes(finishMessage);
-                    await webSocket.SendAsync(
-                        new ArraySegment<byte>(finishBytes),
-                        System.Net.WebSockets.WebSocketMessageType.Text,
-                        true,
-                        CancellationToken.None);
-                    break;
+                    case StepFinishedEvent:
+                        // Mark as finished when we see a step finished event
+                        isFinished = true;
+                        break;
                 }
+            }
+
+            if (isFinished)
+            {
+                var response = new StreamFinishResponse(true, "Stop");
+                var finishMessage = System.Text.Json.JsonSerializer.Serialize(response, AppJsonSerializerContext.Default.StreamFinishResponse);
+                var finishBytes = System.Text.Encoding.UTF8.GetBytes(finishMessage);
+                await webSocket.SendAsync(
+                    new ArraySegment<byte>(finishBytes),
+                    System.Net.WebSockets.WebSocketMessageType.Text,
+                    true,
+                    CancellationToken.None);
             }
 
             await webSocket.CloseAsync(

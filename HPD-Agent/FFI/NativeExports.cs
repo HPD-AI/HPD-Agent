@@ -339,27 +339,14 @@ public static partial class NativeExports
                 Marshal.FreeCoTaskMem(messageStartPtr);
                 
                 // 3. Use streaming with the conversation's actual message history
-                var finalResponseMessages = new List<ChatMessage>();
-                await foreach (var update in conversation.SendStreamingAsync(message, null))
+                await foreach (var evt in conversation.SendStreamingAsync(message, null))
                 {
-                    // Convert ChatResponseUpdate to AGUI event and stream it
-                    string eventJson = ConvertChatResponseUpdateToAGUIEvent(update);
-                    
+                    // Serialize the BaseEvent directly to JSON
+                    string eventJson = SerializeBaseEvent(evt);
+
                     var eventJsonPtr = Marshal.StringToCoTaskMemAnsi(eventJson);
                     callbackDelegate(context, eventJsonPtr);
                     Marshal.FreeCoTaskMem(eventJsonPtr);
-                    
-                    // Collect response content for final state update
-                    if (update.Contents != null)
-                    {
-                        foreach (var content in update.Contents)
-                        {
-                            if (content is TextContent textContent)
-                            {
-                                // This will be handled by the Conversation.SendStreamingAsync method
-                            }
-                        }
-                    }
                 }
                 
                 // 4. Emit TEXT_MESSAGE_END
@@ -391,32 +378,20 @@ public static partial class NativeExports
     }
 
     /// <summary>
-    /// Converts ChatResponseUpdate to AGUI event format for streaming
+    /// Serializes BaseEvent to JSON for streaming
     /// </summary>
-    private static string ConvertChatResponseUpdateToAGUIEvent(ChatResponseUpdate update)
+    private static string SerializeBaseEvent(BaseEvent evt)
     {
-        // Convert the ChatResponseUpdate to AGUI-style events
-        // This is a simplified conversion - you may need to expand based on your AGUI event format
-        
-        if (!string.IsNullOrEmpty(update.Text))
+        // Use the agent's built-in serialization method for BaseEvents
+        try
         {
-            return $"{{\"type\":\"TEXT_MESSAGE_CONTENT\",\"content\":\"{update.Text.Replace("\"", "\\\"").Replace("\n", "\\n")}\",\"timestamp\":{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}}}";
+            return EventSerialization.SerializeEvent(evt);
         }
-        
-        // Check for function call content in the update's Contents
-        if (update.Contents != null)
+        catch
         {
-            foreach (var content in update.Contents)
-            {
-                if (content is FunctionCallContent functionCall)
-                {
-                    return $"{{\"type\":\"FUNCTION_CALL_STARTED\",\"function_name\":\"{functionCall.Name}\",\"timestamp\":{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}}}";
-                }
-            }
+            // Fallback to simple JSON if serialization fails
+            return $"{{\"type\":\"{evt.Type}\",\"timestamp\":{evt.Timestamp}}}";
         }
-
-        // Default event for other types
-        return $"{{\"type\":\"STEP_STARTED\",\"stepName\":\"Processing\",\"timestamp\":{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}}}";
     }
 
     /// <summary>

@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using System.Collections.Generic;
 using System.Linq;
 using A2A;
+using HPD_Agent.FFI;
 
 /// <summary>
 /// A modern, unified AIFunctionFactory that prioritizes delegate-based invocation 
@@ -249,6 +250,9 @@ public class ValidationError
 
 // --- Project FFI types ---
 [JsonSerializable(typeof(ProjectInfo))]
+// --- Rust plugin types ---
+[JsonSerializable(typeof(RustFunctionInfo))]
+[JsonSerializable(typeof(List<RustFunctionInfo>))]
 public partial class HPDJsonContext : JsonSerializerContext
 {
 }

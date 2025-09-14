@@ -127,7 +127,7 @@ namespace HPD_Agent.FFI
         /// </summary>
         public static PluginExecutionResult ExecuteFunction(string functionName, Dictionary<string, object> arguments)
         {
-            var argsJson = JsonSerializer.Serialize(arguments);
+            var argsJson = JsonSerializer.Serialize(arguments, HPDJsonContext.Default.DictionaryStringObject);
             var ptr = rust_execute_plugin_function(functionName, argsJson);
             
             if (ptr == IntPtr.Zero)
@@ -151,7 +151,7 @@ namespace HPD_Agent.FFI
                     };
                 }
 
-                var response = JsonSerializer.Deserialize<JsonDocument>(json);
+                var response = JsonDocument.Parse(json);
                 return new PluginExecutionResult 
                 { 
                     Success = true, 

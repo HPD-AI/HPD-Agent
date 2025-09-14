@@ -467,6 +467,28 @@ public class AgentBuilder
         _continuationPermissionManager = manager;
         return this;
     }
+
+    /// <summary>
+    /// Adds a Rust function to the agent (used by FFI layer)
+    /// </summary>
+    internal void AddRustFunction(AIFunction function)
+    {
+        // Get or create default chat options
+        if (_config.Provider == null)
+            _config.Provider = new ProviderConfig();
+            
+        if (_config.Provider.DefaultChatOptions == null)
+            _config.Provider.DefaultChatOptions = new ChatOptions();
+            
+        // Add to tools list
+        var tools = _config.Provider.DefaultChatOptions.Tools?.ToList() ?? new List<AITool>();
+        tools.Add(function);
+        _config.Provider.DefaultChatOptions.Tools = tools;
+        
+        // Enable auto tool mode if not already set
+        if (_config.Provider.DefaultChatOptions.ToolMode == null)
+            _config.Provider.DefaultChatOptions.ToolMode = ChatToolMode.Auto;
+    }
 }
 
 #region Audio Extensions

@@ -1,8 +1,11 @@
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using Microsoft.Extensions.AI;
 
 namespace HPD_Agent.FFI;
+
 
 /// <summary>
 /// Delegate for streaming callback from C# to Rust
@@ -10,6 +13,30 @@ namespace HPD_Agent.FFI;
 /// <param name="context">Context pointer passed back to Rust</param>
 /// <param name="eventJsonPtr">Pointer to UTF-8 JSON string of the event, or null to signal end of stream</param>
 public delegate void StreamCallback(IntPtr context, IntPtr eventJsonPtr);
+
+/// <summary>
+/// Matches the Rust RustFunctionInfo structure
+/// </summary>
+public class RustFunctionInfo
+{
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+    
+    [JsonPropertyName("description")]
+    public string Description { get; set; } = string.Empty;
+    
+    [JsonPropertyName("wrapperFunctionName")]
+    public string WrapperFunctionName { get; set; } = string.Empty;
+    
+    [JsonPropertyName("schema")]
+    public string Schema { get; set; } = "{}";
+    
+    [JsonPropertyName("requiresPermission")]
+    public bool RequiresPermission { get; set; }
+    
+    [JsonPropertyName("requiredPermissions")]
+    public List<string> RequiredPermissions { get; set; } = new();
+}
 
 /// <summary>
 /// Static class containing all C# functions exported to Rust via FFI.
@@ -68,7 +95,7 @@ public static partial class NativeExports
     /// Creates an agent with the given configuration and plugins.
     /// </summary>
     /// <param name="configJsonPtr">Pointer to JSON string containing AgentConfig</param>
-    /// <param name="pluginsJsonPtr">Pointer to JSON string containing plugin definitions (currently unused)</param>
+    /// <param name="pluginsJsonPtr">Pointer to JSON string containing plugin definitions</param>
     /// <returns>Handle to the created Agent, or IntPtr.Zero on failure</returns>
     [UnmanagedCallersOnly(EntryPoint = "create_agent_with_plugins")]
     public static IntPtr CreateAgentWithPlugins(IntPtr configJsonPtr, IntPtr pluginsJsonPtr)
@@ -78,20 +105,40 @@ public static partial class NativeExports
             string? configJson = Marshal.PtrToStringUTF8(configJsonPtr);
             if (string.IsNullOrEmpty(configJson)) return IntPtr.Zero;
 
-            // Deserialize the config from Rust
             var agentConfig = JsonSerializer.Deserialize<AgentConfig>(configJson, HPDJsonContext.Default.AgentConfig);
             if (agentConfig == null) return IntPtr.Zero;
 
             var builder = new AgentBuilder(agentConfig);
             
-            // This is a placeholder for where Rust plugins will be added.
-            // builder.AddRustPlugins(...); 
+            // Parse and add Rust plugins
+            string? pluginsJson = Marshal.PtrToStringUTF8(pluginsJsonPtr);
+            if (!string.IsNullOrEmpty(pluginsJson))
+            {
+                try
+                {
+                    var rustFunctions = JsonSerializer.Deserialize(pluginsJson, HPDJsonContext.Default.ListRustFunctionInfo);
+                    if (rustFunctions != null && rustFunctions.Count > 0)
+                    {
+                        foreach (var rustFunc in rustFunctions)
+                        {
+                            var aiFunction = CreateRustFunctionWrapper(rustFunc);
+                            builder.AddRustFunction(aiFunction);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Log but don't fail - agent can still work without Rust functions
+                    Console.WriteLine($"Failed to parse Rust plugins: {ex.Message}");
+                }
+            }
 
             var agent = builder.Build();
             return ObjectManager.Add(agent);
         }
         catch (Exception ex)
         {
+            Console.WriteLine($"Failed to create agent: {ex.Message}");
             return IntPtr.Zero;
         }
     }
@@ -125,6 +172,108 @@ public static partial class NativeExports
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// Creates an AIFunction wrapper that calls back to Rust via FFI
+    /// </summary>
+    private static AIFunction CreateRustFunctionWrapper(RustFunctionInfo rustFunc)
+    {
+        return HPDAIFunctionFactory.Create(
+            async (arguments, cancellationToken) =>
+            {
+                // Convert AIFunctionArguments to a simple dictionary
+                var argsDict = new Dictionary<string, object>();
+                foreach (var kvp in arguments)
+                {
+                    if (kvp.Key != "__raw_json__") // Skip internal keys
+                    {
+                        argsDict[kvp.Key] = kvp.Value;
+                    }
+                }
+                
+                // Execute the Rust function via FFI
+                var result = RustPluginFFI.ExecuteFunction(rustFunc.Name, argsDict);
+                
+                if (!result.Success)
+                {
+                    // Return error as structured response for better AI understanding
+                    return new { error = result.Error ?? "Unknown error", success = false };
+                }
+                
+                // Parse the result
+                if (result.Result != null)
+                {
+                    try
+                    {
+                        using (result.Result)
+                        {
+                            var root = result.Result.RootElement;
+                            
+                            // Check if it's a success/result envelope
+                            if (root.TryGetProperty("success", out var successProp) && 
+                                root.TryGetProperty("result", out var resultProp))
+                            {
+                                if (successProp.GetBoolean())
+                                {
+                                    // Return just the result value
+                                    return resultProp.ValueKind == JsonValueKind.String 
+                                        ? resultProp.GetString() 
+                                        : resultProp.GetRawText();
+                                }
+                                else if (root.TryGetProperty("error", out var errorProp))
+                                {
+                                    return new { error = errorProp.GetString(), success = false };
+                                }
+                            }
+                            
+                            // Return raw response if not in envelope format
+                            return root.GetRawText();
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        return new { error = $"Failed to parse result: {ex.Message}", success = false };
+                    }
+                }
+                
+                return null;
+            },
+            new HPDAIFunctionFactoryOptions
+            {
+                Name = rustFunc.Name,
+                Description = rustFunc.Description,
+                RequiresPermission = rustFunc.RequiresPermission,
+                SchemaProvider = () => 
+                {
+                    try
+                    {
+                        // Parse the schema JSON from Rust
+                        var schemaDoc = JsonDocument.Parse(rustFunc.Schema);
+                        var rootSchema = schemaDoc.RootElement;
+                        
+                        // Check if this is an OpenAPI function calling format
+                        if (rootSchema.TryGetProperty("function", out var functionElement) &&
+                            functionElement.TryGetProperty("parameters", out var parametersElement))
+                        {
+                            // Extract just the parameters schema for Microsoft.Extensions.AI
+                            return parametersElement.Clone();
+                        }
+                        else
+                        {
+                            // Use the schema as-is if it's already in the right format
+                            return rootSchema.Clone();
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        // Log error and fallback to empty object schema
+                        Console.WriteLine($"Warning: Failed to parse schema for {rustFunc.Name}: {ex.Message}");
+                        return JsonDocument.Parse("{}").RootElement;
+                    }
+                }
+            }
+        );
     }
 
     /// <summary>

@@ -13,7 +13,6 @@ static FUNCTION_EXECUTORS: Lazy<Mutex<HashMap<String, AsyncFunctionExecutor>>> =
 /// Register an async function executor
 pub fn register_async_executor(name: String, executor: AsyncFunctionExecutor) {
     if let Ok(mut registry) = FUNCTION_EXECUTORS.lock() {
-        println!("Registered async executor for function: {}", name);
         registry.insert(name, executor);
     }
 }
@@ -65,7 +64,6 @@ static PLUGIN_REGISTRY: Mutex<Vec<PluginRegistration>> = Mutex::new(Vec::new());
 pub fn register_plugin(plugin: PluginRegistration) {
     if let Ok(mut registry) = PLUGIN_REGISTRY.lock() {
         registry.push(plugin);
-        println!("Registered plugin: {}", registry.last().unwrap().name);
     }
 }
 

@@ -12,9 +12,7 @@ async fn main() {
     println!("🔧 Creating agent with OpenRouter + Gemini 2.5 Pro...");
     let agent = AgentBuilder::new("Math Assistant")
         .with_instructions(
-            "You are a helpful math assistant powered by Google Gemini 2.5 Pro. \
-            When users ask math questions, use the available math functions to calculate the answers. \
-            Always explain which function you're using and show the calculation process."
+            "You are a helpful math assistant."
         )
         .with_provider(ProviderConfig {
             provider: ChatProvider::OpenRouter,
@@ -22,8 +20,6 @@ async fn main() {
             api_key: Some("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".to_string()),
             endpoint: Some("https://openrouter.ai/api/v1".to_string()),
         })
-        .with_plugin(MathPlugin { name: "MathPlugin".to_string() })
-        .with_plugin(StringPlugin { operations_count: 0 })
         .with_max_function_calls(5)
         .build();
 
@@ -59,6 +55,7 @@ async fn main() {
     // Test different math problems with the real agent
     let questions = vec![
         "what functions do you have?",
+        "DO you actually see functions available to you? I am trying to see if it was registerd and you can see thems",
         "What is 156 + 847? Please use the add function to calculate this.",
         "Can you calculate 25 squared (25 to the power of 2) using the power function?",
         "What's the square root of 144? Use the sqrt function please.",

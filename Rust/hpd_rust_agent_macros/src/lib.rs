@@ -119,7 +119,8 @@ fn impl_hpd_plugin(args: Punctuated<syn::Expr, Comma>, mut item_impl: ItemImpl) 
         // Implement the Plugin trait
         impl crate::agent::Plugin for #struct_name {
             fn register_functions(&self) {
-                // Functions are auto-registered via #[ctor] - nothing to do here
+                // Register functions only when explicitly called (not automatically)
+                Self::register_with_agent();
             }
             
             fn get_plugin_info(&self) -> Vec<crate::agent::RustFunctionInfo> {
@@ -542,14 +543,17 @@ fn generate_plugin_registration(
             }
         }
         
-        // Auto-register the plugin on module load
-        #[ctor::ctor]
-        fn #plugin_registration_name() {
-            // Register plugin metadata
-            crate::plugins::register_plugin(#struct_name::register_plugin());
-            
-            // Register function executors
-            #(#executor_registrations)*
+        // Manual registration method (called when explicitly requested)
+        impl #struct_name {
+            /// Manually register this plugin and its executors
+            /// This should only be called when the plugin is explicitly added to an agent
+            pub fn register_with_agent() {
+                // Register plugin metadata
+                crate::plugins::register_plugin(Self::register_plugin());
+                
+                // Register function executors
+                #(#executor_registrations)*
+            }
         }
     })
 }

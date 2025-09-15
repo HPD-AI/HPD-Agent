@@ -15,4 +15,3 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 futures-util = "0.3"
 once_cell = "1.19"
 hpd_rust_agent_macros = { path = "../hpd_rust_agent_macros" }
-ctor = "0.2"

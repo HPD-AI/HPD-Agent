@@ -7,7 +7,7 @@ use crate::plugins::PluginRegistration;
 /// Trait that all plugins must implement
 /// This is implemented automatically by the #[hpd_plugin] macro
 pub trait Plugin {
-    /// Register all functions from this plugin with the global registry
+    /// Register all functions from this plugin (called only when explicitly added to an agent)
     fn register_functions(&self);
     
     /// Get metadata about this plugin for C# consumption
@@ -134,9 +134,10 @@ impl AgentBuilder {
     }
 
     /// Add a plugin to this agent
-    /// The plugin will be automatically registered and its functions will be available to the AI
+    /// The plugin will be registered specifically for this agent
     pub fn with_plugin<P: Plugin + 'static>(mut self, plugin: P) -> Self {
-        plugin.register_functions(); // Register with global function registry
+        // Register functions only when explicitly added to an agent
+        plugin.register_functions(); // This will register with global registry for this agent's use
         let info = plugin.get_plugin_info(); // Get metadata for C#
         self.pending_plugins.extend(info);
         self

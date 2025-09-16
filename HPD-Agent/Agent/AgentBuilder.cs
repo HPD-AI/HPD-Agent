@@ -985,7 +985,7 @@ public static class AgentBuilderProviderExtensions
         ChatProvider.OpenAI => "OpenAI:ApiKey",
         ChatProvider.AzureOpenAI => "AzureOpenAI:ApiKey",
         ChatProvider.Ollama => "Ollama:ApiKey",
-        ChatProvider.AppleIntelligence => "AppleIntelligence:ApiKey",
+        // Apple Intelligence removed
         _ => "Unknown:ApiKey" // AOT-safe fallback
     };
 
@@ -995,7 +995,7 @@ public static class AgentBuilderProviderExtensions
         ChatProvider.OpenAI => "OPENAI_API_KEY",
         ChatProvider.AzureOpenAI => "AZURE_OPENAI_API_KEY",
         ChatProvider.Ollama => "OLLAMA_API_KEY",
-        ChatProvider.AppleIntelligence => "APPLE_INTELLIGENCE_API_KEY",
+        // Apple Intelligence removed
         _ => "UNKNOWN_API_KEY" // AOT-safe fallback
     };
 
@@ -1005,7 +1005,7 @@ public static class AgentBuilderProviderExtensions
         ChatProvider.OpenAI => "OPENAI_API_KEY",
         ChatProvider.AzureOpenAI => "AZUREOPENAI_API_KEY",
         ChatProvider.Ollama => "OLLAMA_API_KEY",
-        ChatProvider.AppleIntelligence => "APPLEINTELLIGENCE_API_KEY",
+        // Apple Intelligence removed
         _ => "GENERIC_API_KEY" // AOT-safe fallback
     };
 
@@ -1017,12 +1017,7 @@ public static class AgentBuilderProviderExtensions
         // If no base client provided but provider info is available, create the client
         if (builder.BaseClient == null && builder.Config.Provider != null && !string.IsNullOrEmpty(builder.Config.Provider.ModelName))
         {
-            // Handle Apple Intelligence as a special case since it doesn't need an API key
-            if (builder.Config.Provider.Provider == ChatProvider.AppleIntelligence)
-            {
-                builder.BaseClient = builder.CreateClientFromProvider(builder.Config.Provider.Provider, builder.Config.Provider.ModelName, null);
-            }
-            else
+            // Apple Intelligence removed - handle all providers the same way
             {
                 var apiKey = builder.ResolveApiKey(builder.Config.Provider.Provider, builder.Config.Provider.ApiKey);
                 builder.BaseClient = builder.CreateClientFromProvider(builder.Config.Provider.Provider, builder.Config.Provider.ModelName, apiKey);
@@ -1041,12 +1036,6 @@ public static class AgentBuilderProviderExtensions
                 Temperature = 0.7,
                 MaxTokens = 2048
             }),
-            ChatProvider.AppleIntelligence => new AppleIntelligenceChatClient(
-                new AppleIntelligenceConfig
-                {
-                    ModelId = modelName,
-                    // Add other config options as needed
-                }),
             ChatProvider.OpenAI => new ChatClient(modelName, apiKey!).AsIChatClient(),
             ChatProvider.AzureOpenAI => new ChatCompletionsClient(
                 new Uri("https://{your-resource-name}.openai.azure.com/openai/deployments/{yourDeployment}"),

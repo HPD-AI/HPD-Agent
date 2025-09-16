@@ -9,7 +9,7 @@ public enum ChatProvider
     
     // Custom implementations for Extensions.AI
     OpenRouter,
-    AppleIntelligence,
+    // AppleIntelligence removed
     Ollama
 }
 

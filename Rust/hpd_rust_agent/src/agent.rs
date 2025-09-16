@@ -77,7 +77,7 @@ pub enum ChatProvider {
     OpenAI = 0,
     AzureOpenAI = 1,
     OpenRouter = 2,
-    AppleIntelligence = 3,
+    // AppleIntelligence removed
     Ollama = 4,
 }
 

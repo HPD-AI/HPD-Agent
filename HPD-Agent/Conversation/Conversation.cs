@@ -39,6 +39,12 @@ public class Conversation
     public void AddConversationFilter(IConversationFilter filter)
         => _conversationFilters.Add(filter);
     public string Id { get; } = Guid.NewGuid().ToString();
+    
+    // Debug constructor to track conversation creation
+    static Conversation()
+    {
+        // This will help us see when conversations are created
+    }
     public DateTime CreatedAt { get; } = DateTime.UtcNow;
     public DateTime LastActivity { get; private set; } = DateTime.UtcNow;
 
@@ -241,10 +247,15 @@ public class Conversation
     // Helper method to avoid code duplication
     private ChatOptions? InjectProjectContextIfNeeded(ChatOptions? options)
     {
+        options ??= new ChatOptions();
+        options.AdditionalProperties ??= new AdditionalPropertiesDictionary();
+        
+        // Always inject conversation ID
+        options.AdditionalProperties["ConversationId"] = Id;
+        
+        // Inject project if available
         if (Metadata.TryGetValue("Project", out var obj) && obj is Project project)
         {
-            options ??= new ChatOptions();
-            options.AdditionalProperties ??= new AdditionalPropertiesDictionary();
             options.AdditionalProperties["Project"] = project;
         }
         return options;
@@ -282,13 +293,15 @@ public class Conversation
             };
         }
 
+        // Create a channel to allow multiple consumers of the event stream
+        var channel = System.Threading.Channels.Channel.CreateUnbounded<BaseEvent>();
+        var writer = channel.Writer;
+        var reader = channel.Reader;
+        
         // Create TaskCompletionSource for the final result
         var resultTcs = new TaskCompletionSource<ConversationTurnResult>();
         
-        // Create the event stream
-        var eventStream = SendStreamingEventsAsync(message, options, orchestrator, documentPaths, cancellationToken);
-        
-        // Start a task to consume events and build the final result
+        // Start a task to produce events and build the final result
         _ = Task.Run(async () => 
         {
             var startTime = DateTime.UtcNow;
@@ -299,12 +312,14 @@ public class Conversation
             
             try
             {
-                // Consume the stream to capture metadata
-                await foreach (var evt in eventStream.WithCancellation(cancellationToken))
+                // Generate and broadcast events while capturing metadata
+                await foreach (var evt in SendStreamingEventsAsync(message, options, orchestrator, documentPaths, cancellationToken))
                 {
-                    // The event stream processing already handles adding messages to conversation
-                    // We just need to wait for it to complete
+                    await writer.WriteAsync(evt, cancellationToken);
                 }
+                
+                // Close the writer to signal completion
+                writer.Complete();
                 
                 // After stream completes, extract the final response from conversation history
                 var lastMessages = _messages.TakeLast(10).ToList();
@@ -337,13 +352,23 @@ public class Conversation
             }
             catch (Exception ex)
             {
+                writer.Complete(ex);
                 resultTcs.SetException(ex);
             }
         }, cancellationToken);
         
+        // Create an async enumerable from the channel reader
+        async IAsyncEnumerable<BaseEvent> eventStream([EnumeratorCancellation] CancellationToken ct = default)
+        {
+            await foreach (var evt in reader.ReadAllAsync(ct))
+            {
+                yield return evt;
+            }
+        }
+        
         return new ConversationStreamingResult
         {
-            EventStream = eventStream,
+            EventStream = eventStream(cancellationToken),
             FinalResult = resultTcs.Task
         };
     }

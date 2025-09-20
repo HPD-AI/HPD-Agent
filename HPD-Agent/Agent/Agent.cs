@@ -221,7 +221,19 @@ public class Agent : IChatClient
     {
         // Generate IDs for this run
         var runId = Guid.NewGuid().ToString();
-        var threadId = "default"; // TODO: Get from conversation context
+        
+        // Extract conversation ID from options or generate new one
+        string conversationId;
+        if (options?.AdditionalProperties?.TryGetValue("ConversationId", out var convIdObj) == true && convIdObj is string convId)
+        {
+            conversationId = convId;
+        }
+        else
+        {
+            conversationId = Guid.NewGuid().ToString();
+        }
+        
+        var threadId = conversationId; // Use conversation ID as thread ID
         var messageId = Guid.NewGuid().ToString();
 
         // Emit mandatory RunStarted event

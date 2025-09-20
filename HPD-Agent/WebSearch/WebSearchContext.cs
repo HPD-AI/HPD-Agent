@@ -13,8 +13,8 @@ public class WebSearchContext : IPluginMetadataContext
     public bool HasTavilyProvider { get; private set; }
     public bool HasBraveProvider { get; private set; }
     public bool HasBingProvider { get; private set; }
-    public string DefaultProvider { get; private set; }
-    public string ConfiguredProviders { get; private set; }
+    public string DefaultProvider { get; private set; } = string.Empty;
+    public string ConfiguredProviders { get; private set; } = string.Empty;
 
     public WebSearchContext(IEnumerable<IWebSearchConnector> connectors, string? defaultProvider = null)
     {

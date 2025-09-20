@@ -10,6 +10,7 @@ using Azure.AI.Inference;
 using Azure;
 using OllamaSharp;
 using System.Diagnostics;
+using Microsoft.Extensions.Caching.Distributed;
 
 /// <summary>
 /// Builder for creating dual interface agents with sophisticated capabilities
@@ -45,6 +46,9 @@ public class AgentBuilder
 
     // Permission system integration
     private ContinuationPermissionManager? _continuationPermissionManager;
+
+    // Microsoft.Extensions.AI middleware pipeline
+    private readonly List<Func<IChatClient, IServiceProvider, IChatClient>> _middlewares = new();
 
     /// <summary>
     /// Creates a new builder with a default configuration.
@@ -126,6 +130,106 @@ public class AgentBuilder
         return this;
     }
 
+    /// <summary>
+    /// Adds distributed caching to reduce redundant LLM calls
+    /// </summary>
+    public AgentBuilder WithCaching(IDistributedCache? cache = null, Action<DistributedCachingChatClient>? configure = null)
+    {
+        _middlewares.Add((client, services) =>
+        {
+            var cacheInstance = cache ?? services.GetService<IDistributedCache>();
+            if (cacheInstance == null)
+            {
+                _logger?.CreateLogger<AgentBuilder>().LogWarning("Caching requested but no IDistributedCache available");
+                return client;
+            }
+            var cachingClient = new DistributedCachingChatClient(client, cacheInstance);
+            configure?.Invoke(cachingClient);
+            return cachingClient;
+        });
+        return this;
+    }
+
+    /// <summary>
+    /// Adds message reduction to handle long conversation histories
+    /// Note: This method will be fully functional when Microsoft.Extensions.AI includes the ReducingChatClient
+    /// </summary>
+    public AgentBuilder WithMessageReducer(object? reducer = null, Action<object>? configure = null)
+    {
+        _middlewares.Add((client, services) =>
+        {
+            // TODO: Implement when ReducingChatClient is available in Microsoft.Extensions.AI
+            _logger?.CreateLogger<AgentBuilder>().LogWarning("Message reduction not yet implemented - ReducingChatClient not available");
+            return client;
+        });
+        return this;
+    }
+
+    /// <summary>
+    /// Adds comprehensive logging for all operations (chat + functions)
+    /// </summary>
+    public AgentBuilder WithLogging(
+        ILoggerFactory? loggerFactory = null, 
+        bool includeChats = true,
+        bool includeFunctions = true,
+        Action<LoggingChatClient>? configureChat = null,
+        Action<LoggingAiFunctionFilter>? configureFunction = null)
+    {
+        // Add chat logging middleware
+        if (includeChats)
+        {
+            _middlewares.Add((client, services) =>
+            {
+                var factory = loggerFactory ?? _logger ?? services.GetService<ILoggerFactory>();
+                if (factory == null || factory == NullLoggerFactory.Instance)
+                {
+                    return client; // Skip if no real logger available
+                }
+                var loggingClient = new LoggingChatClient(client, factory.CreateLogger<LoggingChatClient>());
+                configureChat?.Invoke(loggingClient);
+                return loggingClient;
+            });
+        }
+        
+        // Add function logging filter using the same approach as permission filters
+        if (includeFunctions)
+        {
+            var factory = loggerFactory ?? _logger;
+            var functionFilter = new LoggingAiFunctionFilter(factory);
+            configureFunction?.Invoke(functionFilter);
+            
+            // Use the same registration approach as permission filters
+            this.WithFilter(functionFilter);
+        }
+        
+        return this;
+    }
+
+    /// <summary>
+    /// Adds function invocation logging for advanced users who want explicit control
+    /// </summary>
+    public AgentBuilder WithFunctionLogging(ILoggerFactory? loggerFactory = null, Action<LoggingAiFunctionFilter>? configure = null)
+    {
+        var factory = loggerFactory ?? _logger;
+        var filter = new LoggingAiFunctionFilter(factory);
+        configure?.Invoke(filter);
+        
+        // Use the same registration approach as permission filters
+        return this.WithFilter(filter);
+    }
+
+    /// <summary>
+    /// Adds options configuration middleware
+    /// </summary>
+    public AgentBuilder WithOptionsConfiguration(Action<ChatOptions> configureOptions)
+    {
+        _middlewares.Add((client, services) =>
+        {
+            return new ConfigureOptionsChatClient(client, configureOptions);
+        });
+        return this;
+    }
+
 
     /// <summary>
     /// Sets the agent name
@@ -176,6 +280,21 @@ public class AgentBuilder
 
         if (_baseClient == null)
             throw new InvalidOperationException("Base client must be provided using WithBaseClient() or WithProvider()");
+
+        // Apply middleware pipeline in order
+        var clientToUse = _baseClient;
+        if (_middlewares.Count > 0)
+        {
+            var serviceProvider = _serviceProvider ?? EmptyServiceProvider.Instance;
+            foreach (var middleware in _middlewares)
+            {
+                clientToUse = middleware(clientToUse, serviceProvider);
+                if (clientToUse == null)
+                {
+                    throw new InvalidOperationException("Middleware returned null client");
+                }
+            }
+        }
 
         // Register Memory Injected Memory prompt filter if configured
         if (_config.InjectedMemory != null && MemoryInjectedManager != null)
@@ -246,7 +365,7 @@ public class AgentBuilder
         // Create agent using the new, cleaner constructor with AgentConfig
         var agent = new Agent(
             _config,
-            _baseClient,
+            clientToUse,
             mergedOptions, // Pass the merged options directly
             _promptFilters,
             _scopedFilterManager,
@@ -945,3 +1064,12 @@ internal static class AgentBuilderHelpers
 }
 
 #endregion
+
+/// <summary>
+/// Empty service provider for middleware when no service provider is available
+/// </summary>
+internal class EmptyServiceProvider : IServiceProvider
+{
+    public static readonly EmptyServiceProvider Instance = new();
+    public object? GetService(Type serviceType) => null;
+}

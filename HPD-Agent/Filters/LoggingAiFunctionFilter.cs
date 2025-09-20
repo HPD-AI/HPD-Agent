@@ -1,12 +1,22 @@
 using System;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
 
 /// <summary>
 /// Simple logging filter for orchestration-level AI function calls. Logs input arguments before execution and result after execution.
 /// </summary>
 public class LoggingAiFunctionFilter : IAiFunctionFilter
 {
+    private readonly ILogger? _logger;
+
+    /// <summary>
+    /// Initializes a new instance with optional logger factory
+    /// </summary>
+    public LoggingAiFunctionFilter(ILoggerFactory? loggerFactory = null)
+    {
+        _logger = loggerFactory?.CreateLogger<LoggingAiFunctionFilter>();
+    }
     public async Task InvokeAsync(
         AiFunctionContext context,
         Func<AiFunctionContext, Task> next)
@@ -15,15 +25,30 @@ public class LoggingAiFunctionFilter : IAiFunctionFilter
         var functionName = context.ToolCallRequest?.FunctionName ?? "<unknown>";
         var args = context.ToolCallRequest?.Arguments ?? context.Arguments;
         var conversationId = context.Conversation?.Id ?? "<no-conversation>";
-        Console.WriteLine($"[LOG][PRE] Conversation: {conversationId} Function: {functionName}\nArgs: {FormatArgs(args)}");
+        
+        var preMessage = $"[LOG][PRE] Conversation: {conversationId} Function: {functionName}\nArgs: {FormatArgs(args)}";
+        LogMessage(preMessage);
 
         // Invoke next filter or target function
         await next(context);
 
         // Post-invocation logging
         var result = context.Result;
-        Console.WriteLine($"[LOG][POST] Conversation: {conversationId} Function: {functionName} Result: {FormatResult(result)}");
-        Console.WriteLine(new string('-', 50));
+        var postMessage = $"[LOG][POST] Conversation: {conversationId} Function: {functionName} Result: {FormatResult(result)}";
+        LogMessage(postMessage);
+        LogMessage(new string('-', 50));
+    }
+
+    private void LogMessage(string message)
+    {
+        if (_logger != null)
+        {
+            _logger.LogInformation(message);
+        }
+        else
+        {
+            Console.WriteLine(message);
+        }
     }
 
     private string FormatArgs(object? args)

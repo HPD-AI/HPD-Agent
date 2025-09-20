@@ -168,7 +168,7 @@ public static partial class NativeExports
 
             return null;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             return null;
         }
@@ -186,7 +186,7 @@ public static partial class NativeExports
                 var argsDict = new Dictionary<string, object>();
                 foreach (var kvp in arguments)
                 {
-                    if (kvp.Key != "__raw_json__") // Skip internal keys
+                    if (kvp.Key != "__raw_json__" && kvp.Value != null) // Skip internal keys and null values
                     {
                         argsDict[kvp.Key] = kvp.Value;
                     }
@@ -300,16 +300,18 @@ public static partial class NativeExports
             var agentHandles = new IntPtr[agentCount];
             Marshal.Copy(agentHandlesPtr, agentHandles, 0, agentCount);
 
-            var agents = agentHandles.Select(ObjectManager.Get<Agent>).Where(a => a != null).ToList();
+            var agents = agentHandles.Select(ObjectManager.Get<Agent>).OfType<Agent>().ToList();
             if (!agents.Any())
             {
                 throw new InvalidOperationException("No valid agents provided to create conversation.");
             }
 
-            var conversation = new Conversation(agents.First()); // Simplified for now
+            var firstAgent = agents.First();
+
+            var conversation = new Conversation(firstAgent); // Simplified for now
             return ObjectManager.Add(conversation);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             return IntPtr.Zero;
         }
@@ -350,7 +352,7 @@ public static partial class NativeExports
             
             return Marshal.StringToCoTaskMemAnsi(responseText);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             return IntPtr.Zero; // Return null pointer to indicate an error.
         }
@@ -573,7 +575,7 @@ public static partial class NativeExports
             var project = Project.Create(name, storageDirectory);
             return ObjectManager.Add(project);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             return IntPtr.Zero;
         }
@@ -597,7 +599,7 @@ public static partial class NativeExports
             var agentHandles = new IntPtr[agentCount];
             Marshal.Copy(agentHandlesPtr, agentHandles, 0, agentCount);
 
-            var agents = agentHandles.Select(ObjectManager.Get<Agent>).Where(a => a != null).ToList();
+            var agents = agentHandles.Select(ObjectManager.Get<Agent>).OfType<Agent>().ToList();
             if (!agents.Any())
             {
                 throw new InvalidOperationException("No valid agents provided to create conversation.");
@@ -609,7 +611,7 @@ public static partial class NativeExports
 
             return ObjectManager.Add(conversation);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             return IntPtr.Zero;
         }
@@ -651,7 +653,7 @@ public static partial class NativeExports
             string json = JsonSerializer.Serialize(projectInfo, HPDJsonContext.Default.ProjectInfo);
             return Marshal.StringToCoTaskMemAnsi(json);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             return IntPtr.Zero;
         }

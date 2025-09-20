@@ -68,8 +68,8 @@ static async Task<(Project, Conversation, Agent)> CreateAIAssistant(IConfigurati
     // ✨ BUILD AGENT FROM CONFIG + FLUENT PLUGINS/FILTERS
     var agent = new AgentBuilder(agentConfig)
         .WithAPIConfiguration(config) // Pass appsettings.json for API key resolution
-        .WithFilter(new LoggingAiFunctionFilter())
         .WithTavilyWebSearch()
+        .WithLogging()
         .WithInjectedMemory(opts => opts
             .WithStorageDirectory("./agent-memory-storage")
             .WithMaxTokens(6000))

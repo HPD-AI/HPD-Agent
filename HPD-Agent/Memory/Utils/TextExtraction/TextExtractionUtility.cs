@@ -306,7 +306,7 @@ public sealed class TextExtractionUtility : IAsyncDisposable
     public void RegisterDecoderFactory(Func<ITextDecoder> factory, Type decoderType, string[] extensions, string[] mimeTypes, int priority = 0)
         => _registry.RegisterDecoderFactory(factory, decoderType, extensions, mimeTypes, priority);
 
-    public async Task<TextExtractionResult> ExtractTextAsync(string urlOrFilePath, CancellationToken ct = default)
+    public Task<TextExtractionResult> ExtractTextAsync(string urlOrFilePath, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(urlOrFilePath); 
         
@@ -328,7 +328,7 @@ public sealed class TextExtractionUtility : IAsyncDisposable
             if (!fi.Exists) 
             { 
                 _log.LogWarning("File not found: {FilePath}", urlOrFilePath); 
-                return Failure(fi.Name, urlOrFilePath, $"File not found: {urlOrFilePath}"); 
+                return Task.FromResult(Failure(fi.Name, urlOrFilePath, $"File not found: {urlOrFilePath}")); 
             }
             
             fileName = fi.Name;
@@ -346,7 +346,7 @@ public sealed class TextExtractionUtility : IAsyncDisposable
         if (!decoderFactories.Any())
         {
             _log.LogError("No decoder factories found for lookup key '{LookupKey}' (input: '{Input}')", resolvedExtensionLookupKey, fileName);
-            return Failure(fileName, urlOrFilePath, $"No decoder configuration found for lookup key '{resolvedExtensionLookupKey}'.");
+            return Task.FromResult(Failure(fileName, urlOrFilePath, $"No decoder configuration found for lookup key '{resolvedExtensionLookupKey}'."));
         }
 
         _log.LogDebug("Found {Count} decoder factories for '{Input}'. Types (in order of attempt): {FactoryTypes}", 
@@ -421,7 +421,7 @@ public sealed class TextExtractionUtility : IAsyncDisposable
         }
         _log.LogWarning("{Type} '{Name}': All attempted decoders failed. Tried: {TriedDecoders}. Errors: {AllErrors}", 
             isUrl ? "URL" : "File", fileName, string.Join(", ", triedDecoderDescriptions), string.Join("; ", decoderErrorMessages));
-        return Failure(fileName, urlOrFilePath, $"All attempted decoders failed. Errors: {string.Join("; ", decoderErrorMessages)}");
+        return Task.FromResult(Failure(fileName, urlOrFilePath, $"All attempted decoders failed. Errors: {string.Join("; ", decoderErrorMessages)}"));
     }
 
     public async Task<IReadOnlyList<TextExtractionResult>> ExtractTextBatchAsync(IEnumerable<string> urlsOrFilePaths, CancellationToken ct = default)
@@ -476,7 +476,8 @@ public sealed class TextExtractionUtility : IAsyncDisposable
         const int bomAwarePriority = 120;
         _registry.RegisterDecoder<BomAwareDecoder>(allTextExtensions, plainTextMimeTypeArray, bomAwarePriority);
 
-        const int specificBinaryPriority = 100;
+    // Commented out specific binary decoders
+    // const int specificBinaryPriority = 100;
     // _registry.RegisterDecoder<CustomMsWordDecoder>(officeDocExtensions, new[] { MimeTypes.MsWordX, MimeTypes.MsWord }, specificBinaryPriority);
     // _registry.RegisterDecoder<CustomMsPowerPointDecoder>(officePptExtensions, new[] { MimeTypes.MsPowerPointX, MimeTypes.MsPowerPoint }, specificBinaryPriority);
     // _registry.RegisterDecoder<CustomMsExcelDecoder>(officeXlsExtensions, new[] { MimeTypes.MsExcelX, MimeTypes.MsExcel }, specificBinaryPriority);

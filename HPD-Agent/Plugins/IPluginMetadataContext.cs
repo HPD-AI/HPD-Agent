@@ -4,7 +4,7 @@ public interface IPluginMetadataContext
     /// <summary>
     /// Gets a property value by name with optional default
     /// </summary>
-    T GetProperty<T>(string propertyName, T defaultValue = default);
+    T? GetProperty<T>(string propertyName, T? defaultValue = default);
 
     /// <summary>
     /// Checks if a property exists

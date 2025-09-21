@@ -11,6 +11,7 @@ using Azure;
 using OllamaSharp;
 using System.Diagnostics;
 using Microsoft.Extensions.Caching.Distributed;
+using System.Text.Json;
 
 /// <summary>
 /// Builder for creating dual interface agents with sophisticated capabilities
@@ -65,6 +66,50 @@ public class AgentBuilder
     public AgentBuilder(AgentConfig config)
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
+    }
+
+    /// <summary>
+    /// Creates a new builder from a JSON configuration file.
+    /// </summary>
+    /// <param name="jsonFilePath">Path to the JSON file containing AgentConfig data.</param>
+    /// <exception cref="ArgumentException">Thrown when the file path is null or empty.</exception>
+    /// <exception cref="FileNotFoundException">Thrown when the specified file does not exist.</exception>
+    /// <exception cref="JsonException">Thrown when the JSON is invalid or cannot be deserialized.</exception>
+    public AgentBuilder(string jsonFilePath)
+    {
+        if (string.IsNullOrWhiteSpace(jsonFilePath))
+            throw new ArgumentException("JSON file path cannot be null or empty.", nameof(jsonFilePath));
+
+        if (!File.Exists(jsonFilePath))
+            throw new FileNotFoundException($"Configuration file not found: {jsonFilePath}");
+
+        try
+        {
+            var jsonContent = File.ReadAllText(jsonFilePath);
+            _config = JsonSerializer.Deserialize<AgentConfig>(jsonContent, HPDJsonContext.Default.AgentConfig)
+                ?? throw new JsonException("Failed to deserialize AgentConfig from JSON - result was null.");
+        }
+        catch (JsonException)
+        {
+            throw; // Re-throw JSON exceptions as-is
+        }
+        catch (Exception ex)
+        {
+            throw new JsonException($"Failed to load or parse configuration file '{jsonFilePath}': {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>
+    /// Creates a new builder from a JSON configuration file.
+    /// </summary>
+    /// <param name="jsonFilePath">Path to the JSON file containing AgentConfig data.</param>
+    /// <returns>A new AgentBuilder instance configured from the JSON file.</returns>
+    /// <exception cref="ArgumentException">Thrown when the file path is null or empty.</exception>
+    /// <exception cref="FileNotFoundException">Thrown when the specified file does not exist.</exception>
+    /// <exception cref="JsonException">Thrown when the JSON is invalid or cannot be deserialized.</exception>
+    public static AgentBuilder FromJsonFile(string jsonFilePath)
+    {
+        return new AgentBuilder(jsonFilePath);
     }
 
     /// <summary>
@@ -881,6 +926,38 @@ public static class AgentBuilderProviderExtensions
     {
         builder._configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         return builder;
+    }
+
+    /// <summary>
+    /// Sets the configuration source for reading API keys and other settings from a JSON file
+    /// </summary>
+    /// <param name="builder">The agent builder.</param>
+    /// <param name="jsonFilePath">Path to the JSON configuration file (e.g., appsettings.json)</param>
+    /// <param name="optional">Whether the file is optional (default: false)</param>
+    /// <param name="reloadOnChange">Whether to reload configuration when file changes (default: true)</param>
+    /// <exception cref="ArgumentException">Thrown when the file path is null or empty.</exception>
+    /// <exception cref="FileNotFoundException">Thrown when the specified file does not exist and optional is false.</exception>
+    public static AgentBuilder WithAPIConfiguration(this AgentBuilder builder, string jsonFilePath, bool optional = false, bool reloadOnChange = true)
+    {
+        if (string.IsNullOrWhiteSpace(jsonFilePath))
+            throw new ArgumentException("JSON file path cannot be null or empty.", nameof(jsonFilePath));
+
+        if (!optional && !File.Exists(jsonFilePath))
+            throw new FileNotFoundException($"Configuration file not found: {jsonFilePath}");
+
+        try
+        {
+            var configuration = new ConfigurationBuilder()
+                .AddJsonFile(jsonFilePath, optional: optional, reloadOnChange: reloadOnChange)
+                .Build();
+
+            builder._configuration = configuration;
+            return builder;
+        }
+        catch (Exception ex) when (!(ex is ArgumentException || ex is FileNotFoundException))
+        {
+            throw new InvalidOperationException($"Failed to load configuration from '{jsonFilePath}': {ex.Message}", ex);
+        }
     }
 
     /// <summary>

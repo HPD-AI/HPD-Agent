@@ -44,6 +44,7 @@ public class AiFunctionContext :  FunctionInvocationContext
     {
         Conversation = conversation ?? throw new ArgumentNullException(nameof(conversation));
         ToolCallRequest = toolCallRequest ?? throw new ArgumentNullException(nameof(toolCallRequest));
+        Arguments = new AIFunctionArguments(toolCallRequest.Arguments);
     }
 }
 
@@ -64,6 +65,6 @@ public interface IAiFunctionFilter
 /// </summary>
 public class ToolCallRequest
 {
-    public string FunctionName { get; set; }
-    public IDictionary<string, object?> Arguments { get; set; }
+    public required string FunctionName { get; set; }
+    public required IDictionary<string, object?> Arguments { get; set; }
 }

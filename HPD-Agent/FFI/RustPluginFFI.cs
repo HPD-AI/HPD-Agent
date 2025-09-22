@@ -47,7 +47,7 @@ namespace HPD_Agent.FFI
                 if (string.IsNullOrEmpty(json))
                     return new PluginRegistry { Plugins = new List<PluginInfo>() };
 
-                return JsonSerializer.Deserialize<PluginRegistry>(json) ?? 
+                return JsonSerializer.Deserialize(json, HPDJsonContext.Default.PluginRegistry) ?? 
                        new PluginRegistry { Plugins = new List<PluginInfo>() };
             }
             finally
@@ -91,7 +91,7 @@ namespace HPD_Agent.FFI
                 if (string.IsNullOrEmpty(json))
                     return new PluginStats();
 
-                return JsonSerializer.Deserialize<PluginStats>(json) ?? new PluginStats();
+                return JsonSerializer.Deserialize(json, HPDJsonContext.Default.PluginStats) ?? new PluginStats();
             }
             finally
             {
@@ -114,7 +114,7 @@ namespace HPD_Agent.FFI
                 if (string.IsNullOrEmpty(json))
                     return new List<string>();
 
-                return JsonSerializer.Deserialize<List<string>>(json) ?? new List<string>();
+                return JsonSerializer.Deserialize(json, HPDJsonContext.Default.ListString) ?? new List<string>();
             }
             finally
             {

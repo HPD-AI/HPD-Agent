@@ -143,7 +143,7 @@ public class Agent : IChatClient
 
 
 
-    public async Task<StreamingTurnResult> ExecuteStreamingTurnAsync(
+    public Task<StreamingTurnResult> ExecuteStreamingTurnAsync(
         IEnumerable<ChatMessage> messages,
         ChatOptions? options = null,
         CancellationToken cancellationToken = default)
@@ -156,7 +156,7 @@ public class Agent : IChatClient
         var responseStream = RunAgenticLoopCore(messages, options, turnHistory, historyCompletionSource, cancellationToken);
 
         // Return the result containing both stream and history task
-        return new StreamingTurnResult(responseStream, historyCompletionSource.Task);
+        return Task.FromResult(new StreamingTurnResult(responseStream, historyCompletionSource.Task));
     }
 
     /// <inheritdoc />
@@ -247,8 +247,6 @@ public class Agent : IChatClient
 
         // Collect all response updates to build final history - cannot use try-catch with yield
         var responseUpdates = new List<ChatResponseUpdate>();
-        bool hasError = false;
-        Exception? caughtException = null;
         
         // Prepare messages using MessageProcessor
         var conversation = new Conversation(this);

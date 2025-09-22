@@ -26,11 +26,6 @@ public class AgentConfig
     public McpConfig? Mcp { get; set; }
 
     /// <summary>
-    /// Configuration for audio capabilities (TTS/STT).
-    /// </summary>
-    public AudioConfig? Audio { get; set; }
-
-    /// <summary>
     /// Configuration for web search capabilities.
     /// </summary>
     public WebSearchConfig? WebSearch { get; set; }
@@ -72,16 +67,6 @@ public class McpConfig
 {
     public string ManifestPath { get; set; } = string.Empty;
     public MCPOptions? Options { get; set; }
-}
-
-/// <summary>
-/// Holds all audio-related configurations.
-/// </summary>
-public class AudioConfig
-{
-    public ElevenLabsConfig? ElevenLabs { get; set; }
-    public AzureSpeechConfig? AzureSpeech { get; set; }
-    public AudioCapabilityOptions? Options { get; set; }
 }
 
 /// <summary>

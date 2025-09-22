@@ -33,7 +33,7 @@ else
 await RunInteractiveChat(conversation);
 
 // ✨ NEW CONFIG-FIRST APPROACH: Using AgentConfig pattern
-static async Task<(Project, Conversation, Agent)> CreateAIAssistant(IConfiguration config)
+static Task<(Project, Conversation, Agent)> CreateAIAssistant(IConfiguration config)
 {
     // ✨ CREATE AGENT CONFIG OBJECT FIRST
     var agentConfig = new AgentConfig
@@ -58,10 +58,6 @@ static async Task<(Project, Conversation, Agent)> CreateAIAssistant(IConfigurati
         Mcp = new McpConfig
         {
             ManifestPath = "./MCP.json"
-        },
-        Audio = new AudioConfig
-        {
-            // ElevenLabs will be configured from environment va`les
         }
     };
 
@@ -90,7 +86,7 @@ var project = Project.Create("AI Chat Session");
     Console.WriteLine($"🧠 Memory: {agentConfig.InjectedMemory?.StorageDirectory}");
     Console.WriteLine($"🔧 Max Function Calls: {agentConfig.MaxFunctionCalls}");
     
-    return (project, conversation, agent);
+    return Task.FromResult((project, conversation, agent));
 }
 
 // ✨ CLEAN CHAT LOOP: Fixed response handling

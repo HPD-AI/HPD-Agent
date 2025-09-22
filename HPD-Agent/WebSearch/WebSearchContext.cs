@@ -62,7 +62,7 @@ public class WebSearchContext : IPluginMetadataContext
     }
 
     #region IPluginMetadataContext Implementation
-    public T GetProperty<T>(string propertyName, T defaultValue = default!)
+    public T? GetProperty<T>(string propertyName, T? defaultValue = default)
     {
         object? value = propertyName.ToLowerInvariant() switch
         {

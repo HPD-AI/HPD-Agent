@@ -1113,31 +1113,7 @@ internal static class AgentBuilderHelpers
         return config;
     }
 
-    /// <summary>
-    /// Creates ElevenLabs configuration from environment variables
-    /// </summary>
-    internal static ElevenLabsConfig CreateElevenLabsConfigFromEnvironment()
-    {
-        return new ElevenLabsConfig
-        {
-            ApiKey = GetEnvironmentVariable("ELEVENLABS_API_KEY"),
-            DefaultVoiceId = GetEnvironmentVariable("ELEVENLABS_VOICE_ID") ?? "21m00Tcm4TlvDq8ikWAM", // Default voice
-            BaseUrl = GetEnvironmentVariable("ELEVENLABS_BASE_URL") ?? "https://api.elevenlabs.io"
-        };
-    }
-
-    /// <summary>
-    /// Creates Azure Speech configuration from environment variables
-    /// </summary>
-    internal static AzureSpeechConfig CreateAzureConfigFromEnvironment()
-    {
-        return new AzureSpeechConfig
-        {
-            ApiKey = GetEnvironmentVariable("AZURE_SPEECH_KEY"),
-            Region = GetEnvironmentVariable("AZURE_SPEECH_REGION") ?? "eastus",
-            DefaultVoice = GetEnvironmentVariable("AZURE_SPEECH_VOICE") ?? "en-US-AriaNeural"
-        };
-    }
+    
 }
 
 #endregion

@@ -15,8 +15,6 @@ public sealed class OpenRouterChatClient : IChatClient
     private readonly Uri _apiEndpoint;
     private readonly HttpClient _httpClient;
     private readonly OpenRouterConfig _config;
-    private readonly JsonSerializerOptions _jsonOptions;
-    private readonly JsonSerializerOptions _openRouterOptions;
 
     /// <summary>Initializes a new instance of the <see cref="OpenRouterChatClient"/> class.</summary>
     /// <param name="config">The configuration for OpenRouter.</param>
@@ -42,18 +40,6 @@ public sealed class OpenRouterChatClient : IChatClient
         _httpClient = httpClient ?? new HttpClient();
         
         _metadata = new ChatClientMetadata("openrouter", _apiEndpoint, config.ModelName);
-        
-        _jsonOptions = new JsonSerializerOptions
-        {
-            TypeInfoResolver = System.Text.Json.Serialization.Metadata.JsonTypeInfoResolver.Combine(
-                OpenRouterJsonContext.Default, 
-                HPDJsonContext.Default)
-        };
-        
-        _openRouterOptions = new JsonSerializerOptions
-        {
-            TypeInfoResolver = OpenRouterJsonContext.Default
-        };
     }
 
     /// <inheritdoc />
@@ -64,7 +50,7 @@ public sealed class OpenRouterChatClient : IChatClient
             throw new ArgumentNullException(nameof(messages));
 
         var requestPayload = CreateRequestPayload(messages, options, stream: false);
-        var content = new StringContent(JsonSerializer.Serialize(requestPayload, _openRouterOptions), Encoding.UTF8, "application/json");
+        var content = new StringContent(JsonSerializer.Serialize(requestPayload, OpenRouterJsonContext.Default.OpenRouterRequest), Encoding.UTF8, "application/json");
         
         var request = new HttpRequestMessage(HttpMethod.Post, _apiEndpoint)
         {
@@ -82,7 +68,7 @@ public sealed class OpenRouterChatClient : IChatClient
         }
 
         var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        var result = JsonSerializer.Deserialize<OpenRouterResponse>(json, _openRouterOptions);
+        var result = JsonSerializer.Deserialize(json, OpenRouterJsonContext.Default.OpenRouterResponse);
         
         if (result == null)
         {
@@ -129,7 +115,7 @@ public sealed class OpenRouterChatClient : IChatClient
             throw new ArgumentNullException(nameof(messages));
 
         var requestPayload = CreateRequestPayload(messages, options, stream: true);
-        var content = new StringContent(JsonSerializer.Serialize(requestPayload, _openRouterOptions), Encoding.UTF8, "application/json");
+        var content = new StringContent(JsonSerializer.Serialize(requestPayload, OpenRouterJsonContext.Default.OpenRouterRequest), Encoding.UTF8, "application/json");
         
         var request = new HttpRequestMessage(HttpMethod.Post, _apiEndpoint) { Content = content };
         AddOpenRouterHeaders(request);
@@ -163,7 +149,7 @@ public sealed class OpenRouterChatClient : IChatClient
             OpenRouterResponse? chunk;
             try
             {
-                chunk = JsonSerializer.Deserialize<OpenRouterResponse>(line, _openRouterOptions);
+                chunk = JsonSerializer.Deserialize(line, OpenRouterJsonContext.Default.OpenRouterResponse);
             }
             catch (JsonException)
             {
@@ -209,7 +195,7 @@ public sealed class OpenRouterChatClient : IChatClient
                 }
                 else
                 {
-                    reasoningText = JsonSerializer.Serialize(delta.Reasoning.Value, _jsonOptions);
+                    reasoningText = JsonSerializer.Serialize(delta.Reasoning.Value, OpenRouterJsonContext.Default.JsonElement);
                 }
                 
                 if (!string.IsNullOrEmpty(reasoningText))
@@ -228,7 +214,7 @@ public sealed class OpenRouterChatClient : IChatClient
                     if (toolCall.Function?.Name != null)
                     {
                         var arguments = toolCall.Function.Arguments ?? "{}";
-                        var args = JsonSerializer.Deserialize<Dictionary<string, object?>>(arguments, _jsonOptions);
+                        var args = JsonSerializer.Deserialize(arguments, HPDJsonContext.Default.DictionaryStringObject);
                         update.Contents.Add(new FunctionCallContent(
                             toolCall.Id ?? Guid.NewGuid().ToString("N")[..8],
                             toolCall.Function.Name,
@@ -486,7 +472,7 @@ public sealed class OpenRouterChatClient : IChatClient
             {
                 try
                 {
-                    request.Reasoning = JsonSerializer.Deserialize<OpenRouterReasoning>(jsonElement.GetRawText(), _openRouterOptions);
+                    request.Reasoning = JsonSerializer.Deserialize(jsonElement.GetRawText(), OpenRouterJsonContext.Default.OpenRouterReasoning);
                 }
                 catch (JsonException)
                 {
@@ -525,7 +511,7 @@ public sealed class OpenRouterChatClient : IChatClient
                 {
                     Name = fc.Name,
                     // FIX: Use AOT-safe serialization
-                    Arguments = JsonSerializer.Serialize(fc.Arguments, _jsonOptions)
+                    Arguments = JsonSerializer.Serialize(fc.Arguments, HPDJsonContext.Default.DictionaryStringObject)
                 }
             }).ToList();
         }
@@ -537,7 +523,7 @@ public sealed class OpenRouterChatClient : IChatClient
             // For function results, we need to set the role to "tool"
             result.Role = "tool";
             // FIX: Use AOT-safe serialization for object
-            result.Content = JsonSerializer.Serialize(functionResults.Result, _jsonOptions);
+            result.Content = JsonSerializer.Serialize(functionResults.Result, HPDJsonContext.Default.Object);
             result.ToolCallId = functionResults.CallId;
         }
         

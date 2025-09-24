@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -98,6 +99,7 @@ public static partial class NativeExports
     /// <param name="pluginsJsonPtr">Pointer to JSON string containing plugin definitions</param>
     /// <returns>Handle to the created Agent, or IntPtr.Zero on failure</returns>
     [UnmanagedCallersOnly(EntryPoint = "create_agent_with_plugins")]
+    [RequiresUnreferencedCode("Agent creation uses plugin registration methods that require reflection.")]
     public static IntPtr CreateAgentWithPlugins(IntPtr configJsonPtr, IntPtr pluginsJsonPtr)
     {
         try
@@ -143,36 +145,6 @@ public static partial class NativeExports
         }
     }
 
-    /// <summary>
-    /// Helper method to get a plugin Type by its name.
-    /// This searches loaded assemblies for the plugin type.
-    /// </summary>
-    private static Type? GetPluginTypeByName(string pluginTypeName)
-    {
-        try
-        {
-            // First try exact type name
-            var type = Type.GetType(pluginTypeName);
-            if (type != null) return type;
-
-            // Search through loaded assemblies
-            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                type = assembly.GetType(pluginTypeName);
-                if (type != null) return type;
-
-                // Also try just the class name (without namespace)
-                type = assembly.GetTypes().FirstOrDefault(t => t.Name == pluginTypeName);
-                if (type != null) return type;
-            }
-
-            return null;
-        }
-        catch (Exception)
-        {
-            return null;
-        }
-    }
 
     /// <summary>
     /// Creates an AIFunction wrapper that calls back to Rust via FFI
@@ -180,7 +152,7 @@ public static partial class NativeExports
     private static AIFunction CreateRustFunctionWrapper(RustFunctionInfo rustFunc)
     {
         return HPDAIFunctionFactory.Create(
-            async (arguments, cancellationToken) =>
+            (arguments, cancellationToken) =>
             {
                 // Convert AIFunctionArguments to a simple dictionary
                 var argsDict = new Dictionary<string, object>();
@@ -198,7 +170,7 @@ public static partial class NativeExports
                 if (!result.Success)
                 {
                     // Return error as structured response for better AI understanding
-                    return new { error = result.Error ?? "Unknown error", success = false };
+                    return Task.FromResult<object?>(new { error = result.Error ?? "Unknown error", success = false });
                 }
                 
                 // Parse the result
@@ -217,27 +189,27 @@ public static partial class NativeExports
                                 if (successProp.GetBoolean())
                                 {
                                     // Return just the result value
-                                    return resultProp.ValueKind == JsonValueKind.String 
+                                    return Task.FromResult<object?>(resultProp.ValueKind == JsonValueKind.String 
                                         ? resultProp.GetString() 
-                                        : resultProp.GetRawText();
+                                        : resultProp.GetRawText());
                                 }
                                 else if (root.TryGetProperty("error", out var errorProp))
                                 {
-                                    return new { error = errorProp.GetString(), success = false };
+                                    return Task.FromResult<object?>(new { error = errorProp.GetString(), success = false });
                                 }
                             }
                             
                             // Return raw response if not in envelope format
-                            return root.GetRawText();
+                            return Task.FromResult<object?>(root.GetRawText());
                         }
                     }
                     catch (Exception ex)
                     {
-                        return new { error = $"Failed to parse result: {ex.Message}", success = false };
+                        return Task.FromResult<object?>(new { error = $"Failed to parse result: {ex.Message}", success = false });
                     }
                 }
                 
-                return null;
+                return Task.FromResult<object?>(null);
             },
             new HPDAIFunctionFactoryOptions
             {
@@ -517,7 +489,7 @@ public static partial class NativeExports
                     if (!string.IsNullOrEmpty(text))
                     {
                         // Send plain text content as simple JSON
-                        var contentJson = $"{{\"type\":\"CONTENT\",\"text\":{System.Text.Json.JsonSerializer.Serialize(text)}}}";
+                        var contentJson = $"{{\"type\":\"CONTENT\",\"text\":{System.Text.Json.JsonSerializer.Serialize(text, HPDJsonContext.Default.String)}}}";
                         var contentPtr = Marshal.StringToCoTaskMemAnsi(contentJson);
                         callbackDelegate(context, contentPtr);
                         Marshal.FreeCoTaskMem(contentPtr);
@@ -530,7 +502,7 @@ public static partial class NativeExports
             catch (Exception ex)
             {
                 var callbackDelegate = Marshal.GetDelegateForFunctionPointer<StreamCallback>(callback);
-                string errorJson = $"{{\"type\":\"ERROR\", \"message\":{System.Text.Json.JsonSerializer.Serialize(ex.Message)}}}";
+                string errorJson = $"{{\"type\":\"ERROR\", \"message\":{System.Text.Json.JsonSerializer.Serialize(ex.Message, HPDJsonContext.Default.String)}}}";
                 var errorJsonPtr = Marshal.StringToCoTaskMemAnsi(errorJson);
                 callbackDelegate(context, errorJsonPtr);
                 Marshal.FreeCoTaskMem(errorJsonPtr);

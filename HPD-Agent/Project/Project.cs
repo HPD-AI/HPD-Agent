@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using System.Threading.Tasks;
 using System.Threading;
 using System.Text.Json.Serialization;
+using HPD_Agent.TextExtraction;
 
 /// <summary>
 /// Project information for FFI/API responses.

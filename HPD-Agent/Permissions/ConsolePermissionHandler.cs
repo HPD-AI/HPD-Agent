@@ -3,57 +3,11 @@ using System.Linq;
 using System.Threading.Tasks;
 
 /// <summary>
-/// Default console-based permission handler for command-line applications.
+/// Console-based permission handler for continuation permissions only.
+/// Function-level permissions are now handled by ConsolePermissionFilter.
 /// </summary>
 public class ConsolePermissionHandler : IPermissionHandler
 {
-    public async Task<PermissionDecision> RequestFunctionPermissionAsync(FunctionPermissionRequest request)
-    {
-        // Offload the blocking Console.ReadLine to a background thread
-        return await Task.Run(() =>
-        {
-            Console.WriteLine($"\n[PERMISSION REQUIRED]");
-            Console.WriteLine($"Function: {request.FunctionName}");
-            Console.WriteLine($"Description: {request.FunctionDescription}");
-
-            if (request.Arguments.Any())
-            {
-                Console.WriteLine("Arguments:");
-                foreach (var arg in request.Arguments)
-                {
-                    Console.WriteLine($"  {arg.Key}: {arg.Value}");
-                }
-            }
-
-            Console.WriteLine("\nChoose an option:");
-            Console.WriteLine("  [A]llow once");
-            Console.WriteLine("  [D]eny once");
-            Console.WriteLine("  [Y] Always allow (Global)");
-            Console.WriteLine("  [N] Never allow (Global)");
-            Console.Write("Choice: ");
-
-            var response = Console.ReadLine()?.ToUpper();
-
-            var decision = response switch
-            {
-                "A" => new PermissionDecision { Approved = true },
-                "D" => new PermissionDecision { Approved = false },
-                "Y" => new PermissionDecision 
-                { 
-                    Approved = true,
-                    Storage = new PermissionStorage { Choice = PermissionChoice.AlwaysAllow, Scope = PermissionScope.Global }
-                },
-                "N" => new PermissionDecision 
-                { 
-                    Approved = false,
-                    Storage = new PermissionStorage { Choice = PermissionChoice.AlwaysDeny, Scope = PermissionScope.Global }
-                },
-                _ => new PermissionDecision { Approved = false } // Default to deny
-            };
-
-            return decision;
-        });
-    }
 
     public async Task<ContinuationDecision> RequestContinuationPermissionAsync(ContinuationPermissionRequest request)
     {

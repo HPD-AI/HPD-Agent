@@ -33,7 +33,7 @@ public class AgentBuilder
     internal readonly ScopedFilterManager _scopedFilterManager = new();
     internal readonly BuilderScopeContext _scopeContext = new();
     internal readonly List<IPromptFilter> _promptFilters = new();
-    internal IAiFunctionFilter? _permissionFilter; // Dedicated permission filter
+    internal readonly List<IPermissionFilter> _permissionFilters = new(); // Permission filters
 
     internal readonly Dictionary<Type, object> _providerConfigs = new();
     internal IServiceProvider? _serviceProvider;
@@ -414,7 +414,7 @@ public class AgentBuilder
             mergedOptions, // Pass the merged options directly
             _promptFilters,
             _scopedFilterManager,
-            _permissionFilter,
+            _permissionFilters,
             _continuationPermissionManager);
 
 
@@ -572,13 +572,9 @@ public class AgentBuilder
     internal List<IPromptFilter> PromptFilters => _promptFilters;
 
     /// <summary>
-    /// Internal access to permission filter for extension methods
+    /// Internal access to permission filters for extension methods
     /// </summary>
-    internal IAiFunctionFilter? PermissionFilter
-    {
-        get => _permissionFilter;
-        set => _permissionFilter = value;
-    }
+    internal List<IPermissionFilter> PermissionFilters => _permissionFilters;
 
     /// <summary>
     /// Internal access to MCP client manager for extension methods
@@ -666,14 +662,21 @@ public static class AgentBuilderFilterExtensions
     /// </summary>
     public static AgentBuilder WithFilter(this AgentBuilder builder, IAiFunctionFilter filter)
     {
-        if (filter is FunctionPermissionFilter pFilter)
-        {
-            // Store permission filter separately
-            builder.PermissionFilter = pFilter;
-        }
-        else if (filter != null)
+        if (filter != null)
         {
             builder.ScopedFilterManager.AddFilter(filter, builder.ScopeContext.CurrentScope, builder.ScopeContext.CurrentTarget);
+        }
+        return builder;
+    }
+
+    /// <summary>
+    /// Adds a permission filter instance
+    /// </summary>
+    public static AgentBuilder WithPermissionFilter(this AgentBuilder builder, IPermissionFilter filter)
+    {
+        if (filter != null)
+        {
+            builder.PermissionFilters.Add(filter);
         }
         return builder;
     }

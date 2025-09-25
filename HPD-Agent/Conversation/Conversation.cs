@@ -2,6 +2,7 @@ using Microsoft.Extensions.AI;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Runtime.CompilerServices;
+using HPD_Agent.TextExtraction;
 
 /// <summary>
 /// Clean conversation management built on Microsoft.Extensions.AI

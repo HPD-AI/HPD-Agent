@@ -37,7 +37,7 @@ public class Agent : IChatClient
         ChatOptions? mergedOptions,
         List<IPromptFilter> promptFilters,
         ScopedFilterManager scopedFilterManager,
-        IAiFunctionFilter? permissionFilter = null,
+        IReadOnlyList<IPermissionFilter>? permissionFilters = null,
         ContinuationPermissionManager? continuationPermissionManager = null)
     {
         Config = config ?? throw new ArgumentNullException(nameof(config));
@@ -46,7 +46,7 @@ public class Agent : IChatClient
         _scopedFilterManager = scopedFilterManager ?? throw new ArgumentNullException(nameof(scopedFilterManager));
         _maxFunctionCalls = config.MaxFunctionCalls;
         _messageProcessor = new MessageProcessor(config.SystemInstructions, mergedOptions ?? config.Provider?.DefaultChatOptions, promptFilters);
-        _functionCallProcessor = new FunctionCallProcessor(scopedFilterManager, permissionFilter, new List<IAiFunctionFilter>(), _continuationPermissionManager, config.MaxFunctionCalls);
+        _functionCallProcessor = new FunctionCallProcessor(scopedFilterManager, permissionFilters, new List<IAiFunctionFilter>(), _continuationPermissionManager, config.MaxFunctionCalls);
         _agentTurn = new AgentTurn(_baseClient);
         _toolScheduler = new ToolScheduler(_functionCallProcessor);
         _aguiEventHandler = new AGUIEventHandler(this, _baseClient, _messageProcessor, _name, config);
@@ -732,15 +732,15 @@ public class CapabilityManager
 public class FunctionCallProcessor
 {
     private readonly ScopedFilterManager? _scopedFilterManager;
-    private readonly IAiFunctionFilter? _permissionFilter;
+    private readonly IReadOnlyList<IPermissionFilter> _permissionFilters;
     private readonly IReadOnlyList<IAiFunctionFilter> _aiFunctionFilters;
     private readonly ContinuationPermissionManager? _continuationPermissionManager;
     private readonly int _maxFunctionCalls;
 
-    public FunctionCallProcessor(ScopedFilterManager? scopedFilterManager, IAiFunctionFilter? permissionFilter, IReadOnlyList<IAiFunctionFilter>? aiFunctionFilters, ContinuationPermissionManager? continuationPermissionManager, int maxFunctionCalls)
+    public FunctionCallProcessor(ScopedFilterManager? scopedFilterManager, IReadOnlyList<IPermissionFilter>? permissionFilters, IReadOnlyList<IAiFunctionFilter>? aiFunctionFilters, ContinuationPermissionManager? continuationPermissionManager, int maxFunctionCalls)
     {
         _scopedFilterManager = scopedFilterManager;
-        _permissionFilter = permissionFilter;
+        _permissionFilters = permissionFilters ?? new List<IPermissionFilter>();
         _aiFunctionFilters = aiFunctionFilters ?? new List<IAiFunctionFilter>();
         _continuationPermissionManager = continuationPermissionManager;
         _maxFunctionCalls = maxFunctionCalls;
@@ -801,20 +801,21 @@ public class FunctionCallProcessor
                                 ?? Enumerable.Empty<IAiFunctionFilter>();
 
             // Combine scoped filters with general AI function filters
-            var allFilters = _aiFunctionFilters.Concat(scopedFilters);
+            var allStandardFilters = _aiFunctionFilters.Concat(scopedFilters);
 
             // Wrap all standard filters first.
-            foreach (var filter in allFilters.Reverse())
+            foreach (var filter in allStandardFilters.Reverse())
             {
                 var previous = pipeline;
                 pipeline = ctx => filter.InvokeAsync(ctx, previous);
             }
 
-            // *** CRITICAL: Wrap the permission filter last, so it runs FIRST. ***
-            if (_permissionFilter != null)
+            // Wrap permission filters last, so they run FIRST.
+            // Permission filters are naturally part of the pipeline now.
+            foreach (var permissionFilter in _permissionFilters.Reverse())
             {
                 var previous = pipeline;
-                pipeline = ctx => _permissionFilter.InvokeAsync(ctx, previous);
+                pipeline = ctx => permissionFilter.InvokeAsync(ctx, previous);
             }
 
             // Execute the full pipeline.

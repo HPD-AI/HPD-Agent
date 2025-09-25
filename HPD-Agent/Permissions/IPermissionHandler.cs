@@ -4,16 +4,12 @@ using System.Threading.Tasks;
 
 
     /// <summary>
-    /// Interface that consuming applications implement to handle permission requests.
-    /// The library delegates all permission decisions to implementations of this interface.
+    /// Interface that consuming applications implement to handle continuation permission requests.
+    /// The library delegates continuation permission decisions to implementations of this interface.
+    /// Note: Function-level permissions are now handled by IPermissionFilter implementations.
     /// </summary>
     public interface IPermissionHandler
     {
-        /// <summary>
-        /// Requests permission for a function execution.
-        /// </summary>
-        Task<PermissionDecision> RequestFunctionPermissionAsync(FunctionPermissionRequest request);
-
         /// <summary>
         /// Requests permission to continue function calling beyond configured limits.
         /// </summary>
@@ -21,18 +17,6 @@ using System.Threading.Tasks;
     }
 
     // --- Request Models ---
-
-    /// <summary>
-    /// Contains all information about a function permission request.
-    /// </summary>
-    public class FunctionPermissionRequest
-    {
-        public string FunctionName { get; set; } = string.Empty;
-        public string FunctionDescription { get; set; } = string.Empty;
-        public IDictionary<string, object?> Arguments { get; set; } = new Dictionary<string, object?>();
-        public string ConversationId { get; set; } = string.Empty;
-        public string? ProjectId { get; set; }
-    }
 
     /// <summary>
     /// Contains information about a continuation permission request.
@@ -50,15 +34,6 @@ using System.Threading.Tasks;
     // --- Decision & Storage Models ---
 
     /// <summary>
-    /// Represents the application's decision about a function permission request.
-    /// </summary>
-    public class PermissionDecision
-    {
-        public bool Approved { get; set; }
-        public PermissionStorage? Storage { get; set; }
-    }
-
-    /// <summary>
     /// Represents the application's decision about a continuation permission request.
     /// </summary>
     public class ContinuationDecision
@@ -66,29 +41,6 @@ using System.Threading.Tasks;
         public bool ShouldContinue { get; set; }
         public string? Reason { get; set; }
         public ContinuationStorage? Storage { get; set; }
-    }
-
-    /// <summary>
-    /// Optional preference storage request from the application.
-    /// </summary>
-    public class PermissionStorage
-    {
-        public PermissionChoice Choice { get; set; }
-        public PermissionScope Scope { get; set; }
-    }
-
-    public enum PermissionChoice
-    {
-        AlwaysAllow,
-        AlwaysDeny,
-        Ask
-    }
-
-    public enum PermissionScope
-    {
-        Conversation,
-        Project,
-        Global
     }
 
     // --- Continuation Storage Models ---

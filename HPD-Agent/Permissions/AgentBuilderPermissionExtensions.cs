@@ -4,20 +4,39 @@ using System.Collections.Concurrent;
 public static class AgentBuilderPermissionExtensions
 {
     /// <summary>
-    /// Enables Type 1 (function-level) permissions by registering the FunctionPermissionFilter.
+    /// Adds a console-based permission filter for command-line applications.
     /// </summary>
-    public static AgentBuilder WithFunctionPermissions(
+    public static AgentBuilder WithConsolePermissions(
         this AgentBuilder builder,
-        IPermissionHandler permissionHandler,
         IPermissionStorage? permissionStorage = null)
     {
         var storage = permissionStorage ?? new InMemoryPermissionStorage();
-        var filter = new FunctionPermissionFilter(permissionHandler, storage);
-        
-        // Uses the existing WithFilter method on AgentBuilder
-        return builder.WithFilter(filter);
+        var filter = new ConsolePermissionFilter(storage);
+        return builder.WithPermissionFilter(filter);
     }
-    
+
+    /// <summary>
+    /// Adds an AGUI-based permission filter for web applications.
+    /// </summary>
+    public static AgentBuilder WithAGUIPermissions(
+        this AgentBuilder builder,
+        IPermissionEventEmitter eventEmitter,
+        IPermissionStorage? permissionStorage = null)
+    {
+        var storage = permissionStorage ?? new InMemoryPermissionStorage();
+        var filter = new AGUIPermissionFilter(eventEmitter, storage);
+        return builder.WithPermissionFilter(filter);
+    }
+
+    /// <summary>
+    /// Adds an auto-approve permission filter for testing and automation scenarios.
+    /// </summary>
+    public static AgentBuilder WithAutoApprovePermissions(this AgentBuilder builder)
+    {
+        var filter = new AutoApprovePermissionFilter();
+        return builder.WithPermissionFilter(filter);
+    }
+
     /// <summary>
     /// Enables Type 2 (continuation) permissions by configuring the ContinuationPermissionManager.
     /// </summary>
@@ -30,23 +49,39 @@ public static class AgentBuilderPermissionExtensions
         var storage = permissionStorage ?? new InMemoryPermissionStorage();
         var continuationOptions = options ?? new ContinuationOptions();
         var manager = new ContinuationPermissionManager(permissionHandler, storage, continuationOptions);
-        
-        // Calls the internal method we will add to AgentBuilder in the next step
+
         return builder.WithContinuationManager(manager);
     }
-    
+
     /// <summary>
-    /// Enables both Type 1 and Type 2 permissions using the same handler and storage.
+    /// Enables both console permissions and continuation permissions using the same storage.
     /// </summary>
-    public static AgentBuilder WithFullPermissions(
+    public static AgentBuilder WithFullConsolePermissions(
         this AgentBuilder builder,
         IPermissionHandler permissionHandler,
         IPermissionStorage? permissionStorage = null,
         ContinuationOptions? options = null)
     {
+        var storage = permissionStorage ?? new InMemoryPermissionStorage();
         return builder
-            .WithFunctionPermissions(permissionHandler, permissionStorage)
-            .WithContinuationPermissions(permissionHandler, permissionStorage, options);
+            .WithConsolePermissions(storage)
+            .WithContinuationPermissions(permissionHandler, storage, options);
+    }
+
+    /// <summary>
+    /// Enables both AGUI permissions and continuation permissions using the same storage.
+    /// </summary>
+    public static AgentBuilder WithFullAGUIPermissions(
+        this AgentBuilder builder,
+        IPermissionEventEmitter eventEmitter,
+        IPermissionHandler permissionHandler,
+        IPermissionStorage? permissionStorage = null,
+        ContinuationOptions? options = null)
+    {
+        var storage = permissionStorage ?? new InMemoryPermissionStorage();
+        return builder
+            .WithAGUIPermissions(eventEmitter, storage)
+            .WithContinuationPermissions(permissionHandler, storage, options);
     }
 }
 

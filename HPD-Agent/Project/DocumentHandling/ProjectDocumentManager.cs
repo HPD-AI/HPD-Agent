@@ -8,6 +8,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
+using HPD_Agent.TextExtraction;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 
@@ -86,7 +87,7 @@ public class ProjectDocumentManager
     {
         var extractionResult = await _textExtractor.ExtractTextAsync(filePath, cancellationToken);
         
-        if (!extractionResult.Success)
+        if (!extractionResult.IsSuccess)
         {
             throw new InvalidOperationException($"Failed to extract text from {filePath}: {extractionResult.ErrorMessage}");
         }
@@ -101,7 +102,7 @@ public class ProjectDocumentManager
             OriginalPath = filePath,
             ExtractedText = extractionResult.ExtractedText ?? string.Empty,
             MimeType = extractionResult.MimeType,
-            FileSize = extractionResult.FileSize,
+            FileSize = extractionResult.FileSizeBytes,
             UploadedAt = now,
             LastAccessed = now,
             Description = description ?? string.Empty
@@ -121,7 +122,7 @@ public class ProjectDocumentManager
     {
         var extractionResult = await _textExtractor.ExtractTextAsync(url, cancellationToken);
         
-        if (!extractionResult.Success)
+        if (!extractionResult.IsSuccess)
         {
             throw new InvalidOperationException($"Failed to extract text from {url}: {extractionResult.ErrorMessage}");
         }
@@ -136,7 +137,7 @@ public class ProjectDocumentManager
             OriginalPath = url,
             ExtractedText = extractionResult.ExtractedText ?? string.Empty,
             MimeType = extractionResult.MimeType,
-            FileSize = extractionResult.FileSize,
+            FileSize = extractionResult.FileSizeBytes,
             UploadedAt = now,
             LastAccessed = now,
             Description = description ?? string.Empty

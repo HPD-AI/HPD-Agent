@@ -14,6 +14,45 @@ var (project, conversation, agent) = await CreateAIAssistant(config);
 Console.WriteLine($"✅ AI Assistant ready: {agent.Name}");
 Console.WriteLine($"📁 Project: {project.Name}\n");
 
+// 🧪 TEST: PDF Text Extraction and Injection
+Console.WriteLine("🧪 Testing PDF text extraction and injection...");
+string? uploadedPdfPath = null;
+try
+{
+    var pdfPath = @"C:\Users\einst\OneDrive\Desktop\Agent\HPD-Agent\AgentConsoleTest\perceptual-maps-best-practice.pdf";
+    if (File.Exists(pdfPath))
+    {
+        Console.WriteLine($"📄 Uploading PDF: {Path.GetFileName(pdfPath)}");
+        var document = await project.DocumentManager.UploadDocumentAsync(pdfPath, "Test PDF document");
+        Console.WriteLine($"✅ Document uploaded successfully!");
+        Console.WriteLine($"   - ID: {document.Id}");
+        Console.WriteLine($"   - File: {document.FileName}");
+        Console.WriteLine($"   - Size: {document.FileSize:N0} bytes");
+        Console.WriteLine($"   - Text Length: {document.ExtractedText.Length:N0} characters");
+        Console.WriteLine($"   - First 200 chars: {document.ExtractedText.Substring(0, Math.Min(200, document.ExtractedText.Length))}...\n");
+
+        // Store the path for testing document injection
+        uploadedPdfPath = pdfPath;
+
+        // Test document injection in conversation
+        Console.WriteLine("🧪 Testing document injection in conversation...");
+        Console.WriteLine("Sending test message with PDF document...\n");
+        Console.Write("AI: ");
+        await StreamResponse(conversation,
+            "What is this document about? Give me a brief 2-3 sentence summary of the perceptual maps best practices document.",
+            documentPaths: new[] { pdfPath });
+        Console.WriteLine("\n");
+    }
+    else
+    {
+        Console.WriteLine($"❌ PDF file not found at: {pdfPath}\n");
+    }
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"❌ Error testing PDF extraction: {ex.Message}\n");
+}
+
 // Debug: list registered tools (plugins + MCP tools)
 var registeredTools = agent.DefaultOptions?.Tools;
 if (registeredTools != null && registeredTools.Count > 0)
@@ -70,7 +109,7 @@ static Task<(Project, Conversation, Agent)> CreateAIAssistant(IConfiguration con
             .WithStorageDirectory("./agent-memory-storage")
             .WithMaxTokens(6000))
         .WithPlugin<MathPlugin>()
-        .WithFullPermissions(new ConsolePermissionHandler())
+        .WithConsolePermissions() // Function permissions only via ConsolePermissionFilter
         .WithMCP(agentConfig.Mcp.ManifestPath)
         .Build();
 

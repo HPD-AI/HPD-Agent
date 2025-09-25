@@ -19,6 +19,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HPD-Agent.Audio", "HPD-Agen
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HPD-Agent.Orchestration", "HPD-Agent.Orchestration\HPD-Agent.Orchestration.csproj", "{57ADE412-0E16-4960-8C40-E0104660224D}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HPD-Agent.TextExtraction", "HPD-Agent.TextExtraction\HPD-Agent.TextExtraction.csproj", "{FAA62D9F-DD0B-457B-89CB-C65E6CBAA83F}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -113,6 +115,18 @@ Global
 		{57ADE412-0E16-4960-8C40-E0104660224D}.Release|x64.Build.0 = Release|Any CPU
 		{57ADE412-0E16-4960-8C40-E0104660224D}.Release|x86.ActiveCfg = Release|Any CPU
 		{57ADE412-0E16-4960-8C40-E0104660224D}.Release|x86.Build.0 = Release|Any CPU
+		{FAA62D9F-DD0B-457B-89CB-C65E6CBAA83F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FAA62D9F-DD0B-457B-89CB-C65E6CBAA83F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FAA62D9F-DD0B-457B-89CB-C65E6CBAA83F}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{FAA62D9F-DD0B-457B-89CB-C65E6CBAA83F}.Debug|x64.Build.0 = Debug|Any CPU
+		{FAA62D9F-DD0B-457B-89CB-C65E6CBAA83F}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{FAA62D9F-DD0B-457B-89CB-C65E6CBAA83F}.Debug|x86.Build.0 = Debug|Any CPU
+		{FAA62D9F-DD0B-457B-89CB-C65E6CBAA83F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FAA62D9F-DD0B-457B-89CB-C65E6CBAA83F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{FAA62D9F-DD0B-457B-89CB-C65E6CBAA83F}.Release|x64.ActiveCfg = Release|Any CPU
+		{FAA62D9F-DD0B-457B-89CB-C65E6CBAA83F}.Release|x64.Build.0 = Release|Any CPU
+		{FAA62D9F-DD0B-457B-89CB-C65E6CBAA83F}.Release|x86.ActiveCfg = Release|Any CPU
+		{FAA62D9F-DD0B-457B-89CB-C65E6CBAA83F}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

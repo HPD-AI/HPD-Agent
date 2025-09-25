@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using HPD_Agent.TextExtraction;
 
 
 /// <summary>
@@ -33,11 +34,11 @@ public static class ConversationDocumentHelper
                 FileName = result.FileName,
                 ExtractedText = result.ExtractedText ?? string.Empty,
                 MimeType = result.MimeType,
-                FileSize = result.FileSize,
+                FileSize = result.FileSizeBytes,
                 ProcessedAt = DateTime.UtcNow,
-                Success = result.Success,
+                Success = result.IsSuccess,
                 ErrorMessage = result.ErrorMessage,
-                DecoderUsed = result.DecoderUsed
+                DecoderUsed = "TextExtractionUtility"
             };
         }
         catch (Exception ex)

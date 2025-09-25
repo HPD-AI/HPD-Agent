@@ -42,9 +42,6 @@
     <!-- Async Utilities (use version required by Extensions.AI) -->
     <PackageReference Include="System.Threading.Channels" Version="9.0.7" />
 
-    <!-- Text Extraction -->
-    <PackageReference Include="UTF.Unknown" Version="2.5.1" />
-
     <!-- MCP Support -->
     <PackageReference Include="ModelContextProtocol" Version="0.3.0-preview.3" />
 
@@ -59,7 +56,6 @@
 
   <ItemGroup>
     <ProjectReference Include="../HPD-Agent.SourceGenerator/HPD-Agent.SourceGenerator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
-    <ProjectReference Include="..\HPD-Agent.TextExtraction\HPD-Agent.TextExtraction.csproj" />
   </ItemGroup>
 
 

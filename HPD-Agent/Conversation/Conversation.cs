@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Runtime.CompilerServices;
 using HPD_Agent.TextExtraction;
+using System.Diagnostics;
 
 /// <summary>
 /// Clean conversation management built on Microsoft.Extensions.AI
@@ -20,6 +21,9 @@ public class Conversation
     private ConversationDocumentHandling _uploadStrategy = ConversationDocumentHandling.FullTextInjection; // Default to FullTextInjection for simpler scenarios
     private readonly List<ConversationDocumentUpload> _pendingInjections = new();
     private TextExtractionUtility? _textExtractor;
+
+    // OpenTelemetry Activity Source for conversation telemetry
+    private static readonly ActivitySource ActivitySource = new("HPD.Conversation");
     
     /// <summary>
     /// Gets or sets the default orchestrator for multi-agent scenarios.
@@ -162,86 +166,118 @@ public class Conversation
         string[]? documentPaths = null,
         CancellationToken cancellationToken = default)
     {
-        // Process documents if provided
-        if (documentPaths?.Length > 0)
+        using var activity = ActivitySource.StartActivity("conversation.turn");
+        var startTime = DateTimeOffset.UtcNow;
+
+        // Set telemetry tags
+        activity?.SetTag("conversation.id", Id);
+        activity?.SetTag("conversation.message_count", _messages.Count);
+        activity?.SetTag("conversation.has_documents", documentPaths?.Length > 0);
+        activity?.SetTag("conversation.agent_count", _agents.Count);
+        activity?.SetTag("conversation.primary_agent", PrimaryAgent?.Config?.Name);
+
+        try
         {
-            var textExtractor = GetOrCreateTextExtractor();
-            var uploads = await ProcessDocumentUploadsAsync(documentPaths, textExtractor, cancellationToken);
-            
-            message = _uploadStrategy switch
+            // Process documents if provided
+            if (documentPaths?.Length > 0)
             {
-                ConversationDocumentHandling.FullTextInjection => 
-                    ConversationDocumentHelper.FormatMessageWithDocuments(message, uploads),
-                ConversationDocumentHandling.IndexedRetrieval => message,
-                _ => throw new InvalidOperationException($"Unknown upload strategy: {_uploadStrategy}")
-            };
-        }
+                activity?.SetTag("conversation.document_count", documentPaths.Length);
+                var textExtractor = GetOrCreateTextExtractor();
+                var uploads = await ProcessDocumentUploadsAsync(documentPaths, textExtractor, cancellationToken);
 
-        var startTime = DateTime.UtcNow;
-        var userMessage = new ChatMessage(ChatRole.User, message);
-        _messages.Add(userMessage);
-        UpdateActivity();
-
-        // Inject context
-        options = InjectProjectContextIfNeeded(options);
-
-        OrchestrationResult orchestrationResult;
-
-        if (_agents.Count == 0)
-        {
-            throw new InvalidOperationException("No agents configured");
-        }
-        else if (_agents.Count == 1)
-        {
-            // Single agent path - no orchestration needed
-            var agent = _agents[0];
-            var response = await agent.GetResponseAsync(_messages, options, cancellationToken);
-            orchestrationResult = new OrchestrationResult
-            {
-                Response = response,
-                SelectedAgent = agent,
-                Metadata = new OrchestrationMetadata
+                message = _uploadStrategy switch
                 {
-                    StrategyName = "SingleAgent",
-                    DecisionDuration = TimeSpan.Zero
+                    ConversationDocumentHandling.FullTextInjection =>
+                        ConversationDocumentHelper.FormatMessageWithDocuments(message, uploads),
+                    ConversationDocumentHandling.IndexedRetrieval => message,
+                    _ => throw new InvalidOperationException($"Unknown upload strategy: {_uploadStrategy}")
+                };
+            }
+
+            var userMessage = new ChatMessage(ChatRole.User, message);
+            _messages.Add(userMessage);
+            UpdateActivity();
+
+            // Inject context
+            options = InjectProjectContextIfNeeded(options);
+
+            OrchestrationResult orchestrationResult;
+
+            if (_agents.Count == 0)
+            {
+                throw new InvalidOperationException("No agents configured");
+            }
+            else if (_agents.Count == 1)
+            {
+                // Single agent path - no orchestration needed
+                var agent = _agents[0];
+                activity?.SetTag("conversation.orchestration_strategy", "SingleAgent");
+                var response = await agent.GetResponseAsync(_messages, options, cancellationToken);
+                orchestrationResult = new OrchestrationResult
+                {
+                    Response = response,
+                    SelectedAgent = agent,
+                    Metadata = new OrchestrationMetadata
+                    {
+                        StrategyName = "SingleAgent",
+                        DecisionDuration = TimeSpan.Zero
+                    }
+                };
+            }
+            else
+            {
+                // Multi-agent orchestration - use provided or default orchestrator
+                var effectiveOrchestrator = orchestrator ?? DefaultOrchestrator;
+                if (effectiveOrchestrator == null)
+                {
+                    throw new InvalidOperationException("Multiple agents configured but no orchestrator provided. Set DefaultOrchestrator or pass an orchestrator parameter.");
                 }
+
+                activity?.SetTag("conversation.orchestration_strategy", effectiveOrchestrator.GetType().Name);
+                orchestrationResult = await effectiveOrchestrator.OrchestrateAsync(
+                    _messages, _agents, this.Id, options, cancellationToken);
+            }
+
+            // Commit response to history
+            _messages.AddMessages(orchestrationResult.Response);
+            UpdateActivity();
+
+            // Apply filters
+            var agentMetadata = CollectAgentMetadata(orchestrationResult.Response);
+            var context = new ConversationFilterContext(this, userMessage, orchestrationResult.Response, agentMetadata, options, cancellationToken);
+            await ApplyConversationFilters(context);
+
+            // Record telemetry metrics
+            var duration = DateTimeOffset.UtcNow - startTime;
+            var tokenUsage = CreateTokenUsage(orchestrationResult.Response);
+
+            activity?.SetTag("conversation.duration_ms", duration.TotalMilliseconds);
+            activity?.SetTag("conversation.responding_agent", orchestrationResult.SelectedAgent?.Name);
+            activity?.SetTag("conversation.tokens_used", tokenUsage?.TotalTokens ?? 0);
+            activity?.SetTag("conversation.success", true);
+
+            return new ConversationTurnResult
+            {
+                Response = orchestrationResult.Response,
+                TurnHistory = ExtractTurnHistory(userMessage, orchestrationResult.Response),
+                RespondingAgent = orchestrationResult.SelectedAgent!,
+                UsedOrchestrator = orchestrator,
+                Duration = duration,
+                OrchestrationMetadata = orchestrationResult.Metadata,
+                Usage = tokenUsage,
+                RequestId = Guid.NewGuid().ToString(),
+                ActivityId = System.Diagnostics.Activity.Current?.Id
             };
         }
-        else
+        catch (Exception ex)
         {
-            // Multi-agent orchestration - use provided or default orchestrator
-            var effectiveOrchestrator = orchestrator ?? DefaultOrchestrator;
-            if (effectiveOrchestrator == null)
-            {
-                throw new InvalidOperationException("Multiple agents configured but no orchestrator provided. Set DefaultOrchestrator or pass an orchestrator parameter.");
-            }
-            
-            orchestrationResult = await effectiveOrchestrator.OrchestrateAsync(
-                _messages, _agents, this.Id, options, cancellationToken);
+            var duration = DateTimeOffset.UtcNow - startTime;
+            activity?.SetTag("conversation.duration_ms", duration.TotalMilliseconds);
+            activity?.SetTag("conversation.success", false);
+            activity?.SetTag("error.type", ex.GetType().Name);
+            activity?.SetTag("error.message", ex.Message);
+            throw;
         }
-
-        // Commit response to history
-        _messages.AddMessages(orchestrationResult.Response);
-        UpdateActivity();
-
-        // Apply filters
-        var agentMetadata = CollectAgentMetadata(orchestrationResult.Response);
-        var context = new ConversationFilterContext(this, userMessage, orchestrationResult.Response, agentMetadata, options, cancellationToken);
-        await ApplyConversationFilters(context);
-
-
-        return new ConversationTurnResult
-        {
-            Response = orchestrationResult.Response,
-            TurnHistory = ExtractTurnHistory(userMessage, orchestrationResult.Response),
-            RespondingAgent = orchestrationResult.SelectedAgent,
-            UsedOrchestrator = orchestrator,
-            Duration = DateTime.UtcNow - startTime,
-            OrchestrationMetadata = orchestrationResult.Metadata,
-            Usage = CreateTokenUsage(orchestrationResult.Response),
-            RequestId = Guid.NewGuid().ToString(),
-            ActivityId = System.Diagnostics.Activity.Current?.Id
-        };
     }
 
 
@@ -420,6 +456,7 @@ public class Conversation
         return evt switch
         {
             StepStartedEvent step => $"\n\n",
+            ReasoningContentEvent text => text.Content,
             TextMessageContentEvent text => text.Delta,
             _ => "" // Only show reasoning steps and assistant text, ignore other events
         };

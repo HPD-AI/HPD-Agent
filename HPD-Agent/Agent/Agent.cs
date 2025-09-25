@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.AI;
 using System.Threading.Channels;
 using System.Runtime.CompilerServices;
+using System.Diagnostics;
 
 /// <summary>
 /// Agent facade that delegates to specialized components for clean separation of concerns.
@@ -15,9 +16,11 @@ public class Agent : IChatClient
 
     // Microsoft.Extensions.AI compliance fields
     private readonly ChatClientMetadata _metadata;
-    private readonly AgentStatistics _statistics = new();
     private readonly ErrorHandlingPolicy _errorPolicy;
     private string? _conversationId;
+
+    // OpenTelemetry Activity Source for telemetry
+    private static readonly ActivitySource ActivitySource = new("HPD.Agent");
 
     // Specialized component fields for delegation
     private readonly MessageProcessor _messageProcessor;
@@ -48,10 +51,6 @@ public class Agent : IChatClient
     /// </summary>
     public string? ModelId => Config?.Provider?.ModelName;
 
-    /// <summary>
-    /// Statistics and telemetry for this agent instance
-    /// </summary>
-    public AgentStatistics Statistics => _statistics;
 
     /// <summary>
     /// Current conversation ID for tracking
@@ -177,7 +176,21 @@ public class Agent : IChatClient
         ChatOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        var startTime = DateTime.UtcNow;
+        using var activity = ActivitySource.StartActivity("agent.chat_completion");
+        var startTime = DateTimeOffset.UtcNow;
+
+        // Set telemetry tags
+        activity?.SetTag("agent.name", _name);
+        activity?.SetTag("agent.provider", Provider.ToString());
+        activity?.SetTag("agent.model", ModelId);
+
+        // Track conversation ID
+        if (options?.AdditionalProperties?.TryGetValue("ConversationId", out var convIdObj) == true &&
+            convIdObj is string convId)
+        {
+            _conversationId = convId;
+            activity?.SetTag("conversation.id", convId);
+        }
 
         try
         {
@@ -198,25 +211,23 @@ public class Agent : IChatClient
             var assistantMessages = finalHistory.Where(m => m.Role == ChatRole.Assistant).ToList();
             var response = new ChatResponse(assistantMessages);
 
-            // Track statistics
-            var processingTime = DateTime.UtcNow - startTime;
+            // Record telemetry metrics
+            var duration = DateTimeOffset.UtcNow - startTime;
             var tokensUsed = (int)(response.Usage?.TotalTokenCount ?? 0);
-            _statistics.RecordRequest(processingTime, tokensUsed);
 
-            // Track conversation ID
-            if (options?.AdditionalProperties?.TryGetValue("ConversationId", out var convIdObj) == true &&
-                convIdObj is string convId)
-            {
-                _conversationId = convId;
-            }
+            activity?.SetTag("completion.tokens_used", tokensUsed);
+            activity?.SetTag("completion.duration_ms", duration.TotalMilliseconds);
+            activity?.SetTag("completion.success", true);
 
             return response;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            // Still record the request attempt even if it failed
-            var processingTime = DateTime.UtcNow - startTime;
-            _statistics.RecordRequest(processingTime, 0);
+            var duration = DateTimeOffset.UtcNow - startTime;
+            activity?.SetTag("completion.duration_ms", duration.TotalMilliseconds);
+            activity?.SetTag("completion.success", false);
+            activity?.SetTag("error.type", ex.GetType().Name);
+            activity?.SetTag("error.message", ex.Message);
             throw;
         }
     }
@@ -426,10 +437,7 @@ public class Agent : IChatClient
                 foreach (var toolRequest in toolRequests)
                 {
                     // Track tool call statistics
-                    if (toolRequest.Name != null)
-                    {
-                        _statistics.RecordToolCall(toolRequest.Name);
-                    }
+                    // Tool call telemetry now handled by Activity tags in GetResponseAsync
 
                     yield return EventSerialization.CreateToolCallStart(
                         toolRequest.CallId, 
@@ -602,7 +610,6 @@ public class Agent : IChatClient
             Type t when t == typeof(CapabilityManager) => _capabilityManager,
             Type t when t == typeof(AgentConfig) => Config,
             Type t when t == typeof(ScopedFilterManager) => _scopedFilterManager,
-            Type t when t == typeof(AgentStatistics) => _statistics,
             Type t when t == typeof(ErrorHandlingPolicy) => _errorPolicy,
             Type t when t.IsInstanceOfType(_baseClient) => _baseClient,
             _ => _baseClient.GetService(serviceType, serviceKey)
@@ -677,10 +684,6 @@ public class Agent : IChatClient
         };
     }
 
-    /// <summary>
-    /// Resets statistics counters
-    /// </summary>
-    public void ResetStatistics() => _statistics.Reset();
 }
 
 
@@ -1527,5 +1530,6 @@ public class ErrorHandlingPolicy
         };
     }
 }
+
 
 #endregion

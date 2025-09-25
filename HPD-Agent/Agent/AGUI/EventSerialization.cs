@@ -37,6 +37,10 @@ internal static class EventSerialization
             AgentEvaluationEvent agentEvaluationEvent => JsonSerializer.Serialize(agentEvaluationEvent, AGUIJsonContext.Default.AgentEvaluationEvent),
             AgentHandoffEvent agentHandoffEvent => JsonSerializer.Serialize(agentHandoffEvent, AGUIJsonContext.Default.AgentHandoffEvent),
             OrchestrationCompleteEvent orchestrationCompleteEvent => JsonSerializer.Serialize(orchestrationCompleteEvent, AGUIJsonContext.Default.OrchestrationCompleteEvent),
+            FunctionPermissionRequestEvent functionPermissionEvent => JsonSerializer.Serialize(functionPermissionEvent, AGUIJsonContext.Default.FunctionPermissionRequestEvent),
+            ContinuationPermissionRequestEvent continuationPermissionEvent => JsonSerializer.Serialize(continuationPermissionEvent, AGUIJsonContext.Default.ContinuationPermissionRequestEvent),
+            ToolResultEvent toolResultEvent => JsonSerializer.Serialize(toolResultEvent, AGUIJsonContext.Default.ToolResultEvent),
+            ReasoningContentEvent reasoningContentEvent => JsonSerializer.Serialize(reasoningContentEvent, AGUIJsonContext.Default.ReasoningContentEvent),
             CustomEvent customEvent => JsonSerializer.Serialize(customEvent, AGUIJsonContext.Default.CustomEvent),
             RawEvent rawEvent => JsonSerializer.Serialize(rawEvent, AGUIJsonContext.Default.RawEvent),
             _ => JsonSerializer.Serialize(evt, AGUIJsonContext.Default.BaseEvent)
@@ -122,30 +126,44 @@ internal static class EventSerialization
         Timestamp = GetTimestamp()
     };
 
-    public static CustomEvent CreateToolResult(string messageId, string toolCallId, string toolName, object result) => new()
+    public static ToolResultEvent CreateToolResult(string messageId, string toolCallId, string toolName, object result) => new()
     {
-        Type = "CUSTOM",
-        Data = JsonSerializer.SerializeToElement(new ToolResultEventData
-        {
-            EventType = "tool_result",
-            MessageId = messageId,
-            ToolCallId = toolCallId,
-            ToolName = toolName,
-            // FIX: For AOT compatibility, fall back to string representation for non-string results
-            Result = result?.ToString() ?? "null"
-        }, AGUIJsonContext.Default.ToolResultEventData),
+        Type = "TOOL_RESULT",
+        MessageId = messageId,
+        ToolCallId = toolCallId,
+        ToolName = toolName,
+        // FIX: For AOT compatibility, fall back to string representation for non-string results
+        Result = result?.ToString() ?? "null",
         Timestamp = GetTimestamp()
     };
 
-    public static CustomEvent CreateReasoningContent(string messageId, string content) => new()
+    public static ReasoningContentEvent CreateReasoningContent(string messageId, string content) => new()
     {
-        Type = "CUSTOM",
-        Data = JsonSerializer.SerializeToElement(new ReasoningContentEventData
-        {
-            EventType = "reasoning_content",
-            MessageId = messageId,
-            Content = content
-        }, AGUIJsonContext.Default.ReasoningContentEventData),
+        Type = "REASONING_CONTENT",
+        MessageId = messageId,
+        Content = content,
+        Timestamp = GetTimestamp()
+    };
+
+    public static FunctionPermissionRequestEvent CreateFunctionPermissionRequest(string permissionId, string functionName, string functionDescription, Dictionary<string, object?> arguments, PermissionScope[] availableScopes) => new()
+    {
+        Type = "function",
+        PermissionId = permissionId,
+        FunctionName = functionName,
+        FunctionDescription = functionDescription,
+        Arguments = arguments,
+        AvailableScopes = availableScopes,
+        Timestamp = GetTimestamp()
+    };
+
+    public static ContinuationPermissionRequestEvent CreateContinuationPermissionRequest(string permissionId, int currentIteration, int maxIterations, string[] completedFunctions, string elapsedTime) => new()
+    {
+        Type = "continuation",
+        PermissionId = permissionId,
+        CurrentIteration = currentIteration,
+        MaxIterations = maxIterations,
+        CompletedFunctions = completedFunctions,
+        ElapsedTime = elapsedTime,
         Timestamp = GetTimestamp()
     };
 

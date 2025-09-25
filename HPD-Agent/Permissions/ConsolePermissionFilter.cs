@@ -9,15 +9,31 @@ using System.Threading.Tasks;
 public class ConsolePermissionFilter : IPermissionFilter
 {
     private readonly IPermissionStorage? _storage;
+    private readonly AgentConfig? _config;
 
-    public ConsolePermissionFilter(IPermissionStorage? storage = null)
+    public ConsolePermissionFilter(IPermissionStorage? storage = null, AgentConfig? config = null)
     {
         _storage = storage;
+        _config = config;
     }
 
     public async Task InvokeAsync(AiFunctionContext context, Func<AiFunctionContext, Task> next)
     {
-        // Check if function requires permission
+        // First check: Continuation permission if we're approaching limits
+        if (context.RunContext != null && ShouldCheckContinuation(context.RunContext))
+        {
+            var continueDecision = await RequestContinuationPermissionAsync(context.RunContext);
+            if (!continueDecision)
+            {
+                context.RunContext.IsTerminated = true;
+                context.RunContext.TerminationReason = "User chose to stop at iteration limit";
+                context.Result = "Execution terminated by user at iteration limit.";
+                context.IsTerminated = true;
+                return;
+            }
+        }
+
+        // Second check: Function-level permission (if required)
         if (context.Function is not HPDAIFunctionFactory.HPDAIFunction hpdFunction ||
             !hpdFunction.HPDOptions.RequiresPermission)
         {
@@ -120,6 +136,55 @@ public class ConsolePermissionFilter : IPermissionFilter
             };
 
             return decision;
+        });
+    }
+
+    /// <summary>
+    /// Determines if we should check for continuation permission.
+    /// Only triggers when we've actually exceeded the limit and the LLM is trying to call more functions.
+    /// </summary>
+    private static bool ShouldCheckContinuation(AgentRunContext runContext)
+    {
+        // Check if this iteration would exceed the max (0-based iteration vs 1-based limit)
+        return runContext.CurrentIteration >= runContext.MaxIterations;
+    }
+
+    /// <summary>
+    /// Requests continuation permission via console for continuation beyond limits.
+    /// </summary>
+    private async Task<bool> RequestContinuationPermissionAsync(AgentRunContext runContext)
+    {
+        return await Task.Run(() =>
+        {
+            Console.WriteLine($"\n[CONTINUATION PERMISSION REQUIRED]");
+            Console.WriteLine($"Function calling has exceeded the limit of {runContext.MaxIterations} turns");
+            Console.WriteLine($"Current turns completed: {runContext.CompletedFunctions.Count}");
+            Console.WriteLine($"Elapsed time: {runContext.ElapsedTime:mm\\:ss}");
+            
+            if (runContext.CompletedFunctions.Count > 0)
+            {
+                Console.WriteLine($"Completed functions: {string.Join(", ", runContext.CompletedFunctions)}");
+            }
+
+            Console.WriteLine("\nThe LLM wants to continue with more function calls.");
+            Console.WriteLine("Choose an option:");
+            Console.WriteLine("  [C]ontinue (allow more turns)");
+            Console.WriteLine("  [S]top execution");
+            Console.Write("Choice: ");
+
+            var response = Console.ReadLine()?.ToUpper();
+
+            switch (response)
+            {
+                case "C":
+                    var extensionAmount = _config?.ContinuationExtensionAmount ?? 3;
+                    runContext.MaxIterations += extensionAmount;
+                    Console.WriteLine($"Continuing with extended turn limit.");
+                    return true;
+                case "S":
+                default:
+                    return false;
+            }
         });
     }
 }

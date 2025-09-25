@@ -45,9 +45,6 @@ public class AgentBuilder
     // MCP runtime fields
     internal MCPClientManager? _mcpClientManager;
 
-    // Permission system integration
-    private ContinuationPermissionManager? _continuationPermissionManager;
-
     // Microsoft.Extensions.AI middleware pipeline
     private readonly List<Func<IChatClient, IServiceProvider, IChatClient>> _middlewares = new();
 
@@ -134,15 +131,34 @@ public class AgentBuilder
 
 
     /// <summary>
-    /// Configures the maximum number of function calls allowed in a single conversation turn
+    /// Configures the maximum number of turns the agent can take to call functions before requiring continuation permission
     /// </summary>
-    /// <param name="maxFunctionCalls">Maximum number of function calls (default: 10)</param>
-    public AgentBuilder WithMaxFunctionCalls(int maxFunctionCalls)
+    /// <param name="maxTurns">Maximum number of function-calling turns (default: 10)</param>
+    public AgentBuilder WithMaxFunctionCallTurns(int maxTurns)
     {
-        if (maxFunctionCalls <= 0)
-            throw new ArgumentOutOfRangeException(nameof(maxFunctionCalls), "Maximum function calls must be greater than 0");
+        if (maxTurns <= 0)
+            throw new ArgumentOutOfRangeException(nameof(maxTurns), "Maximum function call turns must be greater than 0");
 
-        _config.MaxFunctionCalls = maxFunctionCalls;
+        _config.MaxFunctionCallTurns = maxTurns;
+        return this;
+    }
+
+    /// <summary>
+    /// Legacy method - use WithMaxFunctionCallTurns instead
+    /// </summary>
+    [Obsolete("Use WithMaxFunctionCallTurns instead - this better reflects that we're limiting turns, not individual function calls")]
+    public AgentBuilder WithMaxFunctionCalls(int maxFunctionCalls) => WithMaxFunctionCallTurns(maxFunctionCalls);
+
+    /// <summary>
+    /// Configures how many additional turns to allow when user chooses to continue beyond the limit
+    /// </summary>
+    /// <param name="extensionAmount">Additional turns to allow (default: 3)</param>
+    public AgentBuilder WithContinuationExtensionAmount(int extensionAmount)
+    {
+        if (extensionAmount <= 0)
+            throw new ArgumentOutOfRangeException(nameof(extensionAmount), "Continuation extension amount must be greater than 0");
+
+        _config.ContinuationExtensionAmount = extensionAmount;
         return this;
     }
 
@@ -414,8 +430,7 @@ public class AgentBuilder
             mergedOptions, // Pass the merged options directly
             _promptFilters,
             _scopedFilterManager,
-            _permissionFilters,
-            _continuationPermissionManager);
+            _permissionFilters);
 
 
         // Attach MCP capability if configured
@@ -595,12 +610,6 @@ public class AgentBuilder
     }
 
     #endregion
-
-    public AgentBuilder WithContinuationManager(ContinuationPermissionManager manager)
-    {
-        _continuationPermissionManager = manager;
-        return this;
-    }
 
     /// <summary>
     /// Adds a Rust function to the agent (used by FFI layer)

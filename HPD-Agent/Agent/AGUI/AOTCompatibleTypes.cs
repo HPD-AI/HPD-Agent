@@ -304,6 +304,37 @@ public sealed record OrchestrationCompleteEvent : BaseEvent
     public required int TotalInvocations { get; init; }
 }
 
+// Custom event data types for AOT compatibility
+public sealed record ToolResultEventData
+{
+    [JsonPropertyName("eventType")]
+    public required string EventType { get; init; } = "tool_result";
+    
+    [JsonPropertyName("messageId")]
+    public required string MessageId { get; init; }
+    
+    [JsonPropertyName("toolCallId")]
+    public required string ToolCallId { get; init; }
+    
+    [JsonPropertyName("toolName")]
+    public required string ToolName { get; init; }
+    
+    [JsonPropertyName("result")]
+    public required string Result { get; init; }
+}
+
+public sealed record ReasoningContentEventData
+{
+    [JsonPropertyName("eventType")]
+    public required string EventType { get; init; } = "reasoning_content";
+    
+    [JsonPropertyName("messageId")]
+    public required string MessageId { get; init; }
+    
+    [JsonPropertyName("content")]
+    public required string Content { get; init; }
+}
+
 // AOT-compatible interface
 public interface IAGUIAgent
 {

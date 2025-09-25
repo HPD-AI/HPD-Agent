@@ -11,7 +11,7 @@ public static class AgentBuilderPermissionExtensions
         IPermissionStorage? permissionStorage = null)
     {
         var storage = permissionStorage ?? new InMemoryPermissionStorage();
-        var filter = new ConsolePermissionFilter(storage);
+        var filter = new ConsolePermissionFilter(storage, builder.Config);
         return builder.WithPermissionFilter(filter);
     }
 
@@ -24,7 +24,7 @@ public static class AgentBuilderPermissionExtensions
         IPermissionStorage? permissionStorage = null)
     {
         var storage = permissionStorage ?? new InMemoryPermissionStorage();
-        var filter = new AGUIPermissionFilter(eventEmitter, storage);
+        var filter = new AGUIPermissionFilter(eventEmitter, storage, builder.Config);
         return builder.WithPermissionFilter(filter);
     }
 
@@ -36,53 +36,6 @@ public static class AgentBuilderPermissionExtensions
         var filter = new AutoApprovePermissionFilter();
         return builder.WithPermissionFilter(filter);
     }
-
-    /// <summary>
-    /// Enables Type 2 (continuation) permissions by configuring the ContinuationPermissionManager.
-    /// </summary>
-    public static AgentBuilder WithContinuationPermissions(
-        this AgentBuilder builder,
-        IPermissionHandler permissionHandler,
-        IPermissionStorage? permissionStorage = null,
-        ContinuationOptions? options = null)
-    {
-        var storage = permissionStorage ?? new InMemoryPermissionStorage();
-        var continuationOptions = options ?? new ContinuationOptions();
-        var manager = new ContinuationPermissionManager(permissionHandler, storage, continuationOptions);
-
-        return builder.WithContinuationManager(manager);
-    }
-
-    /// <summary>
-    /// Enables both console permissions and continuation permissions using the same storage.
-    /// </summary>
-    public static AgentBuilder WithFullConsolePermissions(
-        this AgentBuilder builder,
-        IPermissionHandler permissionHandler,
-        IPermissionStorage? permissionStorage = null,
-        ContinuationOptions? options = null)
-    {
-        var storage = permissionStorage ?? new InMemoryPermissionStorage();
-        return builder
-            .WithConsolePermissions(storage)
-            .WithContinuationPermissions(permissionHandler, storage, options);
-    }
-
-    /// <summary>
-    /// Enables both AGUI permissions and continuation permissions using the same storage.
-    /// </summary>
-    public static AgentBuilder WithFullAGUIPermissions(
-        this AgentBuilder builder,
-        IPermissionEventEmitter eventEmitter,
-        IPermissionHandler permissionHandler,
-        IPermissionStorage? permissionStorage = null,
-        ContinuationOptions? options = null)
-    {
-        var storage = permissionStorage ?? new InMemoryPermissionStorage();
-        return builder
-            .WithAGUIPermissions(eventEmitter, storage)
-            .WithContinuationPermissions(permissionHandler, storage, options);
-    }
 }
 
 /// <summary>
@@ -91,7 +44,6 @@ public static class AgentBuilderPermissionExtensions
 public class InMemoryPermissionStorage : IPermissionStorage
 {
     private readonly ConcurrentDictionary<string, PermissionChoice> _functionChoices = new();
-    private readonly ConcurrentDictionary<string, ContinuationPreference> _continuationChoices = new();
 
     public Task<PermissionChoice?> GetStoredPermissionAsync(string functionName, string conversationId, string? projectId)
     {
@@ -108,18 +60,6 @@ public class InMemoryPermissionStorage : IPermissionStorage
         {
             _functionChoices[functionName] = choice;
         }
-        return Task.CompletedTask;
-    }
-
-    public Task<ContinuationPreference?> GetContinuationPreferenceAsync(string conversationId, string? projectId)
-    {
-        _continuationChoices.TryGetValue(conversationId, out var preference);
-        return Task.FromResult((ContinuationPreference?)preference);
-    }
-
-    public Task SaveContinuationPreferenceAsync(ContinuationStorage storage, string conversationId, string? projectId)
-    {
-        _continuationChoices[conversationId] = storage.Preference;
         return Task.CompletedTask;
     }
 }

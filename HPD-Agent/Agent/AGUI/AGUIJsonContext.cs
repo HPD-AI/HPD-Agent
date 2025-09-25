@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 
 [JsonSourceGenerationOptions(WriteIndented = false)]
 [JsonSerializable(typeof(RunAgentInput))]
@@ -30,6 +31,8 @@ using System.Text.Json.Serialization;
 [JsonSerializable(typeof(OrchestrationCompleteEvent))]
 [JsonSerializable(typeof(CustomEvent))]
 [JsonSerializable(typeof(RawEvent))]
+[JsonSerializable(typeof(ToolResultEventData))]
+[JsonSerializable(typeof(ReasoningContentEventData))]
 [JsonSerializable(typeof(Tool))]
 [JsonSerializable(typeof(Context))]
 [JsonSerializable(typeof(Dictionary<string, object>))]
@@ -37,10 +40,27 @@ using System.Text.Json.Serialization;
 [JsonSerializable(typeof(Dictionary<string, string>))]
 [JsonSerializable(typeof(Dictionary<string, float>))] // FIX: Added for orchestration event scores
 [JsonSerializable(typeof(object))] // FIX: Added for AOT compatibility
+[JsonSerializable(typeof(string))] // FIX: Added for generic serialization
+// FIX: Add all common primitive types that plugins/tools might return
+[JsonSerializable(typeof(int))]
+[JsonSerializable(typeof(long))]
+[JsonSerializable(typeof(double))]
+[JsonSerializable(typeof(float))]
+[JsonSerializable(typeof(bool))]
+[JsonSerializable(typeof(decimal))] // FIX: This was the missing one causing the error!
+[JsonSerializable(typeof(Guid))]
+[JsonSerializable(typeof(DateTime))]
+[JsonSerializable(typeof(DateTimeOffset))]
 [JsonSerializable(typeof(List<BaseMessage>))] // FIX: Added for collections
 [JsonSerializable(typeof(List<Tool>))] // FIX: Added for collections
 [JsonSerializable(typeof(List<Context>))] // FIX: Added for collections
 [JsonSerializable(typeof(System.Text.Json.JsonElement))] // FIX: Added for JsonElement serialization
 public partial class AGUIJsonContext : JsonSerializerContext
 {
+    /// <summary>
+    /// Combined type info resolver that includes AGUI types, HPD types, and OpenRouter types
+    /// This ensures we can serialize ANY type that plugins might return
+    /// </summary>
+    public static IJsonTypeInfoResolver Combined { get; } = 
+        JsonTypeInfoResolver.Combine(Default, HPDJsonContext.Default);
 }

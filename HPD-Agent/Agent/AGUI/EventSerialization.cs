@@ -53,30 +53,31 @@ internal static class EventSerialization
         
         return new()
         {
-            Type = "text_message_content",
+            Type = "TEXT_MESSAGE_CONTENT",
             MessageId = messageId,
             Delta = delta,
             Timestamp = GetTimestamp()
         };
     }
 
-    public static TextMessageStartEvent CreateTextMessageStart(string messageId) => new()
+    public static TextMessageStartEvent CreateTextMessageStart(string messageId, string? role = null) => new()
     {
-        Type = "text_message_start",
+        Type = "TEXT_MESSAGE_START",
         MessageId = messageId,
+        Role = role,
         Timestamp = GetTimestamp()
     };
 
     public static TextMessageEndEvent CreateTextMessageEnd(string messageId) => new()
     {
-        Type = "text_message_end",
+        Type = "TEXT_MESSAGE_END",
         MessageId = messageId,
         Timestamp = GetTimestamp()
     };
 
     public static ToolCallStartEvent CreateToolCallStart(string toolCallId, string toolCallName, string parentMessageId) => new()
     {
-        Type = "tool_call_start",
+        Type = "TOOL_CALL_START",
         ToolCallId = toolCallId,
         ToolCallName = toolCallName,
         ParentMessageId = parentMessageId,
@@ -85,7 +86,7 @@ internal static class EventSerialization
 
     public static ToolCallArgsEvent CreateToolCallArgs(string toolCallId, string delta) => new()
     {
-        Type = "tool_call_args",
+        Type = "TOOL_CALL_ARGS",
         ToolCallId = toolCallId,
         Delta = delta,
         Timestamp = GetTimestamp()
@@ -93,14 +94,14 @@ internal static class EventSerialization
 
     public static ToolCallEndEvent CreateToolCallEnd(string toolCallId) => new()
     {
-        Type = "tool_call_end",
+        Type = "TOOL_CALL_END",
         ToolCallId = toolCallId,
         Timestamp = GetTimestamp()
     };
 
     public static RunStartedEvent CreateRunStarted(string threadId, string runId) => new()
     {
-        Type = "run_started",
+        Type = "RUN_STARTED",
         ThreadId = threadId,
         RunId = runId,
         Timestamp = GetTimestamp()
@@ -108,7 +109,7 @@ internal static class EventSerialization
 
     public static RunFinishedEvent CreateRunFinished(string threadId, string runId) => new()
     {
-        Type = "run_finished",
+        Type = "RUN_FINISHED",
         ThreadId = threadId,
         RunId = runId,
         Timestamp = GetTimestamp()
@@ -116,8 +117,54 @@ internal static class EventSerialization
 
     public static RunErrorEvent CreateRunError(string message) => new()
     {
-        Type = "run_error",
+        Type = "RUN_ERROR",
         Message = message,
+        Timestamp = GetTimestamp()
+    };
+
+    public static CustomEvent CreateToolResult(string messageId, string toolCallId, string toolName, object result) => new()
+    {
+        Type = "CUSTOM",
+        Data = JsonSerializer.SerializeToElement(new ToolResultEventData
+        {
+            EventType = "tool_result",
+            MessageId = messageId,
+            ToolCallId = toolCallId,
+            ToolName = toolName,
+            // FIX: For AOT compatibility, fall back to string representation for non-string results
+            Result = result?.ToString() ?? "null"
+        }, AGUIJsonContext.Default.ToolResultEventData),
+        Timestamp = GetTimestamp()
+    };
+
+    public static CustomEvent CreateReasoningContent(string messageId, string content) => new()
+    {
+        Type = "CUSTOM",
+        Data = JsonSerializer.SerializeToElement(new ReasoningContentEventData
+        {
+            EventType = "reasoning_content",
+            MessageId = messageId,
+            Content = content
+        }, AGUIJsonContext.Default.ReasoningContentEventData),
+        Timestamp = GetTimestamp()
+    };
+
+    // Standard event factory methods for consistency - only adding missing ones
+    public static StepStartedEvent CreateStepStarted(string stepId, string stepName, string? description = null) => new()
+    {
+        Type = "STEP_STARTED",
+        StepId = stepId,
+        StepName = stepName,
+        Description = description,
+        Timestamp = GetTimestamp()
+    };
+
+    public static StepFinishedEvent CreateStepFinished(string stepId, string stepName, JsonElement? result = null) => new()
+    {
+        Type = "STEP_FINISHED",
+        StepId = stepId,
+        StepName = stepName,
+        Result = result,
         Timestamp = GetTimestamp()
     };
 }

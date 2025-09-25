@@ -387,8 +387,8 @@ public class AGUIEventConverter
         public static RunErrorEvent CreateRunError(RunAgentInput input, Exception ex) => 
             EventSerialization.CreateRunError(ex.Message);
         
-        public static TextMessageStartEvent CreateTextMessageStart(string messageId = "") => 
-            EventSerialization.CreateTextMessageStart(messageId);
+        public static TextMessageStartEvent CreateTextMessageStart(string messageId = "", string? role = null) => 
+            EventSerialization.CreateTextMessageStart(messageId, role);
         
         public static TextMessageEndEvent CreateTextMessageEnd(string messageId = "") => 
             EventSerialization.CreateTextMessageEnd(messageId);

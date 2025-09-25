@@ -1,5 +1,15 @@
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
+using System.Threading.Tasks;
+
+/// <summary>
+/// Interface for emitting permission events to an AGUI stream.
+/// This is implemented by the application's streaming infrastructure.
+/// </summary>
+public interface IPermissionEventEmitter
+{
+    Task EmitAsync<T>(T eventData) where T : BaseEvent;
+}
 
 /// <summary>
 /// AGUI event for function permission requests.
@@ -26,7 +36,7 @@ public sealed record FunctionPermissionRequestEvent : BaseEvent
 }
 
 /// <summary>
-/// AGUI event for continuation permission requests.
+/// AGUI event for continuation permission requests when function call limits are reached.
 /// </summary>
 public sealed record ContinuationPermissionRequestEvent : BaseEvent
 {
@@ -42,11 +52,11 @@ public sealed record ContinuationPermissionRequestEvent : BaseEvent
     [JsonPropertyName("completed_functions")]
     public required string[] CompletedFunctions { get; init; }
 
-    [JsonPropertyName("planned_functions")]
-    public required string[] PlannedFunctions { get; init; }
+    [JsonPropertyName("elapsed_time")]
+    public required string ElapsedTime { get; init; }
 
     [JsonPropertyName("options")]
-    public string[] Options { get; init; } = ["Continue", "Stop", "Always Continue", "Set Limit"];
+    public string[] Options { get; init; } = ["Continue", "Stop", "Set New Limit"];
 }
 
 /// <summary>
@@ -60,5 +70,9 @@ public class PermissionResponsePayload
     public bool Approved { get; set; }
     public bool RememberChoice { get; set; }
     public PermissionScope Scope { get; set; }
+    
+    // For continuation responses
+    public int? NewMaxIterations { get; set; } // When user chooses "Set New Limit"
+    
     public object? AdditionalData { get; set; }
 }

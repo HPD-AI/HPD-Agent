@@ -13,6 +13,12 @@ public class Agent : IChatClient
     private readonly ScopedFilterManager? _scopedFilterManager;
     private readonly int _maxFunctionCalls;
 
+    // Microsoft.Extensions.AI compliance fields
+    private readonly ChatClientMetadata _metadata;
+    private readonly AgentStatistics _statistics = new();
+    private readonly ErrorHandlingPolicy _errorPolicy;
+    private string? _conversationId;
+
     // Specialized component fields for delegation
     private readonly MessageProcessor _messageProcessor;
     private readonly FunctionCallProcessor _functionCallProcessor;
@@ -20,12 +26,42 @@ public class Agent : IChatClient
     private readonly ToolScheduler _toolScheduler;
     private readonly AGUIEventHandler _aguiEventHandler;
     private readonly CapabilityManager _capabilityManager;
-    private readonly ContinuationPermissionManager? _continuationPermissionManager;
+    private readonly IReadOnlyList<IAiFunctionFilter> _aiFunctionFilters;
 
     /// <summary>
     /// Agent configuration object containing all settings
     /// </summary>
     public AgentConfig? Config { get; private set; }
+
+    /// <summary>
+    /// Metadata about this chat client, compatible with Microsoft.Extensions.AI patterns
+    /// </summary>
+    public ChatClientMetadata Metadata => _metadata;
+
+    /// <summary>
+    /// Provider from the configuration
+    /// </summary>
+    public ChatProvider Provider => Config?.Provider?.Provider ?? ChatProvider.OpenAI;
+
+    /// <summary>
+    /// Model ID from the configuration
+    /// </summary>
+    public string? ModelId => Config?.Provider?.ModelName;
+
+    /// <summary>
+    /// Statistics and telemetry for this agent instance
+    /// </summary>
+    public AgentStatistics Statistics => _statistics;
+
+    /// <summary>
+    /// Current conversation ID for tracking
+    /// </summary>
+    public string? ConversationId => _conversationId;
+
+    /// <summary>
+    /// Error handling policy for normalizing provider errors
+    /// </summary>
+    public ErrorHandlingPolicy ErrorPolicy => _errorPolicy;
 
 
     /// <summary>
@@ -38,20 +74,38 @@ public class Agent : IChatClient
         List<IPromptFilter> promptFilters,
         ScopedFilterManager scopedFilterManager,
         IReadOnlyList<IPermissionFilter>? permissionFilters = null,
-        ContinuationPermissionManager? continuationPermissionManager = null)
+        IReadOnlyList<IAiFunctionFilter>? aiFunctionFilters = null)
     {
         Config = config ?? throw new ArgumentNullException(nameof(config));
         _baseClient = baseClient ?? throw new ArgumentNullException(nameof(baseClient));
         _name = config.Name;
         _scopedFilterManager = scopedFilterManager ?? throw new ArgumentNullException(nameof(scopedFilterManager));
-        _maxFunctionCalls = config.MaxFunctionCalls;
+        _maxFunctionCalls = config.MaxFunctionCallTurns;
+
+        // Initialize Microsoft.Extensions.AI compliance metadata
+        _metadata = new ChatClientMetadata(
+            providerName: config.Provider?.Provider.ToString()?.ToLowerInvariant(),
+            providerUri: ResolveProviderUri(config.Provider),
+            defaultModelId: config.Provider?.ModelName
+        );
+
+        // Initialize error handling policy
+        _errorPolicy = new ErrorHandlingPolicy
+        {
+            NormalizeProviderErrors = config.ErrorHandling?.NormalizeErrors ?? true,
+            IncludeProviderDetails = config.ErrorHandling?.IncludeProviderDetails ?? false,
+            MaxRetries = config.ErrorHandling?.MaxRetries ?? 3
+        };
+
+        // Fix: Store and use AI function filters
+        _aiFunctionFilters = aiFunctionFilters ?? new List<IAiFunctionFilter>();
+
         _messageProcessor = new MessageProcessor(config.SystemInstructions, mergedOptions ?? config.Provider?.DefaultChatOptions, promptFilters);
-        _functionCallProcessor = new FunctionCallProcessor(scopedFilterManager, permissionFilters, new List<IAiFunctionFilter>(), _continuationPermissionManager, config.MaxFunctionCalls);
+        _functionCallProcessor = new FunctionCallProcessor(scopedFilterManager, permissionFilters, _aiFunctionFilters, config.MaxFunctionCallTurns);
         _agentTurn = new AgentTurn(_baseClient);
         _toolScheduler = new ToolScheduler(_functionCallProcessor);
         _aguiEventHandler = new AGUIEventHandler(this, _baseClient, _messageProcessor, _name, config);
         _capabilityManager = new CapabilityManager();
-        _continuationPermissionManager = continuationPermissionManager;
     }
 
     /// <summary>
@@ -72,7 +126,7 @@ public class Agent : IChatClient
     /// <summary>
     /// AIFuncton filters applied to tool calls in conversations (via ScopedFilterManager)
     /// </summary>
-    public IReadOnlyList<IAiFunctionFilter> AIFunctionFilters => new List<IAiFunctionFilter>();
+    public IReadOnlyList<IAiFunctionFilter> AIFunctionFilters => _aiFunctionFilters;
 
     /// <summary>
     /// Maximum number of function calls allowed in a single conversation turn
@@ -123,22 +177,48 @@ public class Agent : IChatClient
         ChatOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        // Use the unified streaming approach and collect all updates
-        var allEvents = new List<BaseEvent>();
+        var startTime = DateTime.UtcNow;
 
-        var turnResult = await ExecuteStreamingTurnAsync(messages, options, cancellationToken);
-
-        // Consume the entire stream
-        await foreach (var evt in turnResult.EventStream.WithCancellation(cancellationToken))
+        try
         {
-            allEvents.Add(evt);
+            // Use the unified streaming approach and collect all updates
+            var allEvents = new List<BaseEvent>();
+
+            var turnResult = await ExecuteStreamingTurnAsync(messages, options, cancellationToken);
+
+            // Consume the entire stream
+            await foreach (var evt in turnResult.EventStream.WithCancellation(cancellationToken))
+            {
+                allEvents.Add(evt);
+            }
+
+            // Wait for final history and construct response
+            var finalHistory = await turnResult.FinalHistory;
+            // Extract assistant messages from final history
+            var assistantMessages = finalHistory.Where(m => m.Role == ChatRole.Assistant).ToList();
+            var response = new ChatResponse(assistantMessages);
+
+            // Track statistics
+            var processingTime = DateTime.UtcNow - startTime;
+            var tokensUsed = (int)(response.Usage?.TotalTokenCount ?? 0);
+            _statistics.RecordRequest(processingTime, tokensUsed);
+
+            // Track conversation ID
+            if (options?.AdditionalProperties?.TryGetValue("ConversationId", out var convIdObj) == true &&
+                convIdObj is string convId)
+            {
+                _conversationId = convId;
+            }
+
+            return response;
         }
-        
-        // Wait for final history and construct response
-        var finalHistory = await turnResult.FinalHistory;
-        // Extract assistant messages from final history
-        var assistantMessages = finalHistory.Where(m => m.Role == ChatRole.Assistant).ToList();
-        return new ChatResponse(assistantMessages);
+        catch (Exception)
+        {
+            // Still record the request attempt even if it failed
+            var processingTime = DateTime.UtcNow - startTime;
+            _statistics.RecordRequest(processingTime, 0);
+            throw;
+        }
     }
 
 
@@ -236,14 +316,11 @@ public class Agent : IChatClient
         var threadId = conversationId; // Use conversation ID as thread ID
         var messageId = Guid.NewGuid().ToString();
 
+        // Fix: Track conversation ID consistently
+        _conversationId = conversationId;
+
         // Emit mandatory RunStarted event
-        yield return new RunStartedEvent
-        {
-            Type = "RUN_STARTED",
-            ThreadId = threadId,
-            RunId = runId,
-            Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-        };
+        yield return EventSerialization.CreateRunStarted(threadId, runId);
 
         // Collect all response updates to build final history - cannot use try-catch with yield
         var responseUpdates = new List<ChatResponseUpdate>();
@@ -260,9 +337,15 @@ public class Agent : IChatClient
         // Emit message start event at the beginning
         bool messageStarted = false;
 
-        // Main agentic loop
-        for (int iteration = 0; iteration < _maxFunctionCalls; iteration++)
+        // Create agent run context for tracking across all function calls
+        var agentRunContext = new AgentRunContext(runId, conversationId, _maxFunctionCalls);
+
+        // Main agentic loop - use while loop to allow dynamic limit extension
+        int iteration = 0;
+        while (iteration <= agentRunContext.MaxIterations)
         {
+            agentRunContext.CurrentIteration = iteration;
+            
             var toolRequests = new List<FunctionCallContent>();
             var assistantContents = new List<AIContent>();
             bool streamFinished = false;
@@ -284,31 +367,13 @@ public class Agent : IChatClient
                             var stepId = Guid.NewGuid().ToString();
                             
                             // Emit step started event for reasoning (visible to UI, NOT saved to history)
-                            yield return new StepStartedEvent
-                            {
-                                StepId = stepId,
-                                StepName = "Reasoning",
-                                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                                Type = "STEP_STARTED"
-                            };
+                            yield return EventSerialization.CreateStepStarted(stepId, "Reasoning");
                             
-                            // Emit the reasoning text as content (for UI visibility)
-                            yield return new TextMessageContentEvent 
-                            { 
-                                MessageId = messageId, 
-                                Delta = reasoning.Text,
-                                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                                Type = "TEXT_MESSAGE_CONTENT"
-                            };
+                            // Fix: Emit reasoning as a custom event for dev visibility (not user-visible text)
+                            yield return EventSerialization.CreateReasoningContent(messageId, reasoning.Text);
                             
                             // Emit step finished event for reasoning
-                            yield return new StepFinishedEvent
-                            {
-                                StepId = stepId,
-                                StepName = "Reasoning",
-                                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                                Type = "STEP_FINISHED"
-                            };
+                            yield return EventSerialization.CreateStepFinished(stepId, "Reasoning");
                             
                             // CRITICAL: Do NOT add reasoning to assistantContents (not saved to history)
                         }
@@ -317,13 +382,7 @@ public class Agent : IChatClient
                             // Emit message start if this is the first text content
                             if (!messageStarted)
                             {
-                                yield return new TextMessageStartEvent
-                                {
-                                    Type = "TEXT_MESSAGE_START",
-                                    MessageId = messageId,
-                                    Role = "assistant", // Assistant is responding
-                                    Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-                                };
+                                yield return EventSerialization.CreateTextMessageStart(messageId, "assistant");
                                 messageStarted = true;
                             }
 
@@ -331,13 +390,7 @@ public class Agent : IChatClient
                             assistantContents.Add(textContent);
 
                             // Emit text content event
-                            yield return new TextMessageContentEvent
-                            {
-                                MessageId = messageId,
-                                Delta = textContent.Text,
-                                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                                Type = "TEXT_MESSAGE_CONTENT"
-                            };
+                            yield return EventSerialization.CreateTextMessageContent(messageId, textContent.Text);
                         }
                         else if (content is FunctionCallContent functionCall)
                         {
@@ -357,22 +410,31 @@ public class Agent : IChatClient
             // If there are tool requests, execute them
             if (toolRequests.Count > 0)
             {
+                // Fix: Ensure message start before first tool event
+                if (!messageStarted)
+                {
+                    yield return EventSerialization.CreateTextMessageStart(messageId, "assistant");
+                    messageStarted = true;
+                }
+                
                 // Create assistant message with tool calls
                 var assistantMessage = new ChatMessage(ChatRole.Assistant, assistantContents);
                 currentMessages.Add(assistantMessage);
                 turnHistory.Add(assistantMessage);
                 
-                // Emit tool call start events
+                // Emit tool call start events and track statistics
                 foreach (var toolRequest in toolRequests)
                 {
-                    yield return new ToolCallStartEvent
+                    // Track tool call statistics
+                    if (toolRequest.Name != null)
                     {
-                        ToolCallId = toolRequest.CallId,
-                        ToolCallName = toolRequest.Name,
-                        ParentMessageId = messageId,
-                        Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                        Type = "TOOL_CALL_START"
-                    };
+                        _statistics.RecordToolCall(toolRequest.Name);
+                    }
+
+                    yield return EventSerialization.CreateToolCallStart(
+                        toolRequest.CallId, 
+                        toolRequest.Name ?? string.Empty, 
+                        messageId);
 
                     // Emit tool call arguments event
                     if (toolRequest.Arguments != null && toolRequest.Arguments.Count > 0)
@@ -381,44 +443,34 @@ public class Agent : IChatClient
                             toolRequest.Arguments,
                             AGUIJsonContext.Default.DictionaryStringObject);
 
-                        yield return new ToolCallArgsEvent
-                        {
-                            Type = "TOOL_CALL_ARGS",
-                            ToolCallId = toolRequest.CallId,
-                            Delta = argsJson,
-                            Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-                        };
+                        yield return EventSerialization.CreateToolCallArgs(toolRequest.CallId, argsJson);
                     }
                 }
                 
                 // Execute tools
                 var toolResultMessage = await _toolScheduler.ExecuteToolsAsync(
-                    currentMessages, toolRequests, effectiveOptions, cancellationToken);
+                    currentMessages, toolRequests, effectiveOptions, agentRunContext, cancellationToken);
                 
                 // Add tool results to history
                 currentMessages.Add(toolResultMessage);
                 turnHistory.Add(toolResultMessage);
                 
-                // Emit tool call end events
+                // Fix: Emit both tool call end and custom tool result events
                 foreach (var content in toolResultMessage.Contents)
                 {
                     if (content is FunctionResultContent result)
                     {
-                        yield return new ToolCallEndEvent 
-                        { 
-                            ToolCallId = result.CallId,
-                            Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                            Type = "TOOL_CALL_END"
-                        };
+                        yield return EventSerialization.CreateToolCallEnd(result.CallId);
+                        
+                        // Emit custom tool result event for dev visibility and debugging
+                        var matchingTool = toolRequests.FirstOrDefault(t => t.CallId == result.CallId);
+                        var toolName = matchingTool?.Name ?? "unknown";
+                        yield return EventSerialization.CreateToolResult(messageId, result.CallId, toolName, result.Result ?? "null");
                     }
                 }
                 
-                // Update response history for final assembly
-                var toolUpdate = new ChatResponseUpdate
-                {
-                    Contents = toolResultMessage.Contents.ToList()
-                };
-                responseUpdates.Add(toolUpdate);
+                // Fix: Do NOT add tool results to responseUpdates - they belong to tool role, not assistant
+                // This prevents tool content from being mixed into the final assistant message
                 
                 // Update options for next iteration to allow the model to choose not to call tools
                 effectiveOptions = effectiveOptions == null
@@ -441,6 +493,7 @@ public class Agent : IChatClient
                     };
                 
                 // Continue to next iteration
+                iteration++;
             }
             else if (streamFinished)
             {
@@ -452,42 +505,40 @@ public class Agent : IChatClient
                 }
                 break;
             }
+            else
+            {
+                // Increment for next iteration even if no tools/stream finish
+                iteration++;
+            }
         }
         
         // Build the complete history including the final assistant message
         if (responseUpdates.Any())
         {
             var finalResponse = ConstructChatResponseFromUpdates(responseUpdates);
-            var finalAssistantMessage = finalResponse.Messages.First();
-            
-            // Only add if we don't already have this assistant message
-            // (in case it was already added during tool execution)
-            if (!turnHistory.Any() || turnHistory.Last().Role != ChatRole.Assistant || 
-                !turnHistory.Last().Contents.SequenceEqual(finalAssistantMessage.Contents))
+            // Fix: Guard against empty messages collection
+            if (finalResponse.Messages.Count > 0)
             {
-                turnHistory.Add(finalAssistantMessage);
+                var finalAssistantMessage = finalResponse.Messages[0];
+                
+                // Only add if we don't already have this assistant message
+                // (in case it was already added during tool execution)
+                if (!turnHistory.Any() || turnHistory.Last().Role != ChatRole.Assistant || 
+                    !turnHistory.Last().Contents.SequenceEqual(finalAssistantMessage.Contents))
+                {
+                    turnHistory.Add(finalAssistantMessage);
+                }
             }
         }
 
         // Emit message end event if we started a message
         if (messageStarted)
         {
-            yield return new TextMessageEndEvent
-            {
-                MessageId = messageId,
-                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                Type = "TEXT_MESSAGE_END"
-            };
+            yield return EventSerialization.CreateTextMessageEnd(messageId);
         }
 
         // Emit mandatory RunFinished event (errors handled at higher level)
-        yield return new RunFinishedEvent
-        {
-            Type = "RUN_FINISHED",
-            ThreadId = threadId,
-            RunId = runId,
-            Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-        };
+        yield return EventSerialization.CreateRunFinished(threadId, runId);
 
         // Set the final complete history
         historyCompletionSource.SetResult(turnHistory);
@@ -509,7 +560,8 @@ public class Agent : IChatClient
         {
             if (update.Contents != null)
             {
-                allContents.AddRange(update.Contents);
+                // Fix: Only include TextContent in assistant messages, not tool results
+                allContents.AddRange(update.Contents.OfType<TextContent>());
             }
             
             if (update.FinishReason != null)
@@ -546,6 +598,13 @@ public class Agent : IChatClient
         {
             Type t when t == typeof(Agent) => this,
             Type t when t == typeof(IAGUIAgent) => _aguiEventHandler,
+            Type t when t == typeof(ChatClientMetadata) => _metadata,
+            Type t when t == typeof(CapabilityManager) => _capabilityManager,
+            Type t when t == typeof(AgentConfig) => Config,
+            Type t when t == typeof(ScopedFilterManager) => _scopedFilterManager,
+            Type t when t == typeof(AgentStatistics) => _statistics,
+            Type t when t == typeof(ErrorHandlingPolicy) => _errorPolicy,
+            Type t when t.IsInstanceOfType(_baseClient) => _baseClient,
             _ => _baseClient.GetService(serviceType, serviceKey)
         };
     }
@@ -587,6 +646,41 @@ public class Agent : IChatClient
     {
         return _aguiEventHandler.SerializeEvent(aguiEvent);
     }
+
+    /// <summary>
+    /// Resolves the provider URI based on provider configuration, following Microsoft.Extensions.AI patterns
+    /// </summary>
+    /// <param name="provider">Provider configuration</param>
+    /// <returns>Provider URI if resolvable, otherwise null</returns>
+    private static Uri? ResolveProviderUri(ProviderConfig? provider)
+    {
+        if (provider?.Endpoint != null)
+        {
+            try
+            {
+                return new Uri(provider.Endpoint);
+            }
+            catch (UriFormatException)
+            {
+                // Invalid URI format, return null
+                return null;
+            }
+        }
+
+        return provider?.Provider switch
+        {
+            ChatProvider.OpenAI => new Uri("https://api.openai.com"),
+            ChatProvider.OpenRouter => new Uri("https://openrouter.ai/api"),
+            ChatProvider.Ollama => new Uri("http://localhost:11434"),
+            ChatProvider.AzureOpenAI => null, // Requires specific endpoint
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// Resets statistics counters
+    /// </summary>
+    public void ResetStatistics() => _statistics.Reset();
 }
 
 
@@ -637,12 +731,7 @@ public class AGUIEventHandler : IAGUIAgent
             var messages = _eventConverter.ConvertToExtensionsAI(input);
             var chatOptions = _eventConverter.ConvertToExtensionsAIChatOptions(input, _config?.Provider?.DefaultChatOptions);
 
-            // Generate message ID for this response
-            var messageId = Guid.NewGuid().ToString();
-
-            // Emit message start
-            await events.WriteAsync(AGUIEventConverter.LifecycleEvents.CreateTextMessageStart(messageId), cancellationToken);
-
+            // Fix: Remove duplicate message start/end events - let the inner loop handle all message boundaries
             // Use the agent's native BaseEvent stream directly
             var streamResult = await _agent.ExecuteStreamingTurnAsync(messages, chatOptions, cancellationToken);
             await foreach (var baseEvent in streamResult.EventStream.WithCancellation(cancellationToken))
@@ -650,9 +739,6 @@ public class AGUIEventHandler : IAGUIAgent
                 // Write native events directly to the channel
                 await events.WriteAsync(baseEvent, cancellationToken);
             }
-
-            // Emit message end
-            await events.WriteAsync(AGUIEventConverter.LifecycleEvents.CreateTextMessageEnd(messageId), cancellationToken);
 
             // Emit run finished event
             await events.WriteAsync(AGUIEventConverter.LifecycleEvents.CreateRunFinished(input), cancellationToken);
@@ -734,15 +820,13 @@ public class FunctionCallProcessor
     private readonly ScopedFilterManager? _scopedFilterManager;
     private readonly IReadOnlyList<IPermissionFilter> _permissionFilters;
     private readonly IReadOnlyList<IAiFunctionFilter> _aiFunctionFilters;
-    private readonly ContinuationPermissionManager? _continuationPermissionManager;
     private readonly int _maxFunctionCalls;
 
-    public FunctionCallProcessor(ScopedFilterManager? scopedFilterManager, IReadOnlyList<IPermissionFilter>? permissionFilters, IReadOnlyList<IAiFunctionFilter>? aiFunctionFilters, ContinuationPermissionManager? continuationPermissionManager, int maxFunctionCalls)
+    public FunctionCallProcessor(ScopedFilterManager? scopedFilterManager, IReadOnlyList<IPermissionFilter>? permissionFilters, IReadOnlyList<IAiFunctionFilter>? aiFunctionFilters, int maxFunctionCalls)
     {
         _scopedFilterManager = scopedFilterManager;
         _permissionFilters = permissionFilters ?? new List<IPermissionFilter>();
         _aiFunctionFilters = aiFunctionFilters ?? new List<IAiFunctionFilter>();
-        _continuationPermissionManager = continuationPermissionManager;
         _maxFunctionCalls = maxFunctionCalls;
     }
 
@@ -754,6 +838,7 @@ public class FunctionCallProcessor
         List<ChatMessage> messages,
         ChatOptions? options,
         List<FunctionCallContent> functionCallContents,
+        AgentRunContext agentRunContext,
         CancellationToken cancellationToken)
     {
         var resultMessages = new List<ChatMessage>();
@@ -761,6 +846,10 @@ public class FunctionCallProcessor
         // Process each function call through the filter pipeline
         foreach (var functionCall in functionCallContents)
         {
+            // Skip functions without names (safety check)
+            if (string.IsNullOrEmpty(functionCall.Name))
+                continue;
+
             var toolCallRequest = new ToolCallRequest
             {
                 FunctionName = functionCall.Name,
@@ -772,7 +861,8 @@ public class FunctionCallProcessor
 
             var context = new AiFunctionContext(tempConversation, toolCallRequest)
             {
-                Function = FindFunction(toolCallRequest.FunctionName, options?.Tools)
+                Function = FindFunction(toolCallRequest.FunctionName, options?.Tools),
+                RunContext = agentRunContext
             };
 
             // The final step in the pipeline is the actual function invocation.
@@ -820,6 +910,9 @@ public class FunctionCallProcessor
 
             // Execute the full pipeline.
             await pipeline(context);
+
+            // Mark function as completed in run context
+            agentRunContext.CompleteFunction(functionCall.Name);
 
             var functionResult = new FunctionResultContent(functionCall.CallId, context.Result);
             var functionMessage = new ChatMessage(ChatRole.Tool, new AIContent[] { functionResult });
@@ -924,7 +1017,10 @@ public class MessageProcessor
         // Merge options - provided options take precedence
         return new ChatOptions
         {
-            Tools = providedOptions.Tools ?? _defaultOptions.Tools,
+            // Fix: Proper tools merging - keep defaults when provided list is null or empty
+            Tools = (providedOptions.Tools is { Count: > 0 }) 
+                ? providedOptions.Tools 
+                : _defaultOptions.Tools,
             ToolMode = providedOptions.ToolMode ?? _defaultOptions.ToolMode,
             AllowMultipleToolCalls = providedOptions.AllowMultipleToolCalls ?? _defaultOptions.AllowMultipleToolCalls,
             MaxOutputTokens = providedOptions.MaxOutputTokens ?? _defaultOptions.MaxOutputTokens,
@@ -1156,22 +1252,24 @@ public class ToolScheduler
     /// <param name="currentHistory">The current conversation history</param>
     /// <param name="toolRequests">The tool call requests to execute</param>
     /// <param name="options">Optional chat options containing tool definitions</param>
+    /// <param name="agentRunContext">Agent run context for cross-call tracking</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>A chat message containing the tool execution results</returns>
     public async Task<ChatMessage> ExecuteToolsAsync(
         List<ChatMessage> currentHistory,
         List<FunctionCallContent> toolRequests,
         ChatOptions? options,
+        AgentRunContext agentRunContext,
         CancellationToken cancellationToken)
     {
         // For single tool calls, use sequential execution (no parallelization overhead)
         if (toolRequests.Count <= 1)
         {
-            return await ExecuteSequentiallyAsync(currentHistory, toolRequests, options, cancellationToken);
+            return await ExecuteSequentiallyAsync(currentHistory, toolRequests, options, agentRunContext, cancellationToken);
         }
 
         // For multiple tool calls, execute in parallel for better performance
-        return await ExecuteInParallelAsync(currentHistory, toolRequests, options, cancellationToken);
+        return await ExecuteInParallelAsync(currentHistory, toolRequests, options, agentRunContext, cancellationToken);
     }
 
     /// <summary>
@@ -1181,11 +1279,12 @@ public class ToolScheduler
         List<ChatMessage> currentHistory,
         List<FunctionCallContent> toolRequests,
         ChatOptions? options,
+        AgentRunContext agentRunContext,
         CancellationToken cancellationToken)
     {
         // Use the existing FunctionCallProcessor to execute the tools sequentially
         var resultMessages = await _functionCallProcessor.ProcessFunctionCallsAsync(
-            currentHistory, options, toolRequests, cancellationToken);
+            currentHistory, options, toolRequests, agentRunContext, cancellationToken);
 
         // Combine all tool results into a single message
         var allContents = new List<AIContent>();
@@ -1204,6 +1303,7 @@ public class ToolScheduler
         List<ChatMessage> currentHistory,
         List<FunctionCallContent> toolRequests,
         ChatOptions? options,
+        AgentRunContext agentRunContext,
         CancellationToken cancellationToken)
     {
         // Create tasks for each tool execution
@@ -1214,7 +1314,7 @@ public class ToolScheduler
                 // Execute each tool call individually through the processor
                 var singleToolList = new List<FunctionCallContent> { toolRequest };
                 var resultMessages = await _functionCallProcessor.ProcessFunctionCallsAsync(
-                    currentHistory, options, singleToolList, cancellationToken);
+                    currentHistory, options, singleToolList, agentRunContext, cancellationToken);
 
                 return (Success: true, Messages: resultMessages, Error: (Exception?)null);
             }
@@ -1255,6 +1355,176 @@ public class ToolScheduler
         }
 
         return new ChatMessage(ChatRole.Tool, allContents);
+    }
+}
+
+#endregion
+
+#region Error Handling Policy
+
+/// <summary>
+/// Error handling policy that normalizes exceptions across different providers
+/// into consistent ErrorContent format following Microsoft.Extensions.AI patterns.
+/// </summary>
+public class ErrorHandlingPolicy
+{
+    /// <summary>
+    /// Whether to normalize provider-specific errors into standard formats
+    /// </summary>
+    public bool NormalizeProviderErrors { get; set; } = true;
+
+    /// <summary>
+    /// Whether to include provider-specific details in error messages
+    /// </summary>
+    public bool IncludeProviderDetails { get; set; } = false;
+
+    /// <summary>
+    /// Maximum number of retries for transient errors
+    /// </summary>
+    public int MaxRetries { get; set; } = 3;
+
+    /// <summary>
+    /// Normalizes an exception into a consistent ErrorContent format
+    /// </summary>
+    /// <param name="ex">The exception to normalize</param>
+    /// <param name="provider">The provider that generated the exception</param>
+    /// <returns>Normalized ErrorContent</returns>
+    public ErrorContent NormalizeError(Exception ex, ChatProvider provider)
+    {
+        if (!NormalizeProviderErrors)
+        {
+            return new ErrorContent(ex.Message);
+        }
+
+        var normalizedMessage = ex.Message;
+        var errorCode = "UnknownError";
+
+        // Provider-specific error normalization
+        switch (provider)
+        {
+            case ChatProvider.OpenAI:
+                (normalizedMessage, errorCode) = NormalizeOpenAIError(ex);
+                break;
+            case ChatProvider.OpenRouter:
+                (normalizedMessage, errorCode) = NormalizeOpenRouterError(ex);
+                break;
+            case ChatProvider.AzureOpenAI:
+                (normalizedMessage, errorCode) = NormalizeAzureError(ex);
+                break;
+            case ChatProvider.Ollama:
+                (normalizedMessage, errorCode) = NormalizeOllamaError(ex);
+                break;
+            default:
+                normalizedMessage = ex.Message;
+                errorCode = "ProviderError";
+                break;
+        }
+
+        var errorContent = new ErrorContent(normalizedMessage)
+        {
+            ErrorCode = errorCode
+        };
+
+        // Add provider details if requested
+        if (IncludeProviderDetails)
+        {
+            errorContent.AdditionalProperties ??= new();
+            errorContent.AdditionalProperties["Provider"] = provider.ToString();
+            errorContent.AdditionalProperties["OriginalMessage"] = ex.Message;
+            errorContent.AdditionalProperties["ExceptionType"] = ex.GetType().Name;
+        }
+
+        return errorContent;
+    }
+
+    /// <summary>
+    /// Determines if an error is transient and should be retried
+    /// </summary>
+    /// <param name="ex">The exception to check</param>
+    /// <param name="provider">The provider that generated the exception</param>
+    /// <returns>True if the error is transient</returns>
+    public bool IsTransientError(Exception ex, ChatProvider provider)
+    {
+        var message = ex.Message.ToLowerInvariant();
+
+        // Common transient error patterns
+        if (message.Contains("rate limit") ||
+            message.Contains("timeout") ||
+            message.Contains("503") ||
+            message.Contains("502") ||
+            message.Contains("network") ||
+            message.Contains("connection"))
+        {
+            return true;
+        }
+
+        // Provider-specific transient patterns
+        return provider switch
+        {
+            ChatProvider.OpenAI => message.Contains("overloaded") || message.Contains("429"),
+            ChatProvider.OpenRouter => message.Contains("queue") || message.Contains("busy"),
+            ChatProvider.Ollama => message.Contains("loading") || message.Contains("busy"),
+            _ => false
+        };
+    }
+
+    private static (string message, string code) NormalizeOpenAIError(Exception ex)
+    {
+        var message = ex.Message;
+
+        return message.ToLowerInvariant() switch
+        {
+            var m when m.Contains("rate limit") => ("Rate limit exceeded. Please try again later.", "RateLimit"),
+            var m when m.Contains("insufficient quota") => ("API quota exceeded.", "QuotaExceeded"),
+            var m when m.Contains("invalid api key") => ("Invalid API key provided.", "InvalidApiKey"),
+            var m when m.Contains("model_not_found") => ("Model not found or not accessible.", "ModelNotFound"),
+            var m when m.Contains("refused") => ("Request was refused by the model.", "Refusal"),
+            var m when m.Contains("context_length_exceeded") => ("Input exceeds maximum context length.", "ContextTooLong"),
+            var m when m.Contains("content filter") => ("Content was filtered due to policy violations.", "ContentFiltered"),
+            _ => (message, "OpenAIError")
+        };
+    }
+
+    private static (string message, string code) NormalizeOpenRouterError(Exception ex)
+    {
+        var message = ex.Message;
+
+        return message.ToLowerInvariant() switch
+        {
+            var m when m.Contains("rate limit") => ("Rate limit exceeded. Please try again later.", "RateLimit"),
+            var m when m.Contains("credits") => ("Insufficient credits.", "InsufficientCredits"),
+            var m when m.Contains("queue") => ("Request queued due to high demand.", "Queued"),
+            var m when m.Contains("model unavailable") => ("Model is currently unavailable.", "ModelUnavailable"),
+            _ => (message, "OpenRouterError")
+        };
+    }
+
+    private static (string message, string code) NormalizeAzureError(Exception ex)
+    {
+        var message = ex.Message;
+
+        return message.ToLowerInvariant() switch
+        {
+            var m when m.Contains("unauthorized") => ("Authentication failed. Check your API key.", "AuthenticationFailed"),
+            var m when m.Contains("deployment not found") => ("Model deployment not found.", "DeploymentNotFound"),
+            var m when m.Contains("quota") => ("Deployment quota exceeded.", "QuotaExceeded"),
+            var m when m.Contains("content filter") => ("Content filtered by Azure policies.", "ContentFiltered"),
+            _ => (message, "AzureError")
+        };
+    }
+
+    private static (string message, string code) NormalizeOllamaError(Exception ex)
+    {
+        var message = ex.Message;
+
+        return message.ToLowerInvariant() switch
+        {
+            var m when m.Contains("model not found") => ("Model not found. Please pull the model first.", "ModelNotFound"),
+            var m when m.Contains("connection refused") => ("Cannot connect to Ollama server.", "ConnectionFailed"),
+            var m when m.Contains("loading") => ("Model is still loading. Please wait.", "ModelLoading"),
+            var m when m.Contains("out of memory") => ("Insufficient memory to run model.", "OutOfMemory"),
+            _ => (message, "OllamaError")
+        };
     }
 }
 

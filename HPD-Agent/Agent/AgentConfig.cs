@@ -96,6 +96,11 @@ public class ProviderConfig
     public string? ApiKey { get; set; }
     public string? Endpoint { get; set; }
     public ChatOptions? DefaultChatOptions { get; set; }
+    
+    /// <summary>
+    /// Provider-specific configuration options
+    /// </summary>
+    public ProviderSpecificConfig? ProviderSpecific { get; set; }
 }
 
 /// <summary>
@@ -163,6 +168,11 @@ public class ProviderSpecificConfig
     public AzureOpenAISettings? AzureOpenAI { get; set; }
 
     /// <summary>
+    /// Anthropic-specific configuration
+    /// </summary>
+    public AnthropicSettings? Anthropic { get; set; }
+
+    /// <summary>
     /// Ollama-specific configuration
     /// </summary>
     public OllamaSettings? Ollama { get; set; }
@@ -171,6 +181,26 @@ public class ProviderSpecificConfig
     /// OpenRouter-specific configuration
     /// </summary>
     public OpenRouterSettings? OpenRouter { get; set; }
+
+    /// <summary>
+    /// Google AI-specific configuration
+    /// </summary>
+    public GoogleAISettings? GoogleAI { get; set; }
+
+    /// <summary>
+    /// Vertex AI-specific configuration
+    /// </summary>
+    public VertexAISettings? VertexAI { get; set; }
+
+    /// <summary>
+    /// Hugging Face-specific configuration
+    /// </summary>
+    public HuggingFaceSettings? HuggingFace { get; set; }
+
+    /// <summary>
+    /// AWS Bedrock-specific configuration
+    /// </summary>
+    public BedrockSettings? Bedrock { get; set; }
 }
 
 /// <summary>
@@ -238,6 +268,126 @@ public class AzureOpenAISettings
     /// Azure region for data residency requirements
     /// </summary>
     public string? Region { get; set; }
+}
+
+/// <summary>
+/// Anthropic-specific settings for Claude models
+/// </summary>
+public class AnthropicSettings
+{
+    /// <summary>
+    /// Prompt caching configuration
+    /// </summary>
+    public AnthropicPromptCaching? PromptCaching { get; set; }
+
+    /// <summary>
+    /// Tool choice configuration for function calling
+    /// </summary>
+    public AnthropicToolChoice? ToolChoice { get; set; }
+
+    /// <summary>
+    /// Base URL for Anthropic API (useful for proxies or custom endpoints)
+    /// </summary>
+    public string? BaseUrl { get; set; }
+
+    /// <summary>
+    /// Request timeout in seconds (default is 600 seconds / 10 minutes)
+    /// </summary>
+    public int? TimeoutSeconds { get; set; }
+
+    /// <summary>
+    /// Maximum number of retries for failed requests (default is 2)
+    /// </summary>
+    public int? MaxRetries { get; set; }
+
+    /// <summary>
+    /// Whether to include reasoning tokens in the response (for reasoning models)
+    /// </summary>
+    public bool? IncludeReasoningTokens { get; set; }
+
+    /// <summary>
+    /// Metadata for tracking requests
+    /// </summary>
+    public Dictionary<string, object>? Metadata { get; set; }
+
+    /// <summary>
+    /// Enable beta features
+    /// </summary>
+    public bool EnableBetaFeatures { get; set; } = false;
+}
+
+/// <summary>
+/// Anthropic prompt caching configuration
+/// </summary>
+public class AnthropicPromptCaching
+{
+    /// <summary>
+    /// Prompt caching type
+    /// </summary>
+    public AnthropicPromptCacheType Type { get; set; } = AnthropicPromptCacheType.None;
+
+    /// <summary>
+    /// Whether to automatically cache system messages and tools
+    /// </summary>
+    public bool AutoCacheSystemAndTools { get; set; } = true;
+}
+
+/// <summary>
+/// Types of prompt caching available in Anthropic
+/// </summary>
+public enum AnthropicPromptCacheType
+{
+    /// <summary>
+    /// No prompt caching
+    /// </summary>
+    None,
+    
+    /// <summary>
+    /// Automatic caching of tools and system messages
+    /// </summary>
+    AutomaticToolsAndSystem,
+    
+    /// <summary>
+    /// Fine-grained manual control over cache points
+    /// </summary>
+    FineGrained
+}
+
+/// <summary>
+/// Anthropic tool choice configuration
+/// </summary>
+public class AnthropicToolChoice
+{
+    /// <summary>
+    /// Tool choice type
+    /// </summary>
+    public AnthropicToolChoiceType Type { get; set; } = AnthropicToolChoiceType.Auto;
+
+    /// <summary>
+    /// Specific tool name to use (when Type is Tool)
+    /// </summary>
+    public string? ToolName { get; set; }
+}
+
+/// <summary>
+/// Types of tool choice behavior for Anthropic
+/// </summary>
+public enum AnthropicToolChoiceType
+{
+    /// <summary>
+    /// Let Claude decide whether to use tools
+    /// </summary>
+    Auto,
+    
+    /// <summary>
+    /// Force Claude to use a specific tool
+    /// </summary>
+    Tool,
+    
+    /// <summary>
+    /// Force Claude to use any available tool
+    /// </summary>
+    Any
 }
 
 /// <summary>
@@ -326,6 +476,68 @@ public class OpenRouterReasoningConfig
     /// Whether to include reasoning in the response
     /// </summary>
     public bool IncludeReasoning { get; set; } = true;
+}
+
+/// <summary>
+/// Google AI-specific settings for the simple Gemini API via API Key
+/// </summary>
+public class GoogleAISettings
+{
+    /// <summary>
+    /// API key for the Google AI platform.
+    /// </summary>
+    public string? ApiKey { get; set; }
+}
+
+/// <summary>
+/// Vertex AI-specific settings for the enterprise Google Cloud platform
+/// </summary>
+public class VertexAISettings
+{
+    /// <summary>
+    /// The Google Cloud Project ID.
+    /// </summary>
+    public string? ProjectId { get; set; }
+
+    /// <summary>
+    /// The Google Cloud Region (e.g., "us-central1").
+    /// </summary>
+    public string? Region { get; set; }
+    
+    // Note: AccessToken is typically handled by Google's Application Default Credentials (ADC)
+    // and does not need to be explicitly set by the user in most cases.
+}
+
+/// <summary>
+/// Hugging Face-specific settings for the Serverless Inference API
+/// </summary>
+public class HuggingFaceSettings
+{
+    /// <summary>
+    /// API key for the Hugging Face Inference API.
+    /// </summary>
+    public string? ApiKey { get; set; }
+}
+
+/// <summary>
+/// AWS Bedrock-specific settings
+/// </summary>
+public class BedrockSettings
+{
+    /// <summary>
+    /// The AWS Region where the Bedrock service is hosted (e.g., "us-east-1").
+    /// </summary>
+    public string? Region { get; set; }
+
+    /// <summary>
+    /// Optional AWS Access Key ID. If not provided, the SDK will use the default credential chain.
+    /// </summary>
+    public string? AccessKeyId { get; set; }
+
+    /// <summary>
+    /// Optional AWS Secret Access Key. If not provided, the SDK will use the default credential chain.
+    /// </summary>
+    public string? SecretAccessKey { get; set; }
 }
 
 #endregion

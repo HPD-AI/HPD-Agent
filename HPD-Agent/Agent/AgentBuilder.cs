@@ -9,6 +9,12 @@ using OpenAI.Chat;
 using Azure.AI.Inference;
 using Azure;
 using OllamaSharp;
+using Anthropic.SDK;
+using GenerativeAI;
+using GenerativeAI.Microsoft;
+using HuggingFace;
+using Amazon.BedrockRuntime;
+using Amazon;
 using System.Diagnostics;
 using Microsoft.Extensions.Caching.Distributed;
 using System.Text.Json;
@@ -1019,6 +1025,11 @@ public static class AgentBuilderProviderExtensions
         ChatProvider.OpenAI => "OpenAI:ApiKey",
         ChatProvider.AzureOpenAI => "AzureOpenAI:ApiKey",
         ChatProvider.Ollama => "Ollama:ApiKey",
+        ChatProvider.Anthropic => "Anthropic:ApiKey",
+        ChatProvider.GoogleAI => "GoogleAI:ApiKey",
+        ChatProvider.VertexAI => "VertexAI:ProjectId",
+        ChatProvider.HuggingFace => "HuggingFace:ApiKey",
+        ChatProvider.Bedrock => "AWS:Region", // Primary config is region
         // Apple Intelligence removed
         _ => "Unknown:ApiKey" // AOT-safe fallback
     };
@@ -1029,6 +1040,11 @@ public static class AgentBuilderProviderExtensions
         ChatProvider.OpenAI => "OPENAI_API_KEY",
         ChatProvider.AzureOpenAI => "AZURE_OPENAI_API_KEY",
         ChatProvider.Ollama => "OLLAMA_API_KEY",
+        ChatProvider.Anthropic => "ANTHROPIC_API_KEY",
+        ChatProvider.GoogleAI => "GOOGLE_API_KEY",
+        ChatProvider.VertexAI => "GOOGLE_CLOUD_PROJECT",
+        ChatProvider.HuggingFace => "HF_TOKEN",
+        ChatProvider.Bedrock => "AWS_REGION", // Standard AWS region variable
         // Apple Intelligence removed
         _ => "UNKNOWN_API_KEY" // AOT-safe fallback
     };
@@ -1039,6 +1055,11 @@ public static class AgentBuilderProviderExtensions
         ChatProvider.OpenAI => "OPENAI_API_KEY",
         ChatProvider.AzureOpenAI => "AZUREOPENAI_API_KEY",
         ChatProvider.Ollama => "OLLAMA_API_KEY",
+        ChatProvider.Anthropic => "ANTHROPIC_API_KEY",
+        ChatProvider.GoogleAI => "GOOGLE_API_KEY",
+        ChatProvider.VertexAI => "GOOGLE_CLOUD_PROJECT",
+        ChatProvider.HuggingFace => "HF_TOKEN",
+        ChatProvider.Bedrock => "AWS_REGION",
         // Apple Intelligence removed
         _ => "GENERIC_API_KEY" // AOT-safe fallback
     };
@@ -1075,8 +1096,221 @@ public static class AgentBuilderProviderExtensions
                 new Uri("https://{your-resource-name}.openai.azure.com/openai/deployments/{yourDeployment}"),
                 new AzureKeyCredential(apiKey!)).AsIChatClient(modelName),
             ChatProvider.Ollama => new OllamaApiClient(new Uri("http://localhost:11434"), modelName),
+            ChatProvider.Anthropic => new AnthropicClient(apiKey).Messages,
+            ChatProvider.GoogleAI => new GenerativeAIChatClient(apiKey!, modelName),
+            ChatProvider.VertexAI => CreateVertexAIClient(builder, modelName),
+            ChatProvider.HuggingFace => new HuggingFaceClient(apiKey!),
+            ChatProvider.Bedrock => CreateBedrockChatClient(builder, modelName),
             _ => throw new NotSupportedException($"Provider {provider} is not supported."),
         };
+    }
+
+    /// <summary>
+    /// Creates a Vertex AI client using the project ID and region from configuration
+    /// </summary>
+    private static IChatClient CreateVertexAIClient(AgentBuilder builder, string modelName)
+    {
+        var providerSpecific = builder.Config.Provider?.ProviderSpecific;
+        var projectId = providerSpecific?.VertexAI?.ProjectId 
+            ?? builder._configuration?["VertexAI:ProjectId"] 
+            ?? AgentBuilderHelpers.GetEnvironmentVariable("GOOGLE_CLOUD_PROJECT");
+
+        var region = providerSpecific?.VertexAI?.Region
+            ?? builder._configuration?["VertexAI:Region"]
+            ?? AgentBuilderHelpers.GetEnvironmentVariable("GOOGLE_CLOUD_REGION");
+
+        if (string.IsNullOrEmpty(projectId) || string.IsNullOrEmpty(region))
+        {
+            throw new InvalidOperationException(
+                "For the VertexAI provider, ProjectId and Region must be configured via WithProvider<VertexAISettings>(...) or environment variables (GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_REGION).");
+        }
+
+        // Create VertexAI platform adapter (this will use Application Default Credentials)
+        var platformAdapter = new VertextPlatformAdapter(projectId, region);
+        
+        // Create the IChatClient using the GenerativeAIChatClient with the VertexAI platform adapter
+        return new GenerativeAIChatClient(platformAdapter, modelName);
+    }
+
+    /// <summary>
+    /// Creates an AWS Bedrock client using the region and credentials from configuration
+    /// </summary>
+    private static IChatClient CreateBedrockChatClient(AgentBuilder builder, string modelName)
+    {
+        var settings = builder.Config.Provider?.ProviderSpecific?.Bedrock;
+
+        var region = settings?.Region
+            ?? builder._configuration?["AWS:Region"]
+            ?? AgentBuilderHelpers.GetEnvironmentVariable("AWS_REGION");
+
+        var accessKey = settings?.AccessKeyId
+            ?? builder._configuration?["AWS:AccessKeyId"]
+            ?? AgentBuilderHelpers.GetEnvironmentVariable("AWS_ACCESS_KEY_ID");
+
+        var secretKey = settings?.SecretAccessKey
+            ?? builder._configuration?["AWS:SecretAccessKey"]
+            ?? AgentBuilderHelpers.GetEnvironmentVariable("AWS_SECRET_ACCESS_KEY");
+            
+        if (string.IsNullOrEmpty(region))
+        {
+            throw new InvalidOperationException(
+                "For the Bedrock provider, the AWS Region must be configured via WithProvider<BedrockSettings>(...) or the AWS_REGION environment variable.");
+        }
+
+        // Create the IAmazonBedrockRuntime client
+        IAmazonBedrockRuntime bedrockRuntime;
+        
+        if (!string.IsNullOrEmpty(accessKey) && !string.IsNullOrEmpty(secretKey))
+        {
+            // Use provided credentials
+            var regionEndpoint = RegionEndpoint.GetBySystemName(region);
+            bedrockRuntime = new AmazonBedrockRuntimeClient(accessKey, secretKey, regionEndpoint);
+        }
+        else
+        {
+            // Use default credential chain
+            var regionEndpoint = RegionEndpoint.GetBySystemName(region);
+            bedrockRuntime = new AmazonBedrockRuntimeClient(regionEndpoint);
+        }
+
+        // Use the extension method from the Bedrock MEAI library to get the IChatClient
+        return bedrockRuntime.AsIChatClient(modelName);
+    }
+
+    /// <summary>
+    /// Generic method for configuring any provider with its specific settings in a single call.
+    /// This is a type-safe, flexible approach that combines provider selection and configuration.
+    /// </summary>
+    /// <typeparam name="TProviderConfig">The provider-specific configuration type (e.g., AnthropicSettings, OpenAISettings)</typeparam>
+    /// <param name="builder">The agent builder.</param>
+    /// <param name="provider">The chat provider to use</param>
+    /// <param name="modelName">The specific model name</param>
+    /// <param name="configure">Configuration action for the provider settings</param>
+    /// <param name="apiKey">Optional API key (will fallback to configuration/environment if not provided)</param>
+    /// <returns>The agent builder for method chaining</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the provider type doesn't match the configuration type</exception>
+    public static AgentBuilder WithProvider<TProviderConfig>(
+        this AgentBuilder builder, 
+        ChatProvider provider, 
+        string modelName,
+        Action<TProviderConfig> configure,
+        string? apiKey = null) 
+        where TProviderConfig : class, new()
+    {
+        // First set the basic provider configuration
+        builder.Config.Provider = new ProviderConfig
+        {
+            Provider = provider,
+            ModelName = modelName ?? throw new ArgumentNullException(nameof(modelName)),
+            ApiKey = apiKey
+        };
+
+        // Then configure the provider-specific settings
+        var providerSpecific = GetOrCreateProviderSpecificSettings(builder);
+        var settings = GetOrCreateProviderSettings<TProviderConfig>(providerSpecific, provider);
+        configure(settings);
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Gets or creates the ProviderSpecificConfig object
+    /// </summary>
+    private static ProviderSpecificConfig GetOrCreateProviderSpecificSettings(AgentBuilder builder)
+    {
+        if (builder.Config.Provider!.ProviderSpecific == null)
+        {
+            builder.Config.Provider.ProviderSpecific = new ProviderSpecificConfig();
+        }
+        return builder.Config.Provider.ProviderSpecific;
+    }
+
+    /// <summary>
+    /// Generic helper to get or create provider-specific settings for the generic WithProvider method
+    /// </summary>
+    private static TProviderConfig GetOrCreateProviderSettings<TProviderConfig>(
+        ProviderSpecificConfig providerSpecific, 
+        ChatProvider provider) 
+        where TProviderConfig : class, new()
+    {
+        // Use type matching to set the correct property on ProviderSpecificConfig
+        if (typeof(TProviderConfig) == typeof(AnthropicSettings))
+        {
+            if (provider != ChatProvider.Anthropic)
+                throw new InvalidOperationException($"AnthropicSettings can only be used with {ChatProvider.Anthropic} provider. Current provider is {provider}.");
+            
+            return (providerSpecific.Anthropic ??= new AnthropicSettings()) as TProviderConfig
+                ?? throw new InvalidOperationException("Failed to create AnthropicSettings");
+        }
+        else if (typeof(TProviderConfig) == typeof(OpenAISettings))
+        {
+            if (provider != ChatProvider.OpenAI)
+                throw new InvalidOperationException($"OpenAISettings can only be used with {ChatProvider.OpenAI} provider. Current provider is {provider}.");
+            
+            return (providerSpecific.OpenAI ??= new OpenAISettings()) as TProviderConfig
+                ?? throw new InvalidOperationException("Failed to create OpenAISettings");
+        }
+        else if (typeof(TProviderConfig) == typeof(AzureOpenAISettings))
+        {
+            if (provider != ChatProvider.AzureOpenAI)
+                throw new InvalidOperationException($"AzureOpenAISettings can only be used with {ChatProvider.AzureOpenAI} provider. Current provider is {provider}.");
+            
+            return (providerSpecific.AzureOpenAI ??= new AzureOpenAISettings()) as TProviderConfig
+                ?? throw new InvalidOperationException("Failed to create AzureOpenAISettings");
+        }
+        else if (typeof(TProviderConfig) == typeof(OllamaSettings))
+        {
+            if (provider != ChatProvider.Ollama)
+                throw new InvalidOperationException($"OllamaSettings can only be used with {ChatProvider.Ollama} provider. Current provider is {provider}.");
+            
+            return (providerSpecific.Ollama ??= new OllamaSettings()) as TProviderConfig
+                ?? throw new InvalidOperationException("Failed to create OllamaSettings");
+        }
+        else if (typeof(TProviderConfig) == typeof(OpenRouterSettings))
+        {
+            if (provider != ChatProvider.OpenRouter)
+                throw new InvalidOperationException($"OpenRouterSettings can only be used with {ChatProvider.OpenRouter} provider. Current provider is {provider}.");
+            
+            return (providerSpecific.OpenRouter ??= new OpenRouterSettings()) as TProviderConfig
+                ?? throw new InvalidOperationException("Failed to create OpenRouterSettings");
+        }
+        else if (typeof(TProviderConfig) == typeof(GoogleAISettings))
+        {
+            if (provider != ChatProvider.GoogleAI)
+                throw new InvalidOperationException($"GoogleAISettings can only be used with {ChatProvider.GoogleAI} provider. Current provider is {provider}.");
+            
+            return (providerSpecific.GoogleAI ??= new GoogleAISettings()) as TProviderConfig
+                ?? throw new InvalidOperationException("Failed to create GoogleAISettings");
+        }
+        else if (typeof(TProviderConfig) == typeof(VertexAISettings))
+        {
+            if (provider != ChatProvider.VertexAI)
+                throw new InvalidOperationException($"VertexAISettings can only be used with {ChatProvider.VertexAI} provider. Current provider is {provider}.");
+
+            return (providerSpecific.VertexAI ??= new VertexAISettings()) as TProviderConfig
+                ?? throw new InvalidOperationException("Failed to create VertexAISettings");
+        }
+        else if (typeof(TProviderConfig) == typeof(HuggingFaceSettings))
+        {
+            if (provider != ChatProvider.HuggingFace)
+                throw new InvalidOperationException($"HuggingFaceSettings can only be used with {ChatProvider.HuggingFace} provider. Current provider is {provider}.");
+
+            return (providerSpecific.HuggingFace ??= new HuggingFaceSettings()) as TProviderConfig
+                ?? throw new InvalidOperationException("Failed to create HuggingFaceSettings");
+        }
+        else if (typeof(TProviderConfig) == typeof(BedrockSettings))
+        {
+            if (provider != ChatProvider.Bedrock)
+                throw new InvalidOperationException($"BedrockSettings can only be used with the {ChatProvider.Bedrock} provider.");
+            
+            return (providerSpecific.Bedrock ??= new BedrockSettings()) as TProviderConfig
+                ?? throw new InvalidOperationException("Failed to create BedrockSettings");
+        }
+        else
+        {
+            throw new InvalidOperationException($"Unsupported provider configuration type: {typeof(TProviderConfig).Name}. " +
+                "Supported types: AnthropicSettings, OpenAISettings, AzureOpenAISettings, OllamaSettings, OpenRouterSettings, GoogleAISettings, VertexAISettings, HuggingFaceSettings, BedrockSettings.");
+        }
     }
 
 }

@@ -9,8 +9,13 @@ public enum ChatProvider
     
     // Custom implementations for Extensions.AI
     OpenRouter,
+    Anthropic,
     // AppleIntelligence removed
-    Ollama
+    Ollama,
+    GoogleAI,   // For the simple Gemini API via API Key
+    VertexAI,   // For Google Cloud Vertex AI via ADC
+    HuggingFace, // For Serverless Inference API
+    Bedrock     // For AWS Bedrock
 }
 
 /// <summary>

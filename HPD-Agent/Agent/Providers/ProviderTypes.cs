@@ -6,6 +6,7 @@ public enum ChatProvider
     // Native Extensions.AI support
     OpenAI,
     AzureOpenAI,
+    AzureAIInference, // For the unified Azure AI endpoint
     
     // Custom implementations for Extensions.AI
     OpenRouter,
@@ -15,7 +16,9 @@ public enum ChatProvider
     GoogleAI,   // For the simple Gemini API via API Key
     VertexAI,   // For Google Cloud Vertex AI via ADC
     HuggingFace, // For Serverless Inference API
-    Bedrock     // For AWS Bedrock
+    Bedrock,     // For AWS Bedrock
+    OnnxRuntime, // For local ONNX models
+    Mistral      // For Mistral AI API
 }
 
 /// <summary>

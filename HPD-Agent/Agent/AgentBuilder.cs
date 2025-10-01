@@ -18,6 +18,8 @@ using Amazon;
 using System.Diagnostics;
 using Microsoft.Extensions.Caching.Distributed;
 using System.Text.Json;
+using Microsoft.ML.OnnxRuntimeGenAI;
+using Mistral.SDK;
 
 /// <summary>
 /// Builder for creating dual interface agents with sophisticated capabilities
@@ -1024,12 +1026,15 @@ public static class AgentBuilderProviderExtensions
         ChatProvider.OpenRouter => "OpenRouter:ApiKey",
         ChatProvider.OpenAI => "OpenAI:ApiKey",
         ChatProvider.AzureOpenAI => "AzureOpenAI:ApiKey",
+        ChatProvider.AzureAIInference => "AzureAIInference:Endpoint",
         ChatProvider.Ollama => "Ollama:ApiKey",
         ChatProvider.Anthropic => "Anthropic:ApiKey",
         ChatProvider.GoogleAI => "GoogleAI:ApiKey",
         ChatProvider.VertexAI => "VertexAI:ProjectId",
         ChatProvider.HuggingFace => "HuggingFace:ApiKey",
         ChatProvider.Bedrock => "AWS:Region", // Primary config is region
+        ChatProvider.OnnxRuntime => "OnnxRuntime:ModelPath",
+        ChatProvider.Mistral => "Mistral:ApiKey",
         // Apple Intelligence removed
         _ => "Unknown:ApiKey" // AOT-safe fallback
     };
@@ -1039,12 +1044,15 @@ public static class AgentBuilderProviderExtensions
         ChatProvider.OpenRouter => "OPENROUTER_API_KEY",
         ChatProvider.OpenAI => "OPENAI_API_KEY",
         ChatProvider.AzureOpenAI => "AZURE_OPENAI_API_KEY",
+        ChatProvider.AzureAIInference => "AZURE_AI_INFERENCE_ENDPOINT",
         ChatProvider.Ollama => "OLLAMA_API_KEY",
         ChatProvider.Anthropic => "ANTHROPIC_API_KEY",
         ChatProvider.GoogleAI => "GOOGLE_API_KEY",
         ChatProvider.VertexAI => "GOOGLE_CLOUD_PROJECT",
         ChatProvider.HuggingFace => "HF_TOKEN",
         ChatProvider.Bedrock => "AWS_REGION", // Standard AWS region variable
+        ChatProvider.OnnxRuntime => "ONNX_MODEL_PATH",
+        ChatProvider.Mistral => "MISTRAL_API_KEY",
         // Apple Intelligence removed
         _ => "UNKNOWN_API_KEY" // AOT-safe fallback
     };
@@ -1054,12 +1062,15 @@ public static class AgentBuilderProviderExtensions
         ChatProvider.OpenRouter => "OPENROUTER_API_KEY",
         ChatProvider.OpenAI => "OPENAI_API_KEY",
         ChatProvider.AzureOpenAI => "AZUREOPENAI_API_KEY",
+        ChatProvider.AzureAIInference => "AZURE_AI_INFERENCE_ENDPOINT",
         ChatProvider.Ollama => "OLLAMA_API_KEY",
         ChatProvider.Anthropic => "ANTHROPIC_API_KEY",
         ChatProvider.GoogleAI => "GOOGLE_API_KEY",
         ChatProvider.VertexAI => "GOOGLE_CLOUD_PROJECT",
         ChatProvider.HuggingFace => "HF_TOKEN",
         ChatProvider.Bedrock => "AWS_REGION",
+        ChatProvider.OnnxRuntime => "ONNX_MODEL_PATH",
+        ChatProvider.Mistral => "MISTRAL_API_KEY",
         // Apple Intelligence removed
         _ => "GENERIC_API_KEY" // AOT-safe fallback
     };
@@ -1095,12 +1106,15 @@ public static class AgentBuilderProviderExtensions
             ChatProvider.AzureOpenAI => new ChatCompletionsClient(
                 new Uri("https://{your-resource-name}.openai.azure.com/openai/deployments/{yourDeployment}"),
                 new AzureKeyCredential(apiKey!)).AsIChatClient(modelName),
+            ChatProvider.AzureAIInference => CreateAzureAIInferenceClient(builder, modelName),
             ChatProvider.Ollama => new OllamaApiClient(new Uri("http://localhost:11434"), modelName),
             ChatProvider.Anthropic => new AnthropicClient(apiKey).Messages,
             ChatProvider.GoogleAI => new GenerativeAIChatClient(apiKey!, modelName),
             ChatProvider.VertexAI => CreateVertexAIClient(builder, modelName),
             ChatProvider.HuggingFace => new HuggingFaceClient(apiKey!),
             ChatProvider.Bedrock => CreateBedrockChatClient(builder, modelName),
+            ChatProvider.OnnxRuntime => CreateOnnxRuntimeChatClient(builder, modelName),
+            ChatProvider.Mistral => new MistralClient(apiKey!).Completions,
             _ => throw new NotSupportedException($"Provider {provider} is not supported."),
         };
     }
@@ -1175,6 +1189,64 @@ public static class AgentBuilderProviderExtensions
 
         // Use the extension method from the Bedrock MEAI library to get the IChatClient
         return bedrockRuntime.AsIChatClient(modelName);
+    }
+
+    /// <summary>
+    /// Creates an Azure AI Inference client using the endpoint and API key from configuration
+    /// </summary>
+    private static IChatClient CreateAzureAIInferenceClient(AgentBuilder builder, string modelName)
+    {
+        var settings = builder.Config.Provider?.ProviderSpecific?.AzureAIInference;
+
+        var endpoint = settings?.Endpoint
+            ?? builder._configuration?["AzureAIInference:Endpoint"]
+            ?? AgentBuilderHelpers.GetEnvironmentVariable("AZURE_AI_INFERENCE_ENDPOINT");
+
+        var apiKey = settings?.ApiKey
+            ?? builder._configuration?["AzureAIInference:ApiKey"]
+            ?? AgentBuilderHelpers.GetEnvironmentVariable("AZURE_AI_INFERENCE_API_KEY");
+
+        if (string.IsNullOrEmpty(endpoint))
+        {
+            throw new InvalidOperationException("For AzureAIInference, the Endpoint must be configured.");
+        }
+        
+        if (string.IsNullOrEmpty(apiKey))
+        {
+             throw new InvalidOperationException("For AzureAIInference, the ApiKey must be configured.");
+        }
+
+        // Create the ChatCompletionsClient and use the built-in AsIChatClient extension method
+        var client = new ChatCompletionsClient(new Uri(endpoint), new AzureKeyCredential(apiKey));
+        return client.AsIChatClient(modelName);
+    }
+
+    /// <summary>
+    /// Creates an ONNX Runtime client using the model path from configuration
+    /// </summary>
+    private static IChatClient CreateOnnxRuntimeChatClient(AgentBuilder builder, string modelName)
+    {
+        var settings = builder.Config.Provider?.ProviderSpecific?.OnnxRuntime;
+
+        var modelPath = settings?.ModelPath
+            ?? builder._configuration?["OnnxRuntime:ModelPath"]
+            ?? AgentBuilderHelpers.GetEnvironmentVariable("ONNX_MODEL_PATH");
+
+        if (string.IsNullOrEmpty(modelPath))
+        {
+            throw new InvalidOperationException(
+                "For the OnnxRuntime provider, the ModelPath must be configured.");
+        }
+
+        // Create configuration for the client with enhanced options
+        var options = new OnnxRuntimeGenAIChatClientOptions
+        {
+            StopSequences = settings?.StopSequences,
+            EnableCaching = settings?.EnableCaching ?? false,
+            PromptFormatter = settings?.PromptFormatter
+        };
+        
+        return new OnnxRuntimeGenAIChatClient(modelPath, options);
     }
 
     /// <summary>
@@ -1306,10 +1378,34 @@ public static class AgentBuilderProviderExtensions
             return (providerSpecific.Bedrock ??= new BedrockSettings()) as TProviderConfig
                 ?? throw new InvalidOperationException("Failed to create BedrockSettings");
         }
+        else if (typeof(TProviderConfig) == typeof(AzureAIInferenceSettings))
+        {
+            if (provider != ChatProvider.AzureAIInference)
+                throw new InvalidOperationException($"AzureAIInferenceSettings can only be used with the {ChatProvider.AzureAIInference} provider.");
+            
+            return (providerSpecific.AzureAIInference ??= new AzureAIInferenceSettings()) as TProviderConfig
+                ?? throw new InvalidOperationException("Failed to create AzureAIInferenceSettings");
+        }
+        else if (typeof(TProviderConfig) == typeof(OnnxRuntimeSettings))
+        {
+            if (provider != ChatProvider.OnnxRuntime)
+                throw new InvalidOperationException($"OnnxRuntimeSettings can only be used with the {ChatProvider.OnnxRuntime} provider.");
+            
+            return (providerSpecific.OnnxRuntime ??= new OnnxRuntimeSettings()) as TProviderConfig
+                ?? throw new InvalidOperationException("Failed to create OnnxRuntimeSettings");
+        }
+        else if (typeof(TProviderConfig) == typeof(MistralSettings))
+        {
+            if (provider != ChatProvider.Mistral)
+                throw new InvalidOperationException($"MistralSettings can only be used with the {ChatProvider.Mistral} provider.");
+            
+            return (providerSpecific.Mistral ??= new MistralSettings()) as TProviderConfig
+                ?? throw new InvalidOperationException("Failed to create MistralSettings");
+        }
         else
         {
             throw new InvalidOperationException($"Unsupported provider configuration type: {typeof(TProviderConfig).Name}. " +
-                "Supported types: AnthropicSettings, OpenAISettings, AzureOpenAISettings, OllamaSettings, OpenRouterSettings, GoogleAISettings, VertexAISettings, HuggingFaceSettings, BedrockSettings.");
+                "Supported types: AnthropicSettings, OpenAISettings, AzureOpenAISettings, OllamaSettings, OpenRouterSettings, GoogleAISettings, VertexAISettings, HuggingFaceSettings, BedrockSettings, AzureAIInferenceSettings, OnnxRuntimeSettings, MistralSettings.");
         }
     }
 
@@ -1359,7 +1455,43 @@ internal static class AgentBuilderHelpers
         return config;
     }
 
-    
+    /// <summary>
+    /// Resolves the provider URI based on provider configuration, following Microsoft.Extensions.AI patterns
+    /// </summary>
+    /// <param name="provider">Provider configuration</param>
+    /// <returns>Provider URI if resolvable, otherwise null</returns>
+    internal static Uri? ResolveProviderUri(ProviderConfig? provider)
+    {
+        if (provider?.Endpoint != null)
+        {
+            try
+            {
+                return new Uri(provider.Endpoint);
+            }
+            catch (UriFormatException)
+            {
+                // Invalid URI format, return null
+                return null;
+            }
+        }
+
+        return provider?.Provider switch
+        {
+            ChatProvider.OpenAI => new Uri("https://api.openai.com"),
+            ChatProvider.OpenRouter => new Uri("https://openrouter.ai/api"),
+            ChatProvider.Ollama => new Uri("http://localhost:11434"),
+            ChatProvider.Mistral => new Uri("https://api.mistral.ai"),
+            ChatProvider.Anthropic => new Uri("https://api.anthropic.com"),
+            ChatProvider.GoogleAI => new Uri("https://generativelanguage.googleapis.com"),
+            ChatProvider.VertexAI => new Uri("https://us-central1-aiplatform.googleapis.com"), // Default region
+            ChatProvider.HuggingFace => new Uri("https://api-inference.huggingface.co"),
+            ChatProvider.Bedrock => new Uri("https://bedrock-runtime.us-east-1.amazonaws.com"), // Default region
+            ChatProvider.AzureOpenAI => null, // Requires specific endpoint
+            ChatProvider.AzureAIInference => null, // Requires specific endpoint  
+            ChatProvider.OnnxRuntime => null, // Local model, no URI
+            _ => null
+        };
+    }
 }
 
 #endregion

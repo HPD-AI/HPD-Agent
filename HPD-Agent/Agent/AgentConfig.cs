@@ -201,6 +201,21 @@ public class ProviderSpecificConfig
     /// AWS Bedrock-specific configuration
     /// </summary>
     public BedrockSettings? Bedrock { get; set; }
+
+    /// <summary>
+    /// Azure AI Inference-specific configuration
+    /// </summary>
+    public AzureAIInferenceSettings? AzureAIInference { get; set; }
+
+    /// <summary>
+    /// ONNX Runtime-specific configuration
+    /// </summary>
+    public OnnxRuntimeSettings? OnnxRuntime { get; set; }
+
+    /// <summary>
+    /// Mistral AI-specific configuration
+    /// </summary>
+    public MistralSettings? Mistral { get; set; }
 }
 
 /// <summary>
@@ -538,6 +553,101 @@ public class BedrockSettings
     /// Optional AWS Secret Access Key. If not provided, the SDK will use the default credential chain.
     /// </summary>
     public string? SecretAccessKey { get; set; }
+}
+
+/// <summary>
+/// Azure AI Inference-specific settings
+/// </summary>
+public class AzureAIInferenceSettings
+{
+    /// <summary>
+    /// The unified endpoint for the Azure AI resource (e.g., "https://<your-resource-name>.inference.ai.azure.com").
+    /// </summary>
+    public string? Endpoint { get; set; }
+
+    /// <summary>
+    /// The API key for the Azure AI resource.
+    /// Can be omitted if using managed identity (TokenCredential).
+    /// </summary>
+    public string? ApiKey { get; set; }
+}
+
+/// <summary>
+/// ONNX Runtime-specific settings for local model inference with DirectML acceleration support
+/// </summary>
+public class OnnxRuntimeSettings
+{
+    /// <summary>
+    /// The file path to the ONNX model directory.
+    /// The tokenizer is automatically loaded from the same directory.
+    /// For DirectML acceleration, ensure the model is compatible with GPU execution.
+    /// </summary>
+    public string? ModelPath { get; set; }
+
+    /// <summary>
+    /// Optional stop sequences for the model.
+    /// These will be used in addition to any provided in ChatOptions.
+    /// Common examples: ["<|end|>", "<|eot_id|>", "</s>"]
+    /// </summary>
+    public IList<string>? StopSequences { get; set; }
+
+    /// <summary>
+    /// Whether to enable conversation caching for better performance.
+    /// Should only be set to true when the client is not shared across multiple conversations.
+    /// Caching can significantly improve response times for follow-up messages.
+    /// </summary>
+    public bool EnableCaching { get; set; } = false;
+
+    /// <summary>
+    /// Custom prompt formatter function for advanced prompt engineering.
+    /// If null, the default formatter will be used which formats messages as JSON array.
+    /// Use this to implement model-specific prompt templates (e.g., ChatML, Alpaca, etc.).
+    /// </summary>
+    /// <example>
+    /// For ChatML format:
+    /// <code>
+    /// PromptFormatter = (messages, options) => {
+    ///     var sb = new StringBuilder();
+    ///     foreach (var msg in messages) {
+    ///         sb.Append($"&lt;|{msg.Role.Value}|&gt;\n{msg.Text}&lt;|end|&gt;\n");
+    ///     }
+    ///     sb.Append("&lt;|assistant|&gt;\n");
+    ///     return sb.ToString();
+    /// }
+    /// </code>
+    /// </example>
+    public Func<IEnumerable<ChatMessage>, ChatOptions?, string>? PromptFormatter { get; set; }
+
+    /// <summary>
+    /// DirectML-specific execution provider options.
+    /// Set to true to prefer DirectML execution provider for GPU acceleration on Windows.
+    /// Falls back to CPU if DirectML is not available.
+    /// </summary>
+    public bool PreferDirectML { get; set; } = true;
+
+    /// <summary>
+    /// Maximum context length for the model in tokens.
+    /// If not specified, uses the model's default context window.
+    /// DirectML models may have different optimal context lengths.
+    /// </summary>
+    public int? MaxContextLength { get; set; }
+
+    /// <summary>
+    /// GPU device ID to use for DirectML execution (0-based).
+    /// If null, uses the default GPU. Only applicable when PreferDirectML is true.
+    /// </summary>
+    public int? DeviceId { get; set; }
+}
+
+/// <summary>
+/// Mistral AI-specific settings
+/// </summary>
+public class MistralSettings
+{
+    /// <summary>
+    /// API key for the Mistral AI platform.
+    /// </summary>
+    public string? ApiKey { get; set; }
 }
 
 #endregion

@@ -84,7 +84,7 @@ public class Agent : IChatClient
         // Initialize Microsoft.Extensions.AI compliance metadata
         _metadata = new ChatClientMetadata(
             providerName: config.Provider?.Provider.ToString()?.ToLowerInvariant(),
-            providerUri: ResolveProviderUri(config.Provider),
+            providerUri: AgentBuilderHelpers.ResolveProviderUri(config.Provider),
             defaultModelId: config.Provider?.ModelName
         );
 
@@ -274,7 +274,7 @@ public class Agent : IChatClient
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var turnHistory = new List<ChatMessage>();
-        
+
         // Convert BaseEvent stream to ChatResponseUpdate stream for IChatClient compatibility
         await foreach (var baseEvent in RunAgenticLoopCore(messages, options, turnHistory, historyCompletionSource, cancellationToken))
         {
@@ -287,22 +287,22 @@ public class Agent : IChatClient
                         Contents = [new TextContent(textEvent.Delta)]
                     };
                     break;
-                    
+
                 // StepStartedEvent is for UI observability only - ignore in chat adapter
                 case StepStartedEvent:
                     break;
-                    
+
                 // ToolCallStartEvent is for UI observability only - ignore in chat adapter  
                 case ToolCallStartEvent:
                     break;
-                    
+
                 case ToolCallEndEvent:
                     // ToolCallEndEvent is for UI notification only
                     break;
             }
         }
     }
-    
+
     private async IAsyncEnumerable<BaseEvent> RunAgenticLoopCore(
         IEnumerable<ChatMessage> messages,
         ChatOptions? options,
@@ -312,7 +312,7 @@ public class Agent : IChatClient
     {
         // Generate IDs for this run
         var runId = Guid.NewGuid().ToString();
-        
+
         // Extract conversation ID from options or generate new one
         string conversationId;
         if (options?.AdditionalProperties?.TryGetValue("ConversationId", out var convIdObj) == true && convIdObj is string convId)
@@ -323,7 +323,7 @@ public class Agent : IChatClient
         {
             conversationId = Guid.NewGuid().ToString();
         }
-        
+
         var threadId = conversationId; // Use conversation ID as thread ID
         var messageId = Guid.NewGuid().ToString();
 
@@ -335,16 +335,16 @@ public class Agent : IChatClient
 
         // Collect all response updates to build final history - cannot use try-catch with yield
         var responseUpdates = new List<ChatResponseUpdate>();
-        
+
         // Prepare messages using MessageProcessor
         var conversation = new Conversation(this);
         messages.ToList().ForEach(m => conversation.AddMessage(m));
-        
+
         var (effectiveMessages, effectiveOptions) = await _messageProcessor.PrepareMessagesAsync(
             messages, options, conversation, _name, cancellationToken);
-        
+
         var currentMessages = effectiveMessages.ToList();
-        
+
         // Emit message start event at the beginning
         bool messageStarted = false;
 
@@ -356,7 +356,7 @@ public class Agent : IChatClient
         while (iteration <= agentRunContext.MaxIterations)
         {
             agentRunContext.CurrentIteration = iteration;
-            
+
             var toolRequests = new List<FunctionCallContent>();
             var assistantContents = new List<AIContent>();
             bool streamFinished = false;
@@ -366,7 +366,7 @@ public class Agent : IChatClient
             {
                 // Store update for building final history
                 responseUpdates.Add(update);
-                
+
                 // Process contents and emit appropriate BaseEvent objects
                 if (update.Contents != null)
                 {
@@ -376,16 +376,16 @@ public class Agent : IChatClient
                         {
                             // Generate a consistent step ID for start and finish events
                             var stepId = Guid.NewGuid().ToString();
-                            
+
                             // Emit step started event for reasoning (visible to UI, NOT saved to history)
                             yield return EventSerialization.CreateStepStarted(stepId, "Reasoning");
-                            
+
                             // Fix: Emit reasoning as a custom event for dev visibility (not user-visible text)
                             yield return EventSerialization.CreateReasoningContent(messageId, reasoning.Text);
-                            
+
                             // Emit step finished event for reasoning
                             yield return EventSerialization.CreateStepFinished(stepId, "Reasoning");
-                            
+
                             // CRITICAL: Do NOT add reasoning to assistantContents (not saved to history)
                         }
                         else if (content is TextContent textContent && !string.IsNullOrEmpty(textContent.Text))
@@ -410,14 +410,14 @@ public class Agent : IChatClient
                         }
                     }
                 }
-                
+
                 // Check for stream completion
                 if (update.FinishReason != null)
                 {
                     streamFinished = true;
                 }
             }
-            
+
             // If there are tool requests, execute them
             if (toolRequests.Count > 0)
             {
@@ -427,12 +427,12 @@ public class Agent : IChatClient
                     yield return EventSerialization.CreateTextMessageStart(messageId, "assistant");
                     messageStarted = true;
                 }
-                
+
                 // Create assistant message with tool calls
                 var assistantMessage = new ChatMessage(ChatRole.Assistant, assistantContents);
                 currentMessages.Add(assistantMessage);
                 turnHistory.Add(assistantMessage);
-                
+
                 // Emit tool call start events and track statistics
                 foreach (var toolRequest in toolRequests)
                 {
@@ -440,8 +440,8 @@ public class Agent : IChatClient
                     // Tool call telemetry now handled by Activity tags in GetResponseAsync
 
                     yield return EventSerialization.CreateToolCallStart(
-                        toolRequest.CallId, 
-                        toolRequest.Name ?? string.Empty, 
+                        toolRequest.CallId,
+                        toolRequest.Name ?? string.Empty,
                         messageId);
 
                     // Emit tool call arguments event
@@ -454,32 +454,32 @@ public class Agent : IChatClient
                         yield return EventSerialization.CreateToolCallArgs(toolRequest.CallId, argsJson);
                     }
                 }
-                
+
                 // Execute tools
                 var toolResultMessage = await _toolScheduler.ExecuteToolsAsync(
                     currentMessages, toolRequests, effectiveOptions, agentRunContext, cancellationToken);
-                
+
                 // Add tool results to history
                 currentMessages.Add(toolResultMessage);
                 turnHistory.Add(toolResultMessage);
-                
+
                 // Fix: Emit both tool call end and custom tool result events
                 foreach (var content in toolResultMessage.Contents)
                 {
                     if (content is FunctionResultContent result)
                     {
                         yield return EventSerialization.CreateToolCallEnd(result.CallId);
-                        
+
                         // Emit custom tool result event for dev visibility and debugging
                         var matchingTool = toolRequests.FirstOrDefault(t => t.CallId == result.CallId);
                         var toolName = matchingTool?.Name ?? "unknown";
                         yield return EventSerialization.CreateToolResult(messageId, result.CallId, toolName, result.Result ?? "null");
                     }
                 }
-                
+
                 // Fix: Do NOT add tool results to responseUpdates - they belong to tool role, not assistant
                 // This prevents tool content from being mixed into the final assistant message
-                
+
                 // Update options for next iteration to allow the model to choose not to call tools
                 effectiveOptions = effectiveOptions == null
                     ? new ChatOptions { ToolMode = ChatToolMode.Auto }
@@ -499,7 +499,7 @@ public class Agent : IChatClient
                         ModelId = effectiveOptions.ModelId,
                         AdditionalProperties = effectiveOptions.AdditionalProperties
                     };
-                
+
                 // Continue to next iteration
                 iteration++;
             }
@@ -519,7 +519,7 @@ public class Agent : IChatClient
                 iteration++;
             }
         }
-        
+
         // Build the complete history including the final assistant message
         if (responseUpdates.Any())
         {
@@ -528,10 +528,10 @@ public class Agent : IChatClient
             if (finalResponse.Messages.Count > 0)
             {
                 var finalAssistantMessage = finalResponse.Messages[0];
-                
+
                 // Only add if we don't already have this assistant message
                 // (in case it was already added during tool execution)
-                if (!turnHistory.Any() || turnHistory.Last().Role != ChatRole.Assistant || 
+                if (!turnHistory.Any() || turnHistory.Last().Role != ChatRole.Assistant ||
                     !turnHistory.Last().Contents.SequenceEqual(finalAssistantMessage.Contents))
                 {
                     turnHistory.Add(finalAssistantMessage);
@@ -563,7 +563,7 @@ public class Agent : IChatClient
         string? modelId = null;
         string? responseId = null;
         DateTimeOffset? createdAt = null;
-        
+
         foreach (var update in updates)
         {
             if (update.Contents != null)
@@ -571,26 +571,26 @@ public class Agent : IChatClient
                 // Fix: Only include TextContent in assistant messages, not tool results
                 allContents.AddRange(update.Contents.OfType<TextContent>());
             }
-            
+
             if (update.FinishReason != null)
                 finishReason = update.FinishReason;
-                
+
             if (update.ModelId != null)
                 modelId = update.ModelId;
-                
+
             if (update.ResponseId != null)
                 responseId = update.ResponseId;
-                
+
             if (update.CreatedAt != null)
                 createdAt = update.CreatedAt;
         }
-        
+
         // Create a ChatMessage from the collected content
         var chatMessage = new ChatMessage(ChatRole.Assistant, allContents)
         {
             MessageId = responseId
         };
-        
+
         return new ChatResponse(chatMessage)
         {
             FinishReason = finishReason,
@@ -654,35 +654,7 @@ public class Agent : IChatClient
         return _aguiEventHandler.SerializeEvent(aguiEvent);
     }
 
-    /// <summary>
-    /// Resolves the provider URI based on provider configuration, following Microsoft.Extensions.AI patterns
-    /// </summary>
-    /// <param name="provider">Provider configuration</param>
-    /// <returns>Provider URI if resolvable, otherwise null</returns>
-    private static Uri? ResolveProviderUri(ProviderConfig? provider)
-    {
-        if (provider?.Endpoint != null)
-        {
-            try
-            {
-                return new Uri(provider.Endpoint);
-            }
-            catch (UriFormatException)
-            {
-                // Invalid URI format, return null
-                return null;
-            }
-        }
 
-        return provider?.Provider switch
-        {
-            ChatProvider.OpenAI => new Uri("https://api.openai.com"),
-            ChatProvider.OpenRouter => new Uri("https://openrouter.ai/api"),
-            ChatProvider.Ollama => new Uri("http://localhost:11434"),
-            ChatProvider.AzureOpenAI => null, // Requires specific endpoint
-            _ => null
-        };
-    }
 
 }
 
@@ -1021,8 +993,8 @@ public class MessageProcessor
         return new ChatOptions
         {
             // Fix: Proper tools merging - keep defaults when provided list is null or empty
-            Tools = (providedOptions.Tools is { Count: > 0 }) 
-                ? providedOptions.Tools 
+            Tools = (providedOptions.Tools is { Count: > 0 })
+                ? providedOptions.Tools
                 : _defaultOptions.Tools,
             ToolMode = providedOptions.ToolMode ?? _defaultOptions.ToolMode,
             AllowMultipleToolCalls = providedOptions.AllowMultipleToolCalls ?? _defaultOptions.AllowMultipleToolCalls,

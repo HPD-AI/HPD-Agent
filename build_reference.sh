@@ -1,0 +1,36 @@
+#!/bin/zsh
+
+REFERENCE_DIR="Reference"
+
+# List your reference repositories here
+REPOS=(
+    "https://github.com/dotnet/extensions.git"
+    "https://github.com/microsoft/semantic-kernel.git"
+    # Add more repo URLs as needed
+)
+
+mkdir -p "$REFERENCE_DIR"
+
+for repo in "${REPOS[@]}"; do
+    repo_name=$(basename "$repo" .git)
+    target_dir="$REFERENCE_DIR/$repo_name"
+    # Check if any folder in REFERENCE_DIR is a git repo with the same remote URL
+    found_match=false
+    for dir in "$REFERENCE_DIR"/*; do
+        if [ -d "$dir/.git" ]; then
+            remote_url=$(git -C "$dir" config --get remote.origin.url)
+            if [ "$remote_url" = "$repo" ]; then
+                echo "Updating $(basename "$dir") in $REFERENCE_DIR..."
+                git -C "$dir" pull
+                found_match=true
+                break
+            fi
+        fi
+    done
+    if [ "$found_match" = false ]; then
+        echo "Cloning $repo into $target_dir..."
+        git clone "$repo" "$target_dir"
+    fi
+done
+
+echo "All reference repositories are up to date in $REFERENCE_DIR."

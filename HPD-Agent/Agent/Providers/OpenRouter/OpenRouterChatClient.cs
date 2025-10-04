@@ -68,12 +68,39 @@ internal sealed class OpenRouterChatClient : IChatClient
         var requestBody = BuildRequestBody(messages, options, stream: true);
         var requestJson = JsonSerializer.Serialize(requestBody, _jsonContext.OpenRouterChatRequest);
 
+        // DEBUG: Log message history to debug infinite loops
+        Console.WriteLine($"=== OpenRouter Request ({requestBody.Messages.Count} messages) ===");
+        foreach (var msg in requestBody.Messages)
+        {
+            var preview = msg.Content?.Length > 50 ? msg.Content.Substring(0, 50) + "..." : msg.Content;
+            Console.WriteLine($"  [{msg.Role}] content='{preview}', tools={msg.ToolCalls?.Count ?? 0}, tool_call_id={msg.ToolCallId}");
+
+            if (msg.ToolCalls != null)
+            {
+                foreach (var tc in msg.ToolCalls)
+                {
+                    Console.WriteLine($"    → Tool: {tc.Function.Name} (id={tc.Id})");
+                }
+            }
+        }
+        Console.WriteLine("=========================================================");
+
         var httpRequest = new HttpRequestMessage(HttpMethod.Post, "chat/completions")
         {
             Content = new StringContent(requestJson, Encoding.UTF8, "application/json")
         };
 
         using var httpResponse = await _httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+
+        if (!httpResponse.IsSuccessStatusCode)
+        {
+            var errorContent = await httpResponse.Content.ReadAsStringAsync(cancellationToken);
+            Console.WriteLine($"=== OpenRouter Error ===");
+            Console.WriteLine($"Status: {httpResponse.StatusCode}");
+            Console.WriteLine($"Error: {errorContent}");
+            Console.WriteLine("========================");
+        }
+
         httpResponse.EnsureSuccessStatusCode();
 
         using var stream = await httpResponse.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
@@ -401,7 +428,7 @@ internal sealed class OpenRouterChatClient : IChatClient
             }
             else
             {
-                // For other roles, use text content (exclude TextReasoningContent - it goes in reasoning_details)
+                // For other roles, use text content (exclude TextReasoningContent)
                 var textContents = m.Contents
                     .Where(c => c is TextContent && c is not TextReasoningContent)
                     .Cast<TextContent>()
@@ -409,26 +436,18 @@ internal sealed class OpenRouterChatClient : IChatClient
                 msg.Content = m.Text ?? string.Join("\n", textContents);
             }
 
-            // Add reasoning_details if present (for assistant role)
-            var reasoningContents = m.Contents.OfType<TextReasoningContent>().ToList();
-            if (reasoningContents.Count > 0)
-            {
-                msg.ReasoningDetails = reasoningContents
-                    .Select(rc => rc.RawRepresentation as OpenRouterReasoningDetail)
-                    .Where(rd => rd != null)
-                    .Cast<OpenRouterReasoningDetail>()
-                    .ToList();
-
-                // If no raw representations, create reasoning_details from the text
-                if (msg.ReasoningDetails.Count == 0)
-                {
-                    msg.ReasoningDetails = reasoningContents.Select(rc => new OpenRouterReasoningDetail
-                    {
-                        Type = "reasoning.text",
-                        Text = rc.Text
-                    }).ToList();
-                }
-            }
+            // DO NOT send reasoning_details back to the API
+            // Root cause: OpenRouter's proxy layer has a bug when forwarding to Anthropic's native API
+            // - OpenRouter returns reasoning in "reasoning_details" field (normalized OpenRouter format)
+            // - Anthropic's native API expects reasoning in "content" array as "thinking" blocks
+            // - OpenRouter fails to translate between these formats when proxying requests to Anthropic
+            //
+            // Error: "messages.1.content.0.type: Expected `thinking` or `redacted_thinking`, but found `tool_use`"
+            //
+            // Solution: Don't send reasoning_details in subsequent requests. The model generates fresh
+            // reasoning for each turn anyway. Users still see reasoning in the initial response.
+            //
+            // Note: TextReasoningContent already filtered from msg.Content above
 
             // Add tool calls if present (for assistant role)
             var toolCalls = m.Contents.OfType<FunctionCallContent>().ToList();
@@ -457,7 +476,7 @@ internal sealed class OpenRouterChatClient : IChatClient
             Reasoning = new OpenRouterReasoningConfig
             {
                 Enabled = true,  // Enable reasoning for the model
-                Exclude = false  // Include reasoning in the response (default, but explicit)
+                Exclude = false  // Include reasoning in responses so users can see thinking
             }
         };
 
@@ -473,15 +492,38 @@ internal sealed class OpenRouterChatClient : IChatClient
             // Add tools if present
             if (options.Tools?.Count > 0)
             {
-                var tools = options.Tools.OfType<AIFunctionDeclaration>().Select(f => new OpenRouterRequestTool
+                var tools = options.Tools.OfType<AIFunctionDeclaration>().Select(f =>
                 {
-                    Type = "function",
-                    Function = new OpenRouterRequestToolFunction
+                    // Ensure parameters object has required properties for OpenAI/Azure compatibility
+                    var parameters = f.JsonSchema;
+
+                    // Fix: OpenAI requires "properties" field even if empty
+                    if (parameters.ValueKind == JsonValueKind.Object &&
+                        !parameters.TryGetProperty("properties", out _))
                     {
-                        Name = f.Name,
-                        Description = f.Description,
-                        Parameters = f.JsonSchema
+                        // Schema is missing "properties" - rebuild it with empty properties
+                        using var stream = new MemoryStream();
+                        using (var writer = new Utf8JsonWriter(stream))
+                        {
+                            writer.WriteStartObject();
+                            writer.WriteString("type", "object");
+                            writer.WriteStartObject("properties");
+                            writer.WriteEndObject(); // Empty properties
+                            writer.WriteEndObject();
+                        }
+                        parameters = JsonDocument.Parse(stream.ToArray()).RootElement;
                     }
+
+                    return new OpenRouterRequestTool
+                    {
+                        Type = "function",
+                        Function = new OpenRouterRequestToolFunction
+                        {
+                            Name = f.Name,
+                            Description = f.Description,
+                            Parameters = parameters
+                        }
+                    };
                 }).ToList();
 
                 if (tools.Count > 0)

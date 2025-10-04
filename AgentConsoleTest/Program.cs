@@ -124,7 +124,7 @@ static Task<(Project, Conversation, Agent)> CreateAIAssistant(IConfiguration con
         Provider = new ProviderConfig
         {
             Provider = ChatProvider.OpenRouter,
-            ModelName = "anthropic/claude-sonnet-4.5", // 🧠 Reasoning model - FREE on OpenRouter!
+            ModelName = "z-ai/glm-4.6", // 🧠 Reasoning model - FREE on OpenRouter!
             // Alternative reasoning models:
             // "deepseek/deepseek-r1-distill-qwen-32b" - smaller/faster
             // "openai/o1" - OpenAI's reasoning model (expensive)

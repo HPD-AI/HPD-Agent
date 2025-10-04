@@ -514,7 +514,7 @@ public class Agent : IChatClient
                     messageStarted = true;
                 }
 
-                // Create assistant message with tool calls for current turn (includes reasoning)
+                // Create assistant message with tool calls for current turn (includes reasoning for API)
                 var assistantMessage = new ChatMessage(ChatRole.Assistant, assistantContents);
                 currentMessages.Add(assistantMessage);
 

@@ -233,7 +233,7 @@ static async Task RunInteractiveChat(Conversation conversation)
 static async Task StreamResponse(Conversation conversation, string message, string[]? documentPaths = null)
 {
     // Now returns ConversationStreamingResult with event stream and final metadata
-    var result = await conversation.SendStreamingWithOutputAsync(message, documentPaths: documentPaths);
+    var result = await conversation.SendStreamingWithOutputAsync(message);
     
     // Display metadata after streaming completes
     if (result.Usage != null)

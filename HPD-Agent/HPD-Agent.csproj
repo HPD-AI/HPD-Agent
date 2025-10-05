@@ -9,9 +9,10 @@
     <InvariantGlobalization>true</InvariantGlobalization>
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
     <NoWarn>HPDAUDIO001;MEAI001</NoWarn>
-    
+
     <!-- Enable Native Library Export for FFI -->
     <OutputType>Library</OutputType>
+    <NativeLib>Shared</NativeLib>
     <EnableUnmanagedCallersOnlyAttribute>true</EnableUnmanagedCallersOnlyAttribute>
     
     <!-- Enable Swift Interop Support -->

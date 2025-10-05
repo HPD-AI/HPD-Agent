@@ -10,7 +10,7 @@ using System.Diagnostics;
 /// Coordinates ConversationThread (state) and ConversationOrchestrator (execution).
 /// Similar to Microsoft's pattern where Agent + Thread are composed by user code.
 /// </summary>
-internal class Conversation
+public class Conversation
 {
     private readonly ConversationThread _thread;
     private readonly ConversationOrchestrator _orchestrator;
@@ -582,7 +582,7 @@ internal class Conversation
 /// <summary>
 /// Token usage and cost information for a conversation turn
 /// </summary>
-internal record TokenUsage
+public record TokenUsage
 {
     public int PromptTokens { get; init; }
     public int CompletionTokens { get; init; }
@@ -595,7 +595,7 @@ internal record TokenUsage
 /// <summary>
 /// Result of a conversation turn with rich metadata for business decisions
 /// </summary>
-internal record ConversationTurnResult
+public record ConversationTurnResult
 {
     public required ChatResponse Response { get; init; }
     public required IReadOnlyList<ChatMessage> TurnHistory { get; init; }
@@ -624,7 +624,7 @@ internal record ConversationTurnResult
 /// <summary>
 /// Streaming result for conversation turns, providing both event stream and final metadata.
 /// </summary>
-internal record ConversationStreamingResult
+public record ConversationStreamingResult
 {
     public required IAsyncEnumerable<BaseEvent> EventStream { get; init; }
     public required Task<ConversationTurnResult> FinalResult { get; init; }

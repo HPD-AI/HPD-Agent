@@ -127,7 +127,7 @@ public enum OrchestrationStatus
 /// <summary>
 /// Orchestration decision metadata.
 /// </summary>
-internal record OrchestrationMetadata
+public record OrchestrationMetadata
 {
     public TimeSpan DecisionDuration { get; init; }
     public string StrategyName { get; init; } = "";
@@ -151,7 +151,7 @@ internal record OrchestrationMetadata
 /// Primary orchestration result.
 /// Contains universal fields applicable to all orchestrator types.
 /// </summary>
-internal record OrchestrationResult
+public record OrchestrationResult
 {
     // ========================================
     // REQUIRED (All orchestrators must provide)
@@ -296,7 +296,7 @@ public record OrchestrationCheckpoint
 /// <summary>
 /// Streaming orchestration result with BaseEvent stream.
 /// </summary>
-internal record OrchestrationStreamingResult
+public record OrchestrationStreamingResult
 {
     public required IAsyncEnumerable<BaseEvent> EventStream { get; init; }
     public required Task<OrchestrationResult> FinalResult { get; init; }

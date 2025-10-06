@@ -349,7 +349,41 @@ public static partial class NativeExports
 
             // Extract the primary text content from the agent's final response message.
             var responseText = response.Response.Messages.LastOrDefault()?.Text ?? "";
-            
+
+            return Marshal.StringToCoTaskMemAnsi(responseText);
+        }
+        catch (Exception)
+        {
+            return IntPtr.Zero; // Return null pointer to indicate an error.
+        }
+    }
+
+    /// <summary>
+    /// Sends a message to a conversation using AGUI protocol input and returns the final response text.
+    /// </summary>
+    /// <param name="conversationHandle">Handle to the conversation</param>
+    /// <param name="aguiInputJsonPtr">Pointer to UTF-8 JSON string containing AGUI input</param>
+    /// <returns>Pointer to the UTF-8 response string, or null on error</returns>
+    [UnmanagedCallersOnly(EntryPoint = "conversation_send_agui")]
+    public static IntPtr ConversationSendAgui(IntPtr conversationHandle, IntPtr aguiInputJsonPtr)
+    {
+        try
+        {
+            var conversation = ObjectManager.Get<Conversation>(conversationHandle);
+            if (conversation == null) throw new InvalidOperationException("Conversation handle is invalid.");
+
+            string? aguiInputJson = Marshal.PtrToStringUTF8(aguiInputJsonPtr);
+            if (string.IsNullOrEmpty(aguiInputJson)) return IntPtr.Zero;
+
+            var aguiInput = JsonSerializer.Deserialize<RunAgentInput>(aguiInputJson);
+            if (aguiInput == null) return IntPtr.Zero;
+
+            // Block on the async method to get the final result for the synchronous FFI call.
+            var response = conversation.SendAsync(aguiInput).GetAwaiter().GetResult();
+
+            // Extract the primary text content from the agent's final response message.
+            var responseText = response.Response.Messages.LastOrDefault()?.Text ?? "";
+
             return Marshal.StringToCoTaskMemAnsi(responseText);
         }
         catch (Exception)
@@ -386,7 +420,7 @@ public static partial class NativeExports
         }
 
         string? message = Marshal.PtrToStringUTF8(messagePtr);
-        if (string.IsNullOrEmpty(message)) 
+        if (string.IsNullOrEmpty(message))
         {
             // Signal error through callback
             string errorJson = "{\"type\":\"ERROR\", \"message\":\"Message is null or empty\"}";
@@ -397,7 +431,7 @@ public static partial class NativeExports
             errorCallback(context, IntPtr.Zero); // End stream
             return;
         }
-        
+
         // Now run the streaming in a background thread with the captured message string
         Task.Run(async () =>
         {
@@ -430,7 +464,7 @@ public static partial class NativeExports
                 Marshal.FreeCoTaskMem(messageStartPtr);
                 
                 // 3. Use streaming with the conversation's actual message history
-                var streamResult = await conversation.SendStreamingAsync(message, null);
+                var streamResult = await conversation.SendStreamingAsync(message, null, null);
                 await foreach (var evt in streamResult.EventStream)
                 {
                     // Serialize the BaseEvent directly to JSON
@@ -470,6 +504,75 @@ public static partial class NativeExports
     }
 
     /// <summary>
+    /// Sends a message to a conversation using AGUI protocol and streams AGUI events via callback.
+    /// </summary>
+    /// <param name="conversationHandle">Handle to the conversation</param>
+    /// <param name="aguiInputJsonPtr">Pointer to UTF-8 JSON string containing AGUI input</param>
+    /// <param name="callback">Function pointer to receive events</param>
+    /// <param name="context">Context pointer passed back to callback</param>
+    [UnmanagedCallersOnly(EntryPoint = "conversation_send_streaming_agui")]
+    public static void ConversationSendStreamingAgui(IntPtr conversationHandle, IntPtr aguiInputJsonPtr, IntPtr callback, IntPtr context)
+    {
+        var conversation = ObjectManager.Get<Conversation>(conversationHandle);
+        if (conversation == null)
+        {
+            string errorJson = "{\"type\":\"ERROR\", \"message\":\"Invalid conversation handle\"}";
+            var errorJsonPtr = Marshal.StringToCoTaskMemAnsi(errorJson);
+            var errorCallback = Marshal.GetDelegateForFunctionPointer<StreamCallback>(callback);
+            errorCallback(context, errorJsonPtr);
+            Marshal.FreeCoTaskMem(errorJsonPtr);
+            errorCallback(context, IntPtr.Zero);
+            return;
+        }
+
+        string? aguiInputJson = Marshal.PtrToStringUTF8(aguiInputJsonPtr);
+        if (string.IsNullOrEmpty(aguiInputJson))
+        {
+            string errorJson = "{\"type\":\"ERROR\", \"message\":\"AGUI input is null or empty\"}";
+            var errorJsonPtr = Marshal.StringToCoTaskMemAnsi(errorJson);
+            var errorCallback = Marshal.GetDelegateForFunctionPointer<StreamCallback>(callback);
+            errorCallback(context, errorJsonPtr);
+            Marshal.FreeCoTaskMem(errorJsonPtr);
+            errorCallback(context, IntPtr.Zero);
+            return;
+        }
+
+        Task.Run(async () =>
+        {
+            try
+            {
+                var aguiInput = JsonSerializer.Deserialize<RunAgentInput>(aguiInputJson);
+                if (aguiInput == null)
+                {
+                    throw new InvalidOperationException("Failed to deserialize AGUI input");
+                }
+
+                var callbackDelegate = Marshal.GetDelegateForFunctionPointer<StreamCallback>(callback);
+
+                var streamResult = await conversation.SendStreamingAsync(aguiInput);
+                await foreach (var evt in streamResult.EventStream)
+                {
+                    string eventJson = SerializeBaseEvent(evt);
+                    var eventJsonPtr = Marshal.StringToCoTaskMemAnsi(eventJson);
+                    callbackDelegate(context, eventJsonPtr);
+                    Marshal.FreeCoTaskMem(eventJsonPtr);
+                }
+
+                callbackDelegate(context, IntPtr.Zero);
+            }
+            catch (Exception ex)
+            {
+                var callbackDelegate = Marshal.GetDelegateForFunctionPointer<StreamCallback>(callback);
+                string errorJson = $"{{\"type\":\"ERROR\", \"message\":\"{ex.Message.Replace("\"", "'")}\"}}";
+                var errorJsonPtr = Marshal.StringToCoTaskMemAnsi(errorJson);
+                callbackDelegate(context, errorJsonPtr);
+                Marshal.FreeCoTaskMem(errorJsonPtr);
+                callbackDelegate(context, IntPtr.Zero);
+            }
+        });
+    }
+
+    /// <summary>
     /// Sends a message to a conversation with simple text streaming (no detailed events).
     /// This provides a clean, minimal output similar to ChatGPT.
     /// </summary>
@@ -494,7 +597,7 @@ public static partial class NativeExports
         }
 
         string? message = Marshal.PtrToStringUTF8(messagePtr);
-        if (string.IsNullOrEmpty(message)) 
+        if (string.IsNullOrEmpty(message))
         {
             string errorJson = "{\"type\":\"ERROR\", \"message\":\"Message is null or empty\"}";
             var errorJsonPtr = Marshal.StringToCoTaskMemAnsi(errorJson);
@@ -504,13 +607,13 @@ public static partial class NativeExports
             errorCallback(context, IntPtr.Zero); // End stream
             return;
         }
-        
+
         Task.Run(async () =>
         {
             try
             {
                 var callbackDelegate = Marshal.GetDelegateForFunctionPointer<StreamCallback>(callback);
-                
+
                 // Use the simple streaming method with a custom output handler
                 await conversation.SendStreamingWithOutputAsync(message, text =>
                 {
@@ -535,6 +638,80 @@ public static partial class NativeExports
                 callbackDelegate(context, errorJsonPtr);
                 Marshal.FreeCoTaskMem(errorJsonPtr);
                 callbackDelegate(context, IntPtr.Zero); // End stream
+            }
+        });
+    }
+
+    /// <summary>
+    /// Sends a message to a conversation using AGUI protocol with simple text streaming (no detailed events).
+    /// This provides a clean, minimal output similar to ChatGPT.
+    /// </summary>
+    /// <param name="conversationHandle">Handle to the conversation</param>
+    /// <param name="aguiInputJsonPtr">Pointer to UTF-8 JSON string containing AGUI input</param>
+    /// <param name="callback">Function pointer to receive text content</param>
+    /// <param name="context">Context pointer passed back to callback</param>
+    [UnmanagedCallersOnly(EntryPoint = "conversation_send_simple_agui")]
+    public static void ConversationSendSimpleAgui(IntPtr conversationHandle, IntPtr aguiInputJsonPtr, IntPtr callback, IntPtr context)
+    {
+        var conversation = ObjectManager.Get<Conversation>(conversationHandle);
+        if (conversation == null)
+        {
+            string errorJson = "{\"type\":\"ERROR\", \"message\":\"Invalid conversation handle\"}";
+            var errorJsonPtr = Marshal.StringToCoTaskMemAnsi(errorJson);
+            var errorCallback = Marshal.GetDelegateForFunctionPointer<StreamCallback>(callback);
+            errorCallback(context, errorJsonPtr);
+            Marshal.FreeCoTaskMem(errorJsonPtr);
+            errorCallback(context, IntPtr.Zero);
+            return;
+        }
+
+        string? aguiInputJson = Marshal.PtrToStringUTF8(aguiInputJsonPtr);
+        if (string.IsNullOrEmpty(aguiInputJson))
+        {
+            string errorJson = "{\"type\":\"ERROR\", \"message\":\"AGUI input is null or empty\"}";
+            var errorJsonPtr = Marshal.StringToCoTaskMemAnsi(errorJson);
+            var errorCallback = Marshal.GetDelegateForFunctionPointer<StreamCallback>(callback);
+            errorCallback(context, errorJsonPtr);
+            Marshal.FreeCoTaskMem(errorJsonPtr);
+            errorCallback(context, IntPtr.Zero);
+            return;
+        }
+
+        Task.Run(async () =>
+        {
+            try
+            {
+                var aguiInput = JsonSerializer.Deserialize<RunAgentInput>(aguiInputJson);
+                if (aguiInput == null)
+                {
+                    throw new InvalidOperationException("Failed to deserialize AGUI input");
+                }
+
+                var callbackDelegate = Marshal.GetDelegateForFunctionPointer<StreamCallback>(callback);
+
+                var streamResult = await conversation.SendStreamingAsync(aguiInput);
+                await foreach (var evt in streamResult.EventStream)
+                {
+                    // Only send text content for simple mode
+                    if (evt is TextMessageContentEvent textEvt)
+                    {
+                        var contentJson = $"{{\"type\":\"CONTENT\",\"text\":{System.Text.Json.JsonSerializer.Serialize(textEvt.Delta, HPDJsonContext.Default.String)}}}";
+                        var contentPtr = Marshal.StringToCoTaskMemAnsi(contentJson);
+                        callbackDelegate(context, contentPtr);
+                        Marshal.FreeCoTaskMem(contentPtr);
+                    }
+                }
+
+                callbackDelegate(context, IntPtr.Zero);
+            }
+            catch (Exception ex)
+            {
+                var callbackDelegate = Marshal.GetDelegateForFunctionPointer<StreamCallback>(callback);
+                string errorJson = $"{{\"type\":\"ERROR\", \"message\":{System.Text.Json.JsonSerializer.Serialize(ex.Message, HPDJsonContext.Default.String)}}}";
+                var errorJsonPtr = Marshal.StringToCoTaskMemAnsi(errorJson);
+                callbackDelegate(context, errorJsonPtr);
+                Marshal.FreeCoTaskMem(errorJsonPtr);
+                callbackDelegate(context, IntPtr.Zero);
             }
         });
     }

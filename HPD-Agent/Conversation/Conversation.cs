@@ -103,26 +103,32 @@ public class Conversation
 
 
     /// <summary>
+    /// Send a message using AGUI protocol input format.
+    /// </summary>
+    /// <param name="aguiInput">AGUI protocol input containing thread, messages, tools, and context</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Conversation turn result with response and metadata</returns>
+    public Task<ConversationTurnResult> SendAsync(
+        RunAgentInput aguiInput,
+        CancellationToken cancellationToken = default)
+    {
+        return SendAsyncAGUI(aguiInput, cancellationToken);
+    }
+
+    /// <summary>
     /// Send a message in the conversation.
     /// For multi-agent scenarios, uses the provided orchestrator or falls back to DefaultOrchestrator.
     /// </summary>
     /// <param name="message">The message to send</param>
     /// <param name="options">Optional chat options</param>
     /// <param name="orchestrator">Optional orchestrator for multi-agent scenarios (falls back to DefaultOrchestrator)</param>
-    /// <param name="aguiInput">Optional AGUI protocol input (overrides message parameter if provided)</param>
     /// <param name="cancellationToken">Cancellation token</param>
     public async Task<ConversationTurnResult> SendAsync(
         string message,
         ChatOptions? options = null,
         IOrchestrator? orchestrator = null,
-        RunAgentInput? aguiInput = null,
         CancellationToken cancellationToken = default)
     {
-        // If AGUI input provided, use the AGUI path
-        if (aguiInput != null)
-        {
-            return await SendAsyncAGUI(aguiInput, cancellationToken);
-        }
 
         using var activity = ActivitySource.StartActivity("conversation.turn");
         var startTime = DateTimeOffset.UtcNow;
@@ -296,28 +302,34 @@ public class Conversation
     }
 
     /// <summary>
+    /// Stream a conversation turn using AGUI protocol input format.
+    /// Returns both event stream and final conversation result.
+    /// </summary>
+    /// <param name="aguiInput">AGUI protocol input containing thread, messages, tools, and context</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Streaming result with event stream and final metadata</returns>
+    public Task<ConversationStreamingResult> SendStreamingAsync(
+        RunAgentInput aguiInput,
+        CancellationToken cancellationToken = default)
+    {
+        return SendStreamingAsyncAGUI(aguiInput, cancellationToken);
+    }
+
+    /// <summary>
     /// Stream a conversation turn and return both event stream and final metadata.
     /// For multi-agent scenarios, uses the provided orchestrator or falls back to DefaultOrchestrator.
     /// </summary>
     /// <param name="message">The user message to send</param>
     /// <param name="options">Chat options</param>
     /// <param name="orchestrator">Optional orchestrator for multi-agent scenarios (falls back to DefaultOrchestrator)</param>
-    /// <param name="aguiInput">Optional AGUI protocol input (overrides message parameter if provided)</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Streaming result with event stream and final metadata</returns>
     public Task<ConversationStreamingResult> SendStreamingAsync(
         string message,
         ChatOptions? options = null,
         IOrchestrator? orchestrator = null,
-        RunAgentInput? aguiInput = null,
         CancellationToken cancellationToken = default)
     {
-        // If AGUI input provided, use the AGUI streaming path
-        if (aguiInput != null)
-        {
-            return SendStreamingAsyncAGUI(aguiInput, cancellationToken);
-        }
-
 
         // Create a channel to allow multiple consumers of the event stream
         var channel = System.Threading.Channels.Channel.CreateUnbounded<BaseEvent>();
@@ -474,7 +486,7 @@ public class Conversation
     {
         outputHandler ??= Console.Write;
 
-        var result = await SendStreamingAsync(message, options, orchestrator, aguiInput: null, cancellationToken);
+        var result = await SendStreamingAsync(message, options, orchestrator, cancellationToken);
         
         // Stream events to output handler
         await foreach (var evt in result.EventStream.WithCancellation(cancellationToken))

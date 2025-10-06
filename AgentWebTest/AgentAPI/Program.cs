@@ -206,7 +206,7 @@ agentApi.MapGet("/projects/{projectId}/conversations/{conversationId}/ws",
             var userMessage = System.Text.Encoding.UTF8.GetString(buffer, 0, receiveResult.Count);
 
             // Use new streaming API that returns ConversationStreamingResult
-            var streamResult = await conversation.SendStreamingAsync(userMessage, null, null, CancellationToken.None);
+            var streamResult = await conversation.SendStreamingAsync(userMessage, null, null,null, CancellationToken.None);
             
             bool isFinished = false;
             await foreach (var evt in streamResult.EventStream.WithCancellation(CancellationToken.None))

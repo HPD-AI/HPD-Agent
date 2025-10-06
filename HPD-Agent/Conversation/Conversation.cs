@@ -109,13 +109,21 @@ public class Conversation
     /// <param name="message">The message to send</param>
     /// <param name="options">Optional chat options</param>
     /// <param name="orchestrator">Optional orchestrator for multi-agent scenarios (falls back to DefaultOrchestrator)</param>
+    /// <param name="aguiInput">Optional AGUI protocol input (overrides message parameter if provided)</param>
     /// <param name="cancellationToken">Cancellation token</param>
     public async Task<ConversationTurnResult> SendAsync(
         string message,
         ChatOptions? options = null,
         IOrchestrator? orchestrator = null,
+        RunAgentInput? aguiInput = null,
         CancellationToken cancellationToken = default)
     {
+        // If AGUI input provided, use the AGUI path
+        if (aguiInput != null)
+        {
+            return await SendAsyncAGUI(aguiInput, cancellationToken);
+        }
+
         using var activity = ActivitySource.StartActivity("conversation.turn");
         var startTime = DateTimeOffset.UtcNow;
 
@@ -196,6 +204,79 @@ public class Conversation
         }
     }
 
+    // Helper method for AGUI input path
+    private async Task<ConversationTurnResult> SendAsyncAGUI(RunAgentInput aguiInput, CancellationToken cancellationToken)
+    {
+        using var activity = ActivitySource.StartActivity("conversation.turn");
+        var startTime = DateTimeOffset.UtcNow;
+
+        activity?.SetTag("conversation.id", Id);
+        activity?.SetTag("conversation.input_format", "agui");
+        activity?.SetTag("conversation.thread_id", aguiInput.ThreadId);
+        activity?.SetTag("conversation.run_id", aguiInput.RunId);
+
+        try
+        {
+            var agent = PrimaryAgent ?? throw new InvalidOperationException("No agent configured for this conversation");
+
+            // Use agent's AGUI overload
+            var streamResult = await agent.ExecuteStreamingTurnAsync(aguiInput, cancellationToken);
+
+            // Consume stream (non-streaming path)
+            await foreach (var evt in streamResult.EventStream.WithCancellation(cancellationToken))
+            {
+                // Events consumed but not exposed in non-streaming path
+            }
+
+            // Wait for final history
+            var finalHistory = await streamResult.FinalHistory;
+
+            // Build response from final history
+            var assistantMessages = finalHistory.Where(m => m.Role == ChatRole.Assistant).ToList();
+            var response = assistantMessages.Count > 0
+                ? new ChatResponse(assistantMessages)
+                : new ChatResponse(new ChatMessage(ChatRole.Assistant, ""));
+
+            // Update conversation thread
+            foreach (var msg in finalHistory)
+            {
+                if (!_thread.Messages.Contains(msg))
+                {
+                    _thread.AddMessage(msg);
+                }
+            }
+
+            var duration = DateTimeOffset.UtcNow - startTime;
+            activity?.SetTag("conversation.duration_ms", duration.TotalMilliseconds);
+            activity?.SetTag("conversation.success", true);
+
+            return new ConversationTurnResult
+            {
+                Response = response,
+                TurnHistory = finalHistory,
+                RespondingAgent = agent,
+                UsedOrchestrator = null,
+                Duration = duration,
+                OrchestrationMetadata = new OrchestrationMetadata
+                {
+                    StrategyName = "AGUI",
+                    DecisionDuration = TimeSpan.Zero
+                },
+                Usage = CreateTokenUsage(response),
+                RequestId = aguiInput.RunId,
+                ActivityId = System.Diagnostics.Activity.Current?.Id
+            };
+        }
+        catch (Exception ex)
+        {
+            var duration = DateTimeOffset.UtcNow - startTime;
+            activity?.SetTag("conversation.duration_ms", duration.TotalMilliseconds);
+            activity?.SetTag("conversation.success", false);
+            activity?.SetTag("error.type", ex.GetType().Name);
+            activity?.SetTag("error.message", ex.Message);
+            throw;
+        }
+    }
 
     // Helper method to avoid code duplication
     private ChatOptions? InjectProjectContextIfNeeded(ChatOptions? options)
@@ -221,15 +302,23 @@ public class Conversation
     /// <param name="message">The user message to send</param>
     /// <param name="options">Chat options</param>
     /// <param name="orchestrator">Optional orchestrator for multi-agent scenarios (falls back to DefaultOrchestrator)</param>
-    /// <param name="documentPaths">Optional document paths to process and include</param>
+    /// <param name="aguiInput">Optional AGUI protocol input (overrides message parameter if provided)</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Streaming result with event stream and final metadata</returns>
     public Task<ConversationStreamingResult> SendStreamingAsync(
         string message,
         ChatOptions? options = null,
         IOrchestrator? orchestrator = null,
+        RunAgentInput? aguiInput = null,
         CancellationToken cancellationToken = default)
     {
+        // If AGUI input provided, use the AGUI streaming path
+        if (aguiInput != null)
+        {
+            return SendStreamingAsyncAGUI(aguiInput, cancellationToken);
+        }
+
+
         // Create a channel to allow multiple consumers of the event stream
         var channel = System.Threading.Channels.Channel.CreateUnbounded<BaseEvent>();
         var writer = channel.Writer;
@@ -310,6 +399,61 @@ public class Conversation
         });
     }
 
+    // Helper method for AGUI streaming path
+    private async Task<ConversationStreamingResult> SendStreamingAsyncAGUI(RunAgentInput aguiInput, CancellationToken cancellationToken)
+    {
+        var startTime = DateTime.UtcNow;
+        var agent = PrimaryAgent ?? throw new InvalidOperationException("No agent configured for this conversation");
+
+        // Use agent's AGUI overload
+        var streamResult = await agent.ExecuteStreamingTurnAsync(aguiInput, cancellationToken);
+
+        // Create task to build final result after streaming completes
+        var finalResultTask = Task.Run(async () =>
+        {
+            // Wait for final history from agent
+            var finalHistory = await streamResult.FinalHistory;
+
+            // Build response from final history
+            var assistantMessages = finalHistory.Where(m => m.Role == ChatRole.Assistant).ToList();
+            var response = assistantMessages.Count > 0
+                ? new ChatResponse(assistantMessages)
+                : new ChatResponse(new ChatMessage(ChatRole.Assistant, ""));
+
+            // Update conversation thread
+            foreach (var msg in finalHistory)
+            {
+                if (!_thread.Messages.Contains(msg))
+                {
+                    _thread.AddMessage(msg);
+                }
+            }
+
+            return new ConversationTurnResult
+            {
+                Response = response,
+                TurnHistory = finalHistory,
+                RespondingAgent = agent,
+                UsedOrchestrator = null,
+                Duration = DateTime.UtcNow - startTime,
+                OrchestrationMetadata = new OrchestrationMetadata
+                {
+                    StrategyName = "AGUI",
+                    DecisionDuration = TimeSpan.Zero
+                },
+                Usage = CreateTokenUsage(response),
+                RequestId = aguiInput.RunId,
+                ActivityId = System.Diagnostics.Activity.Current?.Id
+            };
+        }, cancellationToken);
+
+        return new ConversationStreamingResult
+        {
+            EventStream = streamResult.EventStream,
+            FinalResult = finalResultTask
+        };
+    }
+
     /// <summary>
     /// Stream a conversation turn with default console display formatting.
     /// Provides a user-friendly experience with automatic event formatting and output.
@@ -330,7 +474,7 @@ public class Conversation
     {
         outputHandler ??= Console.Write;
 
-        var result = await SendStreamingAsync(message, options, orchestrator, cancellationToken);
+        var result = await SendStreamingAsync(message, options, orchestrator, aguiInput: null, cancellationToken);
         
         // Stream events to output handler
         await foreach (var evt in result.EventStream.WithCancellation(cancellationToken))

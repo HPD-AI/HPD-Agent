@@ -4,11 +4,13 @@ using System.Collections.Generic;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.AI;
 using A2A;
+using HPD;
 
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-    WriteIndented = false
+    WriteIndented = false,
+    PreferredObjectCreationHandling = JsonObjectCreationHandling.Populate
 )]
 // ✨ SIMPLIFIED: Application-specific types only
 [JsonSerializable(typeof(ChatRequest))]
@@ -39,19 +41,25 @@ using A2A;
 [JsonSerializable(typeof(StreamMetadataResponse))]
 [JsonSerializable(typeof(ContentEvent))]
 [JsonSerializable(typeof(FinishEvent))]
+
+// AG-UI Protocol types (already in AGUIJsonContext, but explicit reference for API)
+[JsonSerializable(typeof(RunAgentInput))]
 internal partial class AppJsonSerializerContext : JsonSerializerContext
 {
+}
+
+/// <summary>
+/// Provides combined JSON type info resolvers for the application.
+/// Uses the library's AGUIJsonSerializerHelper for consistent configuration.
+/// </summary>
+internal static class JsonResolvers
+{
     /// <summary>
-    /// Combined type info resolver that includes App, HPD, AGUI, and partial A2A types.
-    /// Note: Some A2A types (AgentCard, AgentCapabilities, AgentTask, Message, Artifact) 
-    /// cannot use source generation due to AgentTransport dependencies and will fall back to runtime serialization.
+    /// Combined type info resolver that includes App, HPD, AGUI, and A2A types.
+    /// App types are first in the chain to ensure API DTOs are found first.
     /// </summary>
-    public static IJsonTypeInfoResolver Combined { get; } = 
-        JsonTypeInfoResolver.Combine(
-            Default, 
-            HPDJsonContext.Default,
-            AGUIJsonContext.Default,
-            A2AJsonSerializerContext.Default);
+    public static IJsonTypeInfoResolver Combined { get; } =
+        AGUIJsonSerializerHelper.CreateCombinedResolver(AppJsonSerializerContext.Default);
 }
 
 // Streaming response types for AOT compatibility

@@ -314,7 +314,7 @@ public class AGUIEventConverter
         };
     }
 
-    private static BaseMessage ConvertChatMessageToBaseMessage(ChatMessage message)
+    public static BaseMessage ConvertChatMessageToBaseMessage(ChatMessage message)
     {
         var content = ExtractTextContent(message) ?? "";
         var role = message.Role.ToString().ToLowerInvariant();
@@ -330,7 +330,7 @@ public class AGUIEventConverter
         };
     }
 
-    private static string? ExtractTextContent(ChatMessage message)
+    public static string? ExtractTextContent(ChatMessage message)
     {
         // Handle different content types from Microsoft.Extensions.AI
         var textContent = message.Contents.OfType<TextContent>().FirstOrDefault()?.Text;

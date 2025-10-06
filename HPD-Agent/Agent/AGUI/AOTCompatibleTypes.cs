@@ -33,18 +33,21 @@ public sealed record RunAgentInput
 }
 
 // Message Types (simplified for AOT)
-public abstract record BaseMessage
+// NOTE: Using concrete record instead of abstract for simpler JSON deserialization
+// The 'role' property indicates the message type without needing polymorphic deserialization
+public record BaseMessage
 {
     [JsonPropertyName("id")]
     public required string Id { get; init; }
-    
+
     [JsonPropertyName("role")]
     public required string Role { get; init; }
-    
+
     [JsonPropertyName("content")]
-    public required string Content { get; init; }
+    public string? Content { get; init; }
 }
 
+// Keep derived types for compatibility, but they're essentially aliases now
 public sealed record UserMessage : BaseMessage;
 public sealed record AssistantMessage : BaseMessage;
 public sealed record SystemMessage : BaseMessage;
@@ -52,6 +55,8 @@ public sealed record DeveloperMessage : BaseMessage;
 public sealed record ToolMessage : BaseMessage;
 
 // Event Types (with JsonSourceGenerator support)
+// NOTE: JsonDerivedType is REQUIRED for proper serialization of derived type properties
+// We use UnknownDerivedTypeHandling.FallBackToBaseType to avoid $type in output
 [JsonDerivedType(typeof(RunStartedEvent), "RUN_STARTED")]
 [JsonDerivedType(typeof(RunFinishedEvent), "RUN_FINISHED")]
 [JsonDerivedType(typeof(RunErrorEvent), "RUN_ERROR")]
@@ -76,7 +81,6 @@ public sealed record ToolMessage : BaseMessage;
 [JsonDerivedType(typeof(CustomEvent), "CUSTOM")]
 [JsonDerivedType(typeof(RawEvent), "RAW")]
 [JsonDerivedType(typeof(MessagesSnapshotEvent), "MESSAGES_SNAPSHOT")]
-[JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
 public abstract record BaseEvent
 {
     [JsonPropertyName("type")]

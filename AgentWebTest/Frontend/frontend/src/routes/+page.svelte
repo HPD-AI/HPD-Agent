@@ -4,6 +4,7 @@
     import ProjectSelector from '../lib/project/ProjectSelector.svelte';
     import ConversationSidebar from '../lib/project/ConversationSidebar.svelte';
     import * as aguiClient from '@ag-ui/client';
+    import type { RunAgentInput, Message } from '@ag-ui/client';
     const { EventType } = aguiClient;
     
     // ✨ CLEAN API CLIENT
@@ -55,14 +56,38 @@
             return response.json();
         }
         
-        streamChat(projectId: string, conversationId: string, message: string) {
+        streamChat(projectId: string, conversationId: string, message: string, conversationMessages: ChatMessage[] = []) {
+            // ✨ Construct AG-UI RunAgentInput format
+            const runId = crypto.randomUUID();
+
+            // Convert existing conversation messages to AG-UI format
+            const aguiMessages: Message[] = conversationMessages.map(msg => ({
+                id: crypto.randomUUID(),
+                role: msg.role as 'user' | 'assistant',
+                content: msg.content
+            }));
+
+            // Add the new user message
+            aguiMessages.push({
+                id: crypto.randomUUID(),
+                role: 'user',
+                content: message
+            });
+
+            const aguiInput: RunAgentInput = {
+                threadId: conversationId,
+                runId: runId,
+                state: {},
+                messages: aguiMessages,
+                tools: [], // Tools are provided by the backend agent
+                context: [],
+                forwardedProps: {}
+            };
+
             return fetch(`${this.baseUrl}/agent/projects/${projectId}/conversations/${conversationId}/stream`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    threadId: conversationId,
-                    messages: [{ content: message }]
-                })
+                body: JSON.stringify(aguiInput)
             });
         }
         
@@ -218,7 +243,9 @@
         
         private async streamResponse(userMessage: string, api: AgentAPI, projectId: string, conversationId: string) {
             console.log('🚀 Starting stream response for message:', userMessage);
-            const response = await api.streamChat(projectId, conversationId, userMessage);
+            // Pass current conversation messages (excluding the placeholder we just added)
+            const conversationHistory = messages.slice(0, -1);
+            const response = await api.streamChat(projectId, conversationId, userMessage, conversationHistory);
             
             if (!response.ok) {
                 console.error('❌ Stream response not ok:', response.status, response.statusText);

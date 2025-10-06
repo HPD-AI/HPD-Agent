@@ -1,7 +1,9 @@
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 
-[JsonSourceGenerationOptions(WriteIndented = false)]
+[JsonSourceGenerationOptions(
+    WriteIndented = false,
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(RunAgentInput))]
 [JsonSerializable(typeof(BaseMessage))]
 [JsonSerializable(typeof(UserMessage))]

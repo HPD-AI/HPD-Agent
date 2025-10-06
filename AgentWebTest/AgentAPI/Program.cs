@@ -10,7 +10,7 @@ var builder = WebApplication.CreateSlimBuilder(args);
 
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
-    options.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonSerializerContext.Combined);
+    options.SerializerOptions.TypeInfoResolverChain.Insert(0, JsonResolvers.Combined);
 });
 
 builder.Services.AddCors(options =>
@@ -127,9 +127,9 @@ agentApi.MapPost("/projects/{projectId}/conversations/{conversationId}/chat",
     return Results.Ok(ToAgentResponse(response));
 });
 
-// ✨ SIMPLIFIED: Streaming with default Microsoft.Extensions.AI approach
-agentApi.MapPost("/projects/{projectId}/conversations/{conversationId}/stream", 
-    async (string projectId, string conversationId, StreamRequest request, ProjectManager pm, HttpContext context) =>
+// ✨ NEW: AG-UI Protocol streaming endpoint (using RunAgentInput overload)
+agentApi.MapPost("/projects/{projectId}/conversations/{conversationId}/stream",
+    async (string projectId, string conversationId, RunAgentInput aguiInput, ProjectManager pm, HttpContext context) =>
 {
     var conversation = pm.GetConversation(projectId, conversationId);
     if (conversation == null)
@@ -143,30 +143,33 @@ agentApi.MapPost("/projects/{projectId}/conversations/{conversationId}/stream",
     context.Response.Headers.Append("Cache-Control", "no-cache");
     context.Response.Headers.Append("Connection", "keep-alive");
 
-    var userMessage = request.Messages.FirstOrDefault()?.Content ?? "";
-    var messages = conversation.Messages.ToList();
-    messages.Add(new ChatMessage(ChatRole.User, userMessage));
-
-    var agent = pm.CreateAgent();
-    var writer = new StreamWriter(context.Response.Body, leaveOpen: true);
+    // Use UTF8 encoding with larger buffer to prevent truncation of large JSON payloads
+    var writer = new StreamWriter(context.Response.Body, encoding: System.Text.Encoding.UTF8, bufferSize: 8192, leaveOpen: true);
 
     try
     {
-        // ✅ 1. Stream AG-UI events directly from agent
-        var streamResult = await agent.ExecuteStreamingTurnAsync(messages, options: null, documentPaths: null, cancellationToken: context.RequestAborted);
+        // ✅ Use the new Conversation.SendStreamingAsync(RunAgentInput) overload
+        var streamResult = await conversation.SendStreamingAsync(aguiInput, context.RequestAborted);
+
         await foreach (var baseEvent in streamResult.EventStream.WithCancellation(context.RequestAborted))
         {
             // Stream the BaseEvent as JSON directly (AG-UI format)
-            var serializerOptions = new JsonSerializerOptions { TypeInfoResolver = AppJsonSerializerContext.Combined };
-            var eventJson = System.Text.Json.JsonSerializer.Serialize(baseEvent, serializerOptions);
+            // Use the runtime type for proper serialization of derived properties
+            var serializerOptions = new JsonSerializerOptions
+            {
+                TypeInfoResolver = JsonResolvers.Combined,
+                DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+            };
+            var eventJson = System.Text.Json.JsonSerializer.Serialize(baseEvent, baseEvent.GetType(), serializerOptions);
+
+            // Write complete SSE event in one operation to prevent truncation
             await writer.WriteAsync($"data: {eventJson}\n\n");
             await writer.FlushAsync();
         }
 
-        // ✅ 2. Update conversation with the user message that was sent
-        conversation.AddMessage(new ChatMessage(ChatRole.User, userMessage));
-        // Note: AG-UI events don't provide final history directly, 
-        // so we'll need to track the assistant response as we receive content events
+        // Wait for final result to update conversation
+        await streamResult.FinalResult;
     }
     catch (Exception ex)
     {
@@ -206,7 +209,7 @@ agentApi.MapGet("/projects/{projectId}/conversations/{conversationId}/ws",
             var userMessage = System.Text.Encoding.UTF8.GetString(buffer, 0, receiveResult.Count);
 
             // Use new streaming API that returns ConversationStreamingResult
-            var streamResult = await conversation.SendStreamingAsync(userMessage, null, null,null, CancellationToken.None);
+            var streamResult = await conversation.SendStreamingAsync(userMessage, null, null, CancellationToken.None);
             
             bool isFinished = false;
             await foreach (var evt in streamResult.EventStream.WithCancellation(CancellationToken.None))
@@ -417,3 +420,7 @@ public record AgentChatResponse(string Response, string Model, UsageInfo Usage);
 public record UsageInfo(long InputTokens, long OutputTokens, long TotalTokens);
 public record SttResponse(string Transcript);
 public record ErrorResponse(string Error);
+
+// ✨ AG-UI Protocol types (for API deserialization)
+// Note: These mirror the types from HPD-Agent/Agent/AGUI/AOTCompatibleTypes.cs
+// but are defined here for API layer independence

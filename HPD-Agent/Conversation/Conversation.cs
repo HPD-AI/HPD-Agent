@@ -225,8 +225,29 @@ public class Conversation
         {
             var agent = PrimaryAgent ?? throw new InvalidOperationException("No agent configured for this conversation");
 
-            // Use agent's AGUI overload
-            var streamResult = await agent.ExecuteStreamingTurnAsync(aguiInput, cancellationToken);
+            // ✅ IMPORTANT: Add the new user message from aguiInput to conversation thread
+            // This ensures the agent sees the full conversation history
+            var newUserMessage = aguiInput.Messages.LastOrDefault(m => m.Role == "user");
+            if (newUserMessage != null)
+            {
+                _thread.AddMessage(new ChatMessage(ChatRole.User, newUserMessage.Content ?? ""));
+            }
+
+            // ✅ Create new RunAgentInput using server-side _thread as source of truth
+            // This ensures the agent uses the conversation history managed by Conversation, not frontend messages
+            var serverSideInput = new RunAgentInput
+            {
+                ThreadId = aguiInput.ThreadId,
+                RunId = aguiInput.RunId,
+                State = aguiInput.State,
+                Messages = ConvertThreadToAGUIMessages(_thread.Messages),
+                Tools = aguiInput.Tools,
+                Context = aguiInput.Context,
+                ForwardedProps = aguiInput.ForwardedProps
+            };
+
+            // Use agent's AGUI overload with server-side messages
+            var streamResult = await agent.ExecuteStreamingTurnAsync(serverSideInput, cancellationToken);
 
             // Consume stream (non-streaming path)
             await foreach (var evt in streamResult.EventStream.WithCancellation(cancellationToken))
@@ -417,8 +438,29 @@ public class Conversation
         var startTime = DateTime.UtcNow;
         var agent = PrimaryAgent ?? throw new InvalidOperationException("No agent configured for this conversation");
 
-        // Use agent's AGUI overload
-        var streamResult = await agent.ExecuteStreamingTurnAsync(aguiInput, cancellationToken);
+        // ✅ IMPORTANT: Add the new user message from aguiInput to conversation thread
+        // This ensures the agent sees the full conversation history
+        var newUserMessage = aguiInput.Messages.LastOrDefault(m => m.Role == "user");
+        if (newUserMessage != null)
+        {
+            _thread.AddMessage(new ChatMessage(ChatRole.User, newUserMessage.Content ?? ""));
+        }
+
+        // ✅ Create new RunAgentInput using server-side _thread as source of truth
+        // This ensures the agent uses the conversation history managed by Conversation, not frontend messages
+        var serverSideInput = new RunAgentInput
+        {
+            ThreadId = aguiInput.ThreadId,
+            RunId = aguiInput.RunId,
+            State = aguiInput.State,
+            Messages = ConvertThreadToAGUIMessages(_thread.Messages),
+            Tools = aguiInput.Tools,
+            Context = aguiInput.Context,
+            ForwardedProps = aguiInput.ForwardedProps
+        };
+
+        // Use agent's AGUI overload with server-side messages
+        var streamResult = await agent.ExecuteStreamingTurnAsync(serverSideInput, cancellationToken);
 
         // Create task to build final result after streaming completes
         var finalResultTask = Task.Run(async () =>
@@ -680,6 +722,28 @@ public class Conversation
             ModelId = response.ModelId
             // EstimatedCost is intentionally left null - cost calculation should be handled by business logic layer
         };
+    }
+
+    /// <summary>
+    /// Converts Extensions.AI ChatMessage collection to AGUI BaseMessage collection.
+    /// This ensures server-side conversation thread is the source of truth for AG-UI protocol.
+    /// Filters out tool-related messages since AG-UI handles tools via events, not message history.
+    /// </summary>
+    private static IReadOnlyList<BaseMessage> ConvertThreadToAGUIMessages(IEnumerable<ChatMessage> messages)
+    {
+        return messages
+            .Where(m => !HasToolContent(m)) // Skip messages with tool calls/results
+            .Select(AGUIEventConverter.ConvertChatMessageToBaseMessage)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Checks if a message contains tool-related content (FunctionCallContent or FunctionResultContent).
+    /// These messages should be excluded from AG-UI message history as tools are handled via events.
+    /// </summary>
+    private static bool HasToolContent(ChatMessage message)
+    {
+        return message.Contents.Any(c => c is FunctionCallContent or FunctionResultContent);
     }
 
     /// <summary>

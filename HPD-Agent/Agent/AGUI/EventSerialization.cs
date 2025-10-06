@@ -21,9 +21,17 @@ internal static class EventSerialization
             TextMessageContentEvent textEvent => JsonSerializer.Serialize(textEvent, AGUIJsonContext.Default.TextMessageContentEvent),
             TextMessageStartEvent startEvent => JsonSerializer.Serialize(startEvent, AGUIJsonContext.Default.TextMessageStartEvent),
             TextMessageEndEvent endEvent => JsonSerializer.Serialize(endEvent, AGUIJsonContext.Default.TextMessageEndEvent),
+            TextMessageChunkEvent chunkEvent => JsonSerializer.Serialize(chunkEvent, AGUIJsonContext.Default.TextMessageChunkEvent),
+            ThinkingStartEvent thinkingStartEvent => JsonSerializer.Serialize(thinkingStartEvent, AGUIJsonContext.Default.ThinkingStartEvent),
+            ThinkingEndEvent thinkingEndEvent => JsonSerializer.Serialize(thinkingEndEvent, AGUIJsonContext.Default.ThinkingEndEvent),
+            ThinkingTextMessageStartEvent thinkingTextStartEvent => JsonSerializer.Serialize(thinkingTextStartEvent, AGUIJsonContext.Default.ThinkingTextMessageStartEvent),
+            ThinkingTextMessageContentEvent thinkingTextContentEvent => JsonSerializer.Serialize(thinkingTextContentEvent, AGUIJsonContext.Default.ThinkingTextMessageContentEvent),
+            ThinkingTextMessageEndEvent thinkingTextEndEvent => JsonSerializer.Serialize(thinkingTextEndEvent, AGUIJsonContext.Default.ThinkingTextMessageEndEvent),
             ToolCallStartEvent toolStartEvent => JsonSerializer.Serialize(toolStartEvent, AGUIJsonContext.Default.ToolCallStartEvent),
             ToolCallArgsEvent toolArgsEvent => JsonSerializer.Serialize(toolArgsEvent, AGUIJsonContext.Default.ToolCallArgsEvent),
             ToolCallEndEvent toolEndEvent => JsonSerializer.Serialize(toolEndEvent, AGUIJsonContext.Default.ToolCallEndEvent),
+            ToolCallChunkEvent toolChunkEvent => JsonSerializer.Serialize(toolChunkEvent, AGUIJsonContext.Default.ToolCallChunkEvent),
+            ToolCallResultEvent toolResultEvent => JsonSerializer.Serialize(toolResultEvent, AGUIJsonContext.Default.ToolCallResultEvent),
             RunStartedEvent runStartEvent => JsonSerializer.Serialize(runStartEvent, AGUIJsonContext.Default.RunStartedEvent),
             RunFinishedEvent runFinishEvent => JsonSerializer.Serialize(runFinishEvent, AGUIJsonContext.Default.RunFinishedEvent),
             RunErrorEvent runErrorEvent => JsonSerializer.Serialize(runErrorEvent, AGUIJsonContext.Default.RunErrorEvent),
@@ -39,8 +47,7 @@ internal static class EventSerialization
             OrchestrationCompleteEvent orchestrationCompleteEvent => JsonSerializer.Serialize(orchestrationCompleteEvent, AGUIJsonContext.Default.OrchestrationCompleteEvent),
             FunctionPermissionRequestEvent functionPermissionEvent => JsonSerializer.Serialize(functionPermissionEvent, AGUIJsonContext.Default.FunctionPermissionRequestEvent),
             ContinuationPermissionRequestEvent continuationPermissionEvent => JsonSerializer.Serialize(continuationPermissionEvent, AGUIJsonContext.Default.ContinuationPermissionRequestEvent),
-            ToolResultEvent toolResultEvent => JsonSerializer.Serialize(toolResultEvent, AGUIJsonContext.Default.ToolResultEvent),
-            ReasoningContentEvent reasoningContentEvent => JsonSerializer.Serialize(reasoningContentEvent, AGUIJsonContext.Default.ReasoningContentEvent),
+            ToolResultEvent legacyToolResultEvent => JsonSerializer.Serialize(legacyToolResultEvent, AGUIJsonContext.Default.ToolResultEvent),
             CustomEvent customEvent => JsonSerializer.Serialize(customEvent, AGUIJsonContext.Default.CustomEvent),
             RawEvent rawEvent => JsonSerializer.Serialize(rawEvent, AGUIJsonContext.Default.RawEvent),
             _ => JsonSerializer.Serialize(evt, AGUIJsonContext.Default.BaseEvent)
@@ -137,14 +144,6 @@ internal static class EventSerialization
         Timestamp = GetTimestamp()
     };
 
-    public static ReasoningContentEvent CreateReasoningContent(string messageId, string content) => new()
-    {
-        Type = "REASONING_CONTENT",
-        MessageId = messageId,
-        Content = content,
-        Timestamp = GetTimestamp()
-    };
-
     public static FunctionPermissionRequestEvent CreateFunctionPermissionRequest(string permissionId, string functionName, string functionDescription, Dictionary<string, object?> arguments, PermissionScope[] availableScopes) => new()
     {
         Type = "function",
@@ -182,6 +181,72 @@ internal static class EventSerialization
         Type = "STEP_FINISHED",
         StepId = stepId,
         StepName = stepName,
+        Result = result,
+        Timestamp = GetTimestamp()
+    };
+
+    // New AG-UI Event Factory Methods
+
+    public static TextMessageChunkEvent CreateTextMessageChunk(string? messageId = null, string? role = null, string? delta = null) => new()
+    {
+        Type = "TEXT_MESSAGE_CHUNK",
+        MessageId = messageId,
+        Role = role,
+        Delta = delta,
+        Timestamp = GetTimestamp()
+    };
+
+    public static ThinkingStartEvent CreateThinkingStart(string messageId) => new()
+    {
+        Type = "THINKING_START",
+        MessageId = messageId,
+        Timestamp = GetTimestamp()
+    };
+
+    public static ThinkingEndEvent CreateThinkingEnd(string messageId) => new()
+    {
+        Type = "THINKING_END",
+        MessageId = messageId,
+        Timestamp = GetTimestamp()
+    };
+
+    public static ThinkingTextMessageStartEvent CreateThinkingTextMessageStart(string messageId, string? role = null) => new()
+    {
+        Type = "THINKING_TEXT_MESSAGE_START",
+        MessageId = messageId,
+        Role = role,
+        Timestamp = GetTimestamp()
+    };
+
+    public static ThinkingTextMessageContentEvent CreateThinkingTextMessageContent(string messageId, string delta) => new()
+    {
+        Type = "THINKING_TEXT_MESSAGE_CONTENT",
+        MessageId = messageId,
+        Delta = delta,
+        Timestamp = GetTimestamp()
+    };
+
+    public static ThinkingTextMessageEndEvent CreateThinkingTextMessageEnd(string messageId) => new()
+    {
+        Type = "THINKING_TEXT_MESSAGE_END",
+        MessageId = messageId,
+        Timestamp = GetTimestamp()
+    };
+
+    public static ToolCallChunkEvent CreateToolCallChunk(string? toolCallId = null, string? toolCallName = null, string? parentMessageId = null, string? delta = null) => new()
+    {
+        Type = "TOOL_CALL_CHUNK",
+        ToolCallId = toolCallId,
+        ToolCallName = toolCallName,
+        ParentMessageId = parentMessageId,
+        Delta = delta,
+        Timestamp = GetTimestamp()
+    };
+
+    public static ToolCallResultEvent CreateToolCallResult(string toolCallId, string result) => new()
+    {
+        Type = "TOOL_CALL_RESULT",
+        ToolCallId = toolCallId,
         Result = result,
         Timestamp = GetTimestamp()
     };

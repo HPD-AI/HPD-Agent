@@ -60,9 +60,17 @@ public sealed record ToolMessage : BaseMessage;
 [JsonDerivedType(typeof(TextMessageStartEvent), "TEXT_MESSAGE_START")]
 [JsonDerivedType(typeof(TextMessageContentEvent), "TEXT_MESSAGE_CONTENT")]
 [JsonDerivedType(typeof(TextMessageEndEvent), "TEXT_MESSAGE_END")]
+[JsonDerivedType(typeof(TextMessageChunkEvent), "TEXT_MESSAGE_CHUNK")]
+[JsonDerivedType(typeof(ThinkingTextMessageStartEvent), "THINKING_TEXT_MESSAGE_START")]
+[JsonDerivedType(typeof(ThinkingTextMessageContentEvent), "THINKING_TEXT_MESSAGE_CONTENT")]
+[JsonDerivedType(typeof(ThinkingTextMessageEndEvent), "THINKING_TEXT_MESSAGE_END")]
+[JsonDerivedType(typeof(ThinkingStartEvent), "THINKING_START")]
+[JsonDerivedType(typeof(ThinkingEndEvent), "THINKING_END")]
 [JsonDerivedType(typeof(ToolCallStartEvent), "TOOL_CALL_START")]
 [JsonDerivedType(typeof(ToolCallArgsEvent), "TOOL_CALL_ARGS")]
 [JsonDerivedType(typeof(ToolCallEndEvent), "TOOL_CALL_END")]
+[JsonDerivedType(typeof(ToolCallChunkEvent), "TOOL_CALL_CHUNK")]
+[JsonDerivedType(typeof(ToolCallResultEvent), "TOOL_CALL_RESULT")]
 [JsonDerivedType(typeof(StateSnapshotEvent), "STATE_SNAPSHOT")]
 [JsonDerivedType(typeof(StateDeltaEvent), "STATE_DELTA")]
 [JsonDerivedType(typeof(CustomEvent), "CUSTOM")]
@@ -78,7 +86,7 @@ public abstract record BaseEvent
 {
     [JsonPropertyName("type")]
     public required string Type { get; init; }
-    
+
     [JsonPropertyName("timestamp")]
     public long? Timestamp { get; init; }
 }
@@ -179,13 +187,79 @@ public sealed record ToolResultEvent : BaseEvent
     public required string Result { get; init; }
 }
 
-public sealed record ReasoningContentEvent : BaseEvent
+// New AG-UI Events - Text Message Chunk
+public sealed record TextMessageChunkEvent : BaseEvent
+{
+    [JsonPropertyName("messageId")]
+    public string? MessageId { get; init; }
+
+    [JsonPropertyName("role")]
+    public string? Role { get; init; }
+
+    [JsonPropertyName("delta")]
+    public string? Delta { get; init; }
+}
+
+// New AG-UI Events - Thinking/Reasoning
+public sealed record ThinkingStartEvent : BaseEvent
 {
     [JsonPropertyName("messageId")]
     public required string MessageId { get; init; }
-    
-    [JsonPropertyName("content")]
-    public required string Content { get; init; }
+}
+
+public sealed record ThinkingEndEvent : BaseEvent
+{
+    [JsonPropertyName("messageId")]
+    public required string MessageId { get; init; }
+}
+
+public sealed record ThinkingTextMessageStartEvent : BaseEvent
+{
+    [JsonPropertyName("messageId")]
+    public required string MessageId { get; init; }
+
+    [JsonPropertyName("role")]
+    public string? Role { get; init; }
+}
+
+public sealed record ThinkingTextMessageContentEvent : BaseEvent
+{
+    [JsonPropertyName("messageId")]
+    public required string MessageId { get; init; }
+
+    [JsonPropertyName("delta")]
+    public required string Delta { get; init; }
+}
+
+public sealed record ThinkingTextMessageEndEvent : BaseEvent
+{
+    [JsonPropertyName("messageId")]
+    public required string MessageId { get; init; }
+}
+
+// New AG-UI Events - Tool Call Chunk and Result
+public sealed record ToolCallChunkEvent : BaseEvent
+{
+    [JsonPropertyName("toolCallId")]
+    public string? ToolCallId { get; init; }
+
+    [JsonPropertyName("toolCallName")]
+    public string? ToolCallName { get; init; }
+
+    [JsonPropertyName("parentMessageId")]
+    public string? ParentMessageId { get; init; }
+
+    [JsonPropertyName("delta")]
+    public string? Delta { get; init; }
+}
+
+public sealed record ToolCallResultEvent : BaseEvent
+{
+    [JsonPropertyName("toolCallId")]
+    public required string ToolCallId { get; init; }
+
+    [JsonPropertyName("result")]
+    public required string Result { get; init; }
 }
 
 public sealed record MessagesSnapshotEvent : BaseEvent
@@ -347,17 +421,6 @@ public sealed record ToolResultEventData
     public required string Result { get; init; }
 }
 
-public sealed record ReasoningContentEventData
-{
-    [JsonPropertyName("eventType")]
-    public string EventType { get; init; } = "reasoning_content";
-    
-    [JsonPropertyName("messageId")]
-    public required string MessageId { get; init; }
-    
-    [JsonPropertyName("content")]
-    public required string Content { get; init; }
-}
 
 // AOT-compatible interface
 public interface IAGUIAgent

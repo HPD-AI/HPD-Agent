@@ -353,10 +353,15 @@ public class Conversation
     {
         return evt switch
         {
-            StepStartedEvent step => $"\nThinking Event\n",
-            ReasoningContentEvent text => text.Content,
+            // Official AG-UI thinking events
+            ThinkingStartEvent => $"\n💭 Thinking...\n",
+            ThinkingTextMessageContentEvent thinkingContent => thinkingContent.Delta,
+            ThinkingEndEvent => "",
+            // Regular text content
             TextMessageContentEvent text => text.Delta,
-            _ => "" // Only show reasoning steps and assistant text, ignore other events
+            // Fallback for generic steps
+            StepStartedEvent step => $"\n[Step: {step.StepName}]\n",
+            _ => "" // Only show thinking and assistant text, ignore other events
         };
     }
 

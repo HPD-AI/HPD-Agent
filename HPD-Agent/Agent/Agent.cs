@@ -30,7 +30,7 @@ public class Agent : IChatClient
     private readonly AgentTurn _agentTurn;
     private readonly ToolScheduler _toolScheduler;
     private readonly AGUIEventHandler _aguiEventHandler;
-    private readonly CapabilityManager _capabilityManager;
+    private readonly AGUIEventConverter _aguiConverter;
     private readonly IReadOnlyList<IAiFunctionFilter> _aiFunctionFilters;
     private readonly IReadOnlyList<IMessageTurnFilter> _messageTurnFilters;
 
@@ -114,8 +114,8 @@ public class Agent : IChatClient
         _functionCallProcessor = new FunctionCallProcessor(scopedFilterManager, permissionFilters, _aiFunctionFilters, config.MaxAgenticIterations, config.ErrorHandling);
         _agentTurn = new AgentTurn(_baseClient);
         _toolScheduler = new ToolScheduler(_functionCallProcessor, config);
-        _aguiEventHandler = new AGUIEventHandler(this, _baseClient, _messageProcessor, _name, config);
-        _capabilityManager = new CapabilityManager();
+        _aguiConverter = new AGUIEventConverter();
+        _aguiEventHandler = new AGUIEventHandler(this);
     }
 
     /// <summary>
@@ -157,37 +157,6 @@ public class Agent : IChatClient
     /// Scoped filter manager for applying filters based on function/plugin scope
     /// </summary>
     public ScopedFilterManager? ScopedFilterManager => _scopedFilterManager;
-
-
-    #region Capability Management
-
-    /// <summary>
-    /// Gets a capability by name and type
-    /// </summary>
-    /// <typeparam name="T">The type of capability to retrieve</typeparam>
-    /// <param name="name">The name of the capability</param>
-    /// <returns>The capability instance if found, otherwise null</returns>
-    public T? GetCapability<T>(string name) where T : class
-        => _capabilityManager.GetCapability<T>(name);
-
-    /// <summary>
-    /// Adds or updates a capability
-    /// </summary>
-    /// <param name="name">The name of the capability</param>
-    /// <param name="capability">The capability instance</param>
-    public void AddCapability(string name, object capability)
-        => _capabilityManager.AddCapability(name, capability);
-
-    /// <summary>
-    /// Removes a capability by name
-    /// </summary>
-    /// <param name="name">The name of the capability to remove</param>
-    /// <returns>True if the capability was removed, false if it wasn't found</returns>
-    public bool RemoveCapability(string name)
-        => _capabilityManager.RemoveCapability(name);
-
-
-    #endregion
 
     #region IChatClient Implementation
 
@@ -275,8 +244,9 @@ public class Agent : IChatClient
         var historyCompletionSource = new TaskCompletionSource<IReadOnlyList<ChatMessage>>();
         var turnHistory = new List<ChatMessage>();
 
-        // Create the streaming enumerable - use BaseEvent directly without conversion
-        var responseStream = RunAgenticLoopCore(messagesList, options, turnHistory, historyCompletionSource, cancellationToken);
+        // Create the streaming enumerable with error handling wrapper
+        var coreStream = RunAgenticLoopCore(messagesList, options, turnHistory, historyCompletionSource, cancellationToken);
+        var responseStream = WrapStreamWithErrorHandling(coreStream, historyCompletionSource, cancellationToken);
 
         // Capture reduction metadata from MessageProcessor (set during PrepareMessagesAsync in RunAgenticLoopCore)
         ReductionMetadata? reductionMetadata = null;
@@ -319,6 +289,33 @@ public class Agent : IChatClient
         };
     }
 
+    /// <summary>
+    /// Executes a streaming turn with AGUI protocol input.
+    /// Converts RunAgentInput to Extensions.AI format internally and streams BaseEvent results.
+    /// This eliminates the need for a separate AGUIEventHandler - AGUI support is built directly into Agent.
+    /// </summary>
+    /// <param name="aguiInput">The AGUI protocol input containing thread, messages, tools, and context</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>StreamingTurnResult containing the BaseEvent stream and final conversation history</returns>
+    public async Task<StreamingTurnResult> ExecuteStreamingTurnAsync(
+        RunAgentInput aguiInput,
+        CancellationToken cancellationToken = default)
+    {
+        // Convert AGUI input to Extensions.AI format using the shared converter instance
+        // This preserves tool tracking state across calls
+        var messages = _aguiConverter.ConvertToExtensionsAI(aguiInput);
+        var chatOptions = _aguiConverter.ConvertToExtensionsAIChatOptions(aguiInput, Config?.Provider?.DefaultChatOptions);
+
+        // Add AGUI metadata to chat options for tracking
+        chatOptions ??= new ChatOptions();
+        chatOptions.AdditionalProperties ??= new AdditionalPropertiesDictionary();
+        chatOptions.AdditionalProperties["ConversationId"] = aguiInput.ThreadId;
+        chatOptions.AdditionalProperties["RunId"] = aguiInput.RunId;
+
+        // Delegate to the existing Extensions.AI overload
+        return await ExecuteStreamingTurnAsync(messages, chatOptions, null, cancellationToken);
+    }
+
     /// <inheritdoc />
     public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
         IEnumerable<ChatMessage> messages,
@@ -330,6 +327,83 @@ public class Agent : IChatClient
         await foreach (var update in RunAgenticLoopAsync(messages, options, historyCompletionSource, cancellationToken).WithCancellation(cancellationToken))
         {
             yield return update;
+        }
+    }
+
+    /// <summary>
+    /// Wraps the core event stream with error handling and emits structured error events.
+    /// Since C# doesn't allow yield return in try-catch blocks, this wrapper catches
+    /// exceptions during stream enumeration and converts them to error events.
+    /// </summary>
+    private async IAsyncEnumerable<BaseEvent> WrapStreamWithErrorHandling(
+        IAsyncEnumerable<BaseEvent> innerStream,
+        TaskCompletionSource<IReadOnlyList<ChatMessage>> historyCompletion,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        var enumerator = innerStream.GetAsyncEnumerator(cancellationToken);
+        Exception? caughtError = null;
+        bool runFinishedEmitted = false;
+
+        try
+        {
+            while (true)
+            {
+                BaseEvent? currentEvent = default;
+                bool hasNext = false;
+                bool hadError = false;
+
+                try
+                {
+                    hasNext = await enumerator.MoveNextAsync().ConfigureAwait(false);
+                    if (hasNext)
+                    {
+                        currentEvent = enumerator.Current;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Capture the exception for error event emission
+                    caughtError = ex;
+                    hadError = true;
+
+                    // Fault the history completion
+                    historyCompletion.TrySetException(ex);
+                }
+
+                // Emit error event AFTER catch block (C# doesn't allow yield in catch)
+                if (hadError && caughtError != null)
+                {
+                    yield return EventSerialization.CreateRunError(caughtError.Message);
+                    break; // Exit the loop - stream is terminated
+                }
+
+                if (!hasNext)
+                {
+                    break;
+                }
+
+                // Check if we're emitting RunFinished event (track for error case)
+                if (currentEvent is RunFinishedEvent)
+                {
+                    runFinishedEmitted = true;
+                }
+
+                yield return currentEvent!; // Non-null because hasNext was true
+            }
+
+            // If error occurred and RunFinished wasn't emitted, we should emit it now
+            // This ensures consumers always get lifecycle closure even on error
+            if (caughtError != null && !runFinishedEmitted)
+            {
+                // Extract threadId and runId from context if available
+                // For simplicity, emit with empty IDs - consumers check for preceding error event
+                yield return EventSerialization.CreateRunFinished(string.Empty, string.Empty);
+            }
+        }
+        finally
+        {
+            // Always dispose the enumerator
+            await enumerator.DisposeAsync().ConfigureAwait(false);
         }
     }
 
@@ -449,9 +523,10 @@ public class Agent : IChatClient
             var assistantContents = new List<AIContent>();
             bool streamFinished = false;
 
-            // Track reasoning step state PER ITERATION (reset for each turn/function call)
-            bool reasoningStepStarted = false;
-            string? reasoningStepId = null;
+            // Track thinking/reasoning state PER ITERATION (reset for each turn/function call)
+            // Using official AG-UI thinking events for better frontend compatibility
+            bool thinkingStarted = false;
+            bool thinkingMessageStarted = false;
 
             // Run turn and collect events
             await foreach (var update in _agentTurn.RunAsync(currentMessages, effectiveOptions, effectiveCancellationToken))
@@ -466,28 +541,38 @@ public class Agent : IChatClient
                     {
                         if (content is TextReasoningContent reasoning && !string.IsNullOrEmpty(reasoning.Text))
                         {
-                            // Emit step started event ONLY on first reasoning chunk
-                            if (!reasoningStepStarted)
+                            // Emit thinking start event ONLY on first reasoning chunk (official AG-UI event)
+                            if (!thinkingStarted)
                             {
-                                reasoningStepId = Guid.NewGuid().ToString();
-                                yield return EventSerialization.CreateStepStarted(reasoningStepId, "Reasoning");
-                                reasoningStepStarted = true;
+                                yield return EventSerialization.CreateThinkingStart(messageId);
+                                thinkingStarted = true;
                             }
 
-                            // Emit reasoning content for each chunk
-                            yield return EventSerialization.CreateReasoningContent(messageId, reasoning.Text);
+                            // Emit thinking message start if not already started
+                            if (!thinkingMessageStarted)
+                            {
+                                yield return EventSerialization.CreateThinkingTextMessageStart(messageId, "assistant");
+                                thinkingMessageStarted = true;
+                            }
+
+                            // Emit thinking content for each chunk (official AG-UI event)
+                            yield return EventSerialization.CreateThinkingTextMessageContent(messageId, reasoning.Text);
 
                             // Add reasoning to assistantContents so it's preserved in conversation history
                             assistantContents.Add(reasoning);
                         }
                         else if (content is TextContent textContent && !string.IsNullOrEmpty(textContent.Text))
                         {
-                            // If we were in reasoning mode, finish the reasoning step
-                            if (reasoningStepStarted && reasoningStepId != null)
+                            // If we were in thinking mode, finish the thinking events
+                            if (thinkingMessageStarted)
                             {
-                                yield return EventSerialization.CreateStepFinished(reasoningStepId, "Reasoning");
-                                reasoningStepStarted = false;
-                                reasoningStepId = null;
+                                yield return EventSerialization.CreateThinkingTextMessageEnd(messageId);
+                                thinkingMessageStarted = false;
+                            }
+                            if (thinkingStarted)
+                            {
+                                yield return EventSerialization.CreateThinkingEnd(messageId);
+                                thinkingStarted = false;
                             }
 
                             // Emit message start if this is the first text content
@@ -516,12 +601,16 @@ public class Agent : IChatClient
                 {
                     streamFinished = true;
 
-                    // If reasoning step is still active when stream ends, finish it
-                    if (reasoningStepStarted && reasoningStepId != null)
+                    // If thinking is still active when stream ends, finish it
+                    if (thinkingMessageStarted)
                     {
-                        yield return EventSerialization.CreateStepFinished(reasoningStepId, "Reasoning");
-                        reasoningStepStarted = false;
-                        reasoningStepId = null;
+                        yield return EventSerialization.CreateThinkingTextMessageEnd(messageId);
+                        thinkingMessageStarted = false;
+                    }
+                    if (thinkingStarted)
+                    {
+                        yield return EventSerialization.CreateThinkingEnd(messageId);
+                        thinkingStarted = false;
                     }
                 }
             }
@@ -583,7 +672,10 @@ public class Agent : IChatClient
                     {
                         yield return EventSerialization.CreateToolCallEnd(result.CallId);
 
-                        // Emit custom tool result event for dev visibility and debugging
+                        // Emit official AG-UI TOOL_CALL_RESULT event
+                        yield return EventSerialization.CreateToolCallResult(result.CallId, result.Result?.ToString() ?? "null");
+
+                        // Also emit custom tool result event for backward compatibility and additional debugging info
                         var matchingTool = toolRequests.FirstOrDefault(t => t.CallId == result.CallId);
                         var toolName = matchingTool?.Name ?? "unknown";
                         yield return EventSerialization.CreateToolResult(messageId, result.CallId, toolName, result.Result ?? "null");
@@ -791,8 +883,6 @@ public class Agent : IChatClient
             Type t when t == typeof(Agent) => this,
             Type t when t == typeof(IAGUIAgent) => _aguiEventHandler,
             Type t when t == typeof(ChatClientMetadata) => _metadata,
-            Type t when t == typeof(CapabilityManager) => _capabilityManager,
-            Type t when t == typeof(AgentConfig) => Config,
             Type t when t == typeof(ScopedFilterManager) => _scopedFilterManager,
             Type t when t == typeof(ErrorHandlingPolicy) => _errorPolicy,
             Type t when t.IsInstanceOfType(_baseClient) => _baseClient,
@@ -997,34 +1087,14 @@ Best practices:
 
     #endregion
 
-    #region AGUI Delegation Methods
-
-    /// <summary>
-    /// Runs the agent in AGUI streaming mode, emitting events to the provided channel
-    /// </summary>
-    public async Task RunAsync(
-        RunAgentInput input,
-        ChannelWriter<BaseEvent> events,
-        CancellationToken cancellationToken = default)
-    {
-        await _aguiEventHandler.RunAsync(input, events, cancellationToken);
-    }
-
-
-
-    #endregion
-
-
-
     /// <summary>
     /// Serializes any AG-UI event to JSON using the correct polymorphic serialization.
-    /// This delegates to the AGUIEventHandler for processing.
     /// </summary>
     /// <param name="aguiEvent">The AG-UI event to serialize</param>
     /// <returns>JSON string with proper polymorphic serialization</returns>
     public string SerializeEvent(BaseEvent aguiEvent)
     {
-        return _aguiEventHandler.SerializeEvent(aguiEvent);
+        return EventSerialization.SerializeEvent(aguiEvent);
     }
 
     #region History Reduction Metadata
@@ -1076,35 +1146,30 @@ Best practices:
 #region AGUI Event Handling
 
 /// <summary>
-/// Handles all AGUI (Agent-GUI) protocol logic including event conversion, streaming, and WebSocket communication.
-/// Implements the IAGUIAgent interface and provides SSE and WebSocket streaming capabilities.
+/// Thin wrapper that implements IAGUIAgent interface for backward compatibility.
+/// Delegates directly to Agent.ExecuteStreamingTurnAsync(RunAgentInput) overload.
+/// For new code, prefer calling Agent.ExecuteStreamingTurnAsync(RunAgentInput) directly.
+///
+/// MIGRATION NOTE: This is a temporary adapter for the custom AGUI protocol implementation.
+/// When the official AGUIDotnet library is released with AOT support:
+/// 1. This class will be updated to implement AGUIDotnet.Agent.IAGUIAgent
+/// 2. Or may be deprecated in favor of the official library's implementation
+/// 3. The underlying Agent.ExecuteStreamingTurnAsync(RunAgentInput) will remain stable
+///
+/// Current implementation provides AGUI protocol compatibility without external dependencies.
 /// </summary>
 public class AGUIEventHandler : IAGUIAgent
 {
     private readonly Agent _agent;
-    private readonly IChatClient _baseClient;
-    private readonly MessageProcessor _messageProcessor;
-    private readonly string _agentName;
-    private readonly AgentConfig? _config;
-    private readonly AGUIEventConverter _eventConverter;
 
-    public AGUIEventHandler(
-        Agent agent,
-        IChatClient baseClient,
-        MessageProcessor messageProcessor,
-        string agentName,
-        AgentConfig? config = null)
+    public AGUIEventHandler(Agent agent)
     {
         _agent = agent ?? throw new ArgumentNullException(nameof(agent));
-        _baseClient = baseClient ?? throw new ArgumentNullException(nameof(baseClient));
-        _messageProcessor = messageProcessor ?? throw new ArgumentNullException(nameof(messageProcessor));
-        _agentName = agentName ?? throw new ArgumentNullException(nameof(agentName));
-        _config = config;
-        _eventConverter = new AGUIEventConverter();
     }
 
     /// <summary>
-    /// Runs the agent in AGUI streaming mode, emitting events to the provided channel
+    /// Runs the agent in AGUI streaming mode, emitting events to the provided channel.
+    /// This is now a thin wrapper around Agent.ExecuteStreamingTurnAsync(RunAgentInput).
     /// </summary>
     public async Task RunAsync(
         RunAgentInput input,
@@ -1113,88 +1178,21 @@ public class AGUIEventHandler : IAGUIAgent
     {
         try
         {
-            // Emit run started event
-            await events.WriteAsync(AGUIEventConverter.LifecycleEvents.CreateRunStarted(input), cancellationToken);
+            // Delegate to the new Agent overload that handles AGUI input directly
+            var streamResult = await _agent.ExecuteStreamingTurnAsync(input, cancellationToken);
 
-            // Convert AGUI input to Extensions.AI format
-            var messages = _eventConverter.ConvertToExtensionsAI(input);
-            var chatOptions = _eventConverter.ConvertToExtensionsAIChatOptions(input, _config?.Provider?.DefaultChatOptions);
-
-            // Fix: Remove duplicate message start/end events - let the inner loop handle all message boundaries
-            // Use the agent's native BaseEvent stream directly
-            var streamResult = await _agent.ExecuteStreamingTurnAsync(messages, chatOptions, null, cancellationToken);
+            // Forward events to the channel
             await foreach (var baseEvent in streamResult.EventStream.WithCancellation(cancellationToken))
             {
-                // Write native events directly to the channel
                 await events.WriteAsync(baseEvent, cancellationToken);
             }
-
-            // Emit run finished event
-            await events.WriteAsync(AGUIEventConverter.LifecycleEvents.CreateRunFinished(input), cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            // Emit error event
-            await events.WriteAsync(AGUIEventConverter.LifecycleEvents.CreateRunError(input, ex), cancellationToken);
-            throw;
         }
         finally
         {
-            // Complete the channel
+            // Always complete the channel, even on error
             events.Complete();
         }
     }
-
-
-
-
-    /// <summary>
-    /// Serializes any AG-UI event to JSON using the correct polymorphic serialization.
-    /// Implements the functionality previously in EventHelpers.SerializeEvent.
-    /// </summary>
-    /// <param name="aguiEvent">The AG-UI event to serialize</param>
-    /// <returns>JSON string with proper polymorphic serialization</returns>
-    public string SerializeEvent(BaseEvent aguiEvent)
-    {
-        return EventSerialization.SerializeEvent(aguiEvent);
-    }
-}
-
-#endregion
-
-#region Capability Manager
-
-/// <summary>
-/// Manages the agent's extended capabilities, such as Audio and MCP.
-/// </summary>
-public class CapabilityManager
-{
-    private readonly Dictionary<string, object> _capabilities = new();
-
-    /// <summary>
-    /// Gets a capability by name and type.
-    /// </summary>
-    /// <typeparam name="T">The type of capability to retrieve.</typeparam>
-    /// <param name="name">The name of the capability.</param>
-    /// <returns>The capability instance if found, otherwise null.</returns>
-    public T? GetCapability<T>(string name) where T : class
-        => _capabilities.TryGetValue(name, out var capability) ? capability as T : null;
-
-    /// <summary>
-    /// Adds or updates a capability.
-    /// </summary>
-    /// <param name="name">The name of the capability.</param>
-    /// <param name="capability">The capability instance.</param>
-    public void AddCapability(string name, object capability)
-        => _capabilities[name] = capability ?? throw new ArgumentNullException(nameof(capability));
-
-    /// <summary>
-    /// Removes a capability by name.
-    /// </summary>
-    /// <param name="name">The name of the capability to remove.</param>
-    /// <returns>True if the capability was removed, false if it wasn't found.</returns>
-    public bool RemoveCapability(string name)
-        => _capabilities.Remove(name);
 }
 
 #endregion

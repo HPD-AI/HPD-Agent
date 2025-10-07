@@ -356,55 +356,33 @@ public class Conversation
         var channel = System.Threading.Channels.Channel.CreateUnbounded<BaseEvent>();
         var writer = channel.Writer;
         var reader = channel.Reader;
-        
+
         // Create TaskCompletionSource for the final result
         var resultTcs = new TaskCompletionSource<ConversationTurnResult>();
-        
+
         // Start a task to produce events and build the final result
-        _ = Task.Run(async () => 
+        _ = Task.Run(async () =>
         {
             var startTime = DateTime.UtcNow;
-            ChatResponse? finalResponse = null;
-            Agent? selectedAgent = null;
-            OrchestrationMetadata? orchestrationMetadata = null;
-            var userMessage = new ChatMessage(ChatRole.User, message);
-            
+
             try
             {
-                // Generate and broadcast events while capturing metadata
-                await foreach (var evt in SendStreamingEventsAsync(message, options, orchestrator, cancellationToken))
-                {
-                    await writer.WriteAsync(evt, cancellationToken);
-                }
-                
+                // ✅ NEW: Capture definitive metadata from streaming execution
+                var metadata = await SendStreamingEventsAsync(message, writer, options, orchestrator, cancellationToken);
+
                 // Close the writer to signal completion
                 writer.Complete();
-                
-                // After stream completes, extract the final response from conversation history
-                var lastMessages = _thread.Messages.TakeLast(10).ToList();
-                var assistantMessage = lastMessages.LastOrDefault(m => m.Role == ChatRole.Assistant);
-                
-                if (assistantMessage != null)
-                {
-                    finalResponse = new ChatResponse(assistantMessage);
-                    selectedAgent = _orchestrator.Agents.FirstOrDefault();
-                    orchestrationMetadata = new OrchestrationMetadata
-                    {
-                        StrategyName = _orchestrator.Agents.Count == 1 ? "SingleAgent" : "Orchestrated",
-                        DecisionDuration = TimeSpan.Zero
-                    };
-                }
-                
-                // Set the final result
+
+                // ✅ Build result from definitive metadata (no more TakeLast(10) guessing!)
                 resultTcs.SetResult(new ConversationTurnResult
                 {
-                    Response = finalResponse ?? new ChatResponse(new ChatMessage(ChatRole.Assistant, "")),
-                    TurnHistory = ExtractTurnHistory(userMessage, finalResponse ?? new ChatResponse(new ChatMessage(ChatRole.Assistant, ""))),
-                    RespondingAgent = selectedAgent ?? _orchestrator.Agents.FirstOrDefault()!,
+                    Response = metadata.Response,
+                    TurnHistory = metadata.FinalHistory,
+                    RespondingAgent = metadata.RespondingAgent,
                     UsedOrchestrator = orchestrator,
                     Duration = DateTime.UtcNow - startTime,
-                    OrchestrationMetadata = orchestrationMetadata ?? new OrchestrationMetadata(),
-                    Usage = CreateTokenUsage(finalResponse ?? new ChatResponse(new ChatMessage(ChatRole.Assistant, ""))),
+                    OrchestrationMetadata = metadata.OrchestrationMetadata,
+                    Usage = CreateTokenUsage(metadata.Response),
                     RequestId = Guid.NewGuid().ToString(),
                     ActivityId = System.Diagnostics.Activity.Current?.Id
                 });
@@ -415,7 +393,7 @@ public class Conversation
                 resultTcs.SetException(ex);
             }
         }, cancellationToken);
-        
+
         // Create an async enumerable from the channel reader
         async IAsyncEnumerable<BaseEvent> eventStream([EnumeratorCancellation] CancellationToken ct = default)
         {
@@ -564,13 +542,15 @@ public class Conversation
     }
 
     /// <summary>
-    /// Stream a conversation turn with full event transparency (advanced users)
+    /// Stream a conversation turn with full event transparency (advanced users).
+    /// Writes events to the provided channel and returns definitive metadata for result construction.
     /// </summary>
-    internal async IAsyncEnumerable<BaseEvent> SendStreamingEventsAsync(
+    internal async Task<StreamingTurnMetadata> SendStreamingEventsAsync(
         string message,
+        System.Threading.Channels.ChannelWriter<BaseEvent> eventWriter,
         ChatOptions? options = null,
         IOrchestrator? orchestrator = null,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default)
     {
         var userMessage = new ChatMessage(ChatRole.User, message);
         _thread.AddMessage(userMessage);
@@ -601,7 +581,7 @@ public class Conversation
                 // Stream the events
                 await foreach (var evt in result.EventStream.WithCancellation(cancellationToken))
                 {
-                    yield return evt;
+                    await eventWriter.WriteAsync(evt, cancellationToken);
                 }
 
                 // Wait for final history and update conversation
@@ -617,48 +597,68 @@ public class Conversation
                 {
                     _thread.AddMessage(msg);
                 }
-            
 
-            // Apply filters on the completed turn
-            var lastMessage = finalHistory.LastOrDefault();
-            if (lastMessage != null)
-            {
-                // Filters are now applied by the Agent directly
+                // Build response from final history
+                var assistantMessages = finalHistory.Where(m => m.Role == ChatRole.Assistant).ToList();
+                var response = assistantMessages.Count > 0
+                    ? new ChatResponse(assistantMessages)
+                    : new ChatResponse(new ChatMessage(ChatRole.Assistant, ""));
+
+                // Return definitive metadata instead of letting caller reconstruct
+                return new StreamingTurnMetadata
+                {
+                    Response = response,
+                    FinalHistory = finalHistory,
+                    RespondingAgent = agent,
+                    OrchestrationMetadata = new OrchestrationMetadata
+                    {
+                        StrategyName = "SingleAgent",
+                        DecisionDuration = TimeSpan.Zero
+                    },
+                    UserMessage = userMessage
+                };
             }
-        }
-        else
-        {
-            // ORCHESTRATED PATH - Multi-agent
-            var effectiveOrchestrator = orchestrator ?? DefaultOrchestrator;
-            if (effectiveOrchestrator == null)
+            else
             {
-                throw new InvalidOperationException(
-                    $"Multi-agent conversations ({_orchestrator.Agents.Count} agents) require an orchestrator. Set DefaultOrchestrator or pass an orchestrator parameter.");
+                // ORCHESTRATED PATH - Multi-agent
+                var effectiveOrchestrator = orchestrator ?? DefaultOrchestrator;
+                if (effectiveOrchestrator == null)
+                {
+                    throw new InvalidOperationException(
+                        $"Multi-agent conversations ({_orchestrator.Agents.Count} agents) require an orchestrator. Set DefaultOrchestrator or pass an orchestrator parameter.");
+                }
+
+                // Use the orchestrator's streaming method
+                var orchestrationResult = await effectiveOrchestrator.OrchestrateStreamingAsync(
+                    _thread.Messages, _orchestrator.Agents, this.Id, options, cancellationToken);
+
+                // Stream all orchestration and agent events
+                await foreach (var evt in orchestrationResult.EventStream.WithCancellation(cancellationToken))
+                {
+                    await eventWriter.WriteAsync(evt, cancellationToken);
+                }
+
+                // Wait for final result and update conversation
+                var finalResult = await orchestrationResult.FinalResult;
+
+                // Apply reduction from orchestration metadata BEFORE adding response
+                ApplyReductionIfPresent(finalResult);
+
+                foreach (var msg in finalResult.Response.Messages)
+                {
+                    _thread.AddMessage(msg);
+                }
+
+                // Return definitive metadata from orchestration
+                return new StreamingTurnMetadata
+                {
+                    Response = finalResult.Response,
+                    FinalHistory = ExtractTurnHistory(userMessage, finalResult.Response),
+                    RespondingAgent = finalResult.PrimaryAgent,
+                    OrchestrationMetadata = finalResult.Metadata,
+                    UserMessage = userMessage
+                };
             }
-
-            // Use the orchestrator's streaming method
-            var orchestrationResult = await effectiveOrchestrator.OrchestrateStreamingAsync(
-                _thread.Messages, _orchestrator.Agents, this.Id, options, cancellationToken);
-
-            // Stream all orchestration and agent events
-            await foreach (var evt in orchestrationResult.EventStream.WithCancellation(cancellationToken))
-            {
-                yield return evt;
-            }
-
-            // Wait for final result and update conversation
-            var finalResult = await orchestrationResult.FinalResult;
-
-            // Apply reduction from orchestration metadata BEFORE adding response
-            ApplyReductionIfPresent(finalResult);
-
-            foreach (var msg in finalResult.Response.Messages)
-            {
-                _thread.AddMessage(msg);
-            }
-
-            // Filters are now applied by the Agent directly
-        }
         }
         finally
         {
@@ -853,6 +853,19 @@ public record ConversationStreamingResult
 {
     public required IAsyncEnumerable<BaseEvent> EventStream { get; init; }
     public required Task<ConversationTurnResult> FinalResult { get; init; }
+}
+
+/// <summary>
+/// Internal metadata captured during streaming turn execution.
+/// Used to build ConversationTurnResult from definitive sources instead of reconstructing from thread.
+/// </summary>
+internal record StreamingTurnMetadata
+{
+    public required ChatResponse Response { get; init; }
+    public required IReadOnlyList<ChatMessage> FinalHistory { get; init; }
+    public required Agent RespondingAgent { get; init; }
+    public required OrchestrationMetadata OrchestrationMetadata { get; init; }
+    public ChatMessage UserMessage { get; init; } = null!;
 }
 
 /// <summary>

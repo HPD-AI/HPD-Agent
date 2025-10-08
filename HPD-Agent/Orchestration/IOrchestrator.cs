@@ -19,14 +19,14 @@ using Microsoft.Extensions.AI;
 /// {
 ///     // 1. Get runtime agents from context
 ///     var agents = context.GetAgents();
-///     var selectedAgent = SelectBestAgent(request.History, agents);
+///     var selectedAgent = SelectBestAgent(request.GetChatHistory(), agents);
 ///
 ///     // 2. Get chat options from context
 ///     var options = context.GetChatOptions();
 ///
 ///     // 3. Call agent and get streaming result
 ///     var streamingResult = await selectedAgent.ExecuteStreamingTurnAsync(
-///         request.History, options, cancellationToken: cancellationToken);
+///         request.GetChatHistory(), options, cancellationToken: cancellationToken);
 ///
 ///     // 4. Consume stream
 ///     await foreach (var evt in streamingResult.EventStream.WithCancellation(cancellationToken))
@@ -93,13 +93,29 @@ public interface IOrchestrator
 /// <summary>
 /// Serializable orchestration request containing all data needed for orchestration.
 /// Separates serializable state from runtime objects following Microsoft Workflows and Pydantic Graph patterns.
+/// Supports both conversation-based and generic orchestration scenarios.
 /// </summary>
 public record OrchestrationRequest
 {
     /// <summary>
-    /// The full conversation history up to this point.
+    /// Generic input data for orchestration. Can be any serializable object.
+    /// For conversation scenarios, this should be an IReadOnlyList&lt;ChatMessage&gt;.
+    /// For other scenarios, this could be files, structured data, API requests, etc.
     /// </summary>
-    public required IReadOnlyList<ChatMessage> History { get; init; }
+    public required object Input { get; init; }
+
+    /// <summary>
+    /// Type descriptor for the input data (e.g., "chat", "file", "data", "api").
+    /// Helps orchestrators understand how to interpret the Input object.
+    /// </summary>
+    public required string InputType { get; init; }
+
+    /// <summary>
+    /// The conversation history for chat-based orchestration (optional).
+    /// When provided, orchestrators can use this directly without casting Input.
+    /// For non-conversation scenarios, this should be null.
+    /// </summary>
+    public IReadOnlyList<ChatMessage>? History { get; init; }
 
     /// <summary>
     /// Agent identifiers for orchestration. Runtime Agent objects are provided via context.
@@ -142,6 +158,32 @@ public record OrchestrationRequest
     /// Convenience method to check if an extension exists.
     /// </summary>
     public bool HasExtension(string key) => Extensions.ContainsKey(key);
+
+    /// <summary>
+    /// Convenience method to get conversation history for chat-based orchestration.
+    /// Returns History if available, otherwise attempts to cast Input to IReadOnlyList&lt;ChatMessage&gt;.
+    /// </summary>
+    public IReadOnlyList<ChatMessage>? GetChatHistory()
+    {
+        // If History is explicitly provided, use it
+        if (History != null) return History;
+        
+        // If InputType indicates chat and Input is chat messages, use it
+        if (InputType == "chat" && Input is IReadOnlyList<ChatMessage> chatMessages)
+            return chatMessages;
+            
+        return null;
+    }
+
+    /// <summary>
+    /// Convenience method to get typed input data.
+    /// </summary>
+    public T? GetInput<T>() where T : class => Input as T;
+
+    /// <summary>
+    /// Convenience method to check if this is a conversation-based orchestration.
+    /// </summary>
+    public bool IsConversationOrchestration => InputType == "chat" || History != null;
 }
 
 /// <summary>

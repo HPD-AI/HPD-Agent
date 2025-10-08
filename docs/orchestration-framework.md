@@ -2,6 +2,8 @@
 
 A next-generation orchestration pattern for multi-agent AI systems that combines the best practices from Microsoft AI Workflows and Pydantic Graph, while providing superior extensibility, state management, and developer experience.
 
+**Now supports both conversation-based and generic orchestration scenarios!**
+
 ## Table of Contents
 
 - [Overview](#overview)
@@ -27,6 +29,7 @@ This design enables:
 - ✅ **Built-in state management** with scoping support
 - ✅ **Superior testing** with clean mocking
 - ✅ **Enterprise observability** with integrated tracing and events
+- ✅ **Generic input support** for both conversation and non-conversation scenarios
 
 ## Core Concepts
 
@@ -37,8 +40,14 @@ A fully serializable object containing all the data needed for orchestration:
 ```csharp
 public record OrchestrationRequest
 {
+    // Generic input support
+    public required object Input { get; init; }               // Any serializable input data
+    public required string InputType { get; init; }           // "chat", "file", "data", "api", etc.
+    
+    // Chat-specific convenience (optional)
+    public IReadOnlyList<ChatMessage>? History { get; init; } // For conversation scenarios
+    
     // Core orchestration data
-    public required IReadOnlyList<ChatMessage> History { get; init; }
     public required IReadOnlyList<string> AgentIds { get; init; }
     public string? RunId { get; init; }
     public string? ConversationId { get; init; }
@@ -53,6 +62,9 @@ public record OrchestrationRequest
     // Helper methods
     public T? GetExtension<T>(string key) where T : class;
     public bool HasExtension(string key);
+    public IReadOnlyList<ChatMessage>? GetChatHistory();      // Convenience for chat scenarios
+    public T? GetInput<T>() where T : class;                  // Typed input access
+    public bool IsConversationOrchestration { get; }          // Check if chat-based
 }
 ```
 
@@ -104,7 +116,7 @@ public interface IOrchestrator
 
 ## Quick Start
 
-### 1. Basic Orchestrator Implementation
+### 1. Conversation-Based Orchestrator (Traditional)
 
 ```csharp
 public class RoundRobinOrchestrator : IOrchestrator
@@ -116,6 +128,11 @@ public class RoundRobinOrchestrator : IOrchestrator
     {
         var agents = context.GetAgents();
         
+        // Get conversation history using convenience method
+        var history = request.GetChatHistory();
+        if (history == null)
+            throw new InvalidOperationException("This orchestrator requires conversation history");
+        
         // Get last used agent from state
         var lastAgentIndex = await context.ReadStateAsync<int>("lastAgentIndex");
         var nextIndex = (lastAgentIndex + 1) % agents.Count;
@@ -124,10 +141,10 @@ public class RoundRobinOrchestrator : IOrchestrator
         // Save state for next turn
         await context.UpdateStateAsync("lastAgentIndex", nextIndex);
         
-        // Execute agent
+        // Execute agent with conversation history
         var options = context.GetChatOptions();
         var streamingResult = await selectedAgent.ExecuteStreamingTurnAsync(
-            request.History, options, cancellationToken: cancellationToken);
+            history, options, cancellationToken: cancellationToken);
 
         // Consume stream
         await foreach (var evt in streamingResult.EventStream.WithCancellation(cancellationToken))
@@ -163,15 +180,119 @@ public class RoundRobinOrchestrator : IOrchestrator
 }
 ```
 
-### 2. Using the Orchestrator
+### 2. Generic File Processing Orchestrator (New!)
 
 ```csharp
-// Create conversation with orchestrator
-var orchestrator = new RoundRobinOrchestrator();
-var conversation = new Conversation(agents, orchestrator);
+public class FileProcessingOrchestrator : IOrchestrator
+{
+    public async Task<OrchestrationResult> OrchestrateAsync(
+        OrchestrationRequest request,
+        IOrchestrationContext context,
+        CancellationToken cancellationToken = default)
+    {
+        // This orchestrator handles file processing, not conversations
+        if (request.InputType != "file")
+            throw new InvalidOperationException($"Expected 'file' input, got '{request.InputType}'");
+        
+        var fileData = request.GetInput<FileProcessingRequest>();
+        if (fileData == null)
+            throw new InvalidOperationException("Invalid file processing request");
+        
+        var agents = context.GetAgents();
+        
+        // Select agent based on file type
+        var selectedAgent = fileData.FileType switch
+        {
+            "pdf" => agents.FirstOrDefault(a => a.Name.Contains("PDF")),
+            "image" => agents.FirstOrDefault(a => a.Name.Contains("Vision")),
+            "code" => agents.FirstOrDefault(a => a.Name.Contains("Code")),
+            _ => agents.First()
+        } ?? agents.First();
+        
+        // Store processing metadata
+        await context.UpdateStateAsync("lastProcessedFile", fileData.FileName);
+        await context.UpdateStateAsync("processedCount", 
+            await context.ReadStateAsync<int>("processedCount") + 1);
+        
+        // Emit custom processing event
+        await context.EmitEventAsync(new FileProcessingStartedEvent(fileData.FileName, fileData.FileType));
+        
+        // Process the file (custom agent method)
+        var result = await ProcessFileWithAgent(selectedAgent, fileData, cancellationToken);
+        
+        return new OrchestrationResult
+        {
+            Response = new ChatResponse(result.Messages),
+            PrimaryAgent = selectedAgent,
+            RunId = request.RunId ?? Guid.NewGuid().ToString("N"),
+            Status = OrchestrationStatus.Completed,
+            Metadata = new OrchestrationMetadata
+            {
+                StrategyName = "FileProcessing",
+                DecisionDuration = TimeSpan.Zero,
+                Context = new Dictionary<string, object>
+                {
+                    ["fileType"] = fileData.FileType,
+                    ["fileName"] = fileData.FileName,
+                    ["fileSize"] = fileData.FileSize
+                }
+            }
+        };
+    }
 
-// Use normally - framework handles Request + Context creation
+    private async Task<ChatResponse> ProcessFileWithAgent(Agent agent, FileProcessingRequest fileData, CancellationToken cancellationToken)
+    {
+        // Convert file data to chat messages for agent processing
+        var messages = new List<ChatMessage>
+        {
+            new ChatMessage(ChatRole.System, $"Process this {fileData.FileType} file: {fileData.FileName}"),
+            new ChatMessage(ChatRole.User, fileData.Content)
+        };
+        
+        var streamingResult = await agent.ExecuteStreamingTurnAsync(messages, cancellationToken: cancellationToken);
+        
+        // Consume stream
+        await foreach (var _ in streamingResult.EventStream.WithCancellation(cancellationToken)) { }
+        
+        var finalHistory = await streamingResult.FinalHistory;
+        return new ChatResponse(finalHistory);
+    }
+
+    public Task<OrchestrationStreamingResult> OrchestrateStreamingAsync(
+        OrchestrationRequest request,
+        IOrchestrationContext context,
+        CancellationToken cancellationToken = default)
+    {
+        throw new NotImplementedException("File processing doesn't support streaming yet");
+    }
+}
+
+// Custom data model for file processing
+public record FileProcessingRequest(string FileName, string FileType, string Content, long FileSize);
+
+// Custom event for file processing
+public record FileProcessingStartedEvent(string FileName, string FileType) : BaseEvent;
+```
+
+### 3. Using the Orchestrators
+
+```csharp
+// Conversation orchestration (traditional)
+var conversationOrchestrator = new RoundRobinOrchestrator();
+var conversation = new Conversation(agents, conversationOrchestrator);
 var result = await conversation.SendAsync("Hello, how can you help me?");
+
+// File processing orchestration (new!)
+var fileOrchestrator = new FileProcessingOrchestrator();
+var fileRequest = new OrchestrationRequest
+{
+    Input = new FileProcessingRequest("document.pdf", "pdf", pdfContent, 1024000),
+    InputType = "file",
+    AgentIds = agents.Select(a => a.Name).ToList(),
+    Priority = 8  // High priority for file processing
+};
+var fileContext = new CustomOrchestrationContext(agents, options: null);
+var fileResult = await fileOrchestrator.OrchestrateAsync(fileRequest, fileContext);
 ```
 
 ## API Reference
@@ -180,13 +301,22 @@ var result = await conversation.SendAsync("Hello, how can you help me?");
 
 | Property | Type | Description | Required |
 |----------|------|-------------|----------|
-| `History` | `IReadOnlyList<ChatMessage>` | Conversation history | ✅ |
+| `Input` | `object` | Generic input data (any serializable object) | ✅ |
+| `InputType` | `string` | Type descriptor ("chat", "file", "data", etc.) | ✅ |
 | `AgentIds` | `IReadOnlyList<string>` | Available agent identifiers | ✅ |
+| `History` | `IReadOnlyList<ChatMessage>?` | Conversation history (optional) | ❌ |
 | `RunId` | `string?` | Unique orchestration run ID | ❌ |
 | `ConversationId` | `string?` | Conversation identifier | ❌ |
 | `Priority` | `int` | Priority level (0-10, default: 5) | ❌ |
 | `MaxExecutionTime` | `TimeSpan?` | Maximum execution time | ❌ |
 | `Extensions` | `IReadOnlyDictionary<string, object>` | Custom extensions | ❌ |
+
+#### Convenience Methods
+- `GetChatHistory()` - Get conversation history (from History or Input)
+- `GetInput<T>()` - Get typed input data
+- `IsConversationOrchestration` - Check if this is chat-based
+- `GetExtension<T>(key)` - Get typed extension value
+- `HasExtension(key)` - Check if extension exists
 
 ### IOrchestrationContext Methods
 
@@ -328,7 +458,7 @@ public class ConversationalOrchestrator : IOrchestrator
         else
         {
             // Normal flow - use context-appropriate agent
-            selectedAgent = SelectAgentByContext(request.History, agents);
+            selectedAgent = SelectAgentByContext(request.GetChatHistory(), agents);
         }
         
         // Update state
@@ -421,7 +551,7 @@ public async Task<OrchestrationResult> OrchestrateAsync(
     CancellationToken cancellationToken = default)
 {
     var agents = context.GetAgents();
-    var selectedAgent = SelectBestAgent(request.History, agents);
+    var selectedAgent = SelectBestAgent(request.GetChatHistory(), agents);
     // ... rest of implementation
 }
 ```
@@ -470,7 +600,8 @@ public class LoadBalancedOrchestrator : IOrchestrator
         {
             var options = context.GetChatOptions();
             var streamingResult = await selectedAgent.ExecuteStreamingTurnAsync(
-                request.History, options, cancellationToken: cancellationToken);
+                request.GetChatHistory() ?? throw new InvalidOperationException("Chat history required"), 
+                options, cancellationToken: cancellationToken);
 
             await foreach (var evt in streamingResult.EventStream.WithCancellation(cancellationToken))
             {
@@ -561,7 +692,8 @@ public class CostOptimizedOrchestrator : IOrchestrator
         
         var options = context.GetChatOptions();
         var streamingResult = await selectedAgent.ExecuteStreamingTurnAsync(
-            request.History, options, cancellationToken: cancellationToken);
+            request.GetChatHistory() ?? throw new InvalidOperationException("Chat history required"), 
+            options, cancellationToken: cancellationToken);
 
         await foreach (var evt in streamingResult.EventStream.WithCancellation(cancellationToken))
         {

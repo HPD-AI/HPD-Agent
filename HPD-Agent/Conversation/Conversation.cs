@@ -212,10 +212,13 @@ public class Conversation
                         $"Set DefaultOrchestrator or pass an orchestrator parameter.");
                 }
 
-                // Build orchestration request with serializable data
+                // Build orchestration request using generic pattern (Input + InputType)
+                // History is left null - GetChatHistory() will derive it from Input for efficiency
                 var request = new OrchestrationRequest
                 {
-                    History = _thread.Messages,
+                    Input = _thread.Messages,           // Generic input (chat messages)
+                    InputType = "chat",                 // Specify this is chat-based
+                    History = null,                     // Let GetChatHistory() derive from Input
                     AgentIds = _agents.Select(a => a.Name).ToList(),
                     RunId = Id,
                     ConversationId = Id,
@@ -702,10 +705,13 @@ public class Conversation
                         $"Multi-agent conversations ({_agents.Count} agents) require an orchestrator. Set DefaultOrchestrator or pass an orchestrator parameter.");
                 }
 
-                // Build orchestration request with serializable data
+                // Build orchestration request using generic pattern (Input + InputType)
+                // History is left null - GetChatHistory() will derive it from Input for efficiency
                 var request = new OrchestrationRequest
                 {
-                    History = _thread.Messages,
+                    Input = _thread.Messages,           // Generic input (chat messages)
+                    InputType = "chat",                 // Specify this is chat-based
+                    History = null,                     // Let GetChatHistory() derive from Input
                     AgentIds = _agents.Select(a => a.Name).ToList(),
                     RunId = this.Id,
                     ConversationId = this.Id,

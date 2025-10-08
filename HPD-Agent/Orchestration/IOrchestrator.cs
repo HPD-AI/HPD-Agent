@@ -2,54 +2,60 @@ using Microsoft.Extensions.AI;
 
 /// <summary>
 /// Core orchestration interface for v0.
-/// Replaces existing interface entirely with rich result types and BaseEvent streaming.
+/// Combines Microsoft's message+context pattern with Pydantic's serializable state approach.
+/// Separates serializable orchestration data from runtime services for better persistence and extensibility.
 ///
 /// IMPORTANT: Orchestrator implementations must pass through history reduction metadata
 /// from StreamingTurnResult.Reduction to OrchestrationMetadata.Context to support
 /// conversation history reduction. See example implementation below.
 /// </summary>
 /// <example>
-/// Example orchestrator implementation showing reduction metadata flow:
+/// Example orchestrator implementation showing new request+context pattern:
 /// <code>
 /// public async Task&lt;OrchestrationResult&gt; OrchestrateAsync(
-///     IReadOnlyList&lt;ChatMessage&gt; history,
-///     IReadOnlyList&lt;Agent&gt; agents,
-///     string? conversationId = null,
-///     ChatOptions? options = null,
+///     OrchestrationRequest request,
+///     IOrchestrationContext context,
 ///     CancellationToken cancellationToken = default)
 /// {
-///     // 1. Select agent (your orchestration logic)
-///     var selectedAgent = SelectBestAgent(history, agents);
+///     // 1. Get runtime agents from context
+///     var agents = context.GetAgents();
+///     var selectedAgent = SelectBestAgent(request.History, agents);
 ///
-///     // 2. Call agent and get streaming result
+///     // 2. Get chat options from context
+///     var options = context.GetChatOptions();
+///
+///     // 3. Call agent and get streaming result
 ///     var streamingResult = await selectedAgent.ExecuteStreamingTurnAsync(
-///         history, options, cancellationToken: cancellationToken);
+///         request.History, options, cancellationToken: cancellationToken);
 ///
-///     // 3. Consume stream
+///     // 4. Consume stream
 ///     await foreach (var evt in streamingResult.EventStream.WithCancellation(cancellationToken))
 ///     {
 ///         // Process events as needed
 ///     }
 ///
-///     // 4. Get final history
+///     // 5. Get final history
 ///     var finalHistory = await streamingResult.FinalHistory;
 ///
-///     // 5. Package reduction metadata using helper (RECOMMENDED)
+///     // 6. Package reduction metadata using helper (RECOMMENDED)
 ///     var reductionContext = OrchestrationHelpers.PackageReductionMetadata(streamingResult.Reduction);
 ///
-///     // 6. Return orchestration result
+///     // 7. Save orchestrator state if needed
+///     await context.UpdateStateAsync("last_agent", selectedAgent.Name);
+///
+///     // 8. Return orchestration result
 ///     return new OrchestrationResult
 ///     {
 ///         Response = new ChatResponse(finalHistory),
 ///         PrimaryAgent = selectedAgent,
-///         RunId = conversationId ?? Guid.NewGuid().ToString("N"),
+///         RunId = request.RunId ?? Guid.NewGuid().ToString("N"),
 ///         CreatedAt = DateTimeOffset.UtcNow,
-///         Status = OrchestrationStatus.Completed,  // Single-turn orchestration
+///         Status = OrchestrationStatus.Completed,
 ///         Metadata = new OrchestrationMetadata
 ///         {
 ///             StrategyName = "YourStrategy",
 ///             DecisionDuration = TimeSpan.Zero,
-///             Context = reductionContext // ← Use helper method result
+///             Context = reductionContext
 ///         }
 ///     };
 /// }
@@ -58,36 +64,152 @@ using Microsoft.Extensions.AI;
 public interface IOrchestrator
 {
     /// <summary>
-    /// Simple orchestration returning rich result with metadata.
+    /// Simple orchestration using request+context pattern for better serialization and extensibility.
+    /// Separates serializable orchestration data (request) from runtime services (context).
     /// </summary>
-    /// <param name="history">The full conversation history up to this point.</param>
-    /// <param name="agents">The pool of available agents to use in the orchestration.</param>
-    /// <param name="conversationId">Optional conversation identifier for stateful orchestrators.</param>
-    /// <param name="options">Optional chat settings.</param>
+    /// <param name="request">Serializable orchestration request containing history, agent IDs, and configuration.</param>
+    /// <param name="context">Runtime context providing agents, services, and state management.</param>
     /// <param name="cancellationToken">A cancellation token.</param>
     /// <returns>Rich orchestration result containing response, selected agent, and metadata.</returns>
     Task<OrchestrationResult> OrchestrateAsync(
-        IReadOnlyList<ChatMessage> history,
-        IReadOnlyList<Agent> agents,
-        string? conversationId = null,
-        ChatOptions? options = null,
+        OrchestrationRequest request,
+        IOrchestrationContext context,
         CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Streaming orchestration with BaseEvent emission for full observability.
+    /// Uses request+context pattern for consistency with non-streaming method.
     /// </summary>
-    /// <param name="history">The full conversation history up to this point.</param>
-    /// <param name="agents">The pool of available agents to use in the orchestration.</param>
-    /// <param name="conversationId">Optional conversation identifier for stateful orchestrators.</param>
-    /// <param name="options">Optional chat settings.</param>
+    /// <param name="request">Serializable orchestration request containing history, agent IDs, and configuration.</param>
+    /// <param name="context">Runtime context providing agents, services, and state management.</param>
     /// <param name="cancellationToken">A cancellation token.</param>
     /// <returns>Streaming result with BaseEvent stream and completion tasks.</returns>
     Task<OrchestrationStreamingResult> OrchestrateStreamingAsync(
-        IReadOnlyList<ChatMessage> history,
-        IReadOnlyList<Agent> agents,
-        string? conversationId = null,
-        ChatOptions? options = null,
+        OrchestrationRequest request,
+        IOrchestrationContext context,
         CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Serializable orchestration request containing all data needed for orchestration.
+/// Separates serializable state from runtime objects following Microsoft Workflows and Pydantic Graph patterns.
+/// </summary>
+public record OrchestrationRequest
+{
+    /// <summary>
+    /// The full conversation history up to this point.
+    /// </summary>
+    public required IReadOnlyList<ChatMessage> History { get; init; }
+
+    /// <summary>
+    /// Agent identifiers for orchestration. Runtime Agent objects are provided via context.
+    /// </summary>
+    public required IReadOnlyList<string> AgentIds { get; init; }
+
+    /// <summary>
+    /// Unique identifier for this orchestration run.
+    /// </summary>
+    public string? RunId { get; init; }
+
+    /// <summary>
+    /// Optional conversation identifier for stateful orchestrators.
+    /// </summary>
+    public string? ConversationId { get; init; }
+
+    /// <summary>
+    /// Orchestrator-specific configuration and extensions.
+    /// Enables dynamic orchestrator behavior without breaking the interface.
+    /// </summary>
+    public IReadOnlyDictionary<string, object> Extensions { get; init; } = new Dictionary<string, object>();
+
+    /// <summary>
+    /// Priority or urgency level for this orchestration (0-10, where 10 is highest priority).
+    /// </summary>
+    public int Priority { get; init; } = 5;
+
+    /// <summary>
+    /// Maximum execution time for this orchestration.
+    /// </summary>
+    public TimeSpan? MaxExecutionTime { get; init; }
+
+    /// <summary>
+    /// Convenience method to get a typed extension value.
+    /// </summary>
+    public T? GetExtension<T>(string key) where T : class
+        => Extensions.TryGetValue(key, out var value) ? value as T : null;
+
+    /// <summary>
+    /// Convenience method to check if an extension exists.
+    /// </summary>
+    public bool HasExtension(string key) => Extensions.ContainsKey(key);
+}
+
+/// <summary>
+/// Runtime context providing services and non-serializable objects to orchestrators.
+/// Inspired by Microsoft Workflows' IWorkflowContext pattern.
+/// </summary>
+public interface IOrchestrationContext
+{
+    /// <summary>
+    /// Gets the runtime Agent objects corresponding to the AgentIds in the request.
+    /// </summary>
+    IReadOnlyList<Agent> GetAgents();
+
+    /// <summary>
+    /// Gets the Agent object for a specific agent ID.
+    /// </summary>
+    /// <param name="agentId">The agent identifier.</param>
+    /// <returns>The agent, or null if not found.</returns>
+    Agent? GetAgent(string agentId);
+
+    /// <summary>
+    /// Gets the chat options for this orchestration.
+    /// </summary>
+    ChatOptions? GetChatOptions();
+
+    /// <summary>
+    /// Reads orchestrator state from persistent storage.
+    /// </summary>
+    /// <typeparam name="T">The type of the state value.</typeparam>
+    /// <param name="key">The state key.</param>
+    /// <param name="scope">Optional scope for the state (defaults to orchestrator-specific scope).</param>
+    ValueTask<T?> ReadStateAsync<T>(string key, string? scope = null);
+
+    /// <summary>
+    /// Updates orchestrator state in persistent storage.
+    /// </summary>
+    /// <typeparam name="T">The type of the state value.</typeparam>
+    /// <param name="key">The state key.</param>
+    /// <param name="value">The state value.</param>
+    /// <param name="scope">Optional scope for the state (defaults to orchestrator-specific scope).</param>
+    ValueTask UpdateStateAsync<T>(string key, T? value, string? scope = null);
+
+    /// <summary>
+    /// Clears all state in the specified scope.
+    /// </summary>
+    /// <param name="scope">Optional scope to clear (defaults to orchestrator-specific scope).</param>
+    ValueTask ClearStateAsync(string? scope = null);
+
+    /// <summary>
+    /// Emits an event that will be included in the orchestration result's event stream.
+    /// </summary>
+    ValueTask EmitEventAsync(BaseEvent orchestrationEvent);
+
+    /// <summary>
+    /// Gets contextual metadata for this orchestration (e.g., conversation metadata, project context).
+    /// </summary>
+    IReadOnlyDictionary<string, object> GetMetadata();
+
+    /// <summary>
+    /// Gets trace context for observability.
+    /// </summary>
+    IReadOnlyDictionary<string, string>? GetTraceContext();
+
+    /// <summary>
+    /// Creates a checkpoint for resuming orchestration later.
+    /// </summary>
+    /// <param name="checkpointData">Orchestrator-specific checkpoint data.</param>
+    ValueTask<string> CreateCheckpointAsync(Dictionary<string, object>? checkpointData = null);
 }
 
 /// <summary>

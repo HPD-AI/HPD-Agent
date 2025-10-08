@@ -212,8 +212,21 @@ public class Conversation
                         $"Set DefaultOrchestrator or pass an orchestrator parameter.");
                 }
 
+                // Build orchestration request with serializable data
+                var request = new OrchestrationRequest
+                {
+                    History = _thread.Messages,
+                    AgentIds = _agents.Select(a => a.Name).ToList(),
+                    RunId = Id,
+                    ConversationId = Id,
+                    Extensions = new Dictionary<string, object>()
+                };
+
+                // Create runtime context with services and non-serializable objects
+                var context = new ConversationOrchestrationContext(_agents, options, _thread);
+                
                 orchestrationResult = await effectiveOrchestrator.OrchestrateAsync(
-                    _thread.Messages, _agents, Id, options, cancellationToken);
+                    request, context, cancellationToken);
             }
 
             activity?.SetTag("conversation.orchestration_strategy", orchestrationResult.Metadata.StrategyName);
@@ -689,9 +702,22 @@ public class Conversation
                         $"Multi-agent conversations ({_agents.Count} agents) require an orchestrator. Set DefaultOrchestrator or pass an orchestrator parameter.");
                 }
 
+                // Build orchestration request with serializable data
+                var request = new OrchestrationRequest
+                {
+                    History = _thread.Messages,
+                    AgentIds = _agents.Select(a => a.Name).ToList(),
+                    RunId = this.Id,
+                    ConversationId = this.Id,
+                    Extensions = new Dictionary<string, object>()
+                };
+
+                // Create runtime context with services and non-serializable objects
+                var context = new ConversationOrchestrationContext(_agents, options, _thread);
+                
                 // Use the orchestrator's streaming method
                 var orchestrationResult = await effectiveOrchestrator.OrchestrateStreamingAsync(
-                    _thread.Messages, _agents, this.Id, options, cancellationToken);
+                    request, context, cancellationToken);
 
                 // Stream all orchestration and agent events
                 await foreach (var evt in orchestrationResult.EventStream.WithCancellation(cancellationToken))

@@ -46,7 +46,8 @@ using Microsoft.Extensions.AI;
 ///     // 8. Return orchestration result
 ///     return new OrchestrationResult
 ///     {
-///         Response = new ChatResponse(finalHistory),
+///         Output = new ChatResponse(finalHistory),
+///         OutputType = "chat",
 ///         PrimaryAgent = selectedAgent,
 ///         RunId = request.RunId ?? Guid.NewGuid().ToString("N"),
 ///         CreatedAt = DateTimeOffset.UtcNow,
@@ -314,13 +315,23 @@ public record OrchestrationResult
     // ========================================
 
     /// <summary>
-    /// The final response from the orchestration.
+    /// The final output from the orchestration (generic).
+    /// For chat scenarios: ChatResponse
+    /// For file processing: FileProcessingResult
+    /// For data pipelines: DataProcessingResult
+    /// For API orchestration: ApiResponse
     /// </summary>
-    public required ChatResponse Response { get; init; }
+    public required object Output { get; init; }
 
     /// <summary>
-    /// The primary agent that produced the response.
-    /// For multi-agent orchestrations, this is the agent that generated the final output.
+    /// Type descriptor for the output data (e.g., "chat", "file", "data", "api").
+    /// Should typically match the InputType from the request, but may differ for transformations.
+    /// </summary>
+    public required string OutputType { get; init; }
+
+    /// <summary>
+    /// The primary agent that produced the output.
+    /// For multi-agent orchestrations, this is the agent that generated the final result.
     /// </summary>
     public required Agent PrimaryAgent { get; init; }
 
@@ -410,11 +421,34 @@ public record OrchestrationResult
     /// </summary>
     public bool IsComplete => Status == OrchestrationStatus.Completed;
 
+    // ========================================
+    // CONVENIENCE METHODS & BACKWARD COMPATIBILITY
+    // ========================================
+
     /// <summary>
-    /// Implicit conversion for convenience.
+    /// Convenience method to get chat response for conversation scenarios.
+    /// Returns the Output if it's a ChatResponse, otherwise null.
+    /// </summary>
+    public ChatResponse? GetChatResponse() => Output as ChatResponse;
+
+    /// <summary>
+    /// Convenience method to get typed output data.
+    /// </summary>
+    public T? GetOutput<T>() where T : class => Output as T;
+
+    /// <summary>
+    /// Convenience property for backward compatibility with existing code.
+    /// Returns the Output as ChatResponse, or throws if not a chat response.
+    /// </summary>
+    public ChatResponse Response => GetChatResponse() 
+        ?? throw new InvalidOperationException($"Output is not a ChatResponse. OutputType: {OutputType}");
+
+    /// <summary>
+    /// Implicit conversion for convenience (backward compatibility).
     /// </summary>
     public static implicit operator ChatResponse(OrchestrationResult result)
-        => result.Response;
+        => result.GetChatResponse() 
+        ?? throw new InvalidOperationException($"Cannot convert {result.OutputType} output to ChatResponse");
 }
 
 /// <summary>

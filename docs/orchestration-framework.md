@@ -156,7 +156,8 @@ public class RoundRobinOrchestrator : IOrchestrator
         
         return new OrchestrationResult
         {
-            Response = new ChatResponse(finalHistory),
+            Output = new ChatResponse(finalHistory),
+            OutputType = "chat",
             PrimaryAgent = selectedAgent,
             RunId = request.RunId ?? Guid.NewGuid().ToString("N"),
             Status = OrchestrationStatus.Completed,
@@ -222,7 +223,8 @@ public class FileProcessingOrchestrator : IOrchestrator
         
         return new OrchestrationResult
         {
-            Response = new ChatResponse(result.Messages),
+            Output = new FileProcessingResult(processedContent, metadata),  // File-specific output
+            OutputType = "file",                                            // File output type
             PrimaryAgent = selectedAgent,
             RunId = request.RunId ?? Guid.NewGuid().ToString("N"),
             Status = OrchestrationStatus.Completed,
@@ -269,6 +271,9 @@ public class FileProcessingOrchestrator : IOrchestrator
 
 // Custom data model for file processing
 public record FileProcessingRequest(string FileName, string FileType, string Content, long FileSize);
+
+// Custom result model for file processing
+public record FileProcessingResult(string ProcessedContent, Dictionary<string, object> Metadata);
 
 // Custom event for file processing
 public record FileProcessingStartedEvent(string FileName, string FileType) : BaseEvent;

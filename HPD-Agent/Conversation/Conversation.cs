@@ -185,7 +185,8 @@ public class Conversation
 
                 orchestrationResult = new OrchestrationResult
                 {
-                    Response = response,
+                    Output = response,                      // Generic output (ChatResponse for conversations)
+                    OutputType = "chat",                    // Specify this is chat output
                     PrimaryAgent = agent,
                     RunId = Id,
                     Status = OrchestrationStatus.Completed,

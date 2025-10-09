@@ -12,6 +12,7 @@ REPOS=(
     "https://github.com/pydantic/pydantic-ai.git"
     "https://github.com/strands-agents/sdk-python.git"
     "https://github.com/ag-ui-protocol/ag-ui.git"
+    "https://github.com/google-gemini/gemini-cli.git"
     # Add more repo URLs as needed
 )
 

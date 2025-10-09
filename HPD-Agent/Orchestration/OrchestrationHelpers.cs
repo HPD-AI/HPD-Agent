@@ -30,7 +30,7 @@ public static class OrchestrationHelpers
     ///     Metadata = new OrchestrationMetadata
     ///     {
     ///         StrategyName = "MyStrategy",
-    ///         Context = OrchestrationHelpers.PackageReductionMetadata(streamingResult.Reduction)
+    ///         Context = OrchestrationHelpers.PackageReductionMetadata(await streamingResult.ReductionTask)
     ///     }
     /// };
     /// </code>

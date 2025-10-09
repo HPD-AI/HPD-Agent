@@ -66,11 +66,6 @@ public sealed record ToolMessage : BaseMessage;
 [JsonDerivedType(typeof(TextMessageContentEvent), "TEXT_MESSAGE_CONTENT")]
 [JsonDerivedType(typeof(TextMessageEndEvent), "TEXT_MESSAGE_END")]
 [JsonDerivedType(typeof(TextMessageChunkEvent), "TEXT_MESSAGE_CHUNK")]
-[JsonDerivedType(typeof(ThinkingTextMessageStartEvent), "THINKING_TEXT_MESSAGE_START")]
-[JsonDerivedType(typeof(ThinkingTextMessageContentEvent), "THINKING_TEXT_MESSAGE_CONTENT")]
-[JsonDerivedType(typeof(ThinkingTextMessageEndEvent), "THINKING_TEXT_MESSAGE_END")]
-[JsonDerivedType(typeof(ThinkingStartEvent), "THINKING_START")]
-[JsonDerivedType(typeof(ThinkingEndEvent), "THINKING_END")]
 [JsonDerivedType(typeof(ReasoningStartEvent), "REASONING_START")]
 [JsonDerivedType(typeof(ReasoningEndEvent), "REASONING_END")]
 [JsonDerivedType(typeof(ReasoningMessageStartEvent), "REASONING_MESSAGE_START")]
@@ -187,43 +182,6 @@ public sealed record TextMessageChunkEvent : BaseEvent
 
     [JsonPropertyName("delta")]
     public string? Delta { get; init; }
-}
-
-// New AG-UI Events - Thinking/Reasoning (DEPRECATED - Use REASONING events instead)
-public sealed record ThinkingStartEvent : BaseEvent
-{
-    [JsonPropertyName("messageId")]
-    public required string MessageId { get; init; }
-}
-
-public sealed record ThinkingEndEvent : BaseEvent
-{
-    [JsonPropertyName("messageId")]
-    public required string MessageId { get; init; }
-}
-
-public sealed record ThinkingTextMessageStartEvent : BaseEvent
-{
-    [JsonPropertyName("messageId")]
-    public required string MessageId { get; init; }
-
-    [JsonPropertyName("role")]
-    public string? Role { get; init; }
-}
-
-public sealed record ThinkingTextMessageContentEvent : BaseEvent
-{
-    [JsonPropertyName("messageId")]
-    public required string MessageId { get; init; }
-
-    [JsonPropertyName("delta")]
-    public required string Delta { get; init; }
-}
-
-public sealed record ThinkingTextMessageEndEvent : BaseEvent
-{
-    [JsonPropertyName("messageId")]
-    public required string MessageId { get; init; }
 }
 
 // Official AG-UI Reasoning Events (Replacement for deprecated THINKING events)

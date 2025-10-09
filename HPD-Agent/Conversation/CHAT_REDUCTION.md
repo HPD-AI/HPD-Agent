@@ -233,18 +233,19 @@ var streamingResult = await agent.ExecuteStreamingTurnAsync(_messages, options, 
 // Consume stream
 await foreach (var _ in streamingResult.EventStream.WithCancellation(cancellationToken)) { }
 
-// Get final history
+// Get final history and reduction metadata
 var finalHistory = await streamingResult.FinalHistory;
+var reductionMetadata = await streamingResult.ReductionTask;
 
 // Package reduction metadata into Context dictionary
 var reductionContext = new Dictionary<string, object>();
-if (streamingResult.Reduction != null)
+if (reductionMetadata != null)
 {
-    if (streamingResult.Reduction.SummaryMessage != null)
+    if (reductionMetadata.SummaryMessage != null)
     {
-        reductionContext["SummaryMessage"] = streamingResult.Reduction.SummaryMessage;
+        reductionContext["SummaryMessage"] = reductionMetadata.SummaryMessage;
     }
-    reductionContext["MessagesRemovedCount"] = streamingResult.Reduction.MessagesRemovedCount;
+    reductionContext["MessagesRemovedCount"] = reductionMetadata.MessagesRemovedCount;
 }
 
 orchestrationResult = new OrchestrationResult
@@ -350,13 +351,14 @@ _messages.AddRange(finalHistory);
 
 ```csharp
 // Agent side (NEW)
-StreamingTurnResult.Reduction → ReductionMetadata object (or null)
+StreamingTurnResult.ReductionTask → Task<ReductionMetadata?> object
 
 // For orchestrators: Convert to Context dictionary
-if (streamingResult.Reduction != null)
+var reductionMetadata = await streamingResult.ReductionTask;
+if (reductionMetadata != null)
 {
-    context["SummaryMessage"] = streamingResult.Reduction.SummaryMessage;
-    context["MessagesRemovedCount"] = streamingResult.Reduction.MessagesRemovedCount;
+    context["SummaryMessage"] = reductionMetadata.SummaryMessage;
+    context["MessagesRemovedCount"] = reductionMetadata.MessagesRemovedCount;
 }
 
 // Flows through
@@ -476,18 +478,19 @@ public class MyCustomOrchestrator : IOrchestrator
             // Process events as needed
         }
 
-        // 4. Get final history
+        // 4. Get final history and reduction metadata
         var finalHistory = await streamingResult.FinalHistory;
+        var reductionMetadata = await streamingResult.ReductionTask;
 
         // 5. Package reduction metadata into Context dictionary
         var reductionContext = new Dictionary<string, object>();
-        if (streamingResult.Reduction != null)
+        if (reductionMetadata != null)
         {
-            if (streamingResult.Reduction.SummaryMessage != null)
+            if (reductionMetadata.SummaryMessage != null)
             {
-                reductionContext["SummaryMessage"] = streamingResult.Reduction.SummaryMessage;
+                reductionContext["SummaryMessage"] = reductionMetadata.SummaryMessage;
             }
-            reductionContext["MessagesRemovedCount"] = streamingResult.Reduction.MessagesRemovedCount;
+            reductionContext["MessagesRemovedCount"] = reductionMetadata.MessagesRemovedCount;
         }
 
         // 6. Return orchestration result
@@ -506,7 +509,7 @@ public class MyCustomOrchestrator : IOrchestrator
 }
 ```
 
-**CRITICAL:** Without packaging `streamingResult.Reduction` into `Context`, reduction won't be applied to Conversation storage!
+**CRITICAL:** Without packaging `await streamingResult.ReductionTask` into `Context`, reduction won't be applied to Conversation storage!
 
 ---
 

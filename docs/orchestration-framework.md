@@ -165,7 +165,7 @@ public class RoundRobinOrchestrator : IOrchestrator
             {
                 StrategyName = "RoundRobin",
                 DecisionDuration = TimeSpan.Zero,
-                Context = OrchestrationHelpers.PackageReductionMetadata(streamingResult.Reduction)
+                Context = OrchestrationHelpers.PackageReductionMetadata(await streamingResult.ReductionTask)
             }
         };
     }
@@ -625,7 +625,7 @@ public class LoadBalancedOrchestrator : IOrchestrator
                 {
                     StrategyName = "LoadBalanced",
                     AgentScores = agentLoads.ToDictionary(kvp => kvp.Key, kvp => (float)kvp.Value),
-                    Context = OrchestrationHelpers.PackageReductionMetadata(streamingResult.Reduction)
+                    Context = OrchestrationHelpers.PackageReductionMetadata(await streamingResult.ReductionTask)
                 }
             };
         }

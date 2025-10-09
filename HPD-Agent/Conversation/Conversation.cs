@@ -175,8 +175,9 @@ public class Conversation
                     // Just consume events
                 }
 
-                // Get final history
+                // Get final history and reduction metadata
                 var finalHistory = await streamingResult.FinalHistory;
+                var reductionMetadata = await streamingResult.ReductionTask;
                 sw.Stop();
 
                 // Build OrchestrationResult
@@ -198,7 +199,7 @@ public class Conversation
                     {
                         StrategyName = "SingleAgent",
                         DecisionDuration = TimeSpan.Zero,
-                        Context = OrchestrationHelpers.PackageReductionMetadata(streamingResult.Reduction)
+                        Context = OrchestrationHelpers.PackageReductionMetadata(reductionMetadata)
                     }
                 };
             }
@@ -607,15 +608,15 @@ public class Conversation
     {
         return evt switch
         {
-            // Official AG-UI thinking events
-            ThinkingStartEvent => $"\n💭 Thinking...\n",
-            ThinkingTextMessageContentEvent thinkingContent => thinkingContent.Delta,
-            ThinkingEndEvent => "",
+            // Official AG-UI reasoning events
+            ReasoningStartEvent => $"\n💭 Thinking...\n",
+            ReasoningMessageContentEvent reasoningContent => reasoningContent.Delta,
+            ReasoningEndEvent => "",
             // Regular text content
             TextMessageContentEvent text => text.Delta,
             // Fallback for generic steps
             StepStartedEvent step => $"\n[Step: {step.StepName}]\n",
-            _ => "" // Only show thinking and assistant text, ignore other events
+            _ => "" // Only show reasoning and assistant text, ignore other events
         };
     }
 
@@ -666,9 +667,10 @@ public class Conversation
                 var finalHistory = await result.FinalHistory;
 
                 // Check for reduction metadata and apply BEFORE adding new messages
-                if (result.Reduction != null)
+                var reductionMetadata = await result.ReductionTask;
+                if (reductionMetadata != null)
                 {
-                    _thread.ApplyReduction(result.Reduction.SummaryMessage, result.Reduction.MessagesRemovedCount);
+                    _thread.ApplyReduction(reductionMetadata.SummaryMessage, reductionMetadata.MessagesRemovedCount);
                 }
 
                 foreach (var msg in finalHistory)

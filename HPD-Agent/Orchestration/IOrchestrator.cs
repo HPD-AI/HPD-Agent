@@ -38,7 +38,7 @@ using Microsoft.Extensions.AI;
 ///     var finalHistory = await streamingResult.FinalHistory;
 ///
 ///     // 6. Package reduction metadata using helper (RECOMMENDED)
-///     var reductionContext = OrchestrationHelpers.PackageReductionMetadata(streamingResult.Reduction);
+///     var reductionContext = OrchestrationHelpers.PackageReductionMetadata(await streamingResult.ReductionTask);
 ///
 ///     // 7. Save orchestrator state if needed
 ///     await context.UpdateStateAsync("last_agent", selectedAgent.Name);

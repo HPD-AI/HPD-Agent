@@ -110,7 +110,17 @@ public class Agent : IChatClient
         // Augment system instructions with plan mode guidance if enabled
         var systemInstructions = AugmentSystemInstructionsForPlanMode(config);
 
-        _messageProcessor = new MessageProcessor(systemInstructions, mergedOptions ?? config.Provider?.DefaultChatOptions, promptFilters, chatReducer);
+        // Extract reduction thresholds from config (AOT-friendly, no reflection)
+        var reductionTargetCount = config.HistoryReduction?.TargetMessageCount ?? 20;
+        var reductionThreshold = config.HistoryReduction?.SummarizationThreshold ?? 5;
+
+        _messageProcessor = new MessageProcessor(
+            systemInstructions, 
+            mergedOptions ?? config.Provider?.DefaultChatOptions, 
+            promptFilters, 
+            chatReducer,
+            reductionTargetCount,
+            reductionThreshold);
         _functionCallProcessor = new FunctionCallProcessor(scopedFilterManager, permissionFilters, _aiFunctionFilters, config.MaxAgenticIterations, config.ErrorHandling);
         _agentTurn = new AgentTurn(_baseClient);
         _toolScheduler = new ToolScheduler(_functionCallProcessor, config);
@@ -187,7 +197,7 @@ public class Agent : IChatClient
             // Use the unified streaming approach and collect all updates
             var allEvents = new List<BaseEvent>();
 
-            var turnResult = await ExecuteStreamingTurnAsync(messages, options, null, cancellationToken);
+            var turnResult = await ExecuteStreamingTurnAsync(messages, options, null, cancellationToken).ConfigureAwait(false);
 
             // Consume the entire stream
             await foreach (var evt in turnResult.EventStream.WithCancellation(cancellationToken))
@@ -196,16 +206,15 @@ public class Agent : IChatClient
             }
 
             // Wait for final history and construct response
-            var finalHistory = await turnResult.FinalHistory;
+            var finalHistory = await turnResult.FinalHistory.ConfigureAwait(false);
             // Extract assistant messages from final history
             var assistantMessages = finalHistory.Where(m => m.Role == ChatRole.Assistant).ToList();
             var response = new ChatResponse(assistantMessages);
 
             // Record telemetry metrics
             var duration = DateTimeOffset.UtcNow - startTime;
-            var tokensUsed = (int)(response.Usage?.TotalTokenCount ?? 0);
+            // Note: Token usage not available from constructed ChatResponse, would need provider integration
 
-            activity?.SetTag("completion.tokens_used", tokensUsed);
             activity?.SetTag("completion.duration_ms", duration.TotalMilliseconds);
             activity?.SetTag("completion.success", true);
 
@@ -218,6 +227,17 @@ public class Agent : IChatClient
             activity?.SetTag("completion.success", false);
             activity?.SetTag("error.type", ex.GetType().Name);
             activity?.SetTag("error.message", ex.Message);
+            
+            // Add cancellation/timeout specific telemetry
+            if (ex is OperationCanceledException)
+            {
+                activity?.SetTag("completion.canceled", true);
+                if (Config?.AgenticLoop?.MaxTurnDuration.HasValue == true)
+                {
+                    activity?.SetTag("completion.timeout_ms", Config.AgenticLoop.MaxTurnDuration.Value.TotalMilliseconds);
+                }
+            }
+            
             throw;
         }
     }
@@ -233,32 +253,21 @@ public class Agent : IChatClient
         // Process documents if provided
         if (documentPaths?.Length > 0)
         {
-            messages = await AgentDocumentProcessor.ProcessDocumentsAsync(messages, documentPaths, Config, cancellationToken);
+            messages = await AgentDocumentProcessor.ProcessDocumentsAsync(messages, documentPaths, Config, cancellationToken).ConfigureAwait(false);
         }
 
         var messagesList = messages.ToList();
         var userMessage = messagesList.LastOrDefault(m => m.Role == ChatRole.User)
             ?? new ChatMessage(ChatRole.User, string.Empty);
 
-        // Create a TaskCompletionSource for the final history
-        var historyCompletionSource = new TaskCompletionSource<IReadOnlyList<ChatMessage>>();
+        // Create TaskCompletionSources for final history and reduction metadata
+        var historyCompletionSource = new TaskCompletionSource<IReadOnlyList<ChatMessage>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reductionCompletionSource = new TaskCompletionSource<ReductionMetadata?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var turnHistory = new List<ChatMessage>();
 
         // Create the streaming enumerable with error handling wrapper
-        var coreStream = RunAgenticLoopCore(messagesList, options, turnHistory, historyCompletionSource, cancellationToken);
+        var coreStream = RunAgenticLoopCore(messagesList, options, turnHistory, historyCompletionSource, reductionCompletionSource, cancellationToken);
         var responseStream = WrapStreamWithErrorHandling(coreStream, historyCompletionSource, cancellationToken);
-
-        // Capture reduction metadata from MessageProcessor (set during PrepareMessagesAsync in RunAgenticLoopCore)
-        ReductionMetadata? reductionMetadata = null;
-        if (_messageProcessor.LastReductionMetadata.HasValue)
-        {
-            var metadata = _messageProcessor.LastReductionMetadata.Value;
-            reductionMetadata = new ReductionMetadata
-            {
-                SummaryMessage = metadata.SummaryMessage,
-                MessagesRemovedCount = metadata.RemovedCount
-            };
-        }
 
         // Wrap the final history task to apply message turn filters when complete
         var wrappedHistoryTask = historyCompletionSource.Task.ContinueWith(async task =>
@@ -270,7 +279,7 @@ public class Agent : IChatClient
             {
                 try
                 {
-                    await ApplyMessageTurnFilters(userMessage, history, options, cancellationToken);
+                    await ApplyMessageTurnFilters(userMessage, history, options, cancellationToken).ConfigureAwait(false);
                 }
                 catch (Exception)
                 {
@@ -283,10 +292,7 @@ public class Agent : IChatClient
         }, cancellationToken).Unwrap();
 
         // Return the result containing stream, history, and reduction metadata
-        return new StreamingTurnResult(responseStream, wrappedHistoryTask)
-        {
-            Reduction = reductionMetadata
-        };
+        return new StreamingTurnResult(responseStream, wrappedHistoryTask, reductionCompletionSource.Task);
     }
 
     /// <summary>
@@ -313,7 +319,7 @@ public class Agent : IChatClient
         chatOptions.AdditionalProperties["RunId"] = aguiInput.RunId;
 
         // Delegate to the existing Extensions.AI overload
-        return await ExecuteStreamingTurnAsync(messages, chatOptions, null, cancellationToken);
+        return await ExecuteStreamingTurnAsync(messages, chatOptions, null, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -323,7 +329,7 @@ public class Agent : IChatClient
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // Use the raw streaming loop directly for ChatResponseUpdate compatibility
-        var historyCompletionSource = new TaskCompletionSource<IReadOnlyList<ChatMessage>>();
+        var historyCompletionSource = new TaskCompletionSource<IReadOnlyList<ChatMessage>>(TaskCreationOptions.RunContinuationsAsynchronously);
         await foreach (var update in RunAgenticLoopAsync(messages, options, historyCompletionSource, cancellationToken).WithCancellation(cancellationToken))
         {
             yield return update;
@@ -343,6 +349,10 @@ public class Agent : IChatClient
         var enumerator = innerStream.GetAsyncEnumerator(cancellationToken);
         Exception? caughtError = null;
         bool runFinishedEmitted = false;
+        
+        // Capture IDs from RunStartedEvent to use in error scenarios
+        string? threadId = null;
+        string? runId = null;
 
         try
         {
@@ -358,6 +368,17 @@ public class Agent : IChatClient
                     if (hasNext)
                     {
                         currentEvent = enumerator.Current;
+                        
+                        // Capture IDs from RunStartedEvent for error correlation
+                        if (currentEvent is RunStartedEvent runStarted)
+                        {
+                            threadId = runStarted.ThreadId;
+                            runId = runStarted.RunId;
+                        }
+                        else if (currentEvent is RunFinishedEvent)
+                        {
+                            runFinishedEmitted = true;
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -373,19 +394,18 @@ public class Agent : IChatClient
                 // Emit error event AFTER catch block (C# doesn't allow yield in catch)
                 if (hadError && caughtError != null)
                 {
-                    yield return EventSerialization.CreateRunError(caughtError.Message);
+                    // Friendlier error message for timeout/cancellation
+                    var errorMessage = caughtError is OperationCanceledException
+                        ? "Turn was canceled or timed out."
+                        : caughtError.Message;
+                    
+                    yield return EventSerialization.CreateRunError(errorMessage);
                     break; // Exit the loop - stream is terminated
                 }
 
                 if (!hasNext)
                 {
                     break;
-                }
-
-                // Check if we're emitting RunFinished event (track for error case)
-                if (currentEvent is RunFinishedEvent)
-                {
-                    runFinishedEmitted = true;
                 }
 
                 yield return currentEvent!; // Non-null because hasNext was true
@@ -395,9 +415,10 @@ public class Agent : IChatClient
             // This ensures consumers always get lifecycle closure even on error
             if (caughtError != null && !runFinishedEmitted)
             {
-                // Extract threadId and runId from context if available
-                // For simplicity, emit with empty IDs - consumers check for preceding error event
-                yield return EventSerialization.CreateRunFinished(string.Empty, string.Empty);
+                // Use captured IDs if available, otherwise fallback to empty strings
+                yield return EventSerialization.CreateRunFinished(
+                    threadId ?? string.Empty, 
+                    runId ?? string.Empty);
             }
         }
         finally
@@ -417,9 +438,12 @@ public class Agent : IChatClient
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var turnHistory = new List<ChatMessage>();
+        
+        // Create reduction completion source (not used in this overload but required by signature)
+        var reductionCompletionSource = new TaskCompletionSource<ReductionMetadata?>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         // Convert BaseEvent stream to ChatResponseUpdate stream for IChatClient compatibility
-        await foreach (var baseEvent in RunAgenticLoopCore(messages, options, turnHistory, historyCompletionSource, cancellationToken))
+        await foreach (var baseEvent in RunAgenticLoopCore(messages, options, turnHistory, historyCompletionSource, reductionCompletionSource, cancellationToken))
         {
             // Only convert events that map to the chat protocol
             switch (baseEvent)
@@ -451,6 +475,7 @@ public class Agent : IChatClient
         ChatOptions? options,
         List<ChatMessage> turnHistory,
         TaskCompletionSource<IReadOnlyList<ChatMessage>> historyCompletionSource,
+        TaskCompletionSource<ReductionMetadata?> reductionCompletionSource,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // Create linked cancellation token for turn timeout
@@ -488,11 +513,26 @@ public class Agent : IChatClient
         var responseUpdates = new List<ChatResponseUpdate>();
 
         // Prepare messages using MessageProcessor
-        var (effectiveMessages, effectiveOptions) = await _messageProcessor.PrepareMessagesAsync(
-            messages, options, _name, effectiveCancellationToken);
+        // Note: PrepareMessagesAsync now returns reduction metadata directly for thread-safety
+        ReductionMetadata? reductionMetadata = null;
+        IEnumerable<ChatMessage> effectiveMessages;
+        ChatOptions? effectiveOptions;
+        
+        try
+        {
+            var prep = await _messageProcessor.PrepareMessagesAsync(
+                messages, options, _name, effectiveCancellationToken).ConfigureAwait(false);
+            (effectiveMessages, effectiveOptions, reductionMetadata) = prep;
+        }
+        catch
+        {
+            // Always complete the reduction task even on error to prevent hanging
+            reductionCompletionSource.TrySetResult(null);
+            throw;
+        }
 
-        // Note: Reduction metadata is now captured in ExecuteStreamingTurnAsync
-        // and returned via StreamingTurnResult.Reduction property
+        // Set reduction metadata immediately (thread-safe - no shared mutable state)
+        reductionCompletionSource.TrySetResult(reductionMetadata);
 
         var currentMessages = effectiveMessages.ToList();
 
@@ -504,12 +544,12 @@ public class Agent : IChatClient
 
         // Track consecutive same-function calls for circuit breaker (Gemini CLI-inspired)
         // Tracks function name + arguments hash to detect exact repetition
-        string? lastFunctionSignature = null;
-        int consecutiveSameSignatureCount = 0;
+        var lastSignaturePerTool = new Dictionary<string, string>();
+        var consecutiveCountPerTool = new Dictionary<string, int>();
 
         // Main agentic loop - use while loop to allow dynamic limit extension
         int iteration = 0;
-        while (iteration <= agentRunContext.MaxIterations)
+        while (iteration < agentRunContext.MaxIterations)
         {
             agentRunContext.CurrentIteration = iteration;
 
@@ -522,17 +562,21 @@ public class Agent : IChatClient
             var toolRequests = new List<FunctionCallContent>();
             var assistantContents = new List<AIContent>();
             bool streamFinished = false;
+            bool hadAnyContent = false;
 
             // Track thinking/reasoning state PER ITERATION (reset for each turn/function call)
             // Using official AG-UI thinking events for better frontend compatibility
-            bool thinkingStarted = false;
-            bool thinkingMessageStarted = false;
+            bool reasoningStarted = false;
+            bool reasoningMessageStarted = false;
 
             // Run turn and collect events
             await foreach (var update in _agentTurn.RunAsync(currentMessages, effectiveOptions, effectiveCancellationToken))
             {
                 // Store update for building final history
                 responseUpdates.Add(update);
+
+                // Track whether we received any content this iteration
+                hadAnyContent = hadAnyContent || (update.Contents?.Count > 0) || update.FinishReason != null;
 
                 // Process contents and emit appropriate BaseEvent objects
                 if (update.Contents != null)
@@ -542,17 +586,17 @@ public class Agent : IChatClient
                         if (content is TextReasoningContent reasoning && !string.IsNullOrEmpty(reasoning.Text))
                         {
                             // Emit reasoning start event ONLY on first reasoning chunk (official AG-UI REASONING event)
-                            if (!thinkingStarted)
+                            if (!reasoningStarted)
                             {
                                 yield return EventSerialization.CreateReasoningStart(messageId);
-                                thinkingStarted = true;
+                                reasoningStarted = true;
                             }
 
                             // Emit reasoning message start if not already started
-                            if (!thinkingMessageStarted)
+                            if (!reasoningMessageStarted)
                             {
                                 yield return EventSerialization.CreateReasoningMessageStart(messageId, "assistant");
-                                thinkingMessageStarted = true;
+                                reasoningMessageStarted = true;
                             }
 
                             // Emit reasoning content for each chunk (official AG-UI REASONING event)
@@ -564,15 +608,15 @@ public class Agent : IChatClient
                         else if (content is TextContent textContent && !string.IsNullOrEmpty(textContent.Text))
                         {
                             // If we were in reasoning mode, finish the reasoning events
-                            if (thinkingMessageStarted)
+                            if (reasoningMessageStarted)
                             {
                                 yield return EventSerialization.CreateReasoningMessageEnd(messageId);
-                                thinkingMessageStarted = false;
+                                reasoningMessageStarted = false;
                             }
-                            if (thinkingStarted)
+                            if (reasoningStarted)
                             {
                                 yield return EventSerialization.CreateReasoningEnd(messageId);
-                                thinkingStarted = false;
+                                reasoningStarted = false;
                             }
 
                             // Emit message start if this is the first text content
@@ -602,15 +646,15 @@ public class Agent : IChatClient
                     streamFinished = true;
 
                     // If reasoning is still active when stream ends, finish it
-                    if (thinkingMessageStarted)
+                    if (reasoningMessageStarted)
                     {
                         yield return EventSerialization.CreateReasoningMessageEnd(messageId);
-                        thinkingMessageStarted = false;
+                        reasoningMessageStarted = false;
                     }
-                    if (thinkingStarted)
+                    if (reasoningStarted)
                     {
                         yield return EventSerialization.CreateReasoningEnd(messageId);
-                        thinkingStarted = false;
+                        reasoningStarted = false;
                     }
                 }
             }
@@ -658,7 +702,7 @@ public class Agent : IChatClient
 
                 // Execute tools
                 var toolResultMessage = await _toolScheduler.ExecuteToolsAsync(
-                    currentMessages, toolRequests, effectiveOptions, agentRunContext, _name, effectiveCancellationToken);
+                    currentMessages, toolRequests, effectiveOptions, agentRunContext, _name, effectiveCancellationToken).ConfigureAwait(false);
 
                 // Add tool results to history
                 currentMessages.Add(toolResultMessage);
@@ -686,31 +730,32 @@ public class Agent : IChatClient
 
                 // Circuit breaker: Check for consecutive same-function calls (Gemini CLI-inspired)
                 // Tracks function signature (name + arguments) to detect exact repetition
-                // Handles parallel tool calls by checking each one
+                // Handles parallel tool calls by checking each one separately
                 if (toolRequests.Count > 0 && Config?.AgenticLoop?.MaxConsecutiveFunctionCalls is { } maxConsecutive)
                 {
                     // Check each tool request in the batch (handles parallel calls)
                     foreach (var toolRequest in toolRequests)
                     {
                         var currentSignature = GetFunctionSignature(toolRequest);
+                        var toolName = toolRequest.Name ?? "_unknown";
 
-                        if (currentSignature == lastFunctionSignature)
+                        if (lastSignaturePerTool.TryGetValue(toolName, out var lastSignature) && currentSignature == lastSignature)
                         {
-                            consecutiveSameSignatureCount++;
+                            consecutiveCountPerTool[toolName] = consecutiveCountPerTool.GetValueOrDefault(toolName, 0) + 1;
                         }
                         else
                         {
-                            lastFunctionSignature = currentSignature;
-                            consecutiveSameSignatureCount = 1;
+                            lastSignaturePerTool[toolName] = currentSignature;
+                            consecutiveCountPerTool[toolName] = 1;
                         }
 
-                        if (consecutiveSameSignatureCount >= maxConsecutive)
+                        if (consecutiveCountPerTool[toolName] >= maxConsecutive)
                         {
-                            var errorMessage = $"⚠️ Circuit breaker triggered: Function '{toolRequest.Name}' with same arguments called {consecutiveSameSignatureCount} times consecutively. Stopping to prevent infinite loop.";
+                            var errorMessage = $"⚠️ Circuit breaker triggered: Function '{toolRequest.Name}' with same arguments called {consecutiveCountPerTool[toolName]} times consecutively. Stopping to prevent infinite loop.";
                             yield return EventSerialization.CreateTextMessageContent(messageId, errorMessage);
 
                             agentRunContext.IsTerminated = true;
-                            agentRunContext.TerminationReason = $"Circuit breaker: '{toolRequest.Name}' with same arguments called {consecutiveSameSignatureCount} times consecutively";
+                            agentRunContext.TerminationReason = $"Circuit breaker: '{toolRequest.Name}' with same arguments called {consecutiveCountPerTool[toolName]} times consecutively";
                             break;
                         }
                     }
@@ -786,7 +831,15 @@ public class Agent : IChatClient
             }
             else
             {
-                // Increment for next iteration even if no tools/stream finish
+                // Guard: If stream ended (we're here) and there are no tools to run,
+                // there's nothing left to do—exit regardless of whether content was received.
+                // This prevents unnecessary LLM passes when providers omit FinishReason.
+                if (toolRequests.Count == 0)
+                {
+                    break;
+                }
+                
+                // Increment for next iteration to execute tools
                 iteration++;
             }
         }
@@ -795,17 +848,21 @@ public class Agent : IChatClient
         if (responseUpdates.Any())
         {
             var finalResponse = ConstructChatResponseFromUpdates(responseUpdates);
-            // Fix: Guard against empty messages collection
+            // Fix: Guard against empty messages collection and ensure message has content
             if (finalResponse.Messages.Count > 0)
             {
                 var finalAssistantMessage = finalResponse.Messages[0];
-
-                // Only add if we don't already have this assistant message
-                // (in case it was already added during tool execution)
-                if (!turnHistory.Any() || turnHistory.Last().Role != ChatRole.Assistant ||
-                    !turnHistory.Last().Contents.SequenceEqual(finalAssistantMessage.Contents))
+                
+                // Only add if the message has content and we don't already have it
+                // Use canonical comparison to avoid false negatives with identical content in new instances
+                if (finalAssistantMessage.Contents.Count > 0)
                 {
-                    turnHistory.Add(finalAssistantMessage);
+                    var lastAssistant = turnHistory.LastOrDefault(m => m.Role == ChatRole.Assistant);
+                    if (lastAssistant == null ||
+                        CanonicalizeContents(lastAssistant.Contents) != CanonicalizeContents(finalAssistantMessage.Contents))
+                    {
+                        turnHistory.Add(finalAssistantMessage);
+                    }
                 }
             }
         }
@@ -856,6 +913,17 @@ public class Agent : IChatClient
                 createdAt = update.CreatedAt;
         }
 
+        // Don't create empty assistant messages
+        if (allContents.Count == 0)
+        {
+            return new ChatResponse(Array.Empty<ChatMessage>())
+            {
+                FinishReason = finishReason,
+                ModelId = modelId,
+                CreatedAt = createdAt
+            };
+        }
+
         // Create a ChatMessage from the collected content
         var chatMessage = new ChatMessage(ChatRole.Assistant, allContents)
         {
@@ -880,7 +948,7 @@ public class Agent : IChatClient
             Type t when t == typeof(ChatClientMetadata) => _metadata,
             Type t when t == typeof(ScopedFilterManager) => _scopedFilterManager,
             Type t when t == typeof(ErrorHandlingPolicy) => _errorPolicy,
-            Type t when t.IsInstanceOfType(_baseClient) => _baseClient,
+            Type t when t == typeof(IChatClient) => _baseClient,
             _ => _baseClient.GetService(serviceType, serviceKey)
         };
     }
@@ -1001,7 +1069,20 @@ Best practices:
     #region Message Turn Filters
 
     /// <summary>
-    /// Applies message turn filters after a complete turn (including all function calls) finishes
+    /// Applies message turn filters after a complete turn (including all function calls) finishes.
+    /// 
+    /// IMPORTANT: Message turn filters are READ-ONLY for observation and logging purposes.
+    /// Mutations made by filters to the MessageTurnFilterContext are NOT persisted back to conversation history.
+    /// 
+    /// Use cases for message turn filters:
+    /// - Telemetry and logging of completed turns
+    /// - Monitoring agent behavior and function call patterns
+    /// - Triggering side effects based on conversation events
+    /// 
+    /// If you need to mutate conversation history, use:
+    /// - IPromptFilter (pre-turn) to modify messages before LLM execution
+    /// - IAiFunctionFilter (during-turn) to intercept and modify tool execution
+    /// - Conversation APIs directly to append/modify persisted messages
     /// </summary>
     private async Task ApplyMessageTurnFilters(
         ChatMessage userMessage,
@@ -1050,7 +1131,7 @@ Best practices:
             pipeline = ctx => filter.InvokeAsync(ctx, next);
         }
 
-        await pipeline(context);
+        await pipeline(context).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1073,7 +1154,16 @@ Best practices:
 
             if (functionCalls.Any())
             {
-                metadata[_name] = functionCalls;
+                // Append to existing list instead of overwriting
+                if (!metadata.TryGetValue(_name, out var existingList))
+                {
+                    metadata[_name] = functionCalls;
+                }
+                else
+                {
+                    // Add unique function calls to avoid duplicates
+                    existingList.AddRange(functionCalls.Where(fc => !existingList.Contains(fc)));
+                }
             }
         }
 
@@ -1094,17 +1184,10 @@ Best practices:
 
     #region History Reduction Metadata
 
-    // NOTE: Reduction metadata is now returned via StreamingTurnResult.Reduction property
-    // instead of being stored in agent instance fields. This makes Agent stateless and
-    // allows it to be safely reused across multiple conversations.
-    //
-    // Old API (removed):
-    // - public IReadOnlyDictionary<string, object> GetReductionMetadata()
-    // - public void ClearReductionMetadata()
-    //
-    // New pattern:
-    // - StreamingTurnResult.Reduction contains ReductionMetadata if reduction occurred
-    // - Conversation reads metadata from result object instead of calling agent method
+    // Reduction metadata is now properly handled via StreamingTurnResult.ReductionTask.
+    // This ensures the metadata is available when the turn completes and PrepareMessagesAsync
+    // has finished executing. The task-based approach eliminates the timing bug where
+    // metadata was captured before the reduction actually occurred.
 
     #endregion
 
@@ -1119,9 +1202,15 @@ Best practices:
     /// <returns>SHA256 hash string representing the function signature</returns>
     private static string GetFunctionSignature(FunctionCallContent toolCall)
     {
-        // Serialize arguments to JSON for consistent comparison (using source-generated context for AOT)
+        // Sort arguments by key for deterministic serialization
+        // This prevents semantically identical args with different key order from hashing differently
+        var args = toolCall.Arguments ?? new Dictionary<string, object?>();
+        var ordered = args.OrderBy(kv => kv.Key, StringComparer.Ordinal)
+                          .ToDictionary(kv => kv.Key, kv => kv.Value);
+
+        // Serialize sorted arguments to JSON (using source-generated context for AOT)
         var argsJson = System.Text.Json.JsonSerializer.Serialize(
-            toolCall.Arguments ?? new Dictionary<string, object?>(),
+            ordered,
             AGUIJsonContext.Default.DictionaryStringObject);
 
         // Combine function name and arguments
@@ -1131,6 +1220,73 @@ Best practices:
         using var sha256 = SHA256.Create();
         var hashBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(combined));
         return Convert.ToHexString(hashBytes);
+    }
+
+    /// <summary>
+    /// Creates a canonical string representation of message contents for comparison.
+    /// Avoids false negatives when comparing semantically identical content in different instances.
+    /// Covers all major content types to prevent duplicate message appending.
+    /// </summary>
+    private static string CanonicalizeContents(IList<AIContent> contents)
+    {
+        var sb = new StringBuilder();
+        foreach (var c in contents)
+        {
+            switch (c)
+            {
+                case TextReasoningContent r:
+                    // Check reasoning first since it derives from TextContent
+                    sb.Append("|R:").Append(r.Text);
+                    break;
+                case TextContent t:
+                    sb.Append("|T:").Append(t.Text);
+                    break;
+                case FunctionCallContent fc:
+                    sb.Append("|F:").Append(fc.Name).Append(":").Append(fc.CallId).Append(":");
+                    sb.Append(System.Text.Json.JsonSerializer.Serialize(
+                        fc.Arguments ?? new Dictionary<string, object?>(),
+                        AGUIJsonContext.Default.DictionaryStringObject));
+                    break;
+                case FunctionResultContent fr:
+                    sb.Append("|FR:").Append(fr.CallId).Append(":");
+                    sb.Append(fr.Result?.ToString() ?? "null");
+                    if (fr.Exception != null)
+                    {
+                        sb.Append(":EX:").Append(fr.Exception.Message);
+                    }
+                    break;
+                case DataContent data:
+                    // DataContent covers images, audio, and generic data
+                    sb.Append("|D:").Append(data.MediaType ?? "unknown").Append(":");
+                    if (data.Data.Length > 0)
+                    {
+                        // Use SHA-256 for deterministic, collision-resistant hashing
+                        // (GetHashCode() is not stable across processes)
+                        sb.Append(HashDataBytes(data.Data));
+                    }
+                    else if (data.Uri != null)
+                    {
+                        sb.Append(data.Uri.ToString());
+                    }
+                    break;
+                // Future-proof: capture type name for any unknown content types
+                default:
+                    sb.Append("|U:").Append(c.GetType().Name);
+                    break;
+            }
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Computes a deterministic SHA-256 hash of byte data for content comparison.
+    /// Stable across processes and prevents collisions better than GetHashCode().
+    /// </summary>
+    private static string HashDataBytes(ReadOnlyMemory<byte> data)
+    {
+        using var sha = SHA256.Create();
+        var hash = sha.ComputeHash(data.ToArray());
+        return Convert.ToHexString(hash);
     }
 
     #endregion
@@ -1174,12 +1330,12 @@ public class AGUIEventHandler : IAGUIAgent
         try
         {
             // Delegate to the new Agent overload that handles AGUI input directly
-            var streamResult = await _agent.ExecuteStreamingTurnAsync(input, cancellationToken);
+            var streamResult = await _agent.ExecuteStreamingTurnAsync(input, cancellationToken).ConfigureAwait(false);
 
             // Forward events to the channel
             await foreach (var baseEvent in streamResult.EventStream.WithCancellation(cancellationToken))
             {
-                await events.WriteAsync(baseEvent, cancellationToken);
+                await events.WriteAsync(baseEvent, cancellationToken).ConfigureAwait(false);
             }
         }
         finally
@@ -1192,7 +1348,7 @@ public class AGUIEventHandler : IAGUIAgent
 
 #endregion
 
-#region 
+#region FunctionCallProcessor
 
 /// <summary>
 /// Handles all function calling logic, including multi-turn execution and filter pipelines.
@@ -1273,14 +1429,16 @@ public class FunctionCallProcessor
         }
 
         // Execute permission check
-        await pipeline(context);
+        await pipeline(context).ConfigureAwait(false);
 
         // Return approval status
         return !context.IsTerminated;
     }
 
     /// <summary>
-    /// Processes the function calls and returns the messages to add to the conversation
+    /// Processes the function calls and returns the messages to add to the conversation.
+    /// If skipPermissionFilters is true, permission filters are not re-run (used when parallel
+    /// execution has already checked permissions in CheckPermissionAsync).
     /// </summary>
     public async Task<IList<ChatMessage>> ProcessFunctionCallsAsync(
         List<ChatMessage> messages,
@@ -1288,7 +1446,8 @@ public class FunctionCallProcessor
         List<FunctionCallContent> functionCallContents,
         AgentRunContext agentRunContext,
         string? agentName,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool skipPermissionFilters = false)
     {
         var resultMessages = new List<ChatMessage>();
 
@@ -1324,7 +1483,7 @@ public class FunctionCallProcessor
                     return;
                 }
 
-                await ExecuteWithRetryAsync(ctx, cancellationToken);
+                await ExecuteWithRetryAsync(ctx, cancellationToken).ConfigureAwait(false);
             };
 
             var pipeline = finalInvoke;
@@ -1344,15 +1503,18 @@ public class FunctionCallProcessor
             }
 
             // Wrap permission filters last, so they run FIRST.
-            // Permission filters are naturally part of the pipeline now.
-            foreach (var permissionFilter in _permissionFilters.Reverse())
+            // Skip if already checked by parallel execution (prevents double execution)
+            if (!skipPermissionFilters)
             {
-                var previous = pipeline;
-                pipeline = ctx => permissionFilter.InvokeAsync(ctx, previous);
+                foreach (var permissionFilter in _permissionFilters.Reverse())
+                {
+                    var previous = pipeline;
+                    pipeline = ctx => permissionFilter.InvokeAsync(ctx, previous);
+                }
             }
 
             // Execute the full pipeline.
-            await pipeline(context);
+            await pipeline(context).ConfigureAwait(false);
 
             // Mark function as completed in run context
             agentRunContext.CompleteFunction(functionCall.Name);
@@ -1367,7 +1529,8 @@ public class FunctionCallProcessor
 
     /// <summary>
     /// Executes a function with retry logic and timeout enforcement.
-    /// Implements exponential backoff for transient failures.
+    /// Implements exponential backoff with jitter for transient failures.
+    /// Jitter prevents thundering herd when multiple parallel tools fail simultaneously.
     /// </summary>
     private async Task ExecuteWithRetryAsync(AiFunctionContext context, CancellationToken cancellationToken)
     {
@@ -1389,7 +1552,7 @@ public class FunctionCallProcessor
                 }
 
                 var args = new AIFunctionArguments(context.ToolCallRequest.Arguments);
-                context.Result = await context.Function!.InvokeAsync(args, functionCts.Token);
+                context.Result = await context.Function!.InvokeAsync(args, functionCts.Token).ConfigureAwait(false);
                 return; // Success - exit retry loop
             }
             catch (OperationCanceledException) when (functionTimeout.HasValue && !cancellationToken.IsCancellationRequested)
@@ -1409,9 +1572,14 @@ public class FunctionCallProcessor
                     return;
                 }
 
-                // Exponential backoff: delay increases with each attempt
-                var delay = TimeSpan.FromMilliseconds(retryDelay.TotalMilliseconds * (attempt + 1));
-                await Task.Delay(delay, cancellationToken);
+                // Exponential backoff with full jitter: delay = random(0, base * 2^attempt)
+                // Prevents thundering herd when parallel tools fail simultaneously
+                // Reference: AWS Architecture Blog on exponential backoff and jitter
+                var baseMs = retryDelay.TotalMilliseconds;
+                var maxDelayMs = baseMs * Math.Pow(2, attempt); // 1x, 2x, 4x, 8x...
+                var jitteredDelayMs = Random.Shared.NextDouble() * maxDelayMs;
+                var delay = TimeSpan.FromMilliseconds(jitteredDelayMs);
+                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
             }
         }
     }
@@ -1443,19 +1611,23 @@ public class MessageProcessor
     private readonly string? _systemInstructions;
     private readonly ChatOptions? _defaultOptions;
     private readonly IChatReducer? _chatReducer;
+    private readonly int _reductionTargetCount;
+    private readonly int _reductionThreshold;
 
-    /// <summary>
-    /// Reduction metadata from the last PrepareMessages call.
-    /// Null if no reduction occurred.
-    /// </summary>
-    public (ChatMessage? SummaryMessage, int RemovedCount)? LastReductionMetadata { get; private set; }
-
-    public MessageProcessor(string? systemInstructions, ChatOptions? defaultOptions, IReadOnlyList<IPromptFilter> promptFilters, IChatReducer? chatReducer = null)
+    public MessageProcessor(
+        string? systemInstructions, 
+        ChatOptions? defaultOptions, 
+        IReadOnlyList<IPromptFilter> promptFilters, 
+        IChatReducer? chatReducer,
+        int reductionTargetCount,
+        int reductionThreshold)
     {
         _systemInstructions = systemInstructions;
         _defaultOptions = defaultOptions;
         _promptFilters = promptFilters ?? new List<IPromptFilter>();
         _chatReducer = chatReducer;
+        _reductionTargetCount = reductionTargetCount;
+        _reductionThreshold = reductionThreshold;
     }
 
     /// <summary>
@@ -1470,8 +1642,9 @@ public class MessageProcessor
 
     /// <summary>
     /// Prepares the final list of messages and chat options for the LLM call.
+    /// Returns reduction metadata directly for thread-safety (no shared mutable state).
     /// </summary>
-    public async Task<(IEnumerable<ChatMessage> messages, ChatOptions? options)> PrepareMessagesAsync(
+    public async Task<(IEnumerable<ChatMessage> messages, ChatOptions? options, ReductionMetadata? reduction)> PrepareMessagesAsync(
         IEnumerable<ChatMessage> messages,
         ChatOptions? options,
         string agentName,
@@ -1491,30 +1664,25 @@ public class MessageProcessor
 
             bool shouldReduce = false;
 
+            // Use configured thresholds (AOT-friendly, no reflection)
+            // These are passed to MessageProcessor at construction time from AgentConfig
             if (lastSummaryIndex >= 0)
             {
                 // Summary found - only count messages AFTER the summary
                 var messagesAfterSummary = messagesList.Count - lastSummaryIndex - 1;
-
-                // For now, use hardcoded threshold values
-                // TODO: Extract from reducer configuration
-                int targetCount = 20;
-                int threshold = 5;
-
-                shouldReduce = messagesAfterSummary > (targetCount + threshold);
+                shouldReduce = messagesAfterSummary > (_reductionTargetCount + _reductionThreshold);
             }
             else
             {
                 // No summary found - check total message count
-                int targetCount = 20;
-                int threshold = 5;
-
-                shouldReduce = messagesList.Count > (targetCount + threshold);
+                shouldReduce = messagesList.Count > (_reductionTargetCount + _reductionThreshold);
             }
+
+            ReductionMetadata? reductionMetadata = null;
 
             if (shouldReduce)
             {
-                var reduced = await _chatReducer.ReduceAsync(effectiveMessages, cancellationToken);
+                var reduced = await _chatReducer.ReduceAsync(effectiveMessages, cancellationToken).ConfigureAwait(false);
 
                 if (reduced != null)
                 {
@@ -1529,23 +1697,26 @@ public class MessageProcessor
                         // Calculate how many messages were removed
                         int removedCount = messagesList.Count - reducedList.Count + 1; // +1 for summary itself
 
-                        // Store metadata for Agent to access
-                        LastReductionMetadata = (summaryMsg, removedCount);
+                        // Return metadata directly for thread-safety
+                        reductionMetadata = new ReductionMetadata
+                        {
+                            SummaryMessage = summaryMsg,
+                            MessagesRemovedCount = removedCount
+                        };
                     }
 
                     effectiveMessages = reducedList;
                 }
             }
-            else
-            {
-                // Clear metadata if no reduction occurred
-                LastReductionMetadata = null;
-            }
+
+            effectiveMessages = await ApplyPromptFiltersAsync(effectiveMessages, effectiveOptions, agentName, cancellationToken).ConfigureAwait(false);
+
+            return (effectiveMessages, effectiveOptions, reductionMetadata);
         }
 
-        effectiveMessages = await ApplyPromptFiltersAsync(effectiveMessages, effectiveOptions, agentName, cancellationToken);
+        effectiveMessages = await ApplyPromptFiltersAsync(effectiveMessages, effectiveOptions, agentName, cancellationToken).ConfigureAwait(false);
 
-        return (effectiveMessages, effectiveOptions);
+        return (effectiveMessages, effectiveOptions, null);
     }
 
     /// <summary>
@@ -1635,7 +1806,7 @@ public class MessageProcessor
             var next = pipeline;
             pipeline = ctx => filter.InvokeAsync(ctx, next);
         }
-        return await pipeline(context);
+        return await pipeline(context).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1794,22 +1965,25 @@ public class StreamingTurnResult
     public Task<IReadOnlyList<ChatMessage>> FinalHistory { get; }
 
     /// <summary>
-    /// Reduction metadata if history reduction occurred during this turn.
+    /// Task that completes with reduction metadata if history reduction occurred during this turn.
     /// Null if no reduction was performed.
     /// </summary>
-    public ReductionMetadata? Reduction { get; init; }
+    public Task<ReductionMetadata?> ReductionTask { get; }
 
     /// <summary>
     /// Initializes a new instance of StreamingTurnResult
     /// </summary>
     /// <param name="eventStream">The stream of BaseEvents</param>
     /// <param name="finalHistory">Task that provides the final turn history</param>
+    /// <param name="reductionTask">Task that provides the reduction metadata</param>
     public StreamingTurnResult(
         IAsyncEnumerable<BaseEvent> eventStream,
-        Task<IReadOnlyList<ChatMessage>> finalHistory)
+        Task<IReadOnlyList<ChatMessage>> finalHistory,
+        Task<ReductionMetadata?> reductionTask)
     {
         EventStream = eventStream ?? throw new ArgumentNullException(nameof(eventStream));
         FinalHistory = finalHistory ?? throw new ArgumentNullException(nameof(finalHistory));
+        ReductionTask = reductionTask ?? Task.FromResult<ReductionMetadata?>(null);
     }
 }
 
@@ -1858,11 +2032,11 @@ public class ToolScheduler
         // For single tool calls, use sequential execution (no parallelization overhead)
         if (toolRequests.Count <= 1)
         {
-            return await ExecuteSequentiallyAsync(currentHistory, toolRequests, options, agentRunContext, agentName, cancellationToken);
+            return await ExecuteSequentiallyAsync(currentHistory, toolRequests, options, agentRunContext, agentName, cancellationToken).ConfigureAwait(false);
         }
 
         // For multiple tool calls, execute in parallel for better performance
-        return await ExecuteInParallelAsync(currentHistory, toolRequests, options, agentRunContext, agentName, cancellationToken);
+        return await ExecuteInParallelAsync(currentHistory, toolRequests, options, agentRunContext, agentName, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1930,13 +2104,15 @@ public class ToolScheduler
 
         var executionTasks = approvedTools.Select(async toolRequest =>
         {
-            await semaphore.WaitAsync(cancellationToken);
+            await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
                 // Execute each approved tool call through the processor
+                // Skip permission filters since we already checked them in Phase 1
                 var singleToolList = new List<FunctionCallContent> { toolRequest };
                 var resultMessages = await _functionCallProcessor.ProcessFunctionCallsAsync(
-                    currentHistory, options, singleToolList, agentRunContext, agentName, cancellationToken);
+                    currentHistory, options, singleToolList, agentRunContext, agentName, cancellationToken, 
+                    skipPermissionFilters: true).ConfigureAwait(false);
 
                 return (Success: true, Messages: resultMessages, Error: (Exception?)null, ToolRequest: toolRequest);
             }
@@ -1952,7 +2128,7 @@ public class ToolScheduler
         }).ToArray();
 
         // Wait for all approved tasks to complete
-        var results = await Task.WhenAll(executionTasks);
+        var results = await Task.WhenAll(executionTasks).ConfigureAwait(false);
 
         // Aggregate results and handle errors
         var allContents = new List<AIContent>();
@@ -1979,7 +2155,7 @@ public class ToolScheduler
         {
             var functionResult = new FunctionResultContent(
                 deniedTool.CallId,
-                $"Execution of '{deniedTool.Name}' was denied by the user."
+                $"Execution of '{deniedTool.Name}' was denied by permissions/policy."
             );
             allContents.Add(functionResult);
         }
@@ -2030,7 +2206,7 @@ internal static class AgentDocumentProcessor
 
         // Process document uploads
         var textExtractor = new HPD_Agent.TextExtraction.TextExtractionUtility();
-        var uploads = await ConversationDocumentHelper.ProcessUploadsAsync(documentPaths, textExtractor, cancellationToken);
+        var uploads = await ConversationDocumentHelper.ProcessUploadsAsync(documentPaths, textExtractor, cancellationToken).ConfigureAwait(false);
 
         // Modify the last user message with document content
         return ModifyLastUserMessageWithDocuments(messages, uploads, docConfig?.DocumentTagFormat);
@@ -2073,8 +2249,18 @@ internal static class AgentDocumentProcessor
         var formattedMessage = ConversationDocumentHelper.FormatMessageWithDocuments(
             originalText, uploads, customTagFormat);
 
-        // Create new message with updated content
-        var newMessage = new ChatMessage(ChatRole.User, formattedMessage);
+        // Append document content to existing contents instead of replacing
+        // This preserves images, audio, and other non-text content
+        var newContents = lastUserMessage.Contents.ToList();
+        newContents.Add(new TextContent(formattedMessage));
+
+        // Preserve AdditionalProperties if present
+        var newMessage = new ChatMessage(ChatRole.User, newContents);
+        if (lastUserMessage.AdditionalProperties != null)
+        {
+            newMessage.AdditionalProperties = new AdditionalPropertiesDictionary(lastUserMessage.AdditionalProperties);
+        }
+        
         messagesList[lastUserMessageIndex] = newMessage;
 
         return messagesList;

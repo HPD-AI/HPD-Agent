@@ -5,13 +5,15 @@ using System.Runtime.CompilerServices;
 using HPD_Agent.TextExtraction;
 using System.Diagnostics;
 using HPD_Agent.Orchestration;
+using Microsoft.Agents.AI;
 
 /// <summary>
 /// Clean conversation management built on Microsoft.Extensions.AI
 /// Coordinates ConversationThread (state) and Agent execution (direct for single-agent, via IOrchestrator for multi-agent).
+/// Implements AIAgent to be compatible with Microsoft.Agents.AI workflows.
 /// Similar to Microsoft's pattern where Agent + Thread are composed by user code.
 /// </summary>
-public class Conversation
+public class Conversation : AIAgent
 {
     private readonly ConversationThread _thread;
     private readonly IReadOnlyList<Agent> _agents;
@@ -37,7 +39,7 @@ public class Conversation
     }
 
     // Convenient pass-through properties to thread
-    public string Id => _thread.Id;
+    public new string Id => _thread.Id;  // Use 'new' to hide inherited AIAgent.Id
     public DateTime CreatedAt => _thread.CreatedAt;
     public DateTime LastActivity => _thread.LastActivity;
     public IReadOnlyList<ChatMessage> Messages => _thread.Messages;
@@ -48,6 +50,170 @@ public class Conversation
 
     /// <summary>Add metadata key/value to this conversation thread.</summary>
     public void AddMetadata(string key, object value) => _thread.AddMetadata(key, value);
+
+    #region AIAgent Implementation
+
+    /// <summary>
+    /// Gets the name of this conversation (derived from primary agent or conversation ID).
+    /// </summary>
+    public override string? Name => PrimaryAgent?.Config?.Name ?? $"Conversation-{Id}";
+
+    /// <summary>
+    /// Gets the description of this conversation (derived from primary agent).
+    /// </summary>
+    public override string? Description => PrimaryAgent?.Config?.SystemInstructions;
+
+    /// <summary>
+    /// Creates a new thread compatible with this agent.
+    /// </summary>
+    public override AgentThread GetNewThread()
+    {
+        return new ConversationThread();
+    }
+
+    /// <summary>
+    /// Deserializes a thread from its JSON representation.
+    /// </summary>
+    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+    {
+        // Deserialize the JsonElement to ConversationThreadSnapshot using source-generated context
+        var snapshot = serializedThread.Deserialize(ConversationJsonContext.Default.ConversationThreadSnapshot);
+        if (snapshot == null)
+        {
+            throw new InvalidOperationException("Failed to deserialize ConversationThreadSnapshot from JsonElement");
+        }
+
+        return ConversationThread.Deserialize(snapshot);
+    }
+
+    /// <summary>
+    /// Runs the agent with messages (non-streaming, AIAgent interface).
+    /// Delegates to existing SendAsync implementation.
+    /// </summary>
+    public override async Task<AgentRunResponse> RunAsync(
+        IEnumerable<ChatMessage> messages,
+        AgentThread? thread = null,
+        AgentRunOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        // Update thread if provided
+        var targetThread = thread as ConversationThread ?? _thread;
+
+        // Add messages to conversation thread
+        foreach (var msg in messages)
+        {
+            if (!targetThread.Messages.Contains(msg))
+            {
+                targetThread.AddMessage(msg);
+            }
+        }
+
+        // Use existing SendAsync logic (empty message since messages already added to thread)
+        var result = await SendAsync("", null, cancellationToken: cancellationToken);
+
+        // Notify thread of new messages
+        if (thread != null)
+        {
+            await NotifyThreadOfNewMessagesAsync(thread, result.Response.Messages, cancellationToken);
+        }
+
+        // Build and return AgentRunResponse
+        return new AgentRunResponse(result.Response)
+        {
+            AgentId = this.Id,
+            ResponseId = result.RequestId,
+            CreatedAt = DateTimeOffset.UtcNow,
+            Usage = result.Usage != null ? new UsageDetails
+            {
+                InputTokenCount = result.Usage.PromptTokens,
+                OutputTokenCount = result.Usage.CompletionTokens,
+                TotalTokenCount = result.Usage.TotalTokens
+            } : null
+        };
+    }
+
+    /// <summary>
+    /// Runs the agent with messages (streaming, AIAgent interface).
+    /// Delegates to existing SendStreamingAsync implementation.
+    /// </summary>
+    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+        IEnumerable<ChatMessage> messages,
+        AgentThread? thread = null,
+        AgentRunOptions? options = null,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        // Update thread if provided
+        var targetThread = thread as ConversationThread ?? _thread;
+
+        // Add messages to conversation thread
+        foreach (var msg in messages)
+        {
+            if (!targetThread.Messages.Contains(msg))
+            {
+                targetThread.AddMessage(msg);
+            }
+        }
+
+        // Use existing streaming implementation (AgentRunOptions is currently empty, pass null)
+        var streamResult = await SendStreamingAsync("", null, cancellationToken: cancellationToken);
+
+        // Convert BaseEvent stream to AgentRunResponseUpdate stream
+        await foreach (var evt in streamResult.EventStream.WithCancellation(cancellationToken))
+        {
+            var update = ConvertBaseEventToAgentRunResponseUpdate(evt);
+            if (update != null)
+            {
+                yield return update;
+            }
+        }
+
+        // Wait for final result and notify thread
+        var finalResult = await streamResult.FinalResult;
+        if (thread != null)
+        {
+            await NotifyThreadOfNewMessagesAsync(thread, finalResult.Response.Messages, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Converts BaseEvent to AgentRunResponseUpdate.
+    /// </summary>
+    private AgentRunResponseUpdate? ConvertBaseEventToAgentRunResponseUpdate(BaseEvent evt)
+    {
+        return evt switch
+        {
+            TextMessageContentEvent textEvent => new AgentRunResponseUpdate
+            {
+                AgentId = this.Id,
+                AuthorName = this.Name,
+                Role = ChatRole.Assistant,
+                Contents = [new TextContent(textEvent.Delta)],
+                CreatedAt = DateTimeOffset.UtcNow,
+                MessageId = Guid.NewGuid().ToString("N")
+            },
+            ToolCallStartEvent toolStart => new AgentRunResponseUpdate
+            {
+                AgentId = this.Id,
+                AuthorName = this.Name,
+                Role = ChatRole.Assistant,
+                Contents = [new FunctionCallContent(toolStart.ToolCallId, toolStart.ToolCallName)],
+                CreatedAt = DateTimeOffset.UtcNow,
+                MessageId = Guid.NewGuid().ToString("N")
+            },
+            ToolCallResultEvent toolResult => new AgentRunResponseUpdate
+            {
+                AgentId = this.Id,
+                AuthorName = this.Name,
+                Role = ChatRole.Tool,
+                Contents = [new FunctionResultContent(toolResult.ToolCallId, toolResult.Result)],
+                CreatedAt = DateTimeOffset.UtcNow,
+                MessageId = Guid.NewGuid().ToString("N")
+            },
+            _ => null // Skip events that don't map to AgentRunResponseUpdate
+        };
+    }
+
+    #endregion
 
     /// <summary>
     /// Creates a conversation with a single agent and a new thread
@@ -964,16 +1130,3 @@ internal record StreamingTurnMetadata
     public ChatMessage UserMessage { get; init; } = null!;
 }
 
-/// <summary>
-/// JSON source generation context for AOT compatibility
-/// </summary>
-[JsonSourceGenerationOptions(WriteIndented = false)]
-[JsonSerializable(typeof(ConversationThreadSnapshot))]
-[JsonSerializable(typeof(List<ChatMessage>))]
-[JsonSerializable(typeof(Dictionary<string, object>))]
-[JsonSerializable(typeof(ChatMessage))]
-[JsonSerializable(typeof(ChatRole))]
-[JsonSerializable(typeof(DateTime))]
-internal partial class ConversationJsonContext : JsonSerializerContext
-{
-}

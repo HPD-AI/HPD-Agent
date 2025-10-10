@@ -1,12 +1,13 @@
 using Microsoft.Extensions.AI;
 using System.Text.Json;
+using Microsoft.Agents.AI;
 
 /// <summary>
 /// Manages conversation state (message history, metadata, timestamps).
-/// Similar to Microsoft's AgentThread - separates state from execution logic.
+/// Inherits from Microsoft's AgentThread for compatibility with Agent Framework.
 /// This allows one agent to serve multiple threads (conversations) concurrently.
 /// </summary>
-public class ConversationThread
+public class ConversationThread : AgentThread
 {
     private readonly List<ChatMessage> _messages = new();
     private readonly Dictionary<string, object> _metadata = new();
@@ -141,9 +142,27 @@ public class ConversationThread
     }
 
     /// <summary>
-    /// Serialize this thread to a snapshot for persistence
+    /// Serialize this thread to a JSON element (AgentThread override).
     /// </summary>
-    public ConversationThreadSnapshot Serialize()
+    public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+    {
+        var snapshot = new ConversationThreadSnapshot
+        {
+            Id = Id,
+            Messages = _messages.ToList(),
+            Metadata = _metadata.ToDictionary(kv => kv.Key, kv => kv.Value),
+            CreatedAt = CreatedAt,
+            LastActivity = LastActivity
+        };
+
+        // Use source-generated JSON context for AOT compatibility
+        return JsonSerializer.SerializeToElement(snapshot, ConversationJsonContext.Default.ConversationThreadSnapshot);
+    }
+
+    /// <summary>
+    /// Serialize this thread to a snapshot for direct persistence (legacy method).
+    /// </summary>
+    public ConversationThreadSnapshot SerializeToSnapshot()
     {
         return new ConversationThreadSnapshot
         {
@@ -176,6 +195,22 @@ public class ConversationThread
     }
 
     /// <summary>
+    /// Called when new messages are received (AgentThread override).
+    /// Updates this thread's message list.
+    /// </summary>
+    protected override Task MessagesReceivedAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default)
+    {
+        foreach (var message in newMessages)
+        {
+            if (!_messages.Contains(message))
+            {
+                AddMessage(message);
+            }
+        }
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
     /// Clear all messages from this thread (useful for testing or reset scenarios)
     /// </summary>
     public void Clear()
@@ -184,6 +219,15 @@ public class ConversationThread
         _metadata.Clear();
         LastActivity = DateTime.UtcNow;
     }
+}
+
+/// <summary>
+/// JSON source generation context for ConversationThread serialization.
+/// </summary>
+[System.Text.Json.Serialization.JsonSourceGenerationOptions(WriteIndented = false)]
+[System.Text.Json.Serialization.JsonSerializable(typeof(ConversationThreadSnapshot))]
+internal partial class ConversationJsonContext : System.Text.Json.Serialization.JsonSerializerContext
+{
 }
 
 /// <summary>

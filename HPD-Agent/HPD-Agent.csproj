@@ -29,8 +29,10 @@
     <PackageReference Include="Google_GenerativeAI" Version="3.2.0" />
     <PackageReference Include="Google_GenerativeAI.Microsoft" Version="3.2.0" />
     <PackageReference Include="HuggingFace" Version="0.4.1-dev.23" />
-    <PackageReference Include="Microsoft.Extensions.AI" Version="9.9.0" />
-    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="9.9.0" />
+    <PackageReference Include="Microsoft.Agents.AI" Version="1.0.0-preview.251009.1" />
+    <PackageReference Include="Microsoft.Agents.AI.Abstractions" Version="1.0.0-preview.251009.1" />
+    <PackageReference Include="Microsoft.Extensions.AI" Version="9.9.1" />
+    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="9.9.1" />
     <PackageReference Include="Microsoft.Extensions.AI.AzureAIInference" Version="9.7.1-preview.1.25365.4" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="9.7.1-preview.1.25365.4" />
   <PackageReference Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.9.2" />
@@ -67,6 +69,7 @@
   <ItemGroup>
     <ProjectReference Include="../HPD-Agent.SourceGenerator/HPD-Agent.SourceGenerator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\HPD-Agent.TextExtraction\HPD-Agent.TextExtraction.csproj" />
+
   </ItemGroup>
 
 

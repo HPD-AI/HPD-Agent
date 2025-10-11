@@ -232,17 +232,27 @@ static async Task RunInteractiveChat(Conversation conversation)
 
 static async Task StreamResponse(Conversation conversation, string message, string[]? documentPaths = null)
 {
-    // Now returns ConversationStreamingResult with event stream and final metadata
-    var result = await conversation.SendStreamingWithOutputAsync(message);
-    
-    // Display metadata after streaming completes
-    if (result.Usage != null)
+    // Create user message for the new RunStreamingAsync API
+    var userMessage = new ChatMessage(ChatRole.User, message);
+
+    // Use the new AIAgent interface RunStreamingAsync
+    await foreach (var update in conversation.RunStreamingAsync([userMessage]))
     {
-        Console.Write($" [Tokens: {result.Usage.TotalTokens}");
-        if (result.Usage.EstimatedCost.HasValue)
-            Console.Write($", Cost: ${result.Usage.EstimatedCost:F4}");
-        Console.Write($", Agent: {result.RespondingAgent.Name}");
-        Console.Write($", Duration: {result.Duration.TotalSeconds:F1}s]");
+        // Extract text content from the update and display it
+        foreach (var content in update.Contents ?? [])
+        {
+            if (content is TextContent textContent && !string.IsNullOrEmpty(textContent.Text))
+            {
+                Console.Write(textContent.Text);
+            }
+        }
+    }
+
+    // Get final usage stats from the conversation's last response
+    var lastMessage = conversation.Messages.LastOrDefault(m => m.Role == ChatRole.Assistant);
+    if (lastMessage != null)
+    {
+        Console.Write($" [Agent: {conversation.Agent.Config?.Name ?? "AI Assistant"}]");
     }
 }
 

@@ -11,6 +11,7 @@ public class ConversationThread : AgentThread
 {
     private readonly List<ChatMessage> _messages = new();
     private readonly Dictionary<string, object> _metadata = new();
+    private string? _serviceThreadId;
 
     /// <summary>
     /// Unique identifier for this conversation thread
@@ -41,6 +42,28 @@ public class ConversationThread : AgentThread
     /// Number of messages in this thread
     /// </summary>
     public int MessageCount => _messages.Count;
+
+    /// <summary>
+    /// Optional service thread ID for hybrid scenarios.
+    /// Enables syncing to OpenAI Assistants, Azure AI, etc.
+    /// This is stored separately from the local message history.
+    /// </summary>
+    public string? ServiceThreadId
+    {
+        get => _serviceThreadId;
+        set
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                _serviceThreadId = value;
+                LastActivity = DateTime.UtcNow;
+            }
+            else
+            {
+                _serviceThreadId = null;
+            }
+        }
+    }
 
     /// <summary>
     /// Creates a new conversation thread with a generated ID
@@ -116,6 +139,19 @@ public class ConversationThread : AgentThread
     }
 
     /// <summary>
+    /// Service discovery - provides AgentThreadMetadata (Microsoft pattern)
+    /// </summary>
+    public override object? GetService(Type serviceType, object? serviceKey = null)
+    {
+        if (serviceKey == null && serviceType == typeof(AgentThreadMetadata))
+        {
+            return new AgentThreadMetadata(Id);
+        }
+
+        return base.GetService(serviceType, serviceKey);
+    }
+
+    /// <summary>
     /// Get a display name for this thread based on first user message.
     /// Useful for UI display in conversation lists.
     /// </summary>
@@ -152,7 +188,8 @@ public class ConversationThread : AgentThread
             Messages = _messages.ToList(),
             Metadata = _metadata.ToDictionary(kv => kv.Key, kv => kv.Value),
             CreatedAt = CreatedAt,
-            LastActivity = LastActivity
+            LastActivity = LastActivity,
+            ServiceThreadId = ServiceThreadId
         };
 
         // Use source-generated JSON context for AOT compatibility
@@ -170,7 +207,8 @@ public class ConversationThread : AgentThread
             Messages = _messages.ToList(),
             Metadata = _metadata.ToDictionary(kv => kv.Key, kv => kv.Value),
             CreatedAt = CreatedAt,
-            LastActivity = LastActivity
+            LastActivity = LastActivity,
+            ServiceThreadId = ServiceThreadId
         };
     }
 
@@ -180,6 +218,8 @@ public class ConversationThread : AgentThread
     public static ConversationThread Deserialize(ConversationThreadSnapshot snapshot)
     {
         var thread = new ConversationThread(snapshot.Id, snapshot.CreatedAt, snapshot.LastActivity);
+        
+        thread._serviceThreadId = snapshot.ServiceThreadId;
 
         foreach (var message in snapshot.Messages)
         {
@@ -240,4 +280,5 @@ public record ConversationThreadSnapshot
     public required Dictionary<string, object> Metadata { get; init; }
     public required DateTime CreatedAt { get; init; }
     public required DateTime LastActivity { get; init; }
+    public string? ServiceThreadId { get; init; }
 }

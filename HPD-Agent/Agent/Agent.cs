@@ -65,7 +65,13 @@ public class Agent : IChatClient
     /// </summary>
     public ErrorHandlingPolicy ErrorPolicy => _errorPolicy;
 
-
+    /// <summary>
+    /// Extracts and merges ChatOptions from AgentRunOptions (for workflow compatibility).
+    /// Preserves workflow-provided tools (e.g., handoff functions) while injecting conversation context.
+    /// </summary>
+    /// <param name="workflowOptions">Options from workflow (may contain handoff tools)</param>
+    /// <param name="conversationContext">Additional context to inject (e.g., ConversationId, Project)</param>
+    /// <returns>Merged ChatOptions ready for agent execution</returns>
     /// <summary>
     /// Initializes a new Agent instance from an AgentConfig object
     /// </summary>
@@ -270,10 +276,27 @@ public class Agent : IChatClient
         var coreStream = RunAgenticLoopCore(messagesList, options, turnHistory, historyCompletionSource, reductionCompletionSource, cancellationToken);
         var responseStream = WrapStreamWithErrorHandling(coreStream, historyCompletionSource, cancellationToken);
 
-        // Wrap the final history task to apply message turn filters when complete
+        // Wrap the final history task to apply post-processing when complete
         var wrappedHistoryTask = historyCompletionSource.Task.ContinueWith(async task =>
         {
-            var history = await task;
+            Exception? invocationException = task.IsFaulted ? task.Exception?.InnerException : null;
+            var history = task.IsCompletedSuccessfully ? await task : new List<ChatMessage>();
+
+            // Apply post-invoke filters (for memory extraction, learning, etc.)
+            try
+            {
+                await _messageProcessor.ApplyPostInvokeFiltersAsync(
+                    messagesList,
+                    task.IsCompletedSuccessfully ? history : null,
+                    invocationException,
+                    options,
+                    Config?.Name ?? "Agent",
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                // Log but don't fail - post-processing is best-effort
+            }
 
             // Apply message turn filters after the turn completes
             if (task.IsCompletedSuccessfully && _messageTurnFilters.Any())
@@ -1955,6 +1978,62 @@ public class MessageProcessor
             pipeline = ctx => filter.InvokeAsync(ctx, next);
         }
         return await pipeline(context).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Applies post-invocation filters to process results, extract memories, etc.
+    /// </summary>
+    /// <param name="requestMessages">The messages sent to the LLM (after pre-processing)</param>
+    /// <param name="responseMessages">The messages returned by the LLM, or null if failed</param>
+    /// <param name="exception">Exception that occurred, or null if successful</param>
+    /// <param name="options">The chat options used for the invocation</param>
+    /// <param name="agentName">The agent name</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    public async Task ApplyPostInvokeFiltersAsync(
+        IEnumerable<ChatMessage> requestMessages,
+        IEnumerable<ChatMessage>? responseMessages,
+        Exception? exception,
+        ChatOptions? options,
+        string agentName,
+        CancellationToken cancellationToken)
+    {
+        if (!_promptFilters.Any())
+        {
+            return;
+        }
+
+        // Create properties dictionary from options
+        var properties = new Dictionary<string, object>();
+        if (options?.AdditionalProperties != null)
+        {
+            foreach (var kvp in options.AdditionalProperties)
+            {
+                properties[kvp.Key] = kvp.Value!;
+            }
+        }
+
+        // Create post-invoke context
+        var context = new PostInvokeContext(
+            requestMessages,
+            responseMessages,
+            exception,
+            properties,
+            agentName,
+            options);
+
+        // Call PostInvokeAsync on all filters (in order, not reversed)
+        foreach (var filter in _promptFilters)
+        {
+            try
+            {
+                await filter.PostInvokeAsync(context, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                // Log but don't fail - post-processing is best-effort
+                // Individual filter failures shouldn't break the response
+            }
+        }
     }
 
     /// <summary>

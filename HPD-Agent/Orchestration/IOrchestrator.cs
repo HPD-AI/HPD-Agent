@@ -392,7 +392,7 @@ public record OrchestrationResult
     /// Aggregated token usage across all agents in this orchestration.
     /// Null if no token usage information is available.
     /// </summary>
-    public TokenUsage? AggregatedUsage { get; init; }
+    public UsageDetails? AggregatedUsage { get; init; }
 
     /// <summary>
     /// Total number of agents/nodes that executed during orchestration.

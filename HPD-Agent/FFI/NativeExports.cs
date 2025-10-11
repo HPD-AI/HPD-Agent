@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
+using Microsoft.Agents.AI;
 
 namespace HPD_Agent.FFI;
 
@@ -344,11 +345,12 @@ public static partial class NativeExports
             string? message = Marshal.PtrToStringUTF8(messagePtr);
             if (string.IsNullOrEmpty(message)) return IntPtr.Zero;
 
-            // Block on the async method to get the final result for the synchronous FFI call.
-            var response = conversation.SendAsync(message).GetAwaiter().GetResult();
+            // Use new AIAgent RunAsync interface
+            var userMessage = new ChatMessage(ChatRole.User, message);
+            var agentResponse = conversation.RunAsync([userMessage]).GetAwaiter().GetResult();
 
-            // Extract the primary text content from the agent's final response message.
-            var responseText = response.Response.Messages.LastOrDefault()?.Text ?? "";
+            // Extract the primary text content from the conversation's message history
+            var responseText = conversation.Messages.LastOrDefault(m => m.Role == ChatRole.Assistant)?.Text ?? "";
 
             return Marshal.StringToCoTaskMemAnsi(responseText);
         }
@@ -378,11 +380,17 @@ public static partial class NativeExports
             var aguiInput = JsonSerializer.Deserialize(aguiInputJson, AGUIJsonContext.Default.RunAgentInput);
             if (aguiInput == null) return IntPtr.Zero;
 
-            // Block on the async method to get the final result for the synchronous FFI call.
-            var response = conversation.SendAsync(aguiInput).GetAwaiter().GetResult();
+            // Use AGUI RunStreamingAsync overload and consume it (no RunAsync(RunAgentInput) overload)
+            Task.Run(async () =>
+            {
+                await foreach (var evt in conversation.RunStreamingAsync(aguiInput))
+                {
+                    // Just consume events
+                }
+            }).GetAwaiter().GetResult();
 
-            // Extract the primary text content from the agent's final response message.
-            var responseText = response.Response.Messages.LastOrDefault()?.Text ?? "";
+            // Extract the primary text content from the conversation's message history
+            var responseText = conversation.Messages.LastOrDefault(m => m.Role == ChatRole.Assistant)?.Text ?? "";
 
             return Marshal.StringToCoTaskMemAnsi(responseText);
         }
@@ -437,52 +445,49 @@ public static partial class NativeExports
         {
             try
             {
-                // Get the agent to stream events from
-                var agent = conversation.Agent;
-
                 // Generate IDs for AGUI protocol
                 var messageId = Guid.NewGuid().ToString();
                 var runId = Guid.NewGuid().ToString();
                 var threadId = conversation.Id; // Use conversation ID to maintain thread continuity
-                
+
                 var callbackDelegate = Marshal.GetDelegateForFunctionPointer<StreamCallback>(callback);
-                
+
                 // 1. Emit RUN_STARTED
                 var runStartedJson = $"{{\"type\":\"RUN_STARTED\",\"runId\":\"{runId}\",\"threadId\":\"{threadId}\",\"timestamp\":{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}}}";
                 var runStartedPtr = Marshal.StringToCoTaskMemAnsi(runStartedJson);
                 callbackDelegate(context, runStartedPtr);
                 Marshal.FreeCoTaskMem(runStartedPtr);
-                
+
                 // 2. Emit TEXT_MESSAGE_START
                 var messageStartJson = $"{{\"type\":\"TEXT_MESSAGE_START\",\"messageId\":\"{messageId}\",\"timestamp\":{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}}}";
                 var messageStartPtr = Marshal.StringToCoTaskMemAnsi(messageStartJson);
                 callbackDelegate(context, messageStartPtr);
                 Marshal.FreeCoTaskMem(messageStartPtr);
-                
-                // 3. Use streaming with the conversation's actual message history
-                var streamResult = await conversation.SendStreamingAsync(message, null);
-                await foreach (var evt in streamResult.EventStream)
+
+                // 3. Use new AIAgent RunStreamingAsync interface
+                var userMessage = new ChatMessage(ChatRole.User, message);
+                await foreach (var update in conversation.RunStreamingAsync([userMessage]))
                 {
-                    // Serialize the BaseEvent directly to JSON
-                    string eventJson = SerializeBaseEvent(evt);
+                    // Serialize the AgentRunResponseUpdate to JSON
+                    string eventJson = SerializeAgentUpdate(update);
 
                     var eventJsonPtr = Marshal.StringToCoTaskMemAnsi(eventJson);
                     callbackDelegate(context, eventJsonPtr);
                     Marshal.FreeCoTaskMem(eventJsonPtr);
                 }
-                
+
                 // 4. Emit TEXT_MESSAGE_END
                 var messageEndJson = $"{{\"type\":\"TEXT_MESSAGE_END\",\"messageId\":\"{messageId}\",\"timestamp\":{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}}}";
                 var messageEndPtr = Marshal.StringToCoTaskMemAnsi(messageEndJson);
                 callbackDelegate(context, messageEndPtr);
                 Marshal.FreeCoTaskMem(messageEndPtr);
-                
+
                 // 5. Emit RUN_FINISHED
                 var runFinishedJson = $"{{\"type\":\"RUN_FINISHED\",\"runId\":\"{runId}\",\"threadId\":\"{threadId}\",\"timestamp\":{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}}}";
                 var runFinishedPtr = Marshal.StringToCoTaskMemAnsi(runFinishedJson);
                 callbackDelegate(context, runFinishedPtr);
                 Marshal.FreeCoTaskMem(runFinishedPtr);
-                
+
                 var endCallback = Marshal.GetDelegateForFunctionPointer<StreamCallback>(callback);
                 endCallback(context, IntPtr.Zero);
             }
@@ -545,8 +550,8 @@ public static partial class NativeExports
 
                 var callbackDelegate = Marshal.GetDelegateForFunctionPointer<StreamCallback>(callback);
 
-                var streamResult = await conversation.SendStreamingAsync(aguiInput);
-                await foreach (var evt in streamResult.EventStream)
+                // Use new AGUI RunStreamingAsync overload (returns BaseEvent stream)
+                await foreach (var evt in conversation.RunStreamingAsync(aguiInput))
                 {
                     string eventJson = SerializeBaseEvent(evt);
                     var eventJsonPtr = Marshal.StringToCoTaskMemAnsi(eventJson);
@@ -610,19 +615,24 @@ public static partial class NativeExports
             {
                 var callbackDelegate = Marshal.GetDelegateForFunctionPointer<StreamCallback>(callback);
 
-                // Use the simple streaming method with a custom output handler
-                await conversation.SendStreamingWithOutputAsync(message, text =>
+                // Use new AIAgent RunStreamingAsync interface with simple text extraction
+                var userMessage = new ChatMessage(ChatRole.User, message);
+                await foreach (var update in conversation.RunStreamingAsync([userMessage]))
                 {
-                    if (!string.IsNullOrEmpty(text))
+                    // Extract text content from updates
+                    foreach (var content in update.Contents ?? [])
                     {
-                        // Send plain text content as simple JSON
-                        var contentJson = $"{{\"type\":\"CONTENT\",\"text\":{System.Text.Json.JsonSerializer.Serialize(text, HPDJsonContext.Default.String)}}}";
-                        var contentPtr = Marshal.StringToCoTaskMemAnsi(contentJson);
-                        callbackDelegate(context, contentPtr);
-                        Marshal.FreeCoTaskMem(contentPtr);
+                        if (content is TextContent textContent && !string.IsNullOrEmpty(textContent.Text))
+                        {
+                            // Send plain text content as simple JSON
+                            var contentJson = $"{{\"type\":\"CONTENT\",\"text\":{System.Text.Json.JsonSerializer.Serialize(textContent.Text, HPDJsonContext.Default.String)}}}";
+                            var contentPtr = Marshal.StringToCoTaskMemAnsi(contentJson);
+                            callbackDelegate(context, contentPtr);
+                            Marshal.FreeCoTaskMem(contentPtr);
+                        }
                     }
-                });
-                
+                }
+
                 // Signal end of stream
                 callbackDelegate(context, IntPtr.Zero);
             }
@@ -685,11 +695,11 @@ public static partial class NativeExports
 
                 var callbackDelegate = Marshal.GetDelegateForFunctionPointer<StreamCallback>(callback);
 
-                var streamResult = await conversation.SendStreamingAsync(aguiInput);
-                await foreach (var evt in streamResult.EventStream)
+                // Use new AGUI RunStreamingAsync overload (returns BaseEvent stream)
+                await foreach (var evt in conversation.RunStreamingAsync(aguiInput))
                 {
                     // Only send text content for simple mode
-                    if (evt is TextMessageContentEvent textEvt)
+                    if (evt is TextMessageContentEvent textEvt && !string.IsNullOrEmpty(textEvt.Delta))
                     {
                         var contentJson = $"{{\"type\":\"CONTENT\",\"text\":{System.Text.Json.JsonSerializer.Serialize(textEvt.Delta, HPDJsonContext.Default.String)}}}";
                         var contentPtr = Marshal.StringToCoTaskMemAnsi(contentJson);
@@ -713,7 +723,54 @@ public static partial class NativeExports
     }
 
     /// <summary>
-    /// Serializes BaseEvent to JSON for streaming
+    /// Serializes AgentRunResponseUpdate to JSON for streaming (AIAgent interface)
+    /// </summary>
+    private static string SerializeAgentUpdate(AgentRunResponseUpdate update)
+    {
+        try
+        {
+            // Simple JSON serialization of key properties
+            var jsonBuilder = new StringBuilder("{");
+            jsonBuilder.Append($"\"agentId\":\"{update.AgentId}\",");
+            jsonBuilder.Append($"\"messageId\":\"{update.MessageId}\",");
+            jsonBuilder.Append($"\"role\":\"{update.Role}\",");
+            jsonBuilder.Append($"\"authorName\":\"{update.AuthorName}\",");
+
+            if (update.Contents != null && update.Contents.Count > 0)
+            {
+                jsonBuilder.Append("\"contents\":[");
+                var contentList = new List<string>();
+                foreach (var content in update.Contents)
+                {
+                    if (content is TextContent textContent)
+                    {
+                        contentList.Add($"{{\"type\":\"text\",\"text\":{JsonSerializer.Serialize(textContent.Text)}}}");
+                    }
+                    else if (content is FunctionCallContent funcCall)
+                    {
+                        contentList.Add($"{{\"type\":\"function_call\",\"name\":\"{funcCall.Name}\",\"callId\":\"{funcCall.CallId}\"}}");
+                    }
+                    else if (content is FunctionResultContent funcResult)
+                    {
+                        contentList.Add($"{{\"type\":\"function_result\",\"callId\":\"{funcResult.CallId}\"}}");
+                    }
+                }
+                jsonBuilder.Append(string.Join(",", contentList));
+                jsonBuilder.Append("]");
+            }
+
+            jsonBuilder.Append("}");
+            return jsonBuilder.ToString();
+        }
+        catch
+        {
+            // Fallback to minimal JSON if serialization fails
+            return $"{{\"agentId\":\"{update.AgentId}\",\"messageId\":\"{update.MessageId}\"}}";
+        }
+    }
+
+    /// <summary>
+    /// Serializes BaseEvent to JSON for streaming (AGUI protocol)
     /// </summary>
     private static string SerializeBaseEvent(BaseEvent evt)
     {

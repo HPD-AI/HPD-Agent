@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
+using Microsoft.Agents.AI;
 using System.Diagnostics.CodeAnalysis;
 using System.Collections.Concurrent;
 using A2A;
@@ -115,16 +116,18 @@ projectsApi.MapDelete("/{projectId}/conversations/{conversationId}", (string pro
 var agentApi = app.MapGroup("/agent").WithTags("Agent");
 
 // ✨ SIMPLIFIED: Context-aware chat (no complex setup)
-agentApi.MapPost("/projects/{projectId}/conversations/{conversationId}/chat", 
+agentApi.MapPost("/projects/{projectId}/conversations/{conversationId}/chat",
     async (string projectId, string conversationId, ChatRequest request, ProjectManager pm) =>
 {
     if (pm.GetConversation(projectId, conversationId) is not { } conversation)
         return Results.NotFound();
 
-    // 🚀 ONE LINE: Everything handled by conversation
-    // For future document support: conversation.SendAsync(request.Message, documentPaths: request.DocumentPaths)
-    var response = await conversation.SendAsync(request.Message);
-    return Results.Ok(ToAgentResponse(response));
+    // 🚀 Use new AIAgent RunAsync interface
+    var userMessage = new ChatMessage(ChatRole.User, request.Message);
+    var agentResponse = await conversation.RunAsync([userMessage]);
+
+    // Convert AgentRunResponse to our API response format
+    return Results.Ok(ToAgentResponse(agentResponse));
 });
 
 // ✨ NEW: AG-UI Protocol streaming endpoint (using RunAgentInput overload)
@@ -148,28 +151,22 @@ agentApi.MapPost("/projects/{projectId}/conversations/{conversationId}/stream",
 
     try
     {
-        // ✅ Use the new Conversation.SendStreamingAsync(RunAgentInput) overload
-        var streamResult = await conversation.SendStreamingAsync(aguiInput, context.RequestAborted);
-
-        await foreach (var baseEvent in streamResult.EventStream.WithCancellation(context.RequestAborted))
+        // ✅ Use the new Conversation.RunStreamingAsync(RunAgentInput) AGUI overload
+        await foreach (var update in conversation.RunStreamingAsync(aguiInput, context.RequestAborted))
         {
-            // Stream the BaseEvent as JSON directly (AG-UI format)
-            // Use the runtime type for proper serialization of derived properties
+            // Serialize AgentRunResponseUpdate to JSON
             var serializerOptions = new JsonSerializerOptions
             {
                 TypeInfoResolver = JsonResolvers.Combined,
                 DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
                 Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
             };
-            var eventJson = System.Text.Json.JsonSerializer.Serialize(baseEvent, baseEvent.GetType(), serializerOptions);
+            var eventJson = System.Text.Json.JsonSerializer.Serialize(update, update.GetType(), serializerOptions);
 
             // Write complete SSE event in one operation to prevent truncation
             await writer.WriteAsync($"data: {eventJson}\n\n");
             await writer.FlushAsync();
         }
-
-        // Wait for final result to update conversation
-        await streamResult.FinalResult;
     }
     catch (Exception ex)
     {
@@ -208,42 +205,42 @@ agentApi.MapGet("/projects/{projectId}/conversations/{conversationId}/ws",
             var receiveResult = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
             var userMessage = System.Text.Encoding.UTF8.GetString(buffer, 0, receiveResult.Count);
 
-            // Use new streaming API that returns ConversationStreamingResult
-            var streamResult = await conversation.SendStreamingAsync(userMessage, null, null, CancellationToken.None);
-            
-            bool isFinished = false;
-            await foreach (var evt in streamResult.EventStream.WithCancellation(CancellationToken.None))
-            {
-                switch (evt)
-                {
-                    case TextMessageContentEvent textEvent:
-                        if (!string.IsNullOrEmpty(textEvent.Delta))
-                        {
-                            var response = new StreamContentResponse(textEvent.Delta);
-                            var message = System.Text.Json.JsonSerializer.Serialize(response, AppJsonSerializerContext.Default.StreamContentResponse);
-                            var messageBytes = System.Text.Encoding.UTF8.GetBytes(message);
-                            await webSocket.SendAsync(
-                                new ArraySegment<byte>(messageBytes),
-                                System.Net.WebSockets.WebSocketMessageType.Text,
-                                true,
-                                CancellationToken.None);
-                        }
-                        break;
+            // Use new AIAgent RunStreamingAsync interface
+            var chatMessage = new ChatMessage(ChatRole.User, userMessage);
 
-                    case StepFinishedEvent:
-                        // Mark as finished when we see a step finished event
-                        isFinished = true;
-                        break;
+            bool isFinished = false;
+            long totalTokens = 0;
+            await foreach (var update in conversation.RunStreamingAsync([chatMessage], cancellationToken: CancellationToken.None))
+            {
+                // Extract text content from update
+                foreach (var content in update.Contents ?? [])
+                {
+                    if (content is TextContent textContent && !string.IsNullOrEmpty(textContent.Text))
+                    {
+                        var response = new StreamContentResponse(textContent.Text);
+                        var message = System.Text.Json.JsonSerializer.Serialize(response, AppJsonSerializerContext.Default.StreamContentResponse);
+                        var messageBytes = System.Text.Encoding.UTF8.GetBytes(message);
+                        await webSocket.SendAsync(
+                            new ArraySegment<byte>(messageBytes),
+                            System.Net.WebSockets.WebSocketMessageType.Text,
+                            true,
+                            CancellationToken.None);
+                    }
                 }
+
+                // Note: AgentRunResponseUpdate doesn't have Usage property
+                // Usage will be available in the final response, not individual updates
             }
 
+            // Mark as finished after stream completes
+            isFinished = true;
+
             // Send final metadata as completion event
-            var finalResult = await streamResult.FinalResult;
             var metadataResponse = new StreamMetadataResponse(
-                finalResult.Usage?.TotalTokens ?? 0,
-                finalResult.Duration.TotalSeconds,
-                finalResult.RespondingAgent.Name,
-                finalResult.Usage?.EstimatedCost);
+                totalTokens,
+                0.0, // Duration not available from AgentRunResponseUpdate
+                conversation.Agent.Config?.Name ?? "AI Assistant",
+                null); // Cost not available from AgentRunResponseUpdate
             var metadataMessage = System.Text.Json.JsonSerializer.Serialize(metadataResponse, AppJsonSerializerContext.Default.StreamMetadataResponse);
             var metadataBytes = System.Text.Encoding.UTF8.GetBytes(metadataMessage);
             await webSocket.SendAsync(
@@ -303,21 +300,13 @@ static ConversationWithMessagesDto ToConversationWithMessagesDto(Conversation c)
         ExtractTextFromMessage(msg),  // ✨ Use helper method to extract text
         DateTime.UtcNow)).ToArray());
 
-static AgentChatResponse ToAgentResponse(ChatResponse response) => new(
-    Response: ExtractTextFromResponse(response),  // ✨ Simple like console app
-    Model: response.ModelId ?? "google/gemini-2.5-pro", 
+static AgentChatResponse ToAgentResponse(AgentRunResponse response) => new(
+    Response: response.Text,  // ✨ Use built-in Text property from AgentRunResponse
+    Model: "google/gemini-2.5-pro", // ✨ AgentRunResponse doesn't expose ModelId, use default
     Usage: new UsageInfo(
         response.Usage?.InputTokenCount ?? 0,
-        response.Usage?.OutputTokenCount ?? 0, 
+        response.Usage?.OutputTokenCount ?? 0,
         response.Usage?.TotalTokenCount ?? 0));
-
-// ✨ SIMPLE: Helper methods like console app
-static string ExtractTextFromResponse(ChatResponse response)
-{
-    var lastMessage = response.Messages.LastOrDefault(m => m.Role == ChatRole.Assistant);
-    var textContent = lastMessage?.Contents.OfType<TextContent>().FirstOrDefault()?.Text;
-    return textContent ?? "No response received.";
-}
 
 static string ExtractTextFromMessage(ChatMessage message)
 {
@@ -395,7 +384,7 @@ public class ProjectManager
             .WithTavilyWebSearch()    
             .WithPlugin<MathPlugin>()
             .WithMCP("./MCP.json")
-            .WithMaxFunctionCalls(6)
+            .WithMaxFunctionCallTurns(6)
             .Build();
     }
 

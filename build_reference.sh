@@ -14,6 +14,9 @@ REPOS=(
     "https://github.com/ag-ui-protocol/ag-ui.git"
     "https://github.com/google-gemini/gemini-cli.git"
     "https://github.com/openai/codex.git"
+    "https://github.com/microsoft/kernel-memory.git"
+    "https://github.com/HKUDS/LightRAG.git"
+
     # Add more repo URLs as needed
 )
 

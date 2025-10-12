@@ -12,11 +12,21 @@ internal class PluginInfo
     public string Description { get; set; } = string.Empty;
     public string Namespace { get; set; } = string.Empty;
     public List<FunctionInfo> Functions { get; set; } = new();
-    
+
     /// <summary>
     /// Whether any functions have conditional logic requiring context resolution
     /// </summary>
     public bool RequiresContext => Functions.Any(f => f.RequiresContext);
+
+    /// <summary>
+    /// Whether this plugin has the [PluginScope] attribute
+    /// </summary>
+    public bool HasScopeAttribute { get; set; }
+
+    /// <summary>
+    /// Description from [PluginScope] attribute (if present)
+    /// </summary>
+    public string? ScopeDescription { get; set; }
 }
 
 /// <summary>

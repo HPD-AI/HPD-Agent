@@ -23,29 +23,58 @@ public class MCPClientManager : IDisposable
     /// <summary>
     /// Loads MCP tools from the specified manifest file
     /// </summary>
-    public async Task<List<AIFunction>> LoadToolsFromManifestAsync(string manifestPath, CancellationToken cancellationToken = default)
+    /// <param name="manifestPath">Path to the MCP manifest file</param>
+    /// <param name="enableScoping">Enable plugin scoping (groups tools by server behind containers)</param>
+    /// <param name="maxFunctionNamesInDescription">Max function names to show in container descriptions</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    public async Task<List<AIFunction>> LoadToolsFromManifestAsync(
+        string manifestPath,
+        bool enableScoping = false,
+        int maxFunctionNamesInDescription = 10,
+        CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Loading MCP tools from manifest: {ManifestPath}", manifestPath);
-        
+        _logger.LogInformation("Loading MCP tools from manifest: {ManifestPath} (Scoping: {Scoping})",
+            manifestPath, enableScoping);
+
         var manifest = await LoadManifestAsync(manifestPath, cancellationToken);
         var allTools = new List<AIFunction>();
-        
+
         var enabledServers = manifest.Servers.Where(s => s.Enabled).ToList();
         _logger.LogInformation("Found {Count} enabled servers in manifest", enabledServers.Count);
-        
+
         foreach (var serverConfig in enabledServers)
         {
             try
             {
                 var tools = await LoadServerToolsAsync(serverConfig, cancellationToken);
-                allTools.AddRange(tools);
-                _logger.LogInformation("Loaded {Count} tools from server '{ServerName}'", tools.Count, serverConfig.Name);
+
+                if (enableScoping && tools.Count > 0)
+                {
+                    // Wrap tools with container for this server
+                    var (container, scopedTools) = ExternalToolScopingWrapper.WrapMCPServerTools(
+                        serverConfig.Name,
+                        tools,
+                        maxFunctionNamesInDescription);
+
+                    allTools.Add(container);
+                    allTools.AddRange(scopedTools);
+
+                    _logger.LogInformation("Loaded {Count} tools from server '{ServerName}' (scoped with container '{ContainerName}')",
+                        tools.Count, serverConfig.Name, container.Name);
+                }
+                else
+                {
+                    // Original behavior - no scoping
+                    allTools.AddRange(tools);
+                    _logger.LogInformation("Loaded {Count} tools from server '{ServerName}'",
+                        tools.Count, serverConfig.Name);
+                }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to load tools from server '{ServerName}': {Error}", 
+                _logger.LogWarning(ex, "Failed to load tools from server '{ServerName}': {Error}",
                     serverConfig.Name, ex.Message);
-                
+
                 if (_options.FailOnServerError)
                 {
                     throw new InvalidOperationException($"Failed to load server '{serverConfig.Name}'", ex);
@@ -53,39 +82,67 @@ public class MCPClientManager : IDisposable
                 // Continue with other servers if FailOnServerError is false
             }
         }
-        
-        _logger.LogInformation("Successfully loaded {TotalCount} MCP tools from {ServerCount} servers", 
+
+        _logger.LogInformation("Successfully loaded {TotalCount} MCP tools from {ServerCount} servers",
             allTools.Count, _clients.Count);
-        
+
         return allTools;
     }
 
     /// <summary>
     /// Loads MCP tools from manifest content
     /// </summary>
-    public async Task<List<AIFunction>> LoadToolsFromManifestContentAsync(string manifestContent, CancellationToken cancellationToken = default)
+    /// <param name="manifestContent">JSON content of the MCP manifest</param>
+    /// <param name="enableScoping">Enable plugin scoping (groups tools by server behind containers)</param>
+    /// <param name="maxFunctionNamesInDescription">Max function names to show in container descriptions</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    public async Task<List<AIFunction>> LoadToolsFromManifestContentAsync(
+        string manifestContent,
+        bool enableScoping = false,
+        int maxFunctionNamesInDescription = 10,
+        CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Loading MCP tools from manifest content");
-        
+        _logger.LogInformation("Loading MCP tools from manifest content (Scoping: {Scoping})", enableScoping);
+
         var manifest = ParseManifest(manifestContent);
         var allTools = new List<AIFunction>();
-        
+
         var enabledServers = manifest.Servers.Where(s => s.Enabled).ToList();
         _logger.LogInformation("Found {Count} enabled servers in manifest", enabledServers.Count);
-        
+
         foreach (var serverConfig in enabledServers)
         {
             try
             {
                 var tools = await LoadServerToolsAsync(serverConfig, cancellationToken);
-                allTools.AddRange(tools);
-                _logger.LogInformation("Loaded {Count} tools from server '{ServerName}'", tools.Count, serverConfig.Name);
+
+                if (enableScoping && tools.Count > 0)
+                {
+                    // Wrap tools with container for this server
+                    var (container, scopedTools) = ExternalToolScopingWrapper.WrapMCPServerTools(
+                        serverConfig.Name,
+                        tools,
+                        maxFunctionNamesInDescription);
+
+                    allTools.Add(container);
+                    allTools.AddRange(scopedTools);
+
+                    _logger.LogInformation("Loaded {Count} tools from server '{ServerName}' (scoped with container '{ContainerName}')",
+                        tools.Count, serverConfig.Name, container.Name);
+                }
+                else
+                {
+                    // Original behavior - no scoping
+                    allTools.AddRange(tools);
+                    _logger.LogInformation("Loaded {Count} tools from server '{ServerName}'",
+                        tools.Count, serverConfig.Name);
+                }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to load tools from server '{ServerName}': {Error}", 
+                _logger.LogWarning(ex, "Failed to load tools from server '{ServerName}': {Error}",
                     serverConfig.Name, ex.Message);
-                
+
                 if (_options.FailOnServerError)
                 {
                     throw new InvalidOperationException($"Failed to load server '{serverConfig.Name}'", ex);
@@ -93,10 +150,10 @@ public class MCPClientManager : IDisposable
                 // Continue with other servers if FailOnServerError is false
             }
         }
-        
-        _logger.LogInformation("Successfully loaded {TotalCount} MCP tools from {ServerCount} servers", 
+
+        _logger.LogInformation("Successfully loaded {TotalCount} MCP tools from {ServerCount} servers",
             allTools.Count, _clients.Count);
-        
+
         return allTools;
     }
 

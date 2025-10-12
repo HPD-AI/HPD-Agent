@@ -87,7 +87,19 @@ if (registeredTools != null && registeredTools.Count > 0)
     Console.WriteLine("🔧 Registered tools:");
     foreach (var t in registeredTools.OfType<AIFunction>())
     {
-        Console.WriteLine($" - {t.Name} : {t.Description}");
+        // Check for plugin scoping metadata
+        var isContainer = t.AdditionalProperties?.TryGetValue("IsContainer", out var containerVal) == true
+            && containerVal is bool isCont && isCont;
+        var parentPlugin = t.AdditionalProperties?.TryGetValue("ParentPlugin", out var parentVal) == true
+            && parentVal is string parent ? parent : null;
+        var pluginName = t.AdditionalProperties?.TryGetValue("PluginName", out var pluginNameVal) == true
+            && pluginNameVal is string pn ? pn : null;
+
+        var metadata = "";
+        if (isContainer) metadata = " [CONTAINER]";
+        else if (parentPlugin != null) metadata = $" [Plugin: {parentPlugin}]";
+
+        Console.WriteLine($" - {t.Name}{metadata} : {t.Description}");
     }
 }
 else
@@ -124,7 +136,7 @@ static Task<(Project, Conversation, Agent)> CreateAIAssistant(IConfiguration con
         Provider = new ProviderConfig
         {
             Provider = ChatProvider.OpenRouter,
-            ModelName = "z-ai/glm-4.6", // 🧠 Reasoning model - FREE on OpenRouter!
+            ModelName = "google/gemini-2.5-flash-lite", // 🧠 Reasoning model - FREE on OpenRouter!
             // Alternative reasoning models:
             // "deepseek/deepseek-r1-distill-qwen-32b" - smaller/faster
             // "openai/o1" - OpenAI's reasoning model (expensive)
@@ -140,6 +152,16 @@ static Task<(Project, Conversation, Agent)> CreateAIAssistant(IConfiguration con
         Mcp = new McpConfig
         {
             ManifestPath = "./MCP.json"
+        },
+        // 🎯 Plugin Scoping: OFF by default (set Enabled = true to enable)
+        // When enabled, plugin functions are hidden behind container functions to reduce token usage by up to 87.5%
+        // The agent must first call the container (e.g., MathPlugin) before individual functions (Add, Multiply) become visible
+        PluginScoping = new PluginScopingConfig
+        {
+            Enabled = true,              // Scope C# plugins (MathPlugin, etc.)
+            ScopeMCPTools = false,        // Scope MCP tools by server (MCP_filesystem, MCP_github, etc.)
+            ScopeFrontendTools = false,   // Scope Frontend/AGUI tools (FrontendTools container)
+            MaxFunctionNamesInDescription = 10  // Max function names shown in container descriptions
         }
     };
 
@@ -235,24 +257,62 @@ static async Task StreamResponse(Conversation conversation, string message, stri
     // Create user message for the new RunStreamingAsync API
     var userMessage = new ChatMessage(ChatRole.User, message);
 
+    // Track if we've seen reasoning content
+    bool hasReasoningContent = false;
+
     // Use the new AIAgent interface RunStreamingAsync
     await foreach (var update in conversation.RunStreamingAsync([userMessage]))
     {
-        // Extract text content from the update and display it
+        // Extract and display all content types from the update
         foreach (var content in update.Contents ?? [])
         {
+            // Display text content (final answer)
             if (content is TextContent textContent && !string.IsNullOrEmpty(textContent.Text))
             {
                 Console.Write(textContent.Text);
             }
+            // Display reasoning content (thinking process)
+            else if (content is TextReasoningContent reasoningContent)
+            {
+                if (!hasReasoningContent)
+                {
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.Write("\n💭 Thinking: ");
+                    Console.ResetColor();
+                    hasReasoningContent = true;
+                }
+                
+                Console.ForegroundColor = ConsoleColor.DarkGray;
+                Console.Write(reasoningContent.Text);
+                Console.ResetColor();
+            }
+            // Display tool calls
+            else if (content is FunctionCallContent toolCall)
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.Write($"\n🔧 Calling tool: {toolCall.Name}");
+                Console.ResetColor();
+            }
+            // Display tool results
+            else if (content is FunctionResultContent toolResult)
+            {
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.Write($" ✓");
+                Console.ResetColor();
+            }
+            // Display errors
+            else if (content is ErrorContent errorContent)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"\n❌ Error: {errorContent.Message}");
+                Console.ResetColor();
+            }
         }
     }
 
-    // Get final usage stats from the conversation's last response
-    var lastMessage = conversation.Messages.LastOrDefault(m => m.Role == ChatRole.Assistant);
-    if (lastMessage != null)
+    if (hasReasoningContent)
     {
-        Console.Write($" [Agent: {conversation.Agent.Config?.Name ?? "AI Assistant"}]");
+        Console.WriteLine();
     }
 }
 

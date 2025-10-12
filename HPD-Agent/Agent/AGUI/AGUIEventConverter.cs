@@ -94,7 +94,15 @@ public class AGUIEventConverter
     /// Converts AGUI RunAgentInput tools to Extensions.AI ChatOptions
     /// Supports both frontend tools (from AGUI input) and backend tools (from existing ChatOptions)
     /// </summary>
-    public ChatOptions ConvertToExtensionsAIChatOptions(RunAgentInput input, ChatOptions? existingOptions = null)
+    /// <param name="input">AGUI run agent input containing frontend tools</param>
+    /// <param name="existingOptions">Existing chat options with backend tools</param>
+    /// <param name="enableFrontendToolScoping">Enable plugin scoping for frontend tools (groups them in a container)</param>
+    /// <param name="maxFunctionNamesInDescription">Maximum function names to show in container description</param>
+    public ChatOptions ConvertToExtensionsAIChatOptions(
+        RunAgentInput input,
+        ChatOptions? existingOptions = null,
+        bool enableFrontendToolScoping = false,
+        int maxFunctionNamesInDescription = 10)
     {
         var options = existingOptions ?? new ChatOptions
         {
@@ -115,7 +123,7 @@ public class AGUIEventConverter
         // Convert AGUI tools to frontend tool stubs
         var frontendTools = new List<AIFunction>();
         var frontendToolNames = new HashSet<string>();
-        
+
         foreach (var tool in input.Tools)
         {
             // Check for tool name conflicts
@@ -125,16 +133,39 @@ public class AGUIEventConverter
                     $"Frontend tool '{tool.Name}' conflicts with backend tool name. " +
                     "Please ensure frontend and backend tool names are unique.");
             }
-            
+
             // Create frontend tool stub that follows AGUI's termination pattern
             var frontendStub = CreateFrontendToolStub(tool);
             frontendTools.Add(frontendStub);
             frontendToolNames.Add(tool.Name);
-            
+
             // Track this as a frontend tool for event processing
             _toolTracker.TrackFrontendTool("", tool.Name); // We'll get the actual callId later
         }
-        
+
+        // Apply plugin scoping to frontend tools if enabled
+        if (enableFrontendToolScoping && frontendTools.Count > 0)
+        {
+            var (container, scopedTools) = ExternalToolScopingWrapper.WrapFrontendTools(
+                frontendTools,
+                maxFunctionNamesInDescription);
+
+            // Track container as frontend tool too (it triggers expansion)
+            _toolTracker.TrackFrontendTool("", container.Name);
+
+            // Replace with scoped versions (container + scoped tools)
+            frontendTools = new List<AIFunction> { container };
+            frontendTools.AddRange(scopedTools);
+
+            // Update tracking with scoped tool names
+            frontendToolNames.Clear();
+            frontendToolNames.Add(container.Name);
+            foreach (var tool in scopedTools)
+            {
+                frontendToolNames.Add(tool.Name);
+            }
+        }
+
         // Track backend tools
         foreach (var backendTool in backendTools)
         {

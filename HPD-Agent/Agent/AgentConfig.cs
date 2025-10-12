@@ -69,6 +69,12 @@ public class AgentConfig
     /// Configuration for tool selection behavior (how the LLM chooses which tools to use).
     /// </summary>
     public ToolSelectionConfig? ToolSelection { get; set; }
+
+    /// <summary>
+    /// Configuration for plugin scoping - hierarchical organization of plugin functions to reduce token usage.
+    /// When enabled, plugin functions are hidden behind container functions, reducing initial tool list by up to 87.5%.
+    /// </summary>
+    public PluginScopingConfig? PluginScoping { get; set; }
 }
 
 #region Supporting Configuration Classes
@@ -938,6 +944,40 @@ public class MistralSettings
     /// API key for the Mistral AI platform.
     /// </summary>
     public string? ApiKey { get; set; }
+}
+
+/// <summary>
+/// Configuration for plugin scoping feature.
+/// Controls hierarchical organization of plugin functions to reduce token usage.
+/// </summary>
+public class PluginScopingConfig
+{
+    /// <summary>
+    /// Enable plugin scoping for C# plugins. When true, plugin functions are hidden behind container functions.
+    /// Default: false (disabled - all functions visible immediately).
+    /// </summary>
+    public bool Enabled { get; set; } = false;
+
+    /// <summary>
+    /// Enable scoping for MCP tools. When true, tools from each MCP server are grouped behind a container.
+    /// Example: MCP_filesystem container contains ReadFile, WriteFile, etc.
+    /// Default: false (MCP tools always visible).
+    /// </summary>
+    public bool ScopeMCPTools { get; set; } = false;
+
+    /// <summary>
+    /// Enable scoping for Frontend (AGUI) tools. When true, all frontend tools are grouped in a FrontendTools container.
+    /// Frontend tools are human-in-the-loop tools executed by the UI.
+    /// Default: false (frontend tools always visible).
+    /// </summary>
+    public bool ScopeFrontendTools { get; set; } = false;
+
+    /// <summary>
+    /// Maximum number of function names to include in auto-generated container descriptions.
+    /// For template descriptions like "MCP Server 'filesystem'. Contains 15 functions: ReadFile, WriteFile, ..."
+    /// Default: 10.
+    /// </summary>
+    public int MaxFunctionNamesInDescription { get; set; } = 10;
 }
 
 #endregion

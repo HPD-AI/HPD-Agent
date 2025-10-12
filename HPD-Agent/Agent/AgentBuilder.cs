@@ -398,6 +398,16 @@ public class AgentBuilder
             pluginFunctions.AddRange(functions);
         }
 
+        // Filter out container functions if plugin scoping is disabled
+        // Container functions are only needed when scoping is enabled for the two-turn expansion flow
+        if (_config.PluginScoping?.Enabled != true)
+        {
+            pluginFunctions = pluginFunctions.Where(f =>
+                !(f.AdditionalProperties?.TryGetValue("IsContainer", out var isContainer) == true &&
+                  isContainer is bool isCont && isCont)
+            ).ToList();
+        }
+
         // Register function-to-plugin mappings for scoped filters
         RegisterFunctionPluginMappings(pluginFunctions);
 
@@ -409,14 +419,24 @@ public class AgentBuilder
                 List<AIFunction> mcpTools;
                 if (_config.Mcp != null && !string.IsNullOrEmpty(_config.Mcp.ManifestPath))
                 {
+                    // Get scoping configuration
+                    var enableMCPScoping = _config.PluginScoping?.ScopeMCPTools ?? false;
+                    var maxFunctionNames = _config.PluginScoping?.MaxFunctionNamesInDescription ?? 10;
+
                     // Check if this is actually content vs path based on if it starts with '{'
                     if (_config.Mcp.ManifestPath.TrimStart().StartsWith("{"))
                     {
-                        mcpTools = McpClientManager.LoadToolsFromManifestContentAsync(_config.Mcp.ManifestPath).GetAwaiter().GetResult();
+                        mcpTools = McpClientManager.LoadToolsFromManifestContentAsync(
+                            _config.Mcp.ManifestPath,
+                            enableMCPScoping,
+                            maxFunctionNames).GetAwaiter().GetResult();
                     }
                     else
                     {
-                        mcpTools = McpClientManager.LoadToolsFromManifestAsync(_config.Mcp.ManifestPath).GetAwaiter().GetResult();
+                        mcpTools = McpClientManager.LoadToolsFromManifestAsync(
+                            _config.Mcp.ManifestPath,
+                            enableMCPScoping,
+                            maxFunctionNames).GetAwaiter().GetResult();
                     }
                 }
                 else

@@ -40,24 +40,29 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
     {
         var classDecl = (ClassDeclarationSyntax)context.Node;
         var semanticModel = context.SemanticModel;
-        
+
         var functions = classDecl.Members
             .OfType<MethodDeclarationSyntax>()
             .Where(method => HasAIFunctionAttribute(method, semanticModel))
             .Select(method => AnalyzeFunction(method, semanticModel, context))
             .Where(func => func != null)
             .ToList();
-        
+
         if (!functions.Any()) return null;
-        
+
         var namespaceName = GetNamespace(classDecl);
-        
+
+        // Check for [PluginScope] attribute
+        var (hasScopeAttribute, scopeDescription) = GetPluginScopeAttribute(classDecl);
+
         return new PluginInfo
         {
             Name = classDecl.Identifier.ValueText,
             Description = $"Plugin containing {functions.Count} AI functions.",
             Namespace = namespaceName,
-            Functions = functions!
+            Functions = functions!,
+            HasScopeAttribute = hasScopeAttribute,
+            ScopeDescription = scopeDescription
         };
     }
     
@@ -75,12 +80,18 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
                 var first = group.First()!;
                 var allFunctions = group.SelectMany(p => p!.Functions).ToList();
 
+                // Preserve HasScopeAttribute and ScopeDescription from any partial class that has it
+                var hasScopeAttribute = group.Any(p => p!.HasScopeAttribute);
+                var scopeDescription = group.FirstOrDefault(p => p!.HasScopeAttribute)?.ScopeDescription;
+
                 return new PluginInfo
                 {
                     Name = first.Name,
                     Description = $"Plugin containing {allFunctions.Count} AI functions.",
                     Namespace = first.Namespace,
-                    Functions = allFunctions
+                    Functions = allFunctions,
+                    HasScopeAttribute = hasScopeAttribute,
+                    ScopeDescription = scopeDescription
                 };
             })
             .ToList();
@@ -146,7 +157,15 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
         sb.AppendLine($"    public static List<AIFunction> CreatePlugin({plugin.Name} instance, IPluginMetadataContext? context = null)");
         sb.AppendLine("    {");
         sb.AppendLine("        var functions = new List<AIFunction>();");
-        
+
+        // Add container function first if plugin is scoped
+        if (plugin.HasScopeAttribute)
+        {
+            sb.AppendLine();
+            sb.AppendLine("        // Container function for plugin scoping");
+            sb.AppendLine($"        functions.Add(Create{plugin.Name}Container());");
+        }
+
         if (unconditionalFunctions.Any())
         {
             sb.AppendLine();
@@ -212,9 +231,22 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
         sb.AppendLine($"    [System.CodeDom.Compiler.GeneratedCodeAttribute(\"HPDPluginSourceGenerator\", \"1.0.0.0\")]");
         sb.AppendLine($"    public static partial class {plugin.Name}Registration");
         sb.AppendLine("    {");
-        
+
+        // Generate plugin metadata accessor (always generated for consistency)
+        sb.AppendLine(GeneratePluginMetadataMethod(plugin));
+        sb.AppendLine();
+
+        // Generate container function and helper if plugin is scoped
+        if (plugin.HasScopeAttribute)
+        {
+            sb.AppendLine(GenerateContainerFunction(plugin));
+            sb.AppendLine();
+            sb.AppendLine(GenerateEmptySchemaMethod());
+            sb.AppendLine();
+        }
+
         sb.AppendLine(GenerateCreatePluginMethod(plugin));
-        
+
         foreach (var function in plugin.Functions)
         {
             sb.AppendLine();
@@ -423,13 +455,27 @@ $@"({asyncKeyword} (arguments, cancellationToken) =>
     options.AppendLine($"                RequiresPermission = {function.RequiresPermission.ToString().ToLower()},");
         options.AppendLine($"                Validator = Create{function.Name}Validator(),");
         options.AppendLine($"                SchemaProvider = {schemaProviderCode},");
-        options.Append($"                ParameterDescriptions = {GenerateParameterDescriptions(function)}");
-        
-        return 
+        options.AppendLine($"                ParameterDescriptions = {GenerateParameterDescriptions(function)},");
+
+        // Add ParentPlugin metadata if plugin is scoped
+        if (plugin.HasScopeAttribute)
+        {
+            options.AppendLine("                AdditionalProperties = new Dictionary<string, object>");
+            options.AppendLine("                {");
+            options.AppendLine($"                    [\"ParentPlugin\"] = \"{plugin.Name}\",");
+            options.AppendLine("                    [\"IsContainer\"] = false");
+            options.Append("                }");
+        }
+        else
+        {
+            options.Append("                AdditionalProperties = null");
+        }
+
+        return
 $@"HPDAIFunctionFactory.Create(
             new Func<AIFunctionArguments, CancellationToken, {returnType}>{invocationLogic},
             new HPDAIFunctionFactoryOptions
-            {{ 
+            {{
 {options}
             }}
         )";
@@ -1122,6 +1168,31 @@ private static string GenerateContextResolutionMethods(PluginInfo plugin)
     }
 
     /// <summary>
+    /// Detects [PluginScope] attribute on a class and extracts its description.
+    /// </summary>
+    private static (bool hasScopeAttribute, string? scopeDescription) GetPluginScopeAttribute(ClassDeclarationSyntax classDecl)
+    {
+        var scopeAttributes = classDecl.AttributeLists
+            .SelectMany(attrList => attrList.Attributes)
+            .Where(attr => attr.Name.ToString().Contains("PluginScope"));
+
+        foreach (var attr in scopeAttributes)
+        {
+            var arguments = attr.ArgumentList?.Arguments;
+            if (arguments.HasValue && arguments.Value.Count >= 1)
+            {
+                var description = ExtractStringLiteral(arguments.Value[0].Expression);
+                return (true, description);
+            }
+
+            // Attribute present but no description
+            return (true, null);
+        }
+
+        return (false, null);
+    }
+
+    /// <summary>
     /// Generates a manual JSON parser for AOT compatibility - no reflection needed!
     /// </summary>
     private static string GenerateJsonParser(FunctionInfo function, PluginInfo plugin)
@@ -1264,8 +1335,103 @@ private static string GenerateContextResolutionMethods(PluginInfo plugin)
     {
         if (string.IsNullOrEmpty(str) || char.IsLower(str[0]))
             return str;
-        
+
         return char.ToLower(str[0]) + str.Substring(1);
+    }
+
+    /// <summary>
+    /// Generates the GetPluginMetadata() method for plugin scoping support.
+    /// </summary>
+    private static string GeneratePluginMetadataMethod(PluginInfo plugin)
+    {
+        var sb = new StringBuilder();
+
+        var functionNamesArray = string.Join(", ", plugin.Functions.Select(f => $"\"{f.FunctionName}\""));
+        var description = plugin.HasScopeAttribute && !string.IsNullOrEmpty(plugin.ScopeDescription)
+            ? plugin.ScopeDescription
+            : plugin.Description;
+
+        sb.AppendLine("        private static PluginMetadata? _cachedMetadata;");
+        sb.AppendLine();
+        sb.AppendLine("        /// <summary>");
+        sb.AppendLine($"        /// Gets metadata for the {plugin.Name} plugin (used for scoping).");
+        sb.AppendLine("        /// </summary>");
+        sb.AppendLine("        public static PluginMetadata GetPluginMetadata()");
+        sb.AppendLine("        {");
+        sb.AppendLine("            return _cachedMetadata ??= new PluginMetadata");
+        sb.AppendLine("            {");
+        sb.AppendLine($"                Name = \"{plugin.Name}\",");
+        sb.AppendLine($"                Description = \"{description}\",");
+        sb.AppendLine($"                FunctionNames = new[] {{ {functionNamesArray} }},");
+        sb.AppendLine($"                FunctionCount = {plugin.Functions.Count},");
+        sb.AppendLine($"                HasScopeAttribute = {plugin.HasScopeAttribute.ToString().ToLower()}");
+        sb.AppendLine("            };");
+        sb.AppendLine("        }");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Generates the container function for a scoped plugin.
+    /// </summary>
+    private static string GenerateContainerFunction(PluginInfo plugin)
+    {
+        var sb = new StringBuilder();
+
+        var functionList = string.Join(", ", plugin.Functions.Select(f => f.FunctionName));
+        var description = !string.IsNullOrEmpty(plugin.ScopeDescription)
+            ? plugin.ScopeDescription
+            : plugin.Description;
+        var fullDescription = $"{description}. Contains {plugin.Functions.Count} functions: {functionList}";
+
+        sb.AppendLine("        /// <summary>");
+        sb.AppendLine($"        /// Container function for {plugin.Name} plugin scoping.");
+        sb.AppendLine("        /// </summary>");
+        sb.AppendLine($"        private static AIFunction Create{plugin.Name}Container()");
+        sb.AppendLine("        {");
+        sb.AppendLine("            return HPDAIFunctionFactory.Create(");
+        sb.AppendLine("                async (arguments, cancellationToken) =>");
+        sb.AppendLine("                {");
+        sb.AppendLine($"                    return \"{plugin.Name} expanded. Available functions: {functionList}\";");
+        sb.AppendLine("                },");
+        sb.AppendLine("                new HPDAIFunctionFactoryOptions");
+        sb.AppendLine("                {");
+        sb.AppendLine($"                    Name = \"{plugin.Name}\",");
+        sb.AppendLine($"                    Description = \"{fullDescription}\",");
+        sb.AppendLine("                    SchemaProvider = () => CreateEmptyContainerSchema(),");
+        sb.AppendLine("                    AdditionalProperties = new Dictionary<string, object>");
+        sb.AppendLine("                    {");
+        sb.AppendLine("                        [\"IsContainer\"] = true,");
+        sb.AppendLine($"                        [\"PluginName\"] = \"{plugin.Name}\",");
+        sb.AppendLine($"                        [\"FunctionNames\"] = new[] {{ {string.Join(", ", plugin.Functions.Select(f => $"\"{f.FunctionName}\""))} }},");
+        sb.AppendLine($"                        [\"FunctionCount\"] = {plugin.Functions.Count}");
+        sb.AppendLine("                    }");
+        sb.AppendLine("                });");
+        sb.AppendLine("        }");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Generates the CreateEmptyContainerSchema() helper method.
+    /// </summary>
+    private static string GenerateEmptySchemaMethod()
+    {
+        var sb = new StringBuilder();
+
+        sb.AppendLine("        /// <summary>");
+        sb.AppendLine("        /// Creates an empty JSON schema for container functions (no parameters).");
+        sb.AppendLine("        /// </summary>");
+        sb.AppendLine("        private static JsonElement CreateEmptyContainerSchema()");
+        sb.AppendLine("        {");
+        sb.AppendLine("            var schema = new JsonSchemaBuilder()");
+        sb.AppendLine("                .Type(SchemaValueType.Object)");
+        sb.AppendLine("                .Properties(new Dictionary<string, JsonSchema>())");
+        sb.AppendLine("                .Build();");
+        sb.AppendLine("            return JsonSerializer.SerializeToElement(schema, HPDJsonContext.Default.JsonSchema);");
+        sb.AppendLine("        }");
+
+        return sb.ToString();
     }
 
 

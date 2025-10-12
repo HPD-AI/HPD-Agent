@@ -55,6 +55,17 @@ public class HPDAIFunctionFactory
         public override string Description { get; }
         public override JsonElement JsonSchema { get; }
         public override MethodInfo? UnderlyingMethod => _method;
+        public override IReadOnlyDictionary<string, object?> AdditionalProperties
+        {
+            get
+            {
+                if (HPDOptions.AdditionalProperties == null)
+                    return base.AdditionalProperties;
+
+                // Return the dictionary as IReadOnlyDictionary
+                return HPDOptions.AdditionalProperties;
+            }
+        }
 
         protected override async ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken)
         {
@@ -133,11 +144,14 @@ public class HPDAIFunctionFactoryOptions
     public string? Description { get; set; }
     public Dictionary<string, string>? ParameterDescriptions { get; set; }
     public bool RequiresPermission { get; set; }
-    
+
     // The validator now returns a list of detailed, structured errors.
     public Func<JsonElement, List<ValidationError>>? Validator { get; set; }
-    
+
     public Func<JsonElement>? SchemaProvider { get; set; }
+
+    // Additional metadata properties for plugin scoping and other features
+    public Dictionary<string, object?>? AdditionalProperties { get; set; }
 }
 
 /// <summary>

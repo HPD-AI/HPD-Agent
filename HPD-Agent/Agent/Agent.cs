@@ -31,6 +31,7 @@ public class Agent : IChatClient
     private readonly ToolScheduler _toolScheduler;
     private readonly AGUIEventHandler _aguiEventHandler;
     private readonly AGUIEventConverter _aguiConverter;
+    private readonly PluginScopingManager _pluginScopingManager;
     private readonly IReadOnlyList<IAiFunctionFilter> _aiFunctionFilters;
     private readonly IReadOnlyList<IMessageTurnFilter> _messageTurnFilters;
 
@@ -130,7 +131,8 @@ public class Agent : IChatClient
             config.HistoryReduction);
         _functionCallProcessor = new FunctionCallProcessor(scopedFilterManager, permissionFilters, _aiFunctionFilters, config.MaxAgenticIterations, config.ErrorHandling);
         _agentTurn = new AgentTurn(_baseClient);
-        _toolScheduler = new ToolScheduler(_functionCallProcessor, config);
+        _pluginScopingManager = new PluginScopingManager();
+        _toolScheduler = new ToolScheduler(_functionCallProcessor, config, _pluginScopingManager);
         _aguiConverter = new AGUIEventConverter();
         _aguiEventHandler = new AGUIEventHandler(this);
     }
@@ -334,7 +336,11 @@ public class Agent : IChatClient
         // Convert AGUI input to Extensions.AI format using the shared converter instance
         // This preserves tool tracking state across calls
         var messages = _aguiConverter.ConvertToExtensionsAI(aguiInput);
-        var chatOptions = _aguiConverter.ConvertToExtensionsAIChatOptions(aguiInput, Config?.Provider?.DefaultChatOptions);
+        var chatOptions = _aguiConverter.ConvertToExtensionsAIChatOptions(
+            aguiInput,
+            Config?.Provider?.DefaultChatOptions,
+            Config?.PluginScoping?.ScopeFrontendTools ?? false,
+            Config?.PluginScoping?.MaxFunctionNamesInDescription ?? 10);
 
         // Add AGUI metadata to chat options for tracking
         chatOptions ??= new ChatOptions();
@@ -571,6 +577,9 @@ public class Agent : IChatClient
         var lastSignaturePerTool = new Dictionary<string, string>();
         var consecutiveCountPerTool = new Dictionary<string, int>();
 
+        // Plugin scoping: Track expanded plugins (message-turn scoped, auto-collapses after this method exits)
+        var expandedPlugins = new HashSet<string>();
+
         // Main agentic loop - use while loop to allow dynamic limit extension
         int iteration = 0;
         while (iteration < agentRunContext.MaxIterations)
@@ -593,8 +602,38 @@ public class Agent : IChatClient
             bool reasoningStarted = false;
             bool reasoningMessageStarted = false;
 
+            // Plugin scoping: Apply scoping to tools for this agent turn (only if enabled)
+            var scopedOptions = effectiveOptions;
+            if (Config?.PluginScoping?.Enabled == true &&
+                effectiveOptions?.Tools != null && effectiveOptions.Tools.Count > 0)
+            {
+                // Extract AIFunctions from tools (filter out non-function tools)
+                var aiFunctions = effectiveOptions.Tools.OfType<AIFunction>().ToList();
+
+                // Apply scoping
+                var scopedFunctions = _pluginScopingManager.GetToolsForAgentTurn(
+                    aiFunctions,
+                    expandedPlugins);
+
+                // Create new options with scoped tools (cast back to AITool)
+                scopedOptions = new ChatOptions
+                {
+                    ModelId = effectiveOptions.ModelId,
+                    Tools = scopedFunctions.Cast<AITool>().ToList(),
+                    ToolMode = effectiveOptions.ToolMode,
+                    Temperature = effectiveOptions.Temperature,
+                    MaxOutputTokens = effectiveOptions.MaxOutputTokens,
+                    TopP = effectiveOptions.TopP,
+                    FrequencyPenalty = effectiveOptions.FrequencyPenalty,
+                    PresencePenalty = effectiveOptions.PresencePenalty,
+                    StopSequences = effectiveOptions.StopSequences,
+                    ResponseFormat = effectiveOptions.ResponseFormat,
+                    AdditionalProperties = effectiveOptions.AdditionalProperties
+                };
+            }
+
             // Run turn and collect events
-            await foreach (var update in _agentTurn.RunAsync(currentMessages, effectiveOptions, effectiveCancellationToken))
+            await foreach (var update in _agentTurn.RunAsync(currentMessages, scopedOptions, effectiveCancellationToken))
             {
                 // Store update for building final history
                 responseUpdates.Add(update);
@@ -724,9 +763,9 @@ public class Agent : IChatClient
                     }
                 }
 
-                // Execute tools
+                // Execute tools (pass expandedPlugins for container expansion tracking)
                 var toolResultMessage = await _toolScheduler.ExecuteToolsAsync(
-                    currentMessages, toolRequests, effectiveOptions, agentRunContext, _name, effectiveCancellationToken).ConfigureAwait(false);
+                    currentMessages, toolRequests, effectiveOptions, agentRunContext, _name, expandedPlugins, effectiveCancellationToken).ConfigureAwait(false);
 
                 // Add tool results to history
                 currentMessages.Add(toolResultMessage);
@@ -2226,16 +2265,19 @@ public class ToolScheduler
 {
     private readonly FunctionCallProcessor _functionCallProcessor;
     private readonly AgentConfig? _config;
+    private readonly PluginScopingManager _pluginScopingManager;
 
     /// <summary>
     /// Initializes a new instance of ToolScheduler
     /// </summary>
     /// <param name="functionCallProcessor">The function call processor to use for tool execution</param>
     /// <param name="config">Agent configuration for execution settings</param>
-    public ToolScheduler(FunctionCallProcessor functionCallProcessor, AgentConfig? config)
+    /// <param name="pluginScopingManager">Plugin scoping manager for container detection</param>
+    public ToolScheduler(FunctionCallProcessor functionCallProcessor, AgentConfig? config, PluginScopingManager pluginScopingManager)
     {
         _functionCallProcessor = functionCallProcessor ?? throw new ArgumentNullException(nameof(functionCallProcessor));
         _config = config;
+        _pluginScopingManager = pluginScopingManager ?? throw new ArgumentNullException(nameof(pluginScopingManager));
     }
 
     /// <summary>
@@ -2254,16 +2296,17 @@ public class ToolScheduler
         ChatOptions? options,
         AgentRunContext agentRunContext,
         string? agentName,
+        HashSet<string> expandedPlugins,
         CancellationToken cancellationToken)
     {
         // For single tool calls, use sequential execution (no parallelization overhead)
         if (toolRequests.Count <= 1)
         {
-            return await ExecuteSequentiallyAsync(currentHistory, toolRequests, options, agentRunContext, agentName, cancellationToken).ConfigureAwait(false);
+            return await ExecuteSequentiallyAsync(currentHistory, toolRequests, options, agentRunContext, agentName, expandedPlugins, cancellationToken).ConfigureAwait(false);
         }
 
         // For multiple tool calls, execute in parallel for better performance
-        return await ExecuteInParallelAsync(currentHistory, toolRequests, options, agentRunContext, agentName, cancellationToken).ConfigureAwait(false);
+        return await ExecuteInParallelAsync(currentHistory, toolRequests, options, agentRunContext, agentName, expandedPlugins, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -2275,17 +2318,49 @@ public class ToolScheduler
         ChatOptions? options,
         AgentRunContext agentRunContext,
         string? agentName,
+        HashSet<string> expandedPlugins,
         CancellationToken cancellationToken)
     {
-        // Use the existing FunctionCallProcessor to execute the tools sequentially
+        var allContents = new List<AIContent>();
+
+        // Track which tool requests are containers for expansion after invocation
+        var containerExpansions = new Dictionary<string, string>(); // callId -> pluginName
+        foreach (var toolRequest in toolRequests)
+        {
+            // Find the function in the options to check if it's a container
+            var function = options?.Tools?.OfType<AIFunction>()
+                .FirstOrDefault(f => f.Name == toolRequest.Name);
+
+            if (function != null && _pluginScopingManager.IsContainer(function))
+            {
+                // Track this container for expansion after invocation
+                var pluginName = function.AdditionalProperties
+                    ?.TryGetValue("PluginName", out var value) == true && value is string pn
+                    ? pn
+                    : toolRequest.Name;
+
+                containerExpansions[toolRequest.CallId] = pluginName;
+            }
+        }
+
+        // Process ALL tools (containers + regular) through the existing processor
         var resultMessages = await _functionCallProcessor.ProcessFunctionCallsAsync(
             currentHistory, options, toolRequests, agentRunContext, agentName, cancellationToken);
 
-        // Combine all tool results into a single message
-        var allContents = new List<AIContent>();
+        // Combine results and mark containers as expanded
         foreach (var message in resultMessages)
         {
-            allContents.AddRange(message.Contents);
+            foreach (var content in message.Contents)
+            {
+                allContents.Add(content);
+
+                // If this result is for a container, mark the plugin as expanded
+                if (content is FunctionResultContent functionResult &&
+                    containerExpansions.TryGetValue(functionResult.CallId, out var pluginName))
+                {
+                    expandedPlugins.Add(pluginName);
+                }
+            }
         }
 
         return new ChatMessage(ChatRole.Tool, allContents);
@@ -2300,12 +2375,37 @@ public class ToolScheduler
         ChatOptions? options,
         AgentRunContext agentRunContext,
         string? agentName,
+        HashSet<string> expandedPlugins,
         CancellationToken cancellationToken)
     {
-        // TWO-PHASE EXECUTION (inspired by Gemini CLI's CoreToolScheduler)
+        // THREE-PHASE EXECUTION (inspired by Gemini CLI's CoreToolScheduler with plugin scoping)
+        // Phase 0: Separate container expansions from regular tools
         // Phase 1: Check permissions for ALL tools SEQUENTIALLY (prevents race conditions)
         // Phase 2: Execute ALL approved tools in PARALLEL (with optional throttling)
 
+        var allContents = new List<AIContent>();
+
+        // PHASE 0: Identify containers and track them for expansion after invocation
+        var containerExpansions = new Dictionary<string, string>(); // callId -> pluginName
+        foreach (var toolRequest in toolRequests)
+        {
+            // Find the function in the options to check if it's a container
+            var function = options?.Tools?.OfType<AIFunction>()
+                .FirstOrDefault(f => f.Name == toolRequest.Name);
+
+            if (function != null && _pluginScopingManager.IsContainer(function))
+            {
+                // Track this container for expansion after invocation
+                var pluginName = function.AdditionalProperties
+                    ?.TryGetValue("PluginName", out var value) == true && value is string pn
+                    ? pn
+                    : toolRequest.Name;
+
+                containerExpansions[toolRequest.CallId] = pluginName;
+            }
+        }
+
+        // All tool requests (containers + regular) go through normal invocation pipeline
         var approvedTools = new List<FunctionCallContent>();
         var deniedTools = new List<FunctionCallContent>();
 
@@ -2357,8 +2457,7 @@ public class ToolScheduler
         // Wait for all approved tasks to complete
         var results = await Task.WhenAll(executionTasks).ConfigureAwait(false);
 
-        // Aggregate results and handle errors
-        var allContents = new List<AIContent>();
+        // Aggregate results and handle errors (allContents already initialized with container results)
         var errors = new List<Exception>();
 
         // Add results from approved tools
@@ -2369,6 +2468,12 @@ public class ToolScheduler
                 foreach (var message in result.Messages)
                 {
                     allContents.AddRange(message.Contents);
+                }
+
+                // If this was a container, mark the plugin as expanded
+                if (containerExpansions.TryGetValue(result.ToolRequest.CallId, out var pluginName))
+                {
+                    expandedPlugins.Add(pluginName);
                 }
             }
             else if (result.Error != null)

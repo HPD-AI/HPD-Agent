@@ -22,7 +22,6 @@ using System.Text.Json;
 using Microsoft.ML.OnnxRuntimeGenAI;
 using Mistral.SDK;
 using HPD_Agent.Memory.Agent.PlanMode;
-using HPD_Agent.Memory.Agent.StaticMemory.IndexedRetrieval;
 
 /// <summary>
 /// Builder for creating dual interface agents with sophisticated capabilities

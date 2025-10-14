@@ -158,11 +158,20 @@ public class Conversation : AIAgent
         IReadOnlyList<ChatMessage> finalHistory;
         try
         {
-            // DIRECT CALL to Agent.ExecuteStreamingTurnAsync - no SendAsync wrapper!
-            var streamResult = await _agent.ExecuteStreamingTurnAsync(
-                targetThread.Messages,
-                chatOptions,
-                cancellationToken: cancellationToken);
+            // Create RunAgentInput from current thread state
+            var aguiInput = new RunAgentInput
+            {
+                ThreadId = Id,
+                RunId = Guid.NewGuid().ToString(),
+                State = JsonDocument.Parse("{}").RootElement,
+                Messages = ConvertThreadToAGUIMessages(targetThread.Messages),
+                Tools = Array.Empty<Tool>(),
+                Context = Array.Empty<Context>(),
+                ForwardedProps = JsonDocument.Parse("{}").RootElement
+            };
+
+            // DIRECT CALL to Agent.ExecuteStreamingTurnAsync with RunAgentInput
+            var streamResult = await _agent.ExecuteStreamingTurnAsync(aguiInput, cancellationToken);
 
             // Consume stream (non-streaming path)
             await foreach (var _ in streamResult.EventStream.WithCancellation(cancellationToken))
@@ -263,11 +272,20 @@ public class Conversation : AIAgent
         IReadOnlyList<ChatMessage> finalHistory;
         try
         {
-            // DIRECT CALL to Agent.ExecuteStreamingTurnAsync - no SendStreamingAsync wrapper!
-            var streamResult = await _agent.ExecuteStreamingTurnAsync(
-                targetThread.Messages,
-                chatOptions,
-                cancellationToken: cancellationToken);
+            // Create RunAgentInput from current thread state
+            var aguiInput = new RunAgentInput
+            {
+                ThreadId = Id,
+                RunId = Guid.NewGuid().ToString(),
+                State = JsonDocument.Parse("{}").RootElement,
+                Messages = ConvertThreadToAGUIMessages(targetThread.Messages),
+                Tools = Array.Empty<Tool>(),
+                Context = Array.Empty<Context>(),
+                ForwardedProps = JsonDocument.Parse("{}").RootElement
+            };
+
+            // DIRECT CALL to Agent.ExecuteStreamingTurnAsync with RunAgentInput
+            var streamResult = await _agent.ExecuteStreamingTurnAsync(aguiInput, cancellationToken);
 
             // Convert BaseEvent stream to AgentRunResponseUpdate stream
             await foreach (var evt in streamResult.EventStream.WithCancellation(cancellationToken))

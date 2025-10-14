@@ -146,29 +146,11 @@ public class Conversation : AIAgent
         var conversationContext = BuildConversationContext();
         var chatOptions = ExtractAndMergeChatOptions(options, conversationContext);
 
-        // DIRECT CALL to Agent.ExecuteStreamingTurnAsync - no SendAsync wrapper!
-        var streamResult = await _agent.ExecuteStreamingTurnAsync(
+        // Use Agent.GetResponseAsync for non-streaming (IChatClient protocol)
+        var response = await _agent.GetResponseAsync(
             targetThread.Messages,
             chatOptions,
-            cancellationToken: cancellationToken);
-
-        // Consume stream (non-streaming path)
-        await foreach (var _ in streamResult.EventStream.WithCancellation(cancellationToken))
-        {
-            // Just consume events
-        }
-
-        // Get final history and apply reduction
-        var finalHistory = await streamResult.FinalHistory;
-        var reductionMetadata = await streamResult.ReductionTask;
-
-        if (reductionMetadata != null)
-        {
-            targetThread.ApplyReduction(reductionMetadata.SummaryMessage, reductionMetadata.MessagesRemovedCount);
-        }
-
-        // Build response from final history
-        var response = new ChatResponse(finalHistory.ToList());
+            cancellationToken);
 
         // Update thread with response messages
         foreach (var msg in response.Messages)
@@ -233,127 +215,28 @@ public class Conversation : AIAgent
         var conversationContext = BuildConversationContext();
         var chatOptions = ExtractAndMergeChatOptions(options, conversationContext);
 
-        // DIRECT CALL to Agent.ExecuteStreamingTurnAsync - no SendStreamingAsync wrapper!
-        var streamResult = await _agent.ExecuteStreamingTurnAsync(
+        // Use Agent.GetStreamingResponseAsync for streaming (IChatClient protocol)
+        // This now includes text, reasoning, tool calls, and tool results
+        await foreach (var chatUpdate in _agent.GetStreamingResponseAsync(
             targetThread.Messages,
             chatOptions,
-            cancellationToken: cancellationToken);
-
-        // Convert BaseEvent stream to AgentRunResponseUpdate stream
-        await foreach (var evt in streamResult.EventStream.WithCancellation(cancellationToken))
+            cancellationToken))
         {
-            var update = ConvertBaseEventToAgentRunResponseUpdate(evt);
-            if (update != null)
+            // Convert ChatResponseUpdate to AgentRunResponseUpdate
+            var agentUpdate = new AgentRunResponseUpdate
             {
-                yield return update;
-            }
+                AgentId = this.Id,
+                AuthorName = this.Name,
+                Role = chatUpdate.Role ?? ChatRole.Assistant,
+                Contents = chatUpdate.Contents?.ToList() ?? [],
+                CreatedAt = DateTimeOffset.UtcNow
+            };
+
+            yield return agentUpdate;
         }
 
-        // Update thread with final history
-        var finalHistory = await streamResult.FinalHistory;
-        var reductionMetadata = await streamResult.ReductionTask;
-
-        if (reductionMetadata != null)
-        {
-            targetThread.ApplyReduction(reductionMetadata.SummaryMessage, reductionMetadata.MessagesRemovedCount);
-        }
-
-        foreach (var msg in finalHistory)
-        {
-            if (!targetThread.Messages.Contains(msg))
-            {
-                targetThread.AddMessage(msg);
-            }
-        }
-
-        // Notify thread of new messages if external thread provided
-        if (thread != null && thread != _thread)
-        {
-            await NotifyThreadOfNewMessagesAsync(thread, finalHistory, cancellationToken);
-        }
-    }
-
-    /// <summary>
-    /// Converts BaseEvent to AgentRunResponseUpdate with comprehensive AIContent mapping.
-    /// Maps AG-UI protocol events to Microsoft.Extensions.AI content types:
-    /// - TextMessageContentEvent → TextContent (assistant response)
-    /// - ReasoningMessageContentEvent → TextReasoningContent (model thinking)
-    /// - ToolCallStartEvent → FunctionCallContent (tool invocation)
-    /// - ToolCallResultEvent → FunctionResultContent (tool result)
-    /// - RunErrorEvent → ErrorContent (non-fatal errors)
-    /// Metadata events (boundaries, steps, etc.) are filtered out as they don't represent message content.
-    /// </summary>
-    private AgentRunResponseUpdate? ConvertBaseEventToAgentRunResponseUpdate(BaseEvent evt)
-    {
-        return evt switch
-        {
-            // ✅ Text Content - Assistant's actual response
-            TextMessageContentEvent textEvent => new AgentRunResponseUpdate
-            {
-                AgentId = this.Id,
-                AuthorName = this.Name,
-                Role = ChatRole.Assistant,
-                Contents = [new TextContent(textEvent.Delta)],
-                CreatedAt = DateTimeOffset.UtcNow,
-                MessageId = textEvent.MessageId
-            },
-
-            // ✅ Reasoning Content - Model's thinking/reasoning process
-            ReasoningMessageContentEvent reasoningEvent => new AgentRunResponseUpdate
-            {
-                AgentId = this.Id,
-                AuthorName = this.Name,
-                Role = ChatRole.Assistant,
-                Contents = [new TextReasoningContent(reasoningEvent.Delta)],
-                CreatedAt = DateTimeOffset.UtcNow,
-                MessageId = reasoningEvent.MessageId
-            },
-
-            // ✅ Function Call - Tool invocation
-            ToolCallStartEvent toolStart => new AgentRunResponseUpdate
-            {
-                AgentId = this.Id,
-                AuthorName = this.Name,
-                Role = ChatRole.Assistant,
-                Contents = [new FunctionCallContent(toolStart.ToolCallId, toolStart.ToolCallName)],
-                CreatedAt = DateTimeOffset.UtcNow,
-                MessageId = toolStart.ParentMessageId
-            },
-
-            // ✅ Function Result - Tool execution result
-            ToolCallResultEvent toolResult => new AgentRunResponseUpdate
-            {
-                AgentId = this.Id,
-                AuthorName = this.Name,
-                Role = ChatRole.Tool,
-                Contents = [new FunctionResultContent(toolResult.ToolCallId, toolResult.Result)],
-                CreatedAt = DateTimeOffset.UtcNow,
-                MessageId = Guid.NewGuid().ToString("N")
-            },
-
-            // ✅ Error Content - Non-fatal errors during execution
-            RunErrorEvent errorEvent => new AgentRunResponseUpdate
-            {
-                AgentId = this.Id,
-                AuthorName = this.Name,
-                Role = ChatRole.Assistant,
-                Contents = [new ErrorContent(errorEvent.Message)],
-                CreatedAt = DateTimeOffset.UtcNow,
-                MessageId = Guid.NewGuid().ToString("N")
-            },
-
-            // ❌ Filtered Events (Metadata/Boundaries - not message content):
-            // - ReasoningStartEvent/EndEvent - reasoning boundaries
-            // - TextMessageStartEvent/EndEvent - message boundaries
-            // - ReasoningMessageStartEvent/EndEvent - reasoning message boundaries
-            // - ToolCallEndEvent/ToolCallArgsEvent - tool call boundaries/streaming
-            // - StepStartedEvent/StepFinishedEvent - agent iteration metadata
-            // - RunStartedEvent/RunFinishedEvent - run boundaries
-            // - StateSnapshotEvent/StateDeltaEvent - state management
-            // - CustomEvent/RawEvent - custom protocol extensions
-            // - TextMessageChunkEvent/ToolCallChunkEvent - alternate chunking (use delta events instead)
-            _ => null
-        };
+        // Note: Thread notification removed because GetStreamingResponseAsync doesn't provide finalHistory
+        // Messages are already added to targetThread during agent execution via the underlying agent methods
     }
 
     /// <summary>

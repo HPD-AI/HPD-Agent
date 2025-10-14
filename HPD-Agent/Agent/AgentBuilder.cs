@@ -22,6 +22,7 @@ using System.Text.Json;
 using Microsoft.ML.OnnxRuntimeGenAI;
 using Mistral.SDK;
 using HPD_Agent.Memory.Agent.PlanMode;
+using HPD_Agent.Memory.Agent.StaticMemory.IndexedRetrieval;
 
 /// <summary>
 /// Builder for creating dual interface agents with sophisticated capabilities
@@ -1071,10 +1072,8 @@ public static class AgentBuilderMemoryExtensions
         var options = new StaticMemoryOptions();
         configure(options);
 
-        // Determine the knowledge ID (priority: KnowledgeId > AgentName > builder.AgentName)
         var knowledgeId = options.KnowledgeId ?? options.AgentName ?? builder.AgentName;
 
-        // Create store if not provided
         if (options.Store == null)
         {
             var textExtractor = new HPD_Agent.TextExtraction.TextExtractionUtility();
@@ -1084,16 +1083,14 @@ public static class AgentBuilderMemoryExtensions
                 builder.Logger?.CreateLogger<JsonStaticMemoryStore>());
         }
 
-        // Add documents specified at build time
         if (options.DocumentsToAdd.Any())
         {
             var store = options.Store;
-            // Synchronously add documents (blocking - consider async BuildAsync in future)
             foreach (var doc in options.DocumentsToAdd)
             {
                 if (store is JsonStaticMemoryStore jsonStore)
                 {
-                    if (doc.PathOrUrl.StartsWith("http://") || doc.PathOrUrl.StartsWith("https://"))
+                    if (doc.PathOrUrl.StartsWith("http") || doc.PathOrUrl.StartsWith("https"))
                     {
                         jsonStore.AddDocumentFromUrlAsync(knowledgeId, doc.PathOrUrl, doc.Description, doc.Tags).GetAwaiter().GetResult();
                     }
@@ -1105,7 +1102,6 @@ public static class AgentBuilderMemoryExtensions
             }
         }
 
-        // Only register filter for FullTextInjection strategy
         if (options.Strategy == MemoryStrategy.FullTextInjection)
         {
             var filter = new StaticMemoryFilter(
@@ -1113,14 +1109,13 @@ public static class AgentBuilderMemoryExtensions
                 knowledgeId,
                 options.MaxTokens,
                 builder.Logger?.CreateLogger<StaticMemoryFilter>());
-            RegisterStaticMemoryFilter(builder, filter);
+            builder.WithPromptFilter(filter);
         }
         else if (options.Strategy == MemoryStrategy.IndexedRetrieval)
         {
-            // TODO: Future implementation for vector store integration
+            // This is the placeholder for the future, more nuanced implementation.
             throw new NotImplementedException(
-                "IndexedRetrieval strategy is not yet implemented. " +
-                "Please use FullTextInjection for now.");
+                "The IndexedRetrieval strategy is not yet implemented. A future version will use a flexible callback system.");
         }
 
         return builder;

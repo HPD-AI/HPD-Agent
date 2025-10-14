@@ -1,5 +1,4 @@
 using System.Text.Json;
-
 /// <summary>
 /// Internal utility for AG-UI event serialization and creation.
 /// This avoids circular dependencies between Agent and AGUIEventConverter.

@@ -203,26 +203,65 @@ public class Agent : IChatClient
 
         try
         {
-            // Use the unified streaming approach and collect all updates
-            var allEvents = new List<BaseEvent>();
+            // Use the new protocol-agnostic internal core directly
+            var turnHistory = new List<ChatMessage>();
+            var historyCompletionSource = new TaskCompletionSource<IReadOnlyList<ChatMessage>>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var reductionCompletionSource = new TaskCompletionSource<ReductionMetadata?>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            var turnResult = await ExecuteStreamingTurnAsync(messages, options, null, cancellationToken).ConfigureAwait(false);
+            var internalStream = RunAgenticLoopInternal(
+                messages,
+                options,
+                documentPaths: null,
+                turnHistory,
+                historyCompletionSource,
+                reductionCompletionSource,
+                cancellationToken);
 
-            // Consume the entire stream
-            await foreach (var evt in turnResult.EventStream.WithCancellation(cancellationToken))
+            // Consume the entire stream (we don't need the events for non-streaming)
+            await foreach (var _ in internalStream.WithCancellation(cancellationToken))
             {
-                allEvents.Add(evt);
+                // Just drain the stream
             }
 
             // Wait for final history and construct response
-            var finalHistory = await turnResult.FinalHistory.ConfigureAwait(false);
+            var finalHistory = await historyCompletionSource.Task.ConfigureAwait(false);
+
+            // Apply post-invoke filters
+            try
+            {
+                await _messageProcessor.ApplyPostInvokeFiltersAsync(
+                    messages.ToList(),
+                    finalHistory,
+                    null,
+                    options,
+                    Config?.Name ?? "Agent",
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                // Log but don't fail - post-processing is best-effort
+            }
+
+            // Apply message turn filters
+            if (_messageTurnFilters.Any())
+            {
+                var userMessage = messages.LastOrDefault(m => m.Role == ChatRole.User) ?? new ChatMessage(ChatRole.User, string.Empty);
+                try
+                {
+                    await ApplyMessageTurnFilters(userMessage, finalHistory, options, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception)
+                {
+                    // Log but don't fail the turn if filters fail
+                }
+            }
+
             // Extract assistant messages from final history
             var assistantMessages = finalHistory.Where(m => m.Role == ChatRole.Assistant).ToList();
             var response = new ChatResponse(assistantMessages);
 
             // Record telemetry metrics
             var duration = DateTimeOffset.UtcNow - startTime;
-            // Note: Token usage not available from constructed ChatResponse, would need provider integration
 
             activity?.SetTag("completion.duration_ms", duration.TotalMilliseconds);
             activity?.SetTag("completion.success", true);
@@ -236,7 +275,7 @@ public class Agent : IChatClient
             activity?.SetTag("completion.success", false);
             activity?.SetTag("error.type", ex.GetType().Name);
             activity?.SetTag("error.message", ex.Message);
-            
+
             // Add cancellation/timeout specific telemetry
             if (ex is OperationCanceledException)
             {
@@ -246,80 +285,12 @@ public class Agent : IChatClient
                     activity?.SetTag("completion.timeout_ms", Config.AgenticLoop.MaxTurnDuration.Value.TotalMilliseconds);
                 }
             }
-            
+
             throw;
         }
     }
 
 
-
-    public async Task<StreamingTurnResult> ExecuteStreamingTurnAsync(
-        IEnumerable<ChatMessage> messages,
-        ChatOptions? options = null,
-        string[]? documentPaths = null,
-        CancellationToken cancellationToken = default)
-    {
-        // Process documents if provided
-        if (documentPaths?.Length > 0)
-        {
-            messages = await AgentDocumentProcessor.ProcessDocumentsAsync(messages, documentPaths, Config, cancellationToken).ConfigureAwait(false);
-        }
-
-        var messagesList = messages.ToList();
-        var userMessage = messagesList.LastOrDefault(m => m.Role == ChatRole.User)
-            ?? new ChatMessage(ChatRole.User, string.Empty);
-
-        // Create TaskCompletionSources for final history and reduction metadata
-        var historyCompletionSource = new TaskCompletionSource<IReadOnlyList<ChatMessage>>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var reductionCompletionSource = new TaskCompletionSource<ReductionMetadata?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var turnHistory = new List<ChatMessage>();
-
-        // Create the streaming enumerable with error handling wrapper
-        var coreStream = RunAgenticLoopCore(messagesList, options, turnHistory, historyCompletionSource, reductionCompletionSource, cancellationToken);
-        var responseStream = WrapStreamWithErrorHandling(coreStream, historyCompletionSource, cancellationToken);
-
-        // Wrap the final history task to apply post-processing when complete
-        var wrappedHistoryTask = historyCompletionSource.Task.ContinueWith(async task =>
-        {
-            Exception? invocationException = task.IsFaulted ? task.Exception?.InnerException : null;
-            var history = task.IsCompletedSuccessfully ? await task : new List<ChatMessage>();
-
-            // Apply post-invoke filters (for memory extraction, learning, etc.)
-            try
-            {
-                await _messageProcessor.ApplyPostInvokeFiltersAsync(
-                    messagesList,
-                    task.IsCompletedSuccessfully ? history : null,
-                    invocationException,
-                    options,
-                    Config?.Name ?? "Agent",
-                    cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception)
-            {
-                // Log but don't fail - post-processing is best-effort
-            }
-
-            // Apply message turn filters after the turn completes
-            if (task.IsCompletedSuccessfully && _messageTurnFilters.Any())
-            {
-                try
-                {
-                    await ApplyMessageTurnFilters(userMessage, history, options, cancellationToken).ConfigureAwait(false);
-                }
-                catch (Exception)
-                {
-                    // Log but don't fail the turn if filters fail
-                    // Silently continue if filters fail
-                }
-            }
-
-            return history;
-        }, cancellationToken).Unwrap();
-
-        // Return the result containing stream, history, and reduction metadata
-        return new StreamingTurnResult(responseStream, wrappedHistoryTask, reductionCompletionSource.Task);
-    }
 
     /// <summary>
     /// Executes a streaming turn with AGUI protocol input.
@@ -334,7 +305,6 @@ public class Agent : IChatClient
         CancellationToken cancellationToken = default)
     {
         // Convert AGUI input to Extensions.AI format using the shared converter instance
-        // This preserves tool tracking state across calls
         var messages = _aguiConverter.ConvertToExtensionsAI(aguiInput);
         var chatOptions = _aguiConverter.ConvertToExtensionsAIChatOptions(
             aguiInput,
@@ -348,21 +318,127 @@ public class Agent : IChatClient
         chatOptions.AdditionalProperties["ConversationId"] = aguiInput.ThreadId;
         chatOptions.AdditionalProperties["RunId"] = aguiInput.RunId;
 
-        // Delegate to the existing Extensions.AI overload
-        return await ExecuteStreamingTurnAsync(messages, chatOptions, null, cancellationToken).ConfigureAwait(false);
+        // Use the new protocol-agnostic internal core
+        var turnHistory = new List<ChatMessage>();
+        var historyCompletionSource = new TaskCompletionSource<IReadOnlyList<ChatMessage>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reductionCompletionSource = new TaskCompletionSource<ReductionMetadata?>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var internalStream = RunAgenticLoopInternal(
+            messages,
+            chatOptions,
+            documentPaths: null,
+            turnHistory,
+            historyCompletionSource,
+            reductionCompletionSource,
+            cancellationToken);
+
+        // Adapt internal events to AGUI protocol
+        var aguiStream = AdaptToAGUI(internalStream, aguiInput.ThreadId, aguiInput.RunId, cancellationToken);
+
+        // Wrap with error handling
+        var errorHandledStream = WrapStreamWithErrorHandling(aguiStream, historyCompletionSource, cancellationToken);
+
+        // Wrap the final history task to apply post-processing when complete
+        var wrappedHistoryTask = historyCompletionSource.Task.ContinueWith(async task =>
+        {
+            Exception? invocationException = task.IsFaulted ? task.Exception?.InnerException : null;
+            var history = task.IsCompletedSuccessfully ? await task : new List<ChatMessage>();
+
+            // Apply post-invoke filters (for memory extraction, learning, etc.)
+            try
+            {
+                await _messageProcessor.ApplyPostInvokeFiltersAsync(
+                    messages.ToList(),
+                    task.IsCompletedSuccessfully ? history : null,
+                    invocationException,
+                    chatOptions,
+                    Config?.Name ?? "Agent",
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                // Log but don't fail - post-processing is best-effort
+            }
+
+            // Apply message turn filters after the turn completes
+            if (task.IsCompletedSuccessfully && _messageTurnFilters.Any())
+            {
+                try
+                {
+                    var userMessage = messages.LastOrDefault(m => m.Role == ChatRole.User) ?? new ChatMessage(ChatRole.User, string.Empty);
+                    await ApplyMessageTurnFilters(userMessage, history, chatOptions, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception)
+                {
+                    // Log but don't fail the turn if filters fail
+                }
+            }
+
+            return history;
+        }, cancellationToken).Unwrap();
+
+        // Return the result containing stream, history, and reduction metadata
+        return new StreamingTurnResult(errorHandledStream, wrappedHistoryTask, reductionCompletionSource.Task);
     }
 
+    /// <inheritdoc />
     /// <inheritdoc />
     public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
         IEnumerable<ChatMessage> messages,
         ChatOptions? options = null,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        // Use the raw streaming loop directly for ChatResponseUpdate compatibility
+        // Use the new protocol-agnostic internal core with IChatClient adapter
+        var turnHistory = new List<ChatMessage>();
         var historyCompletionSource = new TaskCompletionSource<IReadOnlyList<ChatMessage>>(TaskCreationOptions.RunContinuationsAsynchronously);
-        await foreach (var update in RunAgenticLoopAsync(messages, options, historyCompletionSource, cancellationToken).WithCancellation(cancellationToken))
+        var reductionCompletionSource = new TaskCompletionSource<ReductionMetadata?>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var internalStream = RunAgenticLoopInternal(
+            messages,
+            options,
+            documentPaths: null,
+            turnHistory,
+            historyCompletionSource,
+            reductionCompletionSource,
+            cancellationToken);
+
+        // Adapt internal events to IChatClient protocol (filters to text content only)
+        await foreach (var update in AdaptToIChatClient(internalStream, cancellationToken).WithCancellation(cancellationToken))
         {
             yield return update;
+        }
+
+        // Apply post-processing after stream completes
+        var finalHistory = await historyCompletionSource.Task.ConfigureAwait(false);
+
+        // Apply post-invoke filters
+        try
+        {
+            await _messageProcessor.ApplyPostInvokeFiltersAsync(
+                messages.ToList(),
+                finalHistory,
+                null,
+                options,
+                Config?.Name ?? "Agent",
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+            // Log but don't fail - post-processing is best-effort
+        }
+
+        // Apply message turn filters
+        if (_messageTurnFilters.Any())
+        {
+            var userMessage = messages.LastOrDefault(m => m.Role == ChatRole.User) ?? new ChatMessage(ChatRole.User, string.Empty);
+            try
+            {
+                await ApplyMessageTurnFilters(userMessage, finalHistory, options, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                // Log but don't fail the turn if filters fail
+            }
         }
     }
 
@@ -459,55 +535,25 @@ public class Agent : IChatClient
     }
 
     /// <summary>
-    /// Core agentic loop that handles streaming with tool execution
+    /// Protocol-agnostic core agentic loop that emits internal events.
+    /// This method contains all the agent logic without any protocol-specific concerns.
+    /// Adapters convert internal events to protocol-specific formats (AGUI, IChatClient, etc.).
     /// </summary>
-    private async IAsyncEnumerable<ChatResponseUpdate> RunAgenticLoopAsync(
+    private async IAsyncEnumerable<InternalAgentEvent> RunAgenticLoopInternal(
         IEnumerable<ChatMessage> messages,
         ChatOptions? options,
-        TaskCompletionSource<IReadOnlyList<ChatMessage>> historyCompletionSource,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        var turnHistory = new List<ChatMessage>();
-        
-        // Create reduction completion source (not used in this overload but required by signature)
-        var reductionCompletionSource = new TaskCompletionSource<ReductionMetadata?>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        // Convert BaseEvent stream to ChatResponseUpdate stream for IChatClient compatibility
-        await foreach (var baseEvent in RunAgenticLoopCore(messages, options, turnHistory, historyCompletionSource, reductionCompletionSource, cancellationToken))
-        {
-            // Only convert events that map to the chat protocol
-            switch (baseEvent)
-            {
-                case TextMessageContentEvent textEvent:
-                    yield return new ChatResponseUpdate
-                    {
-                        Contents = [new TextContent(textEvent.Delta)]
-                    };
-                    break;
-
-                // StepStartedEvent is for UI observability only - ignore in chat adapter
-                case StepStartedEvent:
-                    break;
-
-                // ToolCallStartEvent is for UI observability only - ignore in chat adapter  
-                case ToolCallStartEvent:
-                    break;
-
-                case ToolCallEndEvent:
-                    // ToolCallEndEvent is for UI notification only
-                    break;
-            }
-        }
-    }
-
-    private async IAsyncEnumerable<BaseEvent> RunAgenticLoopCore(
-        IEnumerable<ChatMessage> messages,
-        ChatOptions? options,
+        string[]? documentPaths,
         List<ChatMessage> turnHistory,
         TaskCompletionSource<IReadOnlyList<ChatMessage>> historyCompletionSource,
         TaskCompletionSource<ReductionMetadata?> reductionCompletionSource,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        // Process documents if provided (protocol-agnostic feature)
+        if (documentPaths?.Length > 0)
+        {
+            messages = await AgentDocumentProcessor.ProcessDocumentsAsync(messages, documentPaths, Config, cancellationToken).ConfigureAwait(false);
+        }
+
         // Create linked cancellation token for turn timeout
         using var turnCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         if (Config?.AgenticLoop?.MaxTurnDuration is { } turnTimeout)
@@ -516,8 +562,8 @@ public class Agent : IChatClient
         }
         var effectiveCancellationToken = turnCts.Token;
 
-        // Generate IDs for this run
-        var runId = Guid.NewGuid().ToString();
+        // Generate IDs for this message turn
+        var messageTurnId = Guid.NewGuid().ToString();
 
         // Extract conversation ID from options or generate new one
         string conversationId;
@@ -530,24 +576,22 @@ public class Agent : IChatClient
             conversationId = Guid.NewGuid().ToString();
         }
 
-        var threadId = conversationId; // Use conversation ID as thread ID
         var messageId = Guid.NewGuid().ToString();
 
-        // Fix: Track conversation ID consistently
+        // Track conversation ID consistently
         _conversationId = conversationId;
 
-        // Emit mandatory RunStarted event
-        yield return EventSerialization.CreateRunStarted(threadId, runId);
+        // Emit MESSAGE TURN started event
+        yield return new InternalMessageTurnStartedEvent(messageTurnId, conversationId);
 
-        // Collect all response updates to build final history - cannot use try-catch with yield
+        // Collect all response updates to build final history
         var responseUpdates = new List<ChatResponseUpdate>();
 
         // Prepare messages using MessageProcessor
-        // Note: PrepareMessagesAsync now returns reduction metadata directly for thread-safety
         ReductionMetadata? reductionMetadata = null;
         IEnumerable<ChatMessage> effectiveMessages;
         ChatOptions? effectiveOptions;
-        
+
         try
         {
             var prep = await _messageProcessor.PrepareMessagesAsync(
@@ -561,23 +605,22 @@ public class Agent : IChatClient
             throw;
         }
 
-        // Set reduction metadata immediately (thread-safe - no shared mutable state)
+        // Set reduction metadata immediately
         reductionCompletionSource.TrySetResult(reductionMetadata);
 
         var currentMessages = effectiveMessages.ToList();
 
-        // Emit message start event at the beginning
+        // Track message start state
         bool messageStarted = false;
 
         // Create agent run context for tracking across all function calls
-        var agentRunContext = new AgentRunContext(runId, conversationId, _maxFunctionCalls);
+        var agentRunContext = new AgentRunContext(messageTurnId, conversationId, _maxFunctionCalls);
 
-        // Track consecutive same-function calls for circuit breaker (Gemini CLI-inspired)
-        // Tracks function name + arguments hash to detect exact repetition
+        // Track consecutive same-function calls for circuit breaker
         var lastSignaturePerTool = new Dictionary<string, string>();
         var consecutiveCountPerTool = new Dictionary<string, int>();
 
-        // Plugin scoping: Track expanded plugins (message-turn scoped, auto-collapses after this method exits)
+        // Plugin scoping: Track expanded plugins (message-turn scoped)
         var expandedPlugins = new HashSet<string>();
 
         // Main agentic loop - use while loop to allow dynamic limit extension
@@ -586,19 +629,21 @@ public class Agent : IChatClient
         {
             agentRunContext.CurrentIteration = iteration;
 
-            // Check if run has been terminated early (e.g., by error limit or tool request)
+            // Check if run has been terminated early
             if (agentRunContext.IsTerminated)
             {
                 break;
             }
+
+            // Emit AGENT TURN started event
+            yield return new InternalAgentTurnStartedEvent(iteration);
 
             var toolRequests = new List<FunctionCallContent>();
             var assistantContents = new List<AIContent>();
             bool streamFinished = false;
             bool hadAnyContent = false;
 
-            // Track thinking/reasoning state PER ITERATION (reset for each turn/function call)
-            // Using official AG-UI thinking events for better frontend compatibility
+            // Track thinking/reasoning state PER AGENT TURN (reset for each iteration)
             bool reasoningStarted = false;
             bool reasoningMessageStarted = false;
 
@@ -607,15 +652,9 @@ public class Agent : IChatClient
             if (Config?.PluginScoping?.Enabled == true &&
                 effectiveOptions?.Tools != null && effectiveOptions.Tools.Count > 0)
             {
-                // Extract AIFunctions from tools (filter out non-function tools)
                 var aiFunctions = effectiveOptions.Tools.OfType<AIFunction>().ToList();
+                var scopedFunctions = _pluginScopingManager.GetToolsForAgentTurn(aiFunctions, expandedPlugins);
 
-                // Apply scoping
-                var scopedFunctions = _pluginScopingManager.GetToolsForAgentTurn(
-                    aiFunctions,
-                    expandedPlugins);
-
-                // Create new options with scoped tools (cast back to AITool)
                 scopedOptions = new ChatOptions
                 {
                     ModelId = effectiveOptions.ModelId,
@@ -632,40 +671,37 @@ public class Agent : IChatClient
                 };
             }
 
-            // Run turn and collect events
+            // Run agent turn (single LLM call)
             await foreach (var update in _agentTurn.RunAsync(currentMessages, scopedOptions, effectiveCancellationToken))
             {
                 // Store update for building final history
                 responseUpdates.Add(update);
-
-                // Track whether we received any content this iteration
                 hadAnyContent = hadAnyContent || (update.Contents?.Count > 0) || update.FinishReason != null;
 
-                // Process contents and emit appropriate BaseEvent objects
+                // Process contents and emit internal events
                 if (update.Contents != null)
                 {
                     foreach (var content in update.Contents)
                     {
                         if (content is TextReasoningContent reasoning && !string.IsNullOrEmpty(reasoning.Text))
                         {
-                            // Emit reasoning start event ONLY on first reasoning chunk (official AG-UI REASONING event)
+                            // Emit reasoning start event ONLY on first reasoning chunk
                             if (!reasoningStarted)
                             {
-                                yield return EventSerialization.CreateReasoningStart(messageId);
+                                yield return new InternalReasoningStartEvent(messageId);
                                 reasoningStarted = true;
                             }
 
-                            // Emit reasoning message start if not already started
                             if (!reasoningMessageStarted)
                             {
-                                yield return EventSerialization.CreateReasoningMessageStart(messageId, "assistant");
+                                yield return new InternalReasoningMessageStartEvent(messageId, "assistant");
                                 reasoningMessageStarted = true;
                             }
 
-                            // Emit reasoning content for each chunk (official AG-UI REASONING event)
-                            yield return EventSerialization.CreateReasoningMessageContent(messageId, reasoning.Text);
+                            // Emit reasoning delta
+                            yield return new InternalReasoningDeltaEvent(reasoning.Text, messageId);
 
-                            // Add reasoning to assistantContents so it's preserved in conversation history
+                            // Add reasoning to assistantContents for history
                             assistantContents.Add(reasoning);
                         }
                         else if (content is TextContent textContent && !string.IsNullOrEmpty(textContent.Text))
@@ -673,30 +709,54 @@ public class Agent : IChatClient
                             // If we were in reasoning mode, finish the reasoning events
                             if (reasoningMessageStarted)
                             {
-                                yield return EventSerialization.CreateReasoningMessageEnd(messageId);
+                                yield return new InternalReasoningMessageEndEvent(messageId);
                                 reasoningMessageStarted = false;
                             }
                             if (reasoningStarted)
                             {
-                                yield return EventSerialization.CreateReasoningEnd(messageId);
+                                yield return new InternalReasoningEndEvent(messageId);
                                 reasoningStarted = false;
                             }
 
                             // Emit message start if this is the first text content
                             if (!messageStarted)
                             {
-                                yield return EventSerialization.CreateTextMessageStart(messageId, "assistant");
+                                yield return new InternalTextMessageStartEvent(messageId, "assistant");
                                 messageStarted = true;
                             }
 
                             // Regular text content - add to history
                             assistantContents.Add(textContent);
 
-                            // Emit text content event
-                            yield return EventSerialization.CreateTextMessageContent(messageId, textContent.Text);
+                            // Emit text delta event
+                            yield return new InternalTextDeltaEvent(textContent.Text, messageId);
                         }
                         else if (content is FunctionCallContent functionCall)
                         {
+                            // Emit message start if this is the first content
+                            if (!messageStarted)
+                            {
+                                yield return new InternalTextMessageStartEvent(messageId, "assistant");
+                                messageStarted = true;
+                            }
+
+                            // ✨ TRUE STREAMING: Emit function call events immediately
+                            yield return new InternalToolCallStartEvent(
+                                functionCall.CallId,
+                                functionCall.Name ?? string.Empty,
+                                messageId);
+
+                            // Emit tool call arguments immediately
+                            if (functionCall.Arguments != null && functionCall.Arguments.Count > 0)
+                            {
+                                var argsJson = System.Text.Json.JsonSerializer.Serialize(
+                                    functionCall.Arguments,
+                                    AGUIJsonContext.Default.DictionaryStringObject);
+
+                                yield return new InternalToolCallArgsEvent(functionCall.CallId, argsJson);
+                            }
+
+                            // Still buffer for execution (unchanged)
                             toolRequests.Add(functionCall);
                             assistantContents.Add(functionCall);
                         }
@@ -711,59 +771,36 @@ public class Agent : IChatClient
                     // If reasoning is still active when stream ends, finish it
                     if (reasoningMessageStarted)
                     {
-                        yield return EventSerialization.CreateReasoningMessageEnd(messageId);
+                        yield return new InternalReasoningMessageEndEvent(messageId);
                         reasoningMessageStarted = false;
                     }
                     if (reasoningStarted)
                     {
-                        yield return EventSerialization.CreateReasoningEnd(messageId);
+                        yield return new InternalReasoningEndEvent(messageId);
                         reasoningStarted = false;
                     }
                 }
             }
 
+            // Emit AGENT TURN finished event
+            yield return new InternalAgentTurnFinishedEvent(iteration);
+
             // If there are tool requests, execute them
             if (toolRequests.Count > 0)
             {
-                // Fix: Ensure message start before first tool event
-                if (!messageStarted)
-                {
-                    yield return EventSerialization.CreateTextMessageStart(messageId, "assistant");
-                    messageStarted = true;
-                }
-
-                // Create assistant message with tool calls for current turn (includes reasoning for API)
+                // Create assistant message with tool calls
                 var assistantMessage = new ChatMessage(ChatRole.Assistant, assistantContents);
                 currentMessages.Add(assistantMessage);
 
-                // Create assistant message for history WITHOUT reasoning (save tokens in future turns)
+                // Create assistant message for history WITHOUT reasoning (save tokens)
                 var historyContents = assistantContents.Where(c => c is not TextReasoningContent).ToList();
                 var historyMessage = new ChatMessage(ChatRole.Assistant, historyContents);
                 turnHistory.Add(historyMessage);
 
-                // Emit tool call start events and track statistics
-                foreach (var toolRequest in toolRequests)
-                {
-                    // Track tool call statistics
-                    // Tool call telemetry now handled by Activity tags in GetResponseAsync
+                // Note: Tool call start/args events are now emitted immediately during streaming (see above)
+                // This ensures true streaming with zero latency for function call visibility
 
-                    yield return EventSerialization.CreateToolCallStart(
-                        toolRequest.CallId,
-                        toolRequest.Name ?? string.Empty,
-                        messageId);
-
-                    // Emit tool call arguments event
-                    if (toolRequest.Arguments != null && toolRequest.Arguments.Count > 0)
-                    {
-                        var argsJson = System.Text.Json.JsonSerializer.Serialize(
-                            toolRequest.Arguments,
-                            AGUIJsonContext.Default.DictionaryStringObject);
-
-                        yield return EventSerialization.CreateToolCallArgs(toolRequest.CallId, argsJson);
-                    }
-                }
-
-                // Execute tools (pass expandedPlugins for container expansion tracking)
+                // Execute tools
                 var toolResultMessage = await _toolScheduler.ExecuteToolsAsync(
                     currentMessages, toolRequests, effectiveOptions, agentRunContext, _name, expandedPlugins, effectiveCancellationToken).ConfigureAwait(false);
 
@@ -771,16 +808,16 @@ public class Agent : IChatClient
                 currentMessages.Add(toolResultMessage);
                 turnHistory.Add(toolResultMessage);
 
-                // Check for errors in tool results and track consecutive errors
+                // Check for errors in tool results
                 bool hasErrors = false;
                 foreach (var content in toolResultMessage.Contents)
                 {
                     if (content is FunctionResultContent result)
                     {
-                        yield return EventSerialization.CreateToolCallEnd(result.CallId);
+                        yield return new InternalToolCallEndEvent(result.CallId);
 
-                        // Emit official AG-UI TOOL_CALL_RESULT event
-                        yield return EventSerialization.CreateToolCallResult(result.CallId, result.Result?.ToString() ?? "null");
+                        // Emit tool call result event
+                        yield return new InternalToolCallResultEvent(result.CallId, result.Result?.ToString() ?? "null");
 
                         // Check if this result represents an error
                         if (result.Exception != null ||
@@ -791,12 +828,9 @@ public class Agent : IChatClient
                     }
                 }
 
-                // Circuit breaker: Check for consecutive same-function calls (Gemini CLI-inspired)
-                // Tracks function signature (name + arguments) to detect exact repetition
-                // Handles parallel tool calls by checking each one separately
+                // Circuit breaker: Check for consecutive same-function calls
                 if (toolRequests.Count > 0 && Config?.AgenticLoop?.MaxConsecutiveFunctionCalls is { } maxConsecutive)
                 {
-                    // Check each tool request in the batch (handles parallel calls)
                     foreach (var toolRequest in toolRequests)
                     {
                         var currentSignature = GetFunctionSignature(toolRequest);
@@ -815,7 +849,7 @@ public class Agent : IChatClient
                         if (consecutiveCountPerTool[toolName] >= maxConsecutive)
                         {
                             var errorMessage = $"⚠️ Circuit breaker triggered: Function '{toolRequest.Name}' with same arguments called {consecutiveCountPerTool[toolName]} times consecutively. Stopping to prevent infinite loop.";
-                            yield return EventSerialization.CreateTextMessageContent(messageId, errorMessage);
+                            yield return new InternalTextDeltaEvent(errorMessage, messageId);
 
                             agentRunContext.IsTerminated = true;
                             agentRunContext.TerminationReason = $"Circuit breaker: '{toolRequest.Name}' with same arguments called {consecutiveCountPerTool[toolName]} times consecutively";
@@ -823,7 +857,6 @@ public class Agent : IChatClient
                         }
                     }
 
-                    // If circuit breaker triggered, exit the main loop
                     if (agentRunContext.IsTerminated)
                     {
                         break;
@@ -839,9 +872,9 @@ public class Agent : IChatClient
                     if (agentRunContext.HasExceededErrorLimit(maxConsecutiveErrors))
                     {
                         // Emit error event and terminate
-                        yield return EventSerialization.CreateTextMessageContent(
-                            messageId,
-                            $"⚠️ Maximum consecutive errors ({maxConsecutiveErrors}) exceeded. Stopping execution to prevent infinite error loop.");
+                        yield return new InternalTextDeltaEvent(
+                            $"⚠️ Maximum consecutive errors ({maxConsecutiveErrors}) exceeded. Stopping execution to prevent infinite error loop.",
+                            messageId);
 
                         agentRunContext.IsTerminated = true;
                         agentRunContext.TerminationReason = $"Exceeded maximum consecutive errors ({maxConsecutiveErrors})";
@@ -854,10 +887,7 @@ public class Agent : IChatClient
                     agentRunContext.RecordSuccess();
                 }
 
-                // Fix: Do NOT add tool results to responseUpdates - they belong to tool role, not assistant
-                // This prevents tool content from being mixed into the final assistant message
-
-                // Update options for next iteration to allow the model to choose not to call tools
+                // Update options for next iteration
                 effectiveOptions = effectiveOptions == null
                     ? new ChatOptions { ToolMode = ChatToolMode.Auto }
                     : new ChatOptions
@@ -894,14 +924,12 @@ public class Agent : IChatClient
             }
             else
             {
-                // Guard: If stream ended (we're here) and there are no tools to run,
-                // there's nothing left to do—exit regardless of whether content was received.
-                // This prevents unnecessary LLM passes when providers omit FinishReason.
+                // Guard: If stream ended and there are no tools to run, exit
                 if (toolRequests.Count == 0)
                 {
                     break;
                 }
-                
+
                 // Increment for next iteration to execute tools
                 iteration++;
             }
@@ -911,13 +939,10 @@ public class Agent : IChatClient
         if (responseUpdates.Any())
         {
             var finalResponse = ConstructChatResponseFromUpdates(responseUpdates);
-            // Fix: Guard against empty messages collection and ensure message has content
             if (finalResponse.Messages.Count > 0)
             {
                 var finalAssistantMessage = finalResponse.Messages[0];
-                
-                // Only add if the message has content and we don't already have it
-                // Use canonical comparison to avoid false negatives with identical content in new instances
+
                 if (finalAssistantMessage.Contents.Count > 0)
                 {
                     var lastAssistant = turnHistory.LastOrDefault(m => m.Role == ChatRole.Assistant);
@@ -933,14 +958,126 @@ public class Agent : IChatClient
         // Emit message end event if we started a message
         if (messageStarted)
         {
-            yield return EventSerialization.CreateTextMessageEnd(messageId);
+            yield return new InternalTextMessageEndEvent(messageId);
         }
 
-        // Emit mandatory RunFinished event (errors handled at higher level)
-        yield return EventSerialization.CreateRunFinished(threadId, runId);
+        // Emit MESSAGE TURN finished event
+        yield return new InternalMessageTurnFinishedEvent(messageTurnId, conversationId);
 
         // Set the final complete history
         historyCompletionSource.SetResult(turnHistory);
+    }
+
+    /// <summary>
+    /// Adapts protocol-agnostic internal events to AGUI protocol format.
+    /// Translates:
+    /// - MessageTurn events → Run events (RunStarted, RunFinished)
+    /// - AgentTurn events → Step events (StepStarted, StepFinished)
+    /// - Content/Tool events → AGUI equivalents
+    /// </summary>
+    private async IAsyncEnumerable<BaseEvent> AdaptToAGUI(
+        IAsyncEnumerable<InternalAgentEvent> internalStream,
+        string threadId,
+        string runId,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        await foreach (var internalEvent in internalStream.WithCancellation(cancellationToken))
+        {
+            BaseEvent? aguiEvent = internalEvent switch
+            {
+                // MESSAGE TURN → RUN events
+                InternalMessageTurnStartedEvent => EventSerialization.CreateRunStarted(threadId, runId),
+                InternalMessageTurnFinishedEvent => EventSerialization.CreateRunFinished(threadId, runId),
+                InternalMessageTurnErrorEvent e => EventSerialization.CreateRunError(e.Message),
+
+                // AGENT TURN → STEP events
+                InternalAgentTurnStartedEvent e => EventSerialization.CreateStepStarted(
+                    stepId: $"step_{e.Iteration}",
+                    stepName: $"Iteration {e.Iteration}",
+                    description: null),
+                InternalAgentTurnFinishedEvent e => EventSerialization.CreateStepFinished(
+                    stepId: $"step_{e.Iteration}",
+                    stepName: $"Iteration {e.Iteration}",
+                    result: null),
+
+                // TEXT CONTENT events
+                InternalTextMessageStartEvent e => EventSerialization.CreateTextMessageStart(e.MessageId, e.Role),
+                InternalTextDeltaEvent e => EventSerialization.CreateTextMessageContent(e.MessageId, e.Text),
+                InternalTextMessageEndEvent e => EventSerialization.CreateTextMessageEnd(e.MessageId),
+
+                // REASONING events
+                InternalReasoningStartEvent e => EventSerialization.CreateReasoningStart(e.MessageId),
+                InternalReasoningMessageStartEvent e => EventSerialization.CreateReasoningMessageStart(e.MessageId, e.Role),
+                InternalReasoningDeltaEvent e => EventSerialization.CreateReasoningMessageContent(e.MessageId, e.Text),
+                InternalReasoningMessageEndEvent e => EventSerialization.CreateReasoningMessageEnd(e.MessageId),
+                InternalReasoningEndEvent e => EventSerialization.CreateReasoningEnd(e.MessageId),
+
+                // TOOL events (use fully qualified names to avoid conflicts with AGUI events)
+                InternalToolCallStartEvent e => EventSerialization.CreateToolCallStart(e.CallId, e.Name, e.MessageId),
+                InternalToolCallArgsEvent e => EventSerialization.CreateToolCallArgs(e.CallId, e.ArgsJson),
+                InternalToolCallEndEvent e => EventSerialization.CreateToolCallEnd(e.CallId),
+                InternalToolCallResultEvent e => EventSerialization.CreateToolCallResult(e.CallId, e.Result),
+
+                _ => null // Unknown event type
+            };
+
+            if (aguiEvent != null)
+            {
+                yield return aguiEvent;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Adapts protocol-agnostic internal events to IChatClient protocol format (ChatResponseUpdate).
+    /// Maps internal events to Microsoft.Extensions.AI content types:
+    /// - InternalTextDeltaEvent → TextContent (assistant response)
+    /// - InternalReasoningDeltaEvent → TextReasoningContent (model thinking)
+    /// - InternalToolCallStartEvent → FunctionCallContent (tool invocation)
+    /// - InternalToolCallResultEvent → FunctionResultContent (tool result)
+    /// Filters out: turn boundaries, message boundaries, and metadata events
+    /// </summary>
+    private async IAsyncEnumerable<ChatResponseUpdate> AdaptToIChatClient(
+        IAsyncEnumerable<InternalAgentEvent> internalStream,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        await foreach (var internalEvent in internalStream.WithCancellation(cancellationToken))
+        {
+            ChatResponseUpdate? update = internalEvent switch
+            {
+                // Text content
+                InternalTextDeltaEvent text => new ChatResponseUpdate
+                {
+                    Contents = [new TextContent(text.Text)]
+                },
+
+                // Reasoning content (for o1, DeepSeek-R1, etc.)
+                InternalReasoningDeltaEvent reasoning => new ChatResponseUpdate
+                {
+                    Contents = [new TextReasoningContent(reasoning.Text)]
+                },
+
+                // Tool call (function invocation)
+                InternalToolCallStartEvent toolCall => new ChatResponseUpdate
+                {
+                    Contents = [new FunctionCallContent(toolCall.CallId, toolCall.Name)]
+                },
+
+                // Tool result (function execution result)
+                InternalToolCallResultEvent toolResult => new ChatResponseUpdate
+                {
+                    Contents = [new FunctionResultContent(toolResult.CallId, toolResult.Result)]
+                },
+
+                // Filter out: turn boundaries, message boundaries, tool args, tool end
+                _ => null
+            };
+
+            if (update != null)
+            {
+                yield return update;
+            }
+        }
     }
 
     /// <summary>
@@ -2613,3 +2750,136 @@ internal static class AgentDocumentProcessor
 
 #endregion
 
+
+#region Internal Events
+/// <summary>
+/// Protocol-agnostic internal events emitted by the agent core.
+/// These events represent what actually happened during agent execution,
+/// independent of any specific protocol (AGUI, IChatClient, etc.).
+///
+/// KEY CONCEPTS:
+/// - MESSAGE TURN: The entire user interaction (user sends message → agent responds)
+///   May contain multiple agent turns if tools are called
+/// - AGENT TURN: A single call to the LLM (one iteration in the agentic loop)
+///   Multiple agent turns happen within one message turn when using tools
+///
+/// Adapters convert these to protocol-specific formats:
+/// - AGUI: MessageTurn → Run, AgentTurn → Step
+/// - IChatClient: Only cares about final result, ignores turn boundaries
+/// </summary>
+public abstract record InternalAgentEvent;
+
+#region Message Turn Events (Entire User Interaction)
+
+/// <summary>
+/// Emitted when a message turn starts (user sends message, agent begins processing)
+/// This represents the START of the entire multi-step agent execution.
+/// </summary>
+public record InternalMessageTurnStartedEvent(string MessageTurnId, string ConversationId) : InternalAgentEvent;
+
+/// <summary>
+/// Emitted when a message turn completes successfully
+/// This represents the END of the entire agent execution for this user message.
+/// </summary>
+public record InternalMessageTurnFinishedEvent(string MessageTurnId, string ConversationId) : InternalAgentEvent;
+
+/// <summary>
+/// Emitted when an error occurs during message turn execution
+/// </summary>
+public record InternalMessageTurnErrorEvent(string Message, Exception? Exception = null) : InternalAgentEvent;
+
+#endregion
+
+#region Agent Turn Events (Single LLM Call Within Message Turn)
+
+/// <summary>
+/// Emitted when an agent turn starts (single LLM call within the agentic loop)
+/// An agent turn represents one iteration where the LLM processes messages and responds.
+/// Multiple agent turns may occur in one message turn when tools are called.
+/// </summary>
+public record InternalAgentTurnStartedEvent(int Iteration) : InternalAgentEvent;
+
+/// <summary>
+/// Emitted when an agent turn completes
+/// </summary>
+public record InternalAgentTurnFinishedEvent(int Iteration) : InternalAgentEvent;
+
+#endregion
+
+#region Content Events (Within an Agent Turn)
+
+/// <summary>
+/// Emitted when the agent starts producing text content
+/// </summary>
+public record InternalTextMessageStartEvent(string MessageId, string Role) : InternalAgentEvent;
+
+/// <summary>
+/// Emitted when the agent produces text content (streaming delta)
+/// </summary>
+public record InternalTextDeltaEvent(string Text, string MessageId) : InternalAgentEvent;
+
+/// <summary>
+/// Emitted when the agent finishes producing text content
+/// </summary>
+public record InternalTextMessageEndEvent(string MessageId) : InternalAgentEvent;
+
+#endregion
+
+#region Reasoning Events (For reasoning-capable models like o1, DeepSeek-R1)
+
+/// <summary>
+/// Emitted when the agent starts reasoning/thinking
+/// </summary>
+public record InternalReasoningStartEvent(string MessageId) : InternalAgentEvent;
+
+/// <summary>
+/// Emitted when the agent starts a reasoning message
+/// </summary>
+public record InternalReasoningMessageStartEvent(string MessageId, string Role) : InternalAgentEvent;
+
+/// <summary>
+/// Emitted when the agent produces reasoning/thinking content (streaming delta)
+/// </summary>
+public record InternalReasoningDeltaEvent(string Text, string MessageId) : InternalAgentEvent;
+
+/// <summary>
+/// Emitted when the agent finishes a reasoning message
+/// </summary>
+public record InternalReasoningMessageEndEvent(string MessageId) : InternalAgentEvent;
+
+/// <summary>
+/// Emitted when the agent finishes reasoning
+/// </summary>
+public record InternalReasoningEndEvent(string MessageId) : InternalAgentEvent;
+
+#endregion
+
+#region Tool Events
+
+/// <summary>
+/// Emitted when the agent requests a tool call
+/// </summary>
+public record InternalToolCallStartEvent(
+    string CallId,
+    string Name,
+    string MessageId) : InternalAgentEvent;
+
+/// <summary>
+/// Emitted when a tool call's arguments are fully available
+/// </summary>
+public record InternalToolCallArgsEvent(string CallId, string ArgsJson) : InternalAgentEvent;
+
+/// <summary>
+/// Emitted when a tool call completes execution
+/// </summary>
+public record InternalToolCallEndEvent(string CallId) : InternalAgentEvent;
+
+/// <summary>
+/// Emitted when a tool call result is available
+/// </summary>
+public record InternalToolCallResultEvent(
+    string CallId,
+    string Result) : InternalAgentEvent;
+
+#endregion
+#endregion

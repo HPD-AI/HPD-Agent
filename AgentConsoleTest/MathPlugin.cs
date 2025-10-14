@@ -36,8 +36,8 @@ public class MathPluginMetadataContext : IPluginMetadataContext
     public IEnumerable<string> GetPropertyNames() => _properties.Keys;
 }
 
-[PluginScope("Mathematical operations including addition, subtraction, multiplication, and more.")]
-public class MathPlugin
+[PluginScope("Expands to see the Mathematical operations including addition, subtraction, multiplication, and more. Invoke first to get access to functions")]
+public class ExpandMathPlugin
 {
     [AIFunction<MathPluginMetadataContext>]
     [AIDescription("Adds two numbers and returns the sum.")]

@@ -111,7 +111,7 @@ public static partial class NativeExports
             string? configJson = Marshal.PtrToStringUTF8(configJsonPtr);
             if (string.IsNullOrEmpty(configJson)) return IntPtr.Zero;
 
-            var agentConfig = JsonSerializer.Deserialize<AgentConfig>(configJson, HPDJsonContext.Default.AgentConfig);
+            var agentConfig = JsonSerializer.Deserialize<AgentConfig>(configJson, HPDFFIJsonContext.Default.AgentConfig);
             if (agentConfig == null) return IntPtr.Zero;
 
             var builder = new AgentBuilder(agentConfig);
@@ -124,7 +124,7 @@ public static partial class NativeExports
             {
                 try
                 {
-                    var rustFunctions = JsonSerializer.Deserialize(pluginsJson, HPDJsonContext.Default.ListRustFunctionInfo);
+                    var rustFunctions = JsonSerializer.Deserialize(pluginsJson, HPDFFIJsonContext.Default.ListRustFunctionInfo);
                     Console.WriteLine($"[FFI] Deserialized {rustFunctions?.Count ?? 0} Rust functions");
                     
                     if (rustFunctions != null && rustFunctions.Count > 0)
@@ -713,7 +713,7 @@ public static partial class NativeExports
             catch (Exception ex)
             {
                 var callbackDelegate = Marshal.GetDelegateForFunctionPointer<StreamCallback>(callback);
-                string errorJson = $"{{\"type\":\"ERROR\", \"message\":{System.Text.Json.JsonSerializer.Serialize(ex.Message, HPDJsonContext.Default.String)}}}";
+                string errorJson = $"{{\"type\":\"ERROR\", \"message\":{System.Text.Json.JsonSerializer.Serialize(ex.Message, HPDFFIJsonContext.Default.String)}}}";
                 var errorJsonPtr = Marshal.StringToCoTaskMemAnsi(errorJson);
                 callbackDelegate(context, errorJsonPtr);
                 Marshal.FreeCoTaskMem(errorJsonPtr);
@@ -880,7 +880,7 @@ public static partial class NativeExports
                 LastActivity = project.LastActivity.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
             };
 
-            string json = JsonSerializer.Serialize(projectInfo, HPDJsonContext.Default.ProjectInfo);
+            string json = JsonSerializer.Serialize(projectInfo, HPDFFIJsonContext.Default.ProjectInfo);
             return Marshal.StringToCoTaskMemAnsi(json);
         }
         catch (Exception)

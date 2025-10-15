@@ -376,7 +376,7 @@ public class ProjectManager
             .WithAPIConfiguration(config)
             .WithName("AI Assistant")
             .WithLogging() // Global logging filter
-            .WithProvider(ChatProvider.OpenRouter, "google/gemini-2.5-pro")
+            .WithProvider("openrouter", "google/gemini-2.5-pro")
             .WithInstructions("You are a helpful AI assistant with memory, knowledge base, and web search capabilities.")
             .WithDynamicMemory(opts => opts
                 .WithStorageDirectory("./agent-memory-storage")

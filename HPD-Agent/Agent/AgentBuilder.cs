@@ -1,3 +1,4 @@
+using HPD.Agent.Providers;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -5,22 +6,11 @@ using Microsoft.Extensions.Logging;
 using System.Diagnostics.CodeAnalysis;
 using FluentValidation;
 using Microsoft.Extensions.Logging.Abstractions;
-using OpenAI.Chat;
-using Azure.AI.Inference;
-using Azure;
-using OllamaSharp;
-using Anthropic.SDK;
-using GenerativeAI;
-using GenerativeAI.Microsoft;
-using HuggingFace;
-using Amazon.BedrockRuntime;
-using Amazon;
+using Microsoft.Extensions.Caching.Distributed;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
-using Microsoft.Extensions.Caching.Distributed;
 using System.Text.Json;
-using Microsoft.ML.OnnxRuntimeGenAI;
-using Mistral.SDK;
+
 using HPD_Agent.Memory.Agent.PlanMode;
 
 /// <summary>
@@ -31,6 +21,7 @@ public class AgentBuilder
 {
     // The new central configuration object
     private readonly AgentConfig _config;
+    private readonly IProviderRegistry _providerRegistry;
 
     // Fields that are NOT part of the serializable config remain
     internal IChatClient? _baseClient;
@@ -59,21 +50,106 @@ public class AgentBuilder
     private readonly List<Func<IChatClient, IServiceProvider, IChatClient>> _middlewares = new();
 
     /// <summary>
-    /// Creates a new builder with a default configuration.
+    /// Creates a new builder with default configuration.
+    /// Automatically discovers and registers all loaded provider packages.
     /// </summary>
+    [System.Diagnostics.CodeAnalysis.RequiresUnreferencedCode("Provider assembly loading uses reflection in non-AOT scenarios")]
     public AgentBuilder()
     {
         _config = new AgentConfig();
+        _providerRegistry = new ProviderRegistry();
+        DiscoverAndRegisterProviders();
     }
 
     /// <summary>
-    /// Creates a new builder from a pre-existing configuration object.
+    /// Creates a builder from existing configuration.
     /// </summary>
-    /// <param name="config">The configuration to use.</param>
+    [System.Diagnostics.CodeAnalysis.RequiresUnreferencedCode("Provider assembly loading uses reflection in non-AOT scenarios")]
     public AgentBuilder(AgentConfig config)
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
+        _providerRegistry = new ProviderRegistry();
+        DiscoverAndRegisterProviders();
     }
+
+    /// <summary>
+    /// Creates a builder with custom provider registry (for testing).
+    /// </summary>
+    public AgentBuilder(AgentConfig config, IProviderRegistry providerRegistry)
+    {
+        _config = config;
+        _providerRegistry = providerRegistry;
+    }
+
+    /// <summary>
+    /// Discovers all provider packages via ProviderDiscovery and registers them.
+    /// </summary>
+    [System.Diagnostics.CodeAnalysis.RequiresUnreferencedCode("Provider assembly loading uses reflection in non-AOT scenarios")]
+    private void DiscoverAndRegisterProviders()
+    {
+#if !NATIVE_AOT
+        // In non-AOT scenarios, automatically load all provider assemblies
+        // This triggers their ModuleInitializers to register themselves
+        TryLoadProviderAssemblies();
+#endif
+
+        foreach (var factory in ProviderDiscovery.GetFactories())
+        {
+            try
+            {
+                var provider = factory();
+                _providerRegistry.Register(provider);
+            }
+            catch (Exception ex)
+            {
+                _logger?.CreateLogger<AgentBuilder>().LogWarning(ex, "Failed to register provider from discovery");
+            }
+        }
+    }
+
+#if !NATIVE_AOT
+    [System.Diagnostics.CodeAnalysis.RequiresUnreferencedCode("Provider assembly loading uses reflection in non-AOT scenarios")]
+    private void TryLoadProviderAssemblies()
+    {
+        try
+        {
+            // Scan the application directory for provider DLLs
+            var currentAssembly = System.Reflection.Assembly.GetEntryAssembly() 
+                               ?? System.Reflection.Assembly.GetExecutingAssembly();
+            var appDirectory = System.IO.Path.GetDirectoryName(currentAssembly.Location);
+            
+            if (!string.IsNullOrEmpty(appDirectory))
+            {
+                var providerDlls = System.IO.Directory.GetFiles(appDirectory, "HPD-Agent.Providers.*.dll");
+                
+                foreach (var dllPath in providerDlls)
+                {
+                    try
+                    {
+                        var assemblyName = System.Reflection.AssemblyName.GetAssemblyName(dllPath);
+                        var loadedAssembly = System.Reflection.Assembly.Load(assemblyName);
+                        
+                        // Force module initializers to run by executing RunModuleConstructor
+                        // This is the only reliable way to trigger ModuleInitializers in .NET
+                        var moduleHandle = loadedAssembly.ManifestModule.ModuleHandle;
+                        System.Runtime.CompilerServices.RuntimeHelpers.RunModuleConstructor(moduleHandle);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Log but don't fail - provider might not be needed
+                        _logger?.CreateLogger<AgentBuilder>().LogWarning(ex, 
+                            "Failed to load provider assembly {Assembly}", System.IO.Path.GetFileName(dllPath));
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Provider loading is optional - don't fail the build if it doesn't work
+            _logger?.CreateLogger<AgentBuilder>().LogWarning(ex, "Provider assembly discovery failed");
+        }
+    }
+#endif
 
     /// <summary>
     /// Creates a new builder from a JSON configuration file.
@@ -82,6 +158,7 @@ public class AgentBuilder
     /// <exception cref="ArgumentException">Thrown when the file path is null or empty.</exception>
     /// <exception cref="FileNotFoundException">Thrown when the specified file does not exist.</exception>
     /// <exception cref="JsonException">Thrown when the JSON is invalid or cannot be deserialized.</exception>
+    [System.Diagnostics.CodeAnalysis.RequiresUnreferencedCode("Provider assembly loading uses reflection in non-AOT scenarios")]
     public AgentBuilder(string jsonFilePath)
     {
         if (string.IsNullOrWhiteSpace(jsonFilePath))
@@ -90,11 +167,15 @@ public class AgentBuilder
         if (!File.Exists(jsonFilePath))
             throw new FileNotFoundException($"Configuration file not found: {jsonFilePath}");
 
+        _providerRegistry = new ProviderRegistry();
+
         try
         {
             var jsonContent = File.ReadAllText(jsonFilePath);
             _config = JsonSerializer.Deserialize<AgentConfig>(jsonContent, HPDJsonContext.Default.AgentConfig)
                 ?? throw new JsonException("Failed to deserialize AgentConfig from JSON - result was null.");
+            
+            DiscoverAndRegisterProviders();
         }
         catch (JsonException)
         {
@@ -114,6 +195,7 @@ public class AgentBuilder
     /// <exception cref="ArgumentException">Thrown when the file path is null or empty.</exception>
     /// <exception cref="FileNotFoundException">Thrown when the specified file does not exist.</exception>
     /// <exception cref="JsonException">Thrown when the JSON is invalid or cannot be deserialized.</exception>
+    [System.Diagnostics.CodeAnalysis.RequiresUnreferencedCode("Provider assembly loading uses reflection in non-AOT scenarios")]
     public static AgentBuilder FromJsonFile(string jsonFilePath)
     {
         return new AgentBuilder(jsonFilePath);
@@ -335,24 +417,75 @@ public class AgentBuilder
     public Agent Build()
     {
         // === START: VALIDATION LOGIC ===
-        // Validate the core agent configuration
         var agentConfigValidator = new AgentConfigValidator();
         agentConfigValidator.ValidateAndThrow(_config);
 
-        // Validate provider-specific configurations if they exist
-        if (_config.WebSearch?.Tavily != null)
-        {
-            var tavilyValidator = new TavilyConfigValidator();
-            tavilyValidator.ValidateAndThrow(_config.WebSearch.Tavily);
-        }
-        // TODO: Add similar validation blocks for Brave, Bing, ElevenLabs, AzureSpeech etc.
-        // === END: VALIDATION LOGIC ===
+        if (_config.Provider == null)
+            throw new InvalidOperationException("Provider configuration is required.");
 
-        // Ensure base client is available by creating from provider if needed
-        this.EnsureBaseClientFromProvider();
+        // Resolve API key from configuration if not set
+        if (string.IsNullOrEmpty(_config.Provider.ApiKey) && _configuration != null)
+        {
+            var providerKeyForConfig = _config.Provider.ProviderKey;
+            if (string.IsNullOrEmpty(providerKeyForConfig))
+                providerKeyForConfig = "openai"; // fallback default
+            
+            // Try multiple configuration patterns
+            var apiKey = _configuration[$"{providerKeyForConfig}:ApiKey"] 
+                      ?? _configuration[$"{Capitalize(providerKeyForConfig)}:ApiKey"]
+                      ?? Environment.GetEnvironmentVariable($"{providerKeyForConfig.ToUpperInvariant()}_API_KEY");
+            
+            if (!string.IsNullOrEmpty(apiKey))
+            {
+                _config.Provider.ApiKey = apiKey;
+            }
+            
+            // Also try to resolve endpoint if not set
+            if (string.IsNullOrEmpty(_config.Provider.Endpoint))
+            {
+                var endpoint = _configuration[$"{providerKeyForConfig}:Endpoint"] 
+                            ?? _configuration[$"{Capitalize(providerKeyForConfig)}:Endpoint"];
+                
+                if (!string.IsNullOrEmpty(endpoint))
+                {
+                    _config.Provider.Endpoint = endpoint;
+                }
+            }
+        }
+
+        // Resolve provider from registry
+        var providerKey = _config.Provider.ProviderKey;
+        if (string.IsNullOrEmpty(providerKey))
+            throw new InvalidOperationException("ProviderKey in ProviderConfig cannot be empty.");
+
+        var providerFeatures = _providerRegistry.GetProvider(providerKey);
+
+        if (providerFeatures == null)
+        {
+            var availableProviders = string.Join(", ", _providerRegistry.GetRegisteredProviders());
+            throw new InvalidOperationException(
+                $"Provider '{providerKey}' not registered. " +
+                $"Available providers: [{availableProviders}]. " +
+                $"Did you forget to reference the HPD-Agent.Providers.{Capitalize(providerKey)} package?");
+        }
+
+        // Validate provider-specific configuration
+        var validation = providerFeatures.ValidateConfiguration(_config.Provider);
+        if (!validation.IsValid)
+        {
+            throw new InvalidOperationException(
+                $"Provider configuration for '{providerKey}' is invalid:\n- {string.Join("\n- ", validation.Errors)}");
+        }
+
+        // Create chat client and error handler via provider factories
+        _baseClient = providerFeatures.CreateChatClient(_config.Provider, _serviceProvider);
+        var errorHandler = providerFeatures.CreateErrorHandler();
 
         if (_baseClient == null)
-            throw new InvalidOperationException("Base client must be provided using WithBaseClient() or WithProvider()");
+            throw new InvalidOperationException($"The factory for provider '{providerKey}' returned a null chat client.");
+        if (errorHandler == null)
+            throw new InvalidOperationException($"The factory for provider '{providerKey}' returned a null error handler.");
+
 
         // Apply middleware pipeline in order
         var clientToUse = _baseClient;
@@ -451,6 +584,8 @@ public class AgentBuilder
             mergedOptions, // Pass the merged options directly
             _promptFilters,
             _scopedFilterManager,
+            errorHandler,
+            _providerRegistry,
             _permissionFilters,
             _globalFilters,
             _messageTurnFilters);
@@ -459,6 +594,12 @@ public class AgentBuilder
     }
 
     #region Helper Methods
+
+    public bool IsProviderRegistered(string providerKey) => _providerRegistry.IsRegistered(providerKey);
+    
+    public IReadOnlyCollection<string> GetAvailableProviders() => _providerRegistry.GetRegisteredProviders();
+
+    private static string Capitalize(string s) => string.IsNullOrEmpty(s) ? s : char.ToUpperInvariant(s[0]) + s[1..];
 
 
 
@@ -549,6 +690,7 @@ public class AgentBuilder
     /// <summary>
     /// Creates a new builder instance
     /// </summary>
+    [System.Diagnostics.CodeAnalysis.RequiresUnreferencedCode("Provider assembly loading uses reflection in non-AOT scenarios")]
     public static AgentBuilder Create() => new();
 
 
@@ -1237,614 +1379,7 @@ public static class AgentBuilderPluginExtensions
 
 #endregion
 
-#region Provider Extensions
 
-public static class AgentBuilderProviderExtensions
-{
-    /// <summary>
-    /// Configures the agent to use a specific provider with model name
-    /// </summary>
-    /// <param name="builder">The agent builder.</param>
-    /// <param name="provider">The chat provider to use</param>
-    /// <param name="modelName">The specific model name (e.g., "gpt-4", "anthropic/claude-3.5-sonnet")</param>
-    /// <param name="apiKey">API key for the provider (optional - will fallback to configuration/environment)</param>
-    public static AgentBuilder WithProvider(this AgentBuilder builder, ChatProvider provider, string modelName, string? apiKey = null)
-    {
-        builder.Config.Provider = new ProviderConfig
-        {
-            Provider = provider,
-            ModelName = modelName ?? throw new ArgumentNullException(nameof(modelName)),
-            ApiKey = apiKey
-        };
-        return builder;
-    }
-
-    /// <summary>
-    /// Sets the configuration source for reading API keys and other settings
-    /// </summary>
-    /// <param name="builder">The agent builder.</param>
-    /// <param name="configuration">Configuration instance (e.g., from appsettings.json)</param>
-    public static AgentBuilder WithAPIConfiguration(this AgentBuilder builder, IConfiguration configuration)
-    {
-        builder._configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
-        return builder;
-    }
-
-    /// <summary>
-    /// Sets the configuration source for reading API keys and other settings from a JSON file
-    /// </summary>
-    /// <param name="builder">The agent builder.</param>
-    /// <param name="jsonFilePath">Path to the JSON configuration file (e.g., appsettings.json)</param>
-    /// <param name="optional">Whether the file is optional (default: false)</param>
-    /// <param name="reloadOnChange">Whether to reload configuration when file changes (default: true)</param>
-    /// <exception cref="ArgumentException">Thrown when the file path is null or empty.</exception>
-    /// <exception cref="FileNotFoundException">Thrown when the specified file does not exist and optional is false.</exception>
-    public static AgentBuilder WithAPIConfiguration(this AgentBuilder builder, string jsonFilePath, bool optional = false, bool reloadOnChange = true)
-    {
-        if (string.IsNullOrWhiteSpace(jsonFilePath))
-            throw new ArgumentException("JSON file path cannot be null or empty.", nameof(jsonFilePath));
-
-        if (!optional && !File.Exists(jsonFilePath))
-            throw new FileNotFoundException($"Configuration file not found: {jsonFilePath}");
-
-        try
-        {
-            var configuration = new ConfigurationBuilder()
-                .AddJsonFile(jsonFilePath, optional: optional, reloadOnChange: reloadOnChange)
-                .Build();
-
-            builder._configuration = configuration;
-            return builder;
-        }
-        catch (Exception ex) when (!(ex is ArgumentException || ex is FileNotFoundException))
-        {
-            throw new InvalidOperationException($"Failed to load configuration from '{jsonFilePath}': {ex.Message}", ex);
-        }
-    }
-
-    /// <summary>
-    /// Sets the base IChatClient that provides the core LLM functionality
-    /// </summary>
-    /// <param name="builder">The agent builder.</param>
-    /// <param name="baseClient">The base chat client.</param>
-    public static AgentBuilder WithBaseClient(this AgentBuilder builder, IChatClient baseClient)
-    {
-        builder._baseClient = baseClient ?? throw new ArgumentNullException(nameof(baseClient));
-        return builder;
-    }
-
-    internal static string ResolveApiKey(this AgentBuilder builder, ChatProvider provider, string? explicitApiKey = null)
-    {
-        // 1. Use explicitly provided API key if available
-        if (!string.IsNullOrEmpty(explicitApiKey))
-            return explicitApiKey;
-
-        // 2. Try configuration (appsettings.json)
-        var configKey = GetConfigurationKey(provider);
-        var apiKeyFromConfig = builder._configuration?[configKey];
-        if (!string.IsNullOrEmpty(apiKeyFromConfig))
-            return apiKeyFromConfig;
-
-        // 3. Try environment variable
-        var envKey = GetEnvironmentVariableName(provider);
-        var apiKeyFromEnv = AgentBuilderHelpers.GetEnvironmentVariable(envKey);
-        if (!string.IsNullOrEmpty(apiKeyFromEnv))
-            return apiKeyFromEnv;
-
-        // 4. Fallback to generic environment variable names (AOT-safe)
-        var genericEnvKey = GetGenericEnvironmentVariableName(provider);
-        var genericApiKey = AgentBuilderHelpers.GetEnvironmentVariable(genericEnvKey);
-        if (!string.IsNullOrEmpty(genericApiKey))
-            return genericApiKey;
-
-        throw new InvalidOperationException($"API key for {provider} not found. Provide it via:" +
-            $"\n1. WithProvider() method parameter" +
-            $"\n2. Configuration key: '{configKey}'" +
-            $"\n3. Environment variable: '{envKey}' or '{genericEnvKey}'");
-    }
-
-    private static string GetConfigurationKey(ChatProvider provider) => provider switch
-    {
-        ChatProvider.OpenRouter => "OpenRouter:ApiKey",
-        ChatProvider.OpenAI => "OpenAI:ApiKey",
-        ChatProvider.AzureOpenAI => "AzureOpenAI:ApiKey",
-        ChatProvider.AzureAIInference => "AzureAIInference:Endpoint",
-        ChatProvider.Ollama => "Ollama:ApiKey",
-        ChatProvider.Anthropic => "Anthropic:ApiKey",
-        ChatProvider.GoogleAI => "GoogleAI:ApiKey",
-        ChatProvider.VertexAI => "VertexAI:ProjectId",
-        ChatProvider.HuggingFace => "HuggingFace:ApiKey",
-        ChatProvider.Bedrock => "AWS:Region", // Primary config is region
-        ChatProvider.OnnxRuntime => "OnnxRuntime:ModelPath",
-        ChatProvider.Mistral => "Mistral:ApiKey",
-        // Apple Intelligence removed
-        _ => "Unknown:ApiKey" // AOT-safe fallback
-    };
-
-    private static string GetEnvironmentVariableName(ChatProvider provider) => provider switch
-    {
-        ChatProvider.OpenRouter => "OPENROUTER_API_KEY",
-        ChatProvider.OpenAI => "OPENAI_API_KEY",
-        ChatProvider.AzureOpenAI => "AZURE_OPENAI_API_KEY",
-        ChatProvider.AzureAIInference => "AZURE_AI_INFERENCE_ENDPOINT",
-        ChatProvider.Ollama => "OLLAMA_API_KEY",
-        ChatProvider.Anthropic => "ANTHROPIC_API_KEY",
-        ChatProvider.GoogleAI => "GOOGLE_API_KEY",
-        ChatProvider.VertexAI => "GOOGLE_CLOUD_PROJECT",
-        ChatProvider.HuggingFace => "HF_TOKEN",
-        ChatProvider.Bedrock => "AWS_REGION", // Standard AWS region variable
-        ChatProvider.OnnxRuntime => "ONNX_MODEL_PATH",
-        ChatProvider.Mistral => "MISTRAL_API_KEY",
-        // Apple Intelligence removed
-        _ => "UNKNOWN_API_KEY" // AOT-safe fallback
-    };
-
-    private static string GetGenericEnvironmentVariableName(ChatProvider provider) => provider switch
-    {
-        ChatProvider.OpenRouter => "OPENROUTER_API_KEY",
-        ChatProvider.OpenAI => "OPENAI_API_KEY",
-        ChatProvider.AzureOpenAI => "AZUREOPENAI_API_KEY",
-        ChatProvider.AzureAIInference => "AZURE_AI_INFERENCE_ENDPOINT",
-        ChatProvider.Ollama => "OLLAMA_API_KEY",
-        ChatProvider.Anthropic => "ANTHROPIC_API_KEY",
-        ChatProvider.GoogleAI => "GOOGLE_API_KEY",
-        ChatProvider.VertexAI => "GOOGLE_CLOUD_PROJECT",
-        ChatProvider.HuggingFace => "HF_TOKEN",
-        ChatProvider.Bedrock => "AWS_REGION",
-        ChatProvider.OnnxRuntime => "ONNX_MODEL_PATH",
-        ChatProvider.Mistral => "MISTRAL_API_KEY",
-        // Apple Intelligence removed
-        _ => "GENERIC_API_KEY" // AOT-safe fallback
-    };
-
-    /// <summary>
-    /// Ensures a base client is available by creating one from provider configuration if needed
-    /// </summary>
-    internal static void EnsureBaseClientFromProvider(this AgentBuilder builder)
-    {
-        // If no base client provided but provider info is available, create the client
-        if (builder.BaseClient == null && builder.Config.Provider != null && !string.IsNullOrEmpty(builder.Config.Provider.ModelName))
-        {
-            // Apple Intelligence removed - handle all providers the same way
-            {
-                var apiKey = builder.ResolveApiKey(builder.Config.Provider.Provider, builder.Config.Provider.ApiKey);
-                builder.BaseClient = builder.CreateClientFromProvider(builder.Config.Provider.Provider, builder.Config.Provider.ModelName, apiKey);
-            }
-        }
-    }
-
-    internal static IChatClient CreateClientFromProvider(this AgentBuilder builder, ChatProvider provider, string modelName, string? apiKey)
-    {
-        return provider switch
-        {
-            ChatProvider.OpenRouter => CreateOpenRouterClient(modelName, apiKey!),
-            ChatProvider.OpenAI => new ChatClient(modelName, apiKey!).AsIChatClient(),
-            ChatProvider.AzureOpenAI => new ChatCompletionsClient(
-                new Uri("https://{your-resource-name}.openai.azure.com/openai/deployments/{yourDeployment}"),
-                new AzureKeyCredential(apiKey!)).AsIChatClient(modelName),
-            ChatProvider.AzureAIInference => CreateAzureAIInferenceClient(builder, modelName),
-            ChatProvider.Ollama => new OllamaApiClient(new Uri("http://localhost:11434"), modelName),
-            ChatProvider.Anthropic => new AnthropicClient(apiKey).Messages,
-            ChatProvider.GoogleAI => new GenerativeAIChatClient(apiKey!, modelName),
-            ChatProvider.VertexAI => CreateVertexAIClient(builder, modelName),
-            ChatProvider.HuggingFace => new HuggingFaceClient(apiKey!),
-            ChatProvider.Bedrock => CreateBedrockChatClient(builder, modelName),
-            ChatProvider.OnnxRuntime => CreateOnnxRuntimeChatClient(builder, modelName),
-            ChatProvider.Mistral => new MistralClient(apiKey!).Completions,
-            _ => throw new NotSupportedException($"Provider {provider} is not supported."),
-        };
-    }
-
-    /// <summary>
-    /// Creates an OpenRouter client using our custom OpenRouterChatClient.
-    /// Properly exposes reasoning content from OpenRouter's reasoning_details field.
-    /// </summary>
-    private static IChatClient CreateOpenRouterClient(string modelName, string apiKey)
-    {
-        // Create HttpClient configured for OpenRouter
-        var httpClient = new HttpClient
-        {
-            BaseAddress = new Uri("https://openrouter.ai/api/v1/")
-        };
-
-        httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
-        httpClient.DefaultRequestHeaders.Add("HTTP-Referer", "https://github.com/your-repo"); // Optional: for rankings
-        httpClient.DefaultRequestHeaders.Add("X-Title", "HPD-Agent"); // Optional: for rankings
-
-        // Create our custom OpenRouterChatClient that properly handles reasoning_details
-        return new HPD_Agent.Providers.OpenRouter.OpenRouterChatClient(httpClient, modelName);
-    }
-
-    /// <summary>
-    /// Creates a Vertex AI client using the project ID and region from configuration
-    /// </summary>
-    private static IChatClient CreateVertexAIClient(AgentBuilder builder, string modelName)
-    {
-        var providerSpecific = builder.Config.Provider?.ProviderSpecific;
-        var projectId = providerSpecific?.VertexAI?.ProjectId 
-            ?? builder._configuration?["VertexAI:ProjectId"] 
-            ?? AgentBuilderHelpers.GetEnvironmentVariable("GOOGLE_CLOUD_PROJECT");
-
-        var region = providerSpecific?.VertexAI?.Region
-            ?? builder._configuration?["VertexAI:Region"]
-            ?? AgentBuilderHelpers.GetEnvironmentVariable("GOOGLE_CLOUD_REGION");
-
-        if (string.IsNullOrEmpty(projectId) || string.IsNullOrEmpty(region))
-        {
-            throw new InvalidOperationException(
-                "For the VertexAI provider, ProjectId and Region must be configured via WithProvider<VertexAISettings>(...) or environment variables (GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_REGION).");
-        }
-
-        // Create VertexAI platform adapter (this will use Application Default Credentials)
-        var platformAdapter = new VertextPlatformAdapter(projectId, region);
-        
-        // Create the IChatClient using the GenerativeAIChatClient with the VertexAI platform adapter
-        return new GenerativeAIChatClient(platformAdapter, modelName);
-    }
-
-    /// <summary>
-    /// Creates an AWS Bedrock client using the region and credentials from configuration
-    /// </summary>
-    private static IChatClient CreateBedrockChatClient(AgentBuilder builder, string modelName)
-    {
-        var settings = builder.Config.Provider?.ProviderSpecific?.Bedrock;
-
-        var region = settings?.Region
-            ?? builder._configuration?["AWS:Region"]
-            ?? AgentBuilderHelpers.GetEnvironmentVariable("AWS_REGION");
-
-        var accessKey = settings?.AccessKeyId
-            ?? builder._configuration?["AWS:AccessKeyId"]
-            ?? AgentBuilderHelpers.GetEnvironmentVariable("AWS_ACCESS_KEY_ID");
-
-        var secretKey = settings?.SecretAccessKey
-            ?? builder._configuration?["AWS:SecretAccessKey"]
-            ?? AgentBuilderHelpers.GetEnvironmentVariable("AWS_SECRET_ACCESS_KEY");
-            
-        if (string.IsNullOrEmpty(region))
-        {
-            throw new InvalidOperationException(
-                "For the Bedrock provider, the AWS Region must be configured via WithProvider<BedrockSettings>(...) or the AWS_REGION environment variable.");
-        }
-
-        // Create the IAmazonBedrockRuntime client
-        IAmazonBedrockRuntime bedrockRuntime;
-        
-        if (!string.IsNullOrEmpty(accessKey) && !string.IsNullOrEmpty(secretKey))
-        {
-            // Use provided credentials
-            var regionEndpoint = RegionEndpoint.GetBySystemName(region);
-            bedrockRuntime = new AmazonBedrockRuntimeClient(accessKey, secretKey, regionEndpoint);
-        }
-        else
-        {
-            // Use default credential chain
-            var regionEndpoint = RegionEndpoint.GetBySystemName(region);
-            bedrockRuntime = new AmazonBedrockRuntimeClient(regionEndpoint);
-        }
-
-        // Use the extension method from the Bedrock MEAI library to get the IChatClient
-        return bedrockRuntime.AsIChatClient(modelName);
-    }
-
-    /// <summary>
-    /// Creates an Azure AI Inference client using the endpoint and API key from configuration
-    /// </summary>
-    private static IChatClient CreateAzureAIInferenceClient(AgentBuilder builder, string modelName)
-    {
-        var settings = builder.Config.Provider?.ProviderSpecific?.AzureAIInference;
-
-        var endpoint = settings?.Endpoint
-            ?? builder._configuration?["AzureAIInference:Endpoint"]
-            ?? AgentBuilderHelpers.GetEnvironmentVariable("AZURE_AI_INFERENCE_ENDPOINT");
-
-        var apiKey = settings?.ApiKey
-            ?? builder._configuration?["AzureAIInference:ApiKey"]
-            ?? AgentBuilderHelpers.GetEnvironmentVariable("AZURE_AI_INFERENCE_API_KEY");
-
-        if (string.IsNullOrEmpty(endpoint))
-        {
-            throw new InvalidOperationException("For AzureAIInference, the Endpoint must be configured.");
-        }
-        
-        if (string.IsNullOrEmpty(apiKey))
-        {
-             throw new InvalidOperationException("For AzureAIInference, the ApiKey must be configured.");
-        }
-
-        // Create the ChatCompletionsClient and use the built-in AsIChatClient extension method
-        var client = new ChatCompletionsClient(new Uri(endpoint), new AzureKeyCredential(apiKey));
-        return client.AsIChatClient(modelName);
-    }
-
-    /// <summary>
-    /// Creates an ONNX Runtime client using the model path from configuration
-    /// </summary>
-    private static IChatClient CreateOnnxRuntimeChatClient(AgentBuilder builder, string modelName)
-    {
-        var settings = builder.Config.Provider?.ProviderSpecific?.OnnxRuntime;
-
-        var modelPath = settings?.ModelPath
-            ?? builder._configuration?["OnnxRuntime:ModelPath"]
-            ?? AgentBuilderHelpers.GetEnvironmentVariable("ONNX_MODEL_PATH");
-
-        if (string.IsNullOrEmpty(modelPath))
-        {
-            throw new InvalidOperationException(
-                "For the OnnxRuntime provider, the ModelPath must be configured.");
-        }
-
-        // Create configuration for the client with enhanced options
-        var options = new OnnxRuntimeGenAIChatClientOptions
-        {
-            StopSequences = settings?.StopSequences,
-            EnableCaching = settings?.EnableCaching ?? false,
-            PromptFormatter = settings?.PromptFormatter
-        };
-        
-        return new OnnxRuntimeGenAIChatClient(modelPath, options);
-    }
-
-    /// <summary>
-    /// Generic method for configuring any provider with its specific settings in a single call.
-    /// This is a type-safe, flexible approach that combines provider selection and configuration.
-    /// </summary>
-    /// <typeparam name="TProviderConfig">The provider-specific configuration type (e.g., AnthropicSettings, OpenAISettings)</typeparam>
-    /// <param name="builder">The agent builder.</param>
-    /// <param name="provider">The chat provider to use</param>
-    /// <param name="modelName">The specific model name</param>
-    /// <param name="configure">Configuration action for the provider settings</param>
-    /// <param name="apiKey">Optional API key (will fallback to configuration/environment if not provided)</param>
-    /// <returns>The agent builder for method chaining</returns>
-    /// <exception cref="InvalidOperationException">Thrown when the provider type doesn't match the configuration type</exception>
-    public static AgentBuilder WithProvider<TProviderConfig>(
-        this AgentBuilder builder, 
-        ChatProvider provider, 
-        string modelName,
-        Action<TProviderConfig> configure,
-        string? apiKey = null) 
-        where TProviderConfig : class, new()
-    {
-        // First set the basic provider configuration
-        builder.Config.Provider = new ProviderConfig
-        {
-            Provider = provider,
-            ModelName = modelName ?? throw new ArgumentNullException(nameof(modelName)),
-            ApiKey = apiKey
-        };
-
-        // Then configure the provider-specific settings
-        var providerSpecific = GetOrCreateProviderSpecificSettings(builder);
-        var settings = GetOrCreateProviderSettings<TProviderConfig>(providerSpecific, provider);
-        configure(settings);
-
-        return builder;
-    }
-
-    /// <summary>
-    /// Gets or creates the ProviderSpecificConfig object
-    /// </summary>
-    private static ProviderSpecificConfig GetOrCreateProviderSpecificSettings(AgentBuilder builder)
-    {
-        if (builder.Config.Provider!.ProviderSpecific == null)
-        {
-            builder.Config.Provider.ProviderSpecific = new ProviderSpecificConfig();
-        }
-        return builder.Config.Provider.ProviderSpecific;
-    }
-
-    /// <summary>
-    /// Generic helper to get or create provider-specific settings for the generic WithProvider method
-    /// </summary>
-    private static TProviderConfig GetOrCreateProviderSettings<TProviderConfig>(
-        ProviderSpecificConfig providerSpecific, 
-        ChatProvider provider) 
-        where TProviderConfig : class, new()
-    {
-        // Use type matching to set the correct property on ProviderSpecificConfig
-        if (typeof(TProviderConfig) == typeof(AnthropicSettings))
-        {
-            if (provider != ChatProvider.Anthropic)
-                throw new InvalidOperationException($"AnthropicSettings can only be used with {ChatProvider.Anthropic} provider. Current provider is {provider}.");
-            
-            return (providerSpecific.Anthropic ??= new AnthropicSettings()) as TProviderConfig
-                ?? throw new InvalidOperationException("Failed to create AnthropicSettings");
-        }
-        else if (typeof(TProviderConfig) == typeof(OpenAISettings))
-        {
-            if (provider != ChatProvider.OpenAI)
-                throw new InvalidOperationException($"OpenAISettings can only be used with {ChatProvider.OpenAI} provider. Current provider is {provider}.");
-            
-            return (providerSpecific.OpenAI ??= new OpenAISettings()) as TProviderConfig
-                ?? throw new InvalidOperationException("Failed to create OpenAISettings");
-        }
-        else if (typeof(TProviderConfig) == typeof(AzureOpenAISettings))
-        {
-            if (provider != ChatProvider.AzureOpenAI)
-                throw new InvalidOperationException($"AzureOpenAISettings can only be used with {ChatProvider.AzureOpenAI} provider. Current provider is {provider}.");
-            
-            return (providerSpecific.AzureOpenAI ??= new AzureOpenAISettings()) as TProviderConfig
-                ?? throw new InvalidOperationException("Failed to create AzureOpenAISettings");
-        }
-        else if (typeof(TProviderConfig) == typeof(OllamaSettings))
-        {
-            if (provider != ChatProvider.Ollama)
-                throw new InvalidOperationException($"OllamaSettings can only be used with {ChatProvider.Ollama} provider. Current provider is {provider}.");
-            
-            return (providerSpecific.Ollama ??= new OllamaSettings()) as TProviderConfig
-                ?? throw new InvalidOperationException("Failed to create OllamaSettings");
-        }
-        else if (typeof(TProviderConfig) == typeof(OpenRouterSettings))
-        {
-            if (provider != ChatProvider.OpenRouter)
-                throw new InvalidOperationException($"OpenRouterSettings can only be used with {ChatProvider.OpenRouter} provider. Current provider is {provider}.");
-            
-            return (providerSpecific.OpenRouter ??= new OpenRouterSettings()) as TProviderConfig
-                ?? throw new InvalidOperationException("Failed to create OpenRouterSettings");
-        }
-        else if (typeof(TProviderConfig) == typeof(GoogleAISettings))
-        {
-            if (provider != ChatProvider.GoogleAI)
-                throw new InvalidOperationException($"GoogleAISettings can only be used with {ChatProvider.GoogleAI} provider. Current provider is {provider}.");
-            
-            return (providerSpecific.GoogleAI ??= new GoogleAISettings()) as TProviderConfig
-                ?? throw new InvalidOperationException("Failed to create GoogleAISettings");
-        }
-        else if (typeof(TProviderConfig) == typeof(VertexAISettings))
-        {
-            if (provider != ChatProvider.VertexAI)
-                throw new InvalidOperationException($"VertexAISettings can only be used with {ChatProvider.VertexAI} provider. Current provider is {provider}.");
-
-            return (providerSpecific.VertexAI ??= new VertexAISettings()) as TProviderConfig
-                ?? throw new InvalidOperationException("Failed to create VertexAISettings");
-        }
-        else if (typeof(TProviderConfig) == typeof(HuggingFaceSettings))
-        {
-            if (provider != ChatProvider.HuggingFace)
-                throw new InvalidOperationException($"HuggingFaceSettings can only be used with {ChatProvider.HuggingFace} provider. Current provider is {provider}.");
-
-            return (providerSpecific.HuggingFace ??= new HuggingFaceSettings()) as TProviderConfig
-                ?? throw new InvalidOperationException("Failed to create HuggingFaceSettings");
-        }
-        else if (typeof(TProviderConfig) == typeof(BedrockSettings))
-        {
-            if (provider != ChatProvider.Bedrock)
-                throw new InvalidOperationException($"BedrockSettings can only be used with the {ChatProvider.Bedrock} provider.");
-            
-            return (providerSpecific.Bedrock ??= new BedrockSettings()) as TProviderConfig
-                ?? throw new InvalidOperationException("Failed to create BedrockSettings");
-        }
-        else if (typeof(TProviderConfig) == typeof(AzureAIInferenceSettings))
-        {
-            if (provider != ChatProvider.AzureAIInference)
-                throw new InvalidOperationException($"AzureAIInferenceSettings can only be used with the {ChatProvider.AzureAIInference} provider.");
-            
-            return (providerSpecific.AzureAIInference ??= new AzureAIInferenceSettings()) as TProviderConfig
-                ?? throw new InvalidOperationException("Failed to create AzureAIInferenceSettings");
-        }
-        else if (typeof(TProviderConfig) == typeof(OnnxRuntimeSettings))
-        {
-            if (provider != ChatProvider.OnnxRuntime)
-                throw new InvalidOperationException($"OnnxRuntimeSettings can only be used with the {ChatProvider.OnnxRuntime} provider.");
-            
-            return (providerSpecific.OnnxRuntime ??= new OnnxRuntimeSettings()) as TProviderConfig
-                ?? throw new InvalidOperationException("Failed to create OnnxRuntimeSettings");
-        }
-        else if (typeof(TProviderConfig) == typeof(MistralSettings))
-        {
-            if (provider != ChatProvider.Mistral)
-                throw new InvalidOperationException($"MistralSettings can only be used with the {ChatProvider.Mistral} provider.");
-            
-            return (providerSpecific.Mistral ??= new MistralSettings()) as TProviderConfig
-                ?? throw new InvalidOperationException("Failed to create MistralSettings");
-        }
-        else
-        {
-            throw new InvalidOperationException($"Unsupported provider configuration type: {typeof(TProviderConfig).Name}. " +
-                "Supported types: AnthropicSettings, OpenAISettings, AzureOpenAISettings, OllamaSettings, OpenRouterSettings, GoogleAISettings, VertexAISettings, HuggingFaceSettings, BedrockSettings, AzureAIInferenceSettings, OnnxRuntimeSettings, MistralSettings.");
-        }
-    }
-
-}
-
-#endregion
-
-#region Helper Methods
-
-/// <summary>
-/// Shared utility methods for AgentBuilder extension classes.
-/// Contains common helper methods to avoid duplication across extension files.
-/// </summary>
-internal static class AgentBuilderHelpers
-{
-    /// <summary>
-    /// Helper method to get environment variables (isolated to avoid analyzer warnings)
-    /// </summary>
-#pragma warning disable RS1035 // Environment access is valid in application code, not analyzer code
-    internal static string? GetEnvironmentVariable(string name)
-    {
-        return Environment.GetEnvironmentVariable(name);
-    }
-#pragma warning restore RS1035
-
-    /// <summary>
-    /// Simple heuristic to detect analyzer context
-    /// </summary>
-    internal static bool IsAnalyzerContext()
-    {
-        return Debugger.IsAttached == false;
-    }
-
-    /// <summary>
-    /// Resolves or creates a configuration object from the provider configs dictionary
-    /// AOT-safe implementation without reflection
-    /// </summary>
-    internal static T ResolveOrCreateConfig<T>(Dictionary<Type, object> providerConfigs) where T : new()
-    {
-        if (providerConfigs.TryGetValue(typeof(T), out var existing))
-        {
-            return (T)existing;
-        }
-
-        var config = new T();
-        providerConfigs[typeof(T)] = config;
-        return config;
-    }
-
-    /// <summary>
-    /// Resolves the provider URI based on provider configuration, following Microsoft.Extensions.AI patterns
-    /// </summary>
-    /// <param name="provider">Provider configuration</param>
-    /// <returns>Provider URI if resolvable, otherwise null</returns>
-    internal static Uri? ResolveProviderUri(ProviderConfig? provider)
-    {
-        if (provider?.Endpoint != null)
-        {
-            try
-            {
-                return new Uri(provider.Endpoint);
-            }
-            catch (UriFormatException)
-            {
-                // Invalid URI format, return null
-                return null;
-            }
-        }
-
-        return provider?.Provider switch
-        {
-            ChatProvider.OpenAI => new Uri("https://api.openai.com"),
-            ChatProvider.OpenRouter => new Uri("https://openrouter.ai/api"),
-            ChatProvider.Ollama => new Uri("http://localhost:11434"),
-            ChatProvider.Mistral => new Uri("https://api.mistral.ai"),
-            ChatProvider.Anthropic => new Uri("https://api.anthropic.com"),
-            ChatProvider.GoogleAI => new Uri("https://generativelanguage.googleapis.com"),
-            ChatProvider.VertexAI => new Uri("https://us-central1-aiplatform.googleapis.com"), // Default region
-            ChatProvider.HuggingFace => new Uri("https://api-inference.huggingface.co"),
-            ChatProvider.Bedrock => new Uri("https://bedrock-runtime.us-east-1.amazonaws.com"), // Default region
-            ChatProvider.AzureOpenAI => null, // Requires specific endpoint
-            ChatProvider.AzureAIInference => null, // Requires specific endpoint  
-            ChatProvider.OnnxRuntime => null, // Local model, no URI
-            _ => null
-        };
-    }
-
-    /// <summary>
-    /// Creates an IChatClient from a ProviderConfig.
-    /// Used by Agent's history reduction to create a separate summarizer client.
-    /// </summary>
-    internal static IChatClient CreateClientFromProviderConfig(ProviderConfig providerConfig)
-    {
-        // Use a dummy builder to access extension methods
-        var builder = new AgentBuilder();
-        return builder.CreateClientFromProvider(
-            providerConfig.Provider,
-            providerConfig.ModelName,
-            providerConfig.ApiKey);
-    }
-}
-
-#endregion
 #region Error Handling Policy
 
 /// <summary>
@@ -2191,3 +1726,69 @@ internal class EmptyServiceProvider : IServiceProvider
     public static readonly EmptyServiceProvider Instance = new();
     public object? GetService(Type serviceType) => null;
 }
+
+#region Configuration Extensions
+
+public static class AgentBuilderConfigExtensions
+{
+    /// <summary>
+    /// Sets the configuration source for reading API keys and other settings
+    /// </summary>
+    /// <param name="builder">The agent builder.</param>
+    /// <param name="configuration">Configuration instance (e.g., from appsettings.json)</param>
+    public static AgentBuilder WithAPIConfiguration(this AgentBuilder builder, IConfiguration configuration)
+    {
+        builder._configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+        return builder;
+    }
+
+    /// <summary>
+    /// Sets the configuration source for reading API keys and other settings from a JSON file
+    /// </summary>
+    /// <param name="builder">The agent builder.</param>
+    /// <param name="jsonFilePath">Path to the JSON configuration file (e.g., appsettings.json)</param>
+    /// <param name="optional">Whether the file is optional (default: false)</param>
+    /// <param name="reloadOnChange">Whether to reload configuration when file changes (default: true)</param>
+    public static AgentBuilder WithAPIConfiguration(this AgentBuilder builder, string jsonFilePath, bool optional = false, bool reloadOnChange = true)
+    {
+        if (string.IsNullOrWhiteSpace(jsonFilePath))
+            throw new ArgumentException("JSON file path cannot be null or empty.", nameof(jsonFilePath));
+
+        if (!optional && !File.Exists(jsonFilePath))
+            throw new FileNotFoundException($"Configuration file not found: {jsonFilePath}");
+
+        try
+        {
+            var configuration = new ConfigurationBuilder()
+                .AddJsonFile(jsonFilePath, optional: optional, reloadOnChange: reloadOnChange)
+                .Build();
+
+            builder._configuration = configuration;
+            return builder;
+        }
+        catch (Exception ex) when (!(ex is ArgumentException || ex is FileNotFoundException))
+        {
+            throw new InvalidOperationException($"Failed to load configuration from '{jsonFilePath}': {ex.Message}", ex);
+        }
+    }
+}
+
+#endregion
+
+#region Provider Extensions
+
+public static class AgentBuilderProviderExtensions
+{
+    public static AgentBuilder WithProvider(this AgentBuilder builder, string providerKey, string modelName, string? apiKey = null)
+    {
+        builder.Config.Provider = new ProviderConfig
+        {
+            ProviderKey = providerKey,
+            ModelName = modelName,
+            ApiKey = apiKey
+        };
+        return builder;
+    }
+}
+
+#endregion

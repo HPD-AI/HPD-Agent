@@ -1,3 +1,5 @@
+using System;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
 
 /// A data-centric class that holds all the serializable configuration
@@ -159,7 +161,19 @@ public class McpConfig
 /// </summary>
 public class ProviderConfig
 {
+    /// <summary>
+    /// Provider identifier (lowercase, e.g., "openai", "anthropic", "ollama").
+    /// This is the primary key for provider resolution.
+    /// </summary>
+    public string ProviderKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// DEPRECATED: Use ProviderKey instead. Kept for backward compatibility.
+    /// </summary>
+    [Obsolete("Use ProviderKey instead for better extensibility")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public ChatProvider Provider { get; set; }
+
     public string ModelName { get; set; } = string.Empty;
     public string? ApiKey { get; set; }
     public string? Endpoint { get; set; }

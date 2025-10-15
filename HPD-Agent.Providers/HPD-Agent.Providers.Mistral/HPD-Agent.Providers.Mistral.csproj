@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <PackageId>HPD-Agent.Providers.Mistral</PackageId>
+    <Title>HPD-Agent Mistral Provider</Title>
+    <Description>Mistral provider for HPD-Agent</Description>
+    <PackageTags>ai;agent;mistral;llm</PackageTags>
+  </PropertyGroup>
+  
+  <ItemGroup>
+    <ProjectReference Include="../../HPD-Agent/HPD-Agent.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Mistral.SDK" Version="2.3.0" />
+  </ItemGroup>
+</Project>

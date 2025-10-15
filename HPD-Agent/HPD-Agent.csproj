@@ -5,40 +5,22 @@
     <RootNamespace>HPD_Agent</RootNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <PublishAot>true</PublishAot>
-    <InvariantGlobalization>true</InvariantGlobalization>
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
     <NoWarn>HPDAUDIO001;MEAI001</NoWarn>
-
-    <!-- Enable Native Library Export for FFI -->
+    <!-- Core library - NOT Native AOT (FFI project handles that) -->
     <OutputType>Library</OutputType>
-    <NativeLib>Shared</NativeLib>
-    <EnableUnmanagedCallersOnlyAttribute>true</EnableUnmanagedCallersOnlyAttribute>
-    
-    <!-- Enable Swift Interop Support -->
-    <EnableSwiftInterop>true</EnableSwiftInterop>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="HPD-Agent.FFI" />
+  </ItemGroup>
 
   <ItemGroup>
     <!-- Core AI Framework -->
     <PackageReference Include="A2A" Version="0.1.0-preview.2" />
-    <PackageReference Include="Anthropic.SDK" Version="5.5.2" />
-    <PackageReference Include="AWSSDK.BedrockRuntime" Version="4.0.7" />
-    <PackageReference Include="AWSSDK.Extensions.Bedrock.MEAI" Version="4.0.3.1" />
-    <PackageReference Include="Google_GenerativeAI" Version="3.2.0" />
-    <PackageReference Include="Google_GenerativeAI.Microsoft" Version="3.2.0" />
-    <PackageReference Include="HuggingFace" Version="0.4.1-dev.23" />
     <PackageReference Include="Microsoft.Agents.AI.Abstractions" Version="1.0.0-preview.251009.1" />
     <PackageReference Include="Microsoft.Extensions.AI" Version="9.9.1" />
     <PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="9.9.1" />
-    <PackageReference Include="Microsoft.Extensions.AI.AzureAIInference" Version="9.7.1-preview.1.25365.4" />
-    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="9.7.1-preview.1.25365.4" />
-  <PackageReference Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.9.2" />
-    <PackageReference Include="Microsoft.ML.OnnxRuntimeGenAI.DirectML" Version="0.9.2" />
-    <PackageReference Include="Mistral.SDK" Version="2.3.0" />
-
-    <PackageReference Include="OllamaSharp" Version="5.3.4" />
 
 
     <!-- Dependency Injection & Configuration -->

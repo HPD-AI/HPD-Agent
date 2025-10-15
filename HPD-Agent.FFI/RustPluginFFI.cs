@@ -61,7 +61,7 @@ namespace HPD_Agent.FFI
                 if (string.IsNullOrEmpty(json))
                     return new PluginRegistry { Plugins = new List<PluginInfo>() };
 
-                return JsonSerializer.Deserialize(json, HPDJsonContext.Default.PluginRegistry) ?? 
+                return JsonSerializer.Deserialize(json, HPDFFIJsonContext.Default.PluginRegistry) ?? 
                        new PluginRegistry { Plugins = new List<PluginInfo>() };
             }
             finally
@@ -105,7 +105,7 @@ namespace HPD_Agent.FFI
                 if (string.IsNullOrEmpty(json))
                     return new PluginStats();
 
-                return JsonSerializer.Deserialize(json, HPDJsonContext.Default.PluginStats) ?? new PluginStats();
+                return JsonSerializer.Deserialize(json, HPDFFIJsonContext.Default.PluginStats) ?? new PluginStats();
             }
             finally
             {
@@ -128,7 +128,7 @@ namespace HPD_Agent.FFI
                 if (string.IsNullOrEmpty(json))
                     return new List<string>();
 
-                return JsonSerializer.Deserialize(json, HPDJsonContext.Default.ListString) ?? new List<string>();
+                return JsonSerializer.Deserialize(json, HPDFFIJsonContext.Default.ListString) ?? new List<string>();
             }
             finally
             {
@@ -141,7 +141,7 @@ namespace HPD_Agent.FFI
         /// </summary>
         public static PluginExecutionResult ExecuteFunction(string functionName, Dictionary<string, object> arguments)
         {
-            var argsJson = JsonSerializer.Serialize(arguments, HPDJsonContext.Default.DictionaryStringObject);
+            var argsJson = JsonSerializer.Serialize(arguments, HPDFFIJsonContext.Default.DictionaryStringObject);
             var ptr = rust_execute_plugin_function(functionName, argsJson);
             
             if (ptr == IntPtr.Zero)

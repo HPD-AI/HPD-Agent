@@ -35,7 +35,7 @@ static Task<(Project, Conversation, Agent)> CreateAIAssistant(IConfiguration con
         },
         Provider = new ProviderConfig
         {
-            Provider = ChatProvider.OpenRouter,
+            ProviderKey = "openrouter",
             ModelName = "google/gemini-2.5-pro", // 🧠 Reasoning model - FREE on OpenRouter!
             // Alternative reasoning models:
             // "deepseek/deepseek-r1-distill-qwen-32b" - smaller/faster

@@ -3,7 +3,7 @@ using System.Text.Json;
 /// Internal utility for AG-UI event serialization and creation.
 /// This avoids circular dependencies between Agent and AGUIEventConverter.
 /// </summary>
-internal static class EventSerialization
+public static class EventSerialization
 {
     private static long GetTimestamp() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 

@@ -2,6 +2,7 @@
 using System.Threading.Channels;
 using System.Runtime.CompilerServices;
 using System.Diagnostics;
+using HPD.Agent.Providers;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -16,6 +17,7 @@ public class Agent : IChatClient
     private readonly string _name;
     private readonly ScopedFilterManager? _scopedFilterManager;
     private readonly int _maxFunctionCalls;
+    private readonly IProviderRegistry _providerRegistry;
 
     // Microsoft.Extensions.AI compliance fields
     private readonly ChatClientMetadata _metadata;
@@ -36,6 +38,7 @@ public class Agent : IChatClient
     private readonly PermissionManager _permissionManager;
     private readonly IReadOnlyList<IAiFunctionFilter> _aiFunctionFilters;
     private readonly IReadOnlyList<IMessageTurnFilter> _messageTurnFilters;
+    private readonly HPD.Agent.ErrorHandling.IProviderErrorHandler _providerErrorHandler;
 
     /// <summary>
     /// Agent configuration object containing all settings
@@ -50,7 +53,7 @@ public class Agent : IChatClient
     /// <summary>
     /// Provider from the configuration
     /// </summary>
-    public ChatProvider Provider => Config?.Provider?.Provider ?? ChatProvider.OpenAI;
+    public string? ProviderKey => Config?.Provider?.ProviderKey;
 
     /// <summary>
     /// Model ID from the configuration
@@ -84,6 +87,8 @@ public class Agent : IChatClient
         ChatOptions? mergedOptions,
         List<IPromptFilter> promptFilters,
         ScopedFilterManager scopedFilterManager,
+        HPD.Agent.ErrorHandling.IProviderErrorHandler providerErrorHandler,
+        IProviderRegistry providerRegistry, // New
         IReadOnlyList<IPermissionFilter>? permissionFilters = null,
         IReadOnlyList<IAiFunctionFilter>? aiFunctionFilters = null,
         IReadOnlyList<IMessageTurnFilter>? messageTurnFilters = null)
@@ -93,11 +98,20 @@ public class Agent : IChatClient
         _name = config.Name ?? "Agent"; // Default to "Agent" to prevent null dictionary key exceptions
         _scopedFilterManager = scopedFilterManager ?? throw new ArgumentNullException(nameof(scopedFilterManager));
         _maxFunctionCalls = config.MaxAgenticIterations;
+        _providerErrorHandler = providerErrorHandler;
+        _providerRegistry = providerRegistry; // New
+
+        // TEMPORARY: Inject the resolved handler into the config object
+        // so that FunctionCallProcessor can access it without changing its signature yet.
+        // This will be removed when FunctionCallProcessor is refactored.
+        if (Config.ErrorHandling == null) Config.ErrorHandling = new ErrorHandlingConfig();
+        Config.ErrorHandling.ProviderHandler = _providerErrorHandler;
+
 
         // Initialize Microsoft.Extensions.AI compliance metadata
         _metadata = new ChatClientMetadata(
-            providerName: config.Provider?.Provider.ToString()?.ToLowerInvariant(),
-            providerUri: AgentBuilderHelpers.ResolveProviderUri(config.Provider),
+            providerName: config.Provider?.ProviderKey,
+            providerUri: null, 
             defaultModelId: config.Provider?.ModelName
         );
 
@@ -108,12 +122,6 @@ public class Agent : IChatClient
             IncludeProviderDetails = config.ErrorHandling?.IncludeProviderDetails ?? false,
             MaxRetries = config.ErrorHandling?.MaxRetries ?? 3
         };
-
-        // Auto-detect and set provider error handler if not explicitly configured
-        if (config.ErrorHandling != null && config.ErrorHandling.ProviderHandler == null)
-        {
-            config.ErrorHandling.ProviderHandler = CreateProviderHandler(config.Provider?.Provider);
-        }
 
         // Fix: Store and use AI function filters
         _aiFunctionFilters = aiFunctionFilters ?? new List<IAiFunctionFilter>();
@@ -185,7 +193,7 @@ public class Agent : IChatClient
 
         // Set telemetry tags
         activity?.SetTag("agent.name", _name);
-        activity?.SetTag("agent.provider", Provider.ToString());
+        activity?.SetTag("agent.provider", ProviderKey);
         activity?.SetTag("agent.model", ModelId);
 
         // Track conversation ID
@@ -1037,7 +1045,7 @@ Best practices:
 - When a step is blocked, mark it as 'blocked' with notes explaining why, then continue with other steps if possible";
     }
 
-    private static IChatReducer? CreateChatReducer(AgentConfig config, IChatClient baseClient)
+    private IChatReducer? CreateChatReducer(AgentConfig config, IChatClient baseClient)
     {
         var historyConfig = config.HistoryReduction;
 
@@ -1061,15 +1069,27 @@ Best practices:
     /// <summary>
     /// Creates a SummarizingChatReducer with custom configuration
     /// </summary>
-    private static SummarizingChatReducer CreateSummarizingReducer(IChatClient baseClient, HistoryReductionConfig historyConfig, AgentConfig agentConfig)
+    private SummarizingChatReducer CreateSummarizingReducer(IChatClient baseClient, HistoryReductionConfig historyConfig, AgentConfig agentConfig)
     {
         // Determine which client to use for summarization
         IChatClient summarizerClient = baseClient; // Default to main client
 
         if (historyConfig.SummarizerProvider != null)
         {
-            // Create a separate client for summarization
-            summarizerClient = CreateClientForProvider(historyConfig.SummarizerProvider);
+            var providerConfig = historyConfig.SummarizerProvider;
+            var providerKey = providerConfig.ProviderKey;
+            
+            if (!string.IsNullOrEmpty(providerKey) && _providerRegistry.GetProvider(providerKey) is { } providerFeatures)
+            {
+                try
+                {
+                    summarizerClient = providerFeatures.CreateChatClient(providerConfig, null);
+                }
+                catch (Exception)
+                {
+                    // Log warning about failing to create summarizer client, will use base client
+                }
+            }
         }
 
         var reducer = new SummarizingChatReducer(
@@ -1085,33 +1105,9 @@ Best practices:
         return reducer;
     }
 
-    /// <summary>
-    /// Creates an IChatClient from a ProviderConfig for use by the summarizer.
-    /// Delegates to AgentBuilderHelpers to reuse existing provider creation logic.
-    /// </summary>
-    private static IChatClient CreateClientForProvider(ProviderConfig providerConfig)
-    {
-        return AgentBuilderHelpers.CreateClientFromProviderConfig(providerConfig);
-    }
 
-    /// <summary>
-    /// Auto-detects and creates the appropriate error handler based on the provider.
-    /// Opinionated by default: automatically selects provider-specific handler.
-    /// Returns GenericErrorHandler as fallback for unknown providers.
-    /// </summary>
-    private static HPD.Agent.ErrorHandling.IProviderErrorHandler CreateProviderHandler(ChatProvider? provider)
-    {
-        return provider switch
-        {
-            ChatProvider.OpenAI => new HPD.Agent.ErrorHandling.Providers.OpenAIErrorHandler(),
-            ChatProvider.AzureOpenAI => new HPD.Agent.ErrorHandling.Providers.OpenAIErrorHandler(),
-            // Future provider handlers will be added here as they are implemented:
-            // ChatProvider.Anthropic => new AnthropicErrorHandler(),
-            // ChatProvider.GoogleAI => new GoogleAIErrorHandler(),
-            // ChatProvider.VertexAI => new GoogleAIErrorHandler(),
-            _ => new HPD.Agent.ErrorHandling.GenericErrorHandler()
-        };
-    }
+
+
 
     #endregion
 

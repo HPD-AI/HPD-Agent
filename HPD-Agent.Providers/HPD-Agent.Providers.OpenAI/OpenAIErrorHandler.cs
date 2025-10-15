@@ -1,6 +1,9 @@
+using System;
+using System.Net.Http;
 using System.Text.RegularExpressions;
+using HPD.Agent.ErrorHandling;
 
-namespace HPD.Agent.ErrorHandling.Providers;
+namespace HPD_Agent.Providers.OpenAI;
 
 /// <summary>
 /// Error handler for OpenAI and Azure OpenAI providers.
@@ -111,7 +114,7 @@ internal partial class OpenAIErrorHandler : IProviderErrorHandler
     private static int? ExtractStatusCodeFromMessage(string message)
     {
         // Look for pattern "Status: 429" in the message
-        var statusMatch = Regex.Match(message, @"Status:\s*(\d{3})", RegexOptions.IgnoreCase);
+        var statusMatch = Regex.Match(message, @"Status:\s*(\d{{3}})", RegexOptions.IgnoreCase);
         if (statusMatch.Success && int.TryParse(statusMatch.Groups[1].Value, out var statusCode))
         {
             return statusCode;
@@ -198,6 +201,6 @@ internal partial class OpenAIErrorHandler : IProviderErrorHandler
     private static partial Regex RetryDelayRegex();
 #else
     private static Regex RetryDelayRegex() => _retryDelayRegex;
-    private static readonly Regex _retryDelayRegex = new(@"try again in ([\d.]+)(s|ms)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex _retryDelayRegex = new Regex(@"try again in ([\d.]+)(s|ms)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 #endif
 }

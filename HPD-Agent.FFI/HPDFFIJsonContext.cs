@@ -2,9 +2,11 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
 
+namespace HPD_Agent.FFI;
+
 /// <summary>
-/// JSON serialization context for HPD-Agent core types (AOT-compatible).
-/// Does not include FFI-specific types - see HPDFFIJsonContext in HPD-Agent.FFI project.
+/// JSON serialization context for HPD-Agent FFI exports (AOT-compatible).
+/// Includes all core types plus FFI-specific types like RustFunctionInfo, PluginRegistry, etc.
 /// </summary>
 [JsonSourceGenerationOptions(
     WriteIndented = true, 
@@ -59,7 +61,6 @@ using Microsoft.Extensions.AI;
 [JsonSerializable(typeof(List<ChatMessage>))]
 [JsonSerializable(typeof(ChatResponse))]
 [JsonSerializable(typeof(ChatOptions))]
-[JsonSerializable(typeof(Dictionary<string, object>))]
 
 // --- Extensions.AI types for conversation support ---
 [JsonSerializable(typeof(Microsoft.Extensions.AI.ChatMessage))]
@@ -68,7 +69,6 @@ using Microsoft.Extensions.AI;
 [JsonSerializable(typeof(Microsoft.Extensions.AI.UsageDetails))]
 [JsonSerializable(typeof(Microsoft.Extensions.AI.AdditionalPropertiesDictionary))]
 [JsonSerializable(typeof(Microsoft.Extensions.AI.ChatFinishReason))]
-[JsonSerializable(typeof(Microsoft.Extensions.AI.TextContent))]
 [JsonSerializable(typeof(Microsoft.Extensions.AI.ChatResponseUpdate))]
 [JsonSerializable(typeof(Microsoft.Extensions.AI.FunctionCallContent))]
 [JsonSerializable(typeof(Microsoft.Extensions.AI.FunctionResultContent))]
@@ -81,6 +81,16 @@ using Microsoft.Extensions.AI;
 // --- Project types ---
 [JsonSerializable(typeof(ProjectInfo))]
 
-public partial class HPDJsonContext : JsonSerializerContext
+// --- FFI-specific Rust plugin types ---
+[JsonSerializable(typeof(RustFunctionInfo))]
+[JsonSerializable(typeof(List<RustFunctionInfo>))]
+[JsonSerializable(typeof(PluginRegistry))]
+[JsonSerializable(typeof(PluginInfo))]
+[JsonSerializable(typeof(FunctionInfo))]
+[JsonSerializable(typeof(PluginStats))]
+[JsonSerializable(typeof(PluginSummary))]
+[JsonSerializable(typeof(PluginExecutionResult))]
+
+public partial class HPDFFIJsonContext : JsonSerializerContext
 {
 }

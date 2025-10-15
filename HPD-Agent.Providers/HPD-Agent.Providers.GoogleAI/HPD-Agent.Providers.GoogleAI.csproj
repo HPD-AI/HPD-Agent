@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <PackageId>HPD-Agent.Providers.GoogleAI</PackageId>
+    <Title>HPD-Agent GoogleAI Provider</Title>
+    <Description>Google AI (Gemini) provider for HPD-Agent</Description>
+    <PackageTags>ai;agent;google;gemini;llm</PackageTags>
+  </PropertyGroup>
+  
+  <ItemGroup>
+    <ProjectReference Include="../../HPD-Agent/HPD-Agent.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Google_GenerativeAI" Version="3.2.0" />
+    <PackageReference Include="Google_GenerativeAI.Microsoft" Version="3.2.0" />
+        <PackageReference Include="Microsoft.Extensions.AI" Version="9.9.1" />
+    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="9.9.1" />
+  </ItemGroup>
+</Project>

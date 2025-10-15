@@ -82,6 +82,50 @@ public class AgentConfig
     /// When enabled, plugin functions are hidden behind container functions, reducing initial tool list by up to 87.5%.
     /// </summary>
     public PluginScopingConfig? PluginScoping { get; set; }
+
+    /// <summary>
+    /// Tools that the agent can invoke but are NOT sent to the LLM in each request.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Some AI services (e.g., OpenAI Assistants, Anthropic with pre-configured tools) allow you to
+    /// configure functions server-side that persist across requests. When the LLM calls these functions,
+    /// your agent needs to be able to execute them even though they weren't in <see cref="ChatOptions.Tools"/>.
+    /// </para>
+    /// <para>
+    /// <b>Use Cases:</b>
+    /// <list type="bullet">
+    /// <item>OpenAI Assistants with pre-configured tools</item>
+    /// <item>Azure AI Function Apps registered with the service</item>
+    /// <item>Anthropic accounts with account-level tool configurations</item>
+    /// <item>Testing scenarios where you want to hide tools from the LLM but still handle calls</item>
+    /// </list>
+    /// </para>
+    /// <para>
+    /// <b>Priority:</b> If a function exists in both <see cref="ChatOptions.Tools"/> and ServerConfiguredTools,
+    /// the one in <see cref="ChatOptions.Tools"/> takes precedence (allows per-request overrides).
+    /// </para>
+    /// <para>
+    /// Inspired by Microsoft.Extensions.AI's <c>FunctionInvokingChatClient.AdditionalTools</c>.
+    /// </para>
+    /// <para>
+    /// <b>Example:</b>
+    /// <code>
+    /// var agent = new Agent(new AgentConfig 
+    /// {
+    ///     ServerConfiguredTools = [get_weather_function, search_web_function]
+    /// });
+    /// 
+    /// // Request doesn't include tools (they're server-configured)
+    /// var response = await agent.GetResponseAsync(messages, new ChatOptions());
+    /// 
+    /// // LLM calls "get_weather" (server knows about it)
+    /// // Agent finds it in ServerConfiguredTools and executes it
+    /// </code>
+    /// </para>
+    /// </remarks>
+    [JsonIgnore] // Don't serialize AIFunction instances
+    public IList<AITool>? ServerConfiguredTools { get; set; }
 }
 
 #region Supporting Configuration Classes
@@ -180,9 +224,16 @@ public class ProviderConfig
     public ChatOptions? DefaultChatOptions { get; set; }
     
     /// <summary>
-    /// Provider-specific configuration options
+    /// Provider-specific configuration as key-value pairs.
+    /// See provider documentation for available options.
+    /// 
+    /// Examples:
+    /// - OpenAI: { "Organization": "org-123", "StrictJsonSchema": true }
+    /// - Anthropic: { "PromptCachingType": "AutomaticToolsAndSystem" }
+    /// - OpenRouter: { "HttpReferer": "https://myapp.com" }
+    /// - Ollama: { "NumCtx": 8192, "KeepAlive": "5m" }
     /// </summary>
-    public ProviderSpecificConfig? ProviderSpecific { get; set; }
+    public Dictionary<string, object>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -226,6 +277,33 @@ public class ErrorHandlingConfig
     /// Whether to include provider-specific details in error messages
     /// </summary>
     public bool IncludeProviderDetails { get; set; } = false;
+
+    /// <summary>
+    /// Whether to include detailed exception messages in function results sent to the LLM.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Security Warning:</b> Setting this to <c>true</c> may expose sensitive information to the LLM and end users:
+    /// - Database connection strings
+    /// - File system paths
+    /// - API keys or tokens
+    /// - Internal implementation details
+    /// </para>
+    /// <para>
+    /// When <c>false</c> (default), function errors are reported to the LLM as generic messages like
+    /// "Error: Function 'X' failed." The full exception is still available to application code via
+    /// <see cref="FunctionResultContent.Exception"/> for logging and debugging.
+    /// </para>
+    /// <para>
+    /// When <c>true</c>, the full exception message is included in the function result, allowing the LLM
+    /// to potentially self-correct (e.g., retry with different arguments). Use this only in trusted
+    /// environments or with sanitized exceptions.
+    /// </para>
+    /// <para>
+    /// Inspired by Microsoft.Extensions.AI's <c>FunctionInvokingChatClient.IncludeDetailedErrors</c>.
+    /// </para>
+    /// </remarks>
+    public bool IncludeDetailedErrorsInChat { get; set; } = false;
 
     /// <summary>
     /// Maximum number of retries for transient errors
@@ -478,6 +556,29 @@ public class AgenticLoopConfig
     /// respecting external API rate limits, or matching database connection pool sizes.
     /// </summary>
     public int? MaxParallelFunctions { get; set; } = null;
+
+    /// <summary>
+    /// Controls behavior when the LLM requests a function that isn't available.
+    /// When false (default): Creates a "function not found" error message and continues the agentic loop.
+    /// When true: Terminates the agentic loop immediately and returns control to the caller.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Setting this to false (default) allows the LLM to recover from hallucinated functions by seeing
+    /// the error and trying different approaches. This is useful for normal single-agent scenarios.
+    /// </para>
+    /// <para>
+    /// Setting this to true is useful for multi-agent handoff scenarios where an unknown function request
+    /// might indicate that the current agent should transfer control to another agent that has that function.
+    /// When the loop terminates, the caller receives the function call request and can route it appropriately.
+    /// </para>
+    /// <para>
+    /// Note: Functions that are known (via ChatOptions.Tools or AgentConfig.ServerConfiguredTools) but aren't
+    /// AIFunction instances (e.g., AIFunctionDeclaration only) will also cause termination regardless of
+    /// this setting, as they cannot be invoked by the agent.
+    /// </para>
+    /// </remarks>
+    public bool TerminateOnUnknownCalls { get; set; } = false;
 }
 
 /// <summary>
@@ -497,494 +598,6 @@ public class ToolSelectionConfig
     /// Ignored for other modes.
     /// </summary>
     public string? RequiredFunctionName { get; set; }
-}
-
-/// <summary>
-/// Provider-specific configuration extensions for enhanced provider support.
-/// These can be accessed via ChatOptions.AdditionalProperties or RawRepresentationFactory.
-/// </summary>
-public class ProviderSpecificConfig
-{
-    /// <summary>
-    /// OpenAI-specific configuration
-    /// </summary>
-    public OpenAISettings? OpenAI { get; set; }
-
-    /// <summary>
-    /// Azure OpenAI-specific configuration
-    /// </summary>
-    public AzureOpenAISettings? AzureOpenAI { get; set; }
-
-    /// <summary>
-    /// Anthropic-specific configuration
-    /// </summary>
-    public AnthropicSettings? Anthropic { get; set; }
-
-    /// <summary>
-    /// Ollama-specific configuration
-    /// </summary>
-    public OllamaSettings? Ollama { get; set; }
-
-    /// <summary>
-    /// OpenRouter-specific configuration
-    /// </summary>
-    public OpenRouterSettings? OpenRouter { get; set; }
-
-    /// <summary>
-    /// Google AI-specific configuration
-    /// </summary>
-    public GoogleAISettings? GoogleAI { get; set; }
-
-    /// <summary>
-    /// Vertex AI-specific configuration
-    /// </summary>
-    public VertexAISettings? VertexAI { get; set; }
-
-    /// <summary>
-    /// Hugging Face-specific configuration
-    /// </summary>
-    public HuggingFaceSettings? HuggingFace { get; set; }
-
-    /// <summary>
-    /// AWS Bedrock-specific configuration
-    /// </summary>
-    public BedrockSettings? Bedrock { get; set; }
-
-    /// <summary>
-    /// Azure AI Inference-specific configuration
-    /// </summary>
-    public AzureAIInferenceSettings? AzureAIInference { get; set; }
-
-    /// <summary>
-    /// ONNX Runtime-specific configuration
-    /// </summary>
-    public OnnxRuntimeSettings? OnnxRuntime { get; set; }
-
-    /// <summary>
-    /// Mistral AI-specific configuration
-    /// </summary>
-    public MistralSettings? Mistral { get; set; }
-}
-
-/// <summary>
-/// OpenAI-specific settings that can be applied via AdditionalProperties
-/// </summary>
-public class OpenAISettings
-{
-    /// <summary>
-    /// Organization ID for OpenAI API requests
-    /// </summary>
-    public string? Organization { get; set; }
-
-    /// <summary>
-    /// Whether to use strict JSON schema validation
-    /// </summary>
-    public bool? StrictJsonSchema { get; set; }
-
-    /// <summary>
-    /// Image detail level for vision models (low, high, auto)
-    /// </summary>
-    public string? ImageDetail { get; set; }
-
-    /// <summary>
-    /// Voice selection for audio models
-    /// </summary>
-    public string? AudioVoice { get; set; }
-
-    /// <summary>
-    /// Audio output format
-    /// </summary>
-    public string? AudioFormat { get; set; }
-
-    /// <summary>
-    /// Whether to enable reasoning tokens display
-    /// </summary>
-    public bool? IncludeReasoningTokens { get; set; }
-}
-
-/// <summary>
-/// Azure OpenAI-specific settings
-/// </summary>
-public class AzureOpenAISettings
-{
-    /// <summary>
-    /// Azure resource name
-    /// </summary>
-    public string? ResourceName { get; set; }
-
-    /// <summary>
-    /// Deployment name for the model
-    /// </summary>
-    public string? DeploymentName { get; set; }
-
-    /// <summary>
-    /// Azure OpenAI API version
-    /// </summary>
-    public string ApiVersion { get; set; } = "2024-08-01-preview";
-
-    /// <summary>
-    /// Whether to use Entra ID authentication instead of API key
-    /// </summary>
-    public bool UseEntraId { get; set; } = false;
-
-    /// <summary>
-    /// Azure region for data residency requirements
-    /// </summary>
-    public string? Region { get; set; }
-}
-
-/// <summary>
-/// Anthropic-specific settings for Claude models
-/// </summary>
-public class AnthropicSettings
-{
-    /// <summary>
-    /// Prompt caching configuration
-    /// </summary>
-    public AnthropicPromptCaching? PromptCaching { get; set; }
-
-    /// <summary>
-    /// Tool choice configuration for function calling
-    /// </summary>
-    public AnthropicToolChoice? ToolChoice { get; set; }
-
-    /// <summary>
-    /// Base URL for Anthropic API (useful for proxies or custom endpoints)
-    /// </summary>
-    public string? BaseUrl { get; set; }
-
-    /// <summary>
-    /// Request timeout in seconds (default is 600 seconds / 10 minutes)
-    /// </summary>
-    public int? TimeoutSeconds { get; set; }
-
-    /// <summary>
-    /// Maximum number of retries for failed requests (default is 2)
-    /// </summary>
-    public int? MaxRetries { get; set; }
-
-    /// <summary>
-    /// Whether to include reasoning tokens in the response (for reasoning models)
-    /// </summary>
-    public bool? IncludeReasoningTokens { get; set; }
-
-    /// <summary>
-    /// Metadata for tracking requests
-    /// </summary>
-    public Dictionary<string, object>? Metadata { get; set; }
-
-    /// <summary>
-    /// Enable beta features
-    /// </summary>
-    public bool EnableBetaFeatures { get; set; } = false;
-}
-
-/// <summary>
-/// Anthropic prompt caching configuration
-/// </summary>
-public class AnthropicPromptCaching
-{
-    /// <summary>
-    /// Prompt caching type
-    /// </summary>
-    public AnthropicPromptCacheType Type { get; set; } = AnthropicPromptCacheType.None;
-
-    /// <summary>
-    /// Whether to automatically cache system messages and tools
-    /// </summary>
-    public bool AutoCacheSystemAndTools { get; set; } = true;
-}
-
-/// <summary>
-/// Types of prompt caching available in Anthropic
-/// </summary>
-public enum AnthropicPromptCacheType
-{
-    /// <summary>
-    /// No prompt caching
-    /// </summary>
-    None,
-    
-    /// <summary>
-    /// Automatic caching of tools and system messages
-    /// </summary>
-    AutomaticToolsAndSystem,
-    
-    /// <summary>
-    /// Fine-grained manual control over cache points
-    /// </summary>
-    FineGrained
-}
-
-/// <summary>
-/// Anthropic tool choice configuration
-/// </summary>
-public class AnthropicToolChoice
-{
-    /// <summary>
-    /// Tool choice type
-    /// </summary>
-    public AnthropicToolChoiceType Type { get; set; } = AnthropicToolChoiceType.Auto;
-
-    /// <summary>
-    /// Specific tool name to use (when Type is Tool)
-    /// </summary>
-    public string? ToolName { get; set; }
-}
-
-/// <summary>
-/// Types of tool choice behavior for Anthropic
-/// </summary>
-public enum AnthropicToolChoiceType
-{
-    /// <summary>
-    /// Let Claude decide whether to use tools
-    /// </summary>
-    Auto,
-    
-    /// <summary>
-    /// Force Claude to use a specific tool
-    /// </summary>
-    Tool,
-    
-    /// <summary>
-    /// Force Claude to use any available tool
-    /// </summary>
-    Any
-}
-
-/// <summary>
-/// Ollama-specific settings that can be applied to requests
-/// </summary>
-public class OllamaSettings
-{
-    /// <summary>
-    /// Context window size (num_ctx parameter)
-    /// </summary>
-    public int? NumCtx { get; set; }
-
-    /// <summary>
-    /// How long to keep the model loaded in memory
-    /// </summary>
-    public string? KeepAlive { get; set; }
-
-    /// <summary>
-    /// Use memory locking to prevent swapping
-    /// </summary>
-    public bool? UseMlock { get; set; }
-
-    /// <summary>
-    /// Number of threads to use for inference
-    /// </summary>
-    public int? NumThread { get; set; }
-
-    /// <summary>
-    /// Temperature override for Ollama models
-    /// </summary>
-    public float? Temperature { get; set; }
-
-    /// <summary>
-    /// Top-p override for Ollama models
-    /// </summary>
-    public float? TopP { get; set; }
-}
-
-/// <summary>
-/// OpenRouter-specific settings and features
-/// </summary>
-public class OpenRouterSettings
-{
-    /// <summary>
-    /// HTTP Referer header for OpenRouter requests
-    /// </summary>
-    public string? HttpReferer { get; set; }
-
-    /// <summary>
-    /// Application name for OpenRouter analytics
-    /// </summary>
-    public string? AppName { get; set; }
-
-    /// <summary>
-    /// Reasoning configuration for models that support it
-    /// </summary>
-    public OpenRouterReasoningConfig? Reasoning { get; set; }
-
-    /// <summary>
-    /// Preferred provider for models available on multiple providers
-    /// </summary>
-    public string? PreferredProvider { get; set; }
-
-    /// <summary>
-    /// Whether to allow fallback to other providers if preferred is unavailable
-    /// </summary>
-    public bool AllowFallback { get; set; } = true;
-}
-
-/// <summary>
-/// OpenRouter reasoning configuration for models like DeepSeek-R1
-/// </summary>
-public class OpenRouterReasoningConfig
-{
-    /// <summary>
-    /// Whether to enable reasoning mode
-    /// </summary>
-    public bool Enabled { get; set; } = true;
-
-    /// <summary>
-    /// Maximum reasoning tokens to generate
-    /// </summary>
-    public int? MaxReasoningTokens { get; set; }
-
-    /// <summary>
-    /// Whether to include reasoning in the response
-    /// </summary>
-    public bool IncludeReasoning { get; set; } = true;
-}
-
-/// <summary>
-/// Google AI-specific settings for the simple Gemini API via API Key
-/// </summary>
-public class GoogleAISettings
-{
-    /// <summary>
-    /// API key for the Google AI platform.
-    /// </summary>
-    public string? ApiKey { get; set; }
-}
-
-/// <summary>
-/// Vertex AI-specific settings for the enterprise Google Cloud platform
-/// </summary>
-public class VertexAISettings
-{
-    /// <summary>
-    /// The Google Cloud Project ID.
-    /// </summary>
-    public string? ProjectId { get; set; }
-
-    /// <summary>
-    /// The Google Cloud Region (e.g., "us-central1").
-    /// </summary>
-    public string? Region { get; set; }
-    
-    // Note: AccessToken is typically handled by Google's Application Default Credentials (ADC)
-    // and does not need to be explicitly set by the user in most cases.
-}
-
-/// <summary>
-/// Hugging Face-specific settings for the Serverless Inference API
-/// </summary>
-public class HuggingFaceSettings
-{
-    /// <summary>
-    /// API key for the Hugging Face Inference API.
-    /// </summary>
-    public string? ApiKey { get; set; }
-}
-
-/// <summary>
-/// AWS Bedrock-specific settings
-/// </summary>
-public class BedrockSettings
-{
-    /// <summary>
-    /// The AWS Region where the Bedrock service is hosted (e.g., "us-east-1").
-    /// </summary>
-    public string? Region { get; set; }
-
-    /// <summary>
-    /// Optional AWS Access Key ID. If not provided, the SDK will use the default credential chain.
-    /// </summary>
-    public string? AccessKeyId { get; set; }
-
-    /// <summary>
-    /// Optional AWS Secret Access Key. If not provided, the SDK will use the default credential chain.
-    /// </summary>
-    public string? SecretAccessKey { get; set; }
-}
-
-/// <summary>
-/// Azure AI Inference-specific settings
-/// </summary>
-public class AzureAIInferenceSettings
-{
-    /// <summary>
-    /// The unified endpoint for the Azure AI resource (e.g., "https://<your-resource-name>.inference.ai.azure.com").
-    /// </summary>
-    public string? Endpoint { get; set; }
-
-    /// <summary>
-    /// The API key for the Azure AI resource.
-    /// Can be omitted if using managed identity (TokenCredential).
-    /// </summary>
-    public string? ApiKey { get; set; }
-}
-
-/// <summary>
-/// ONNX Runtime-specific settings for local model inference with DirectML acceleration support
-/// </summary>
-public class OnnxRuntimeSettings
-{
-    /// <summary>
-    /// The file path to the ONNX model directory.
-    /// The tokenizer is automatically loaded from the same directory.
-    /// For DirectML acceleration, ensure the model is compatible with GPU execution.
-    /// </summary>
-    public string? ModelPath { get; set; }
-
-    /// <summary>
-    /// Optional stop sequences for the model.
-    /// These will be used in addition to any provided in ChatOptions.
-    /// Common examples: ["<|end|>", "<|eot_id|>", "</s>"]
-    /// </summary>
-    public IList<string>? StopSequences { get; set; }
-
-    /// <summary>
-    /// Whether to enable conversation caching for better performance.
-    /// Should only be set to true when the client is not shared across multiple conversations.
-    /// Caching can significantly improve response times for follow-up messages.
-    /// </summary>
-    public bool EnableCaching { get; set; } = false;
-
-    /// <summary>
-    /// Custom prompt formatter function for advanced prompt engineering.
-    /// If null, the default formatter will be used which formats messages as JSON array.
-    /// Use this to implement model-specific prompt templates (e.g., ChatML, Alpaca, etc.).
-    /// </summary>
-    /// <example>
-    /// For ChatML format:
-    /// <code>
-    /// PromptFormatter = (messages, options) => {
-    ///     var sb = new StringBuilder();
-    ///     foreach (var msg in messages) {
-    ///         sb.Append($"&lt;|{msg.Role.Value}|&gt;\n{msg.Text}&lt;|end|&gt;\n");
-    ///     }
-    ///     sb.Append("&lt;|assistant|&gt;\n");
-    ///     return sb.ToString();
-    /// }
-    /// </code>
-    /// </example>
-    public Func<IEnumerable<ChatMessage>, ChatOptions?, string>? PromptFormatter { get; set; }
-
-    /// <summary>
-    /// DirectML-specific execution provider options.
-    /// Set to true to prefer DirectML execution provider for GPU acceleration on Windows.
-    /// Falls back to CPU if DirectML is not available.
-    /// </summary>
-    public bool PreferDirectML { get; set; } = true;
-
-    /// <summary>
-    /// Maximum context length for the model in tokens.
-    /// If not specified, uses the model's default context window.
-    /// DirectML models may have different optimal context lengths.
-    /// </summary>
-    public int? MaxContextLength { get; set; }
-
-    /// <summary>
-    /// GPU device ID to use for DirectML execution (0-based).
-    /// If null, uses the default GPU. Only applicable when PreferDirectML is true.
-    /// </summary>
-    public int? DeviceId { get; set; }
 }
 
 /// <summary>

@@ -27,6 +27,9 @@ public class Agent : IChatClient
     // OpenTelemetry Activity Source for telemetry
     private static readonly ActivitySource ActivitySource = new("HPD.Agent");
 
+    // AsyncLocal storage for function invocation context (flows across async calls)
+    private static readonly AsyncLocal<FunctionInvocationContext?> _currentFunctionContext = new();
+
     // Specialized component fields for delegation
     private readonly MessageProcessor _messageProcessor;
     private readonly FunctionCallProcessor _functionCallProcessor;
@@ -44,6 +47,33 @@ public class Agent : IChatClient
     /// Agent configuration object containing all settings
     /// </summary>
     public AgentConfig? Config { get; private set; }
+
+    /// <summary>
+    /// Gets the current function invocation context (if a function is currently being invoked).
+    /// This flows across async calls via AsyncLocal storage.
+    /// Returns null if no function is currently executing.
+    /// </summary>
+    /// <remarks>
+    /// Use this in plugins/filters to access metadata about the current function call:
+    /// - Function name and description
+    /// - Call ID for correlation
+    /// - Agent name and iteration number
+    /// - Arguments being passed
+    /// 
+    /// Example:
+    /// <code>
+    /// var ctx = Agent.CurrentFunctionContext;
+    /// if (ctx != null)
+    /// {
+    ///     Console.WriteLine($"Function {ctx.FunctionName} called at iteration {ctx.Iteration}");
+    /// }
+    /// </code>
+    /// </remarks>
+    public static FunctionInvocationContext? CurrentFunctionContext
+    {
+        get => _currentFunctionContext.Value;
+        internal set => _currentFunctionContext.Value = value;
+    }
 
     /// <summary>
     /// Metadata about this chat client, compatible with Microsoft.Extensions.AI patterns
@@ -142,7 +172,14 @@ public class Agent : IChatClient
             promptFilters,
             chatReducer,
             config.HistoryReduction);
-        _functionCallProcessor = new FunctionCallProcessor(scopedFilterManager, _permissionManager, _aiFunctionFilters, config.MaxAgenticIterations, config.ErrorHandling);
+        _functionCallProcessor = new FunctionCallProcessor(
+            scopedFilterManager, 
+            _permissionManager, 
+            _aiFunctionFilters, 
+            config.MaxAgenticIterations, 
+            config.ErrorHandling,
+            config.ServerConfiguredTools,
+            config.AgenticLoop);  // NEW: Pass agentic loop config for TerminateOnUnknownCalls
         _agentTurn = new AgentTurn(_baseClient);
         _pluginScopingManager = new PluginScopingManager();
         _toolScheduler = new ToolScheduler(_functionCallProcessor, _permissionManager, config, _pluginScopingManager);
@@ -459,6 +496,17 @@ public class Agent : IChatClient
         TaskCompletionSource<ReductionMetadata?> reductionCompletionSource,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        // Create orchestration activity to group all agent turns and function calls
+        // This provides better observability in distributed tracing systems (OpenTelemetry)
+        using var orchestrationActivity = ActivitySource.StartActivity(
+            "agent.orchestration",
+            ActivityKind.Internal);
+
+        orchestrationActivity?.SetTag("agent.name", _name);
+        orchestrationActivity?.SetTag("agent.max_iterations", _maxFunctionCalls);
+        orchestrationActivity?.SetTag("agent.provider", ProviderKey);
+        orchestrationActivity?.SetTag("agent.model", ModelId);
+
         // Process documents if provided (protocol-agnostic feature)
         if (documentPaths?.Length > 0)
         {
@@ -536,6 +584,13 @@ public class Agent : IChatClient
         // Plugin scoping: Track expanded plugins (message-turn scoped)
         var expandedPlugins = new HashSet<string>();
 
+        // ConversationId history optimization (inspired by Microsoft's FunctionInvokingChatClient)
+        // When the inner client manages history server-side (indicated by returning a ConversationId),
+        // we only send NEW messages rather than the full history, significantly reducing token costs.
+        // Beneficial for: OpenAI Assistants API, Anthropic threads, Azure AI services with conversation tracking
+        bool innerClientTracksHistory = false; // whether the service returned a ConversationId in last iteration
+        int messagesSentToInnerClient = 0; // how many messages from currentMessages we've sent to the inner client
+
         // Main agentic loop - use while loop to allow dynamic limit extension
         int iteration = 0;
         while (iteration < agentRunContext.MaxIterations)
@@ -602,12 +657,51 @@ public class Agent : IChatClient
                     PresencePenalty = effectiveOptions.PresencePenalty,
                     StopSequences = effectiveOptions.StopSequences,
                     ResponseFormat = effectiveOptions.ResponseFormat,
-                    AdditionalProperties = effectiveOptions.AdditionalProperties
+                    AdditionalProperties = effectiveOptions.AdditionalProperties,
+                    ConversationId = innerClientTracksHistory ? conversationId : effectiveOptions.ConversationId
                 };
             }
+            else if (innerClientTracksHistory && (scopedOptions == null || scopedOptions.ConversationId != conversationId))
+            {
+                // Need to add ConversationId to options (when not doing plugin scoping)
+                scopedOptions = scopedOptions == null 
+                    ? new ChatOptions { ConversationId = conversationId }
+                    : new ChatOptions
+                    {
+                        ModelId = scopedOptions.ModelId,
+                        Tools = scopedOptions.Tools,
+                        ToolMode = scopedOptions.ToolMode,
+                        Temperature = scopedOptions.Temperature,
+                        MaxOutputTokens = scopedOptions.MaxOutputTokens,
+                        TopP = scopedOptions.TopP,
+                        FrequencyPenalty = scopedOptions.FrequencyPenalty,
+                        PresencePenalty = scopedOptions.PresencePenalty,
+                        StopSequences = scopedOptions.StopSequences,
+                        ResponseFormat = scopedOptions.ResponseFormat,
+                        AdditionalProperties = scopedOptions.AdditionalProperties,
+                        ConversationId = conversationId
+                    };
+            }
+
+            // ConversationId history optimization: Determine which messages to send
+            // If the service tracks history (has ConversationId), only send NEW messages
+            IEnumerable<ChatMessage> messagesToSend;
+            if (innerClientTracksHistory && iteration > 0)
+            {
+                // Service manages history server-side, only send messages added since last iteration
+                messagesToSend = currentMessages.Skip(messagesSentToInnerClient);
+            }
+            else
+            {
+                // Either first iteration or service doesn't track history - send all messages
+                messagesToSend = currentMessages;
+            }
+
+            // Track how many messages we're sending for next iteration
+            int messageCountBeforeThisTurn = currentMessages.Count;
 
             // Run agent turn (single LLM call)
-            await foreach (var update in _agentTurn.RunAsync(currentMessages, scopedOptions, effectiveCancellationToken))
+            await foreach (var update in _agentTurn.RunAsync(messagesToSend, scopedOptions, effectiveCancellationToken))
             {
                 // Store update for building final history
                 responseUpdates.Add(update);
@@ -714,6 +808,31 @@ public class Agent : IChatClient
                         reasoningStarted = false;
                     }
                 }
+            }
+
+            // Capture ConversationId from the agent turn response (if available)
+            // This enables server-side history optimization for OpenAI Assistants, Anthropic threads, etc.
+            if (_agentTurn.LastResponseConversationId != null)
+            {
+                // Service returned a ConversationId - it's managing history server-side
+                conversationId = _agentTurn.LastResponseConversationId;
+                
+                if (!innerClientTracksHistory)
+                {
+                    // First time seeing a ConversationId - switch to optimized mode
+                    innerClientTracksHistory = true;
+                }
+                
+                // Update our tracking of how many messages we've sent
+                // This will be used in the next iteration to only send NEW messages
+                messagesSentToInnerClient = messageCountBeforeThisTurn;
+            }
+            else if (innerClientTracksHistory)
+            {
+                // Edge case: Service STOPPED returning ConversationId mid-conversation
+                // This is rare but possible - need to reset and send full history next time
+                innerClientTracksHistory = false;
+                messagesSentToInnerClient = 0;
             }
 
             // Emit AGENT TURN finished event
@@ -913,6 +1032,18 @@ public class Agent : IChatClient
 
         // Emit MESSAGE TURN finished event
         yield return new InternalMessageTurnFinishedEvent(messageTurnId, conversationId);
+
+        // Record orchestration telemetry metrics
+        orchestrationActivity?.SetTag("agent.total_iterations", iteration);
+        orchestrationActivity?.SetTag("agent.total_function_calls", agentRunContext.CompletedFunctions.Count);
+        orchestrationActivity?.SetTag("agent.termination_reason", agentRunContext.TerminationReason ?? "completed");
+        orchestrationActivity?.SetTag("agent.was_terminated", agentRunContext.IsTerminated);
+        
+        if (reductionMetadata != null)
+        {
+            orchestrationActivity?.SetTag("agent.history_reduction_occurred", true);
+            orchestrationActivity?.SetTag("agent.history_messages_removed", reductionMetadata.MessagesRemovedCount);
+        }
 
         // FIX #8: ALWAYS complete history task to prevent hanging
         // This is guaranteed to be called even if exceptions occur during enumeration
@@ -1423,19 +1554,25 @@ public class FunctionCallProcessor
     private readonly IReadOnlyList<IAiFunctionFilter> _aiFunctionFilters;
     private readonly int _maxFunctionCalls;
     private readonly ErrorHandlingConfig? _errorHandlingConfig;
+    private readonly IList<AITool>? _serverConfiguredTools;
+    private readonly AgenticLoopConfig? _agenticLoopConfig;
 
     public FunctionCallProcessor(
         ScopedFilterManager? scopedFilterManager,
         PermissionManager permissionManager,
         IReadOnlyList<IAiFunctionFilter>? aiFunctionFilters,
         int maxFunctionCalls,
-        ErrorHandlingConfig? errorHandlingConfig = null)
+        ErrorHandlingConfig? errorHandlingConfig = null,
+        IList<AITool>? serverConfiguredTools = null,
+        AgenticLoopConfig? agenticLoopConfig = null)
     {
         _scopedFilterManager = scopedFilterManager;
         _permissionManager = permissionManager ?? throw new ArgumentNullException(nameof(permissionManager));
         _aiFunctionFilters = aiFunctionFilters ?? new List<IAiFunctionFilter>();
         _maxFunctionCalls = maxFunctionCalls;
         _errorHandlingConfig = errorHandlingConfig;
+        _serverConfiguredTools = serverConfiguredTools;
+        _agenticLoopConfig = agenticLoopConfig;
     }
 
 
@@ -1454,7 +1591,8 @@ public class FunctionCallProcessor
 
         // Build function map per execution (Microsoft pattern for thread-safety)
         // This avoids shared mutable state and stale cache issues
-        var functionMap = BuildFunctionMap(options?.Tools);
+        // Merge server-configured tools with request tools (request tools take precedence)
+        var functionMap = BuildFunctionMap(_serverConfiguredTools, options?.Tools);
 
         // Process each function call through the filter pipeline
         foreach (var functionCall in functionCallContents)
@@ -1478,6 +1616,19 @@ public class FunctionCallProcessor
 
             // Pass the CallId through metadata for tracking
             context.Metadata["CallId"] = functionCall.CallId;
+
+            // Check if function is unknown and TerminateOnUnknownCalls is enabled
+            if (context.Function == null && _agenticLoopConfig?.TerminateOnUnknownCalls == true)
+            {
+                // Terminate the loop - don't process this or any remaining functions
+                // The function call will be returned to the caller for handling (e.g., multi-agent handoff)
+                context.IsTerminated = true;
+                agentRunContext.IsTerminated = true;
+                agentRunContext.TerminationReason = $"Unknown function requested: '{functionCall.Name}'";
+                
+                // Don't add any result message - let the caller handle the unknown function
+                break;
+            }
 
             // Check permissions using PermissionManager BEFORE building execution pipeline
             var permissionResult = await _permissionManager.CheckPermissionAsync(
@@ -1549,6 +1700,20 @@ public class FunctionCallProcessor
             return;
         }
 
+        // Set AsyncLocal function invocation context for ambient access
+        Agent.CurrentFunctionContext = new FunctionInvocationContext
+        {
+            Function = context.Function,
+            Arguments = context.ToolCallRequest.Arguments,
+            CallId = context.Metadata.TryGetValue("CallId", out var callIdObj) && callIdObj is string callId 
+                ? callId 
+                : Guid.NewGuid().ToString(),
+            AgentName = context.AgentName,
+            Iteration = context.RunContext?.CurrentIteration ?? 0,
+            TotalFunctionCallsInRun = context.RunContext?.CompletedFunctions.Count ?? 0,
+            RunContext = context.RunContext
+        };
+
         var retryExecutor = new FunctionRetryExecutor(_errorHandlingConfig);
         
         try
@@ -1562,35 +1727,79 @@ public class FunctionCallProcessor
         catch (TimeoutException ex)
         {
             // Function-specific timeout
-            context.Result = ex.Message;
+            context.Result = FormatErrorForLLM(ex, context.ToolCallRequest.FunctionName);
         }
         catch (Exception ex)
         {
             // All retries exhausted or non-retryable error
-            context.Result = ex.Message;
+            context.Result = FormatErrorForLLM(ex, context.ToolCallRequest.FunctionName);
+        }
+        finally
+        {
+            // Always clear the context after function completes
+            Agent.CurrentFunctionContext = null;
         }
     }
 
     /// <summary>
-    /// Builds a dictionary map of function name to AIFunction from the tools list.
+    /// Formats an exception for inclusion in function results sent to the LLM.
+    /// Respects IncludeDetailedErrorsInChat security setting.
+    /// </summary>
+    private string FormatErrorForLLM(Exception exception, string functionName)
+    {
+        if (_errorHandlingConfig?.IncludeDetailedErrorsInChat == true)
+        {
+            // Include full exception details (potential security risk)
+            return $"Error invoking function '{functionName}': {exception.Message}";
+        }
+        else
+        {
+            // Generic error message (safe for LLM consumption)
+            // Full exception still available via FunctionResultContent.Exception
+            return $"Error: Function '{functionName}' failed.";
+        }
+    }
+
+    /// <summary>
+    /// Builds a dictionary map of function name to AIFunction from multiple tool sources.
     /// Built per-execution to avoid shared mutable state and cache staleness.
     /// </summary>
-    /// <param name="tools">The list of tools to extract functions from</param>
+    /// <param name="serverConfiguredTools">Tools configured server-side (lower priority)</param>
+    /// <param name="requestTools">Tools provided in the request (higher priority, can override)</param>
     /// <returns>Dictionary mapping function names to AIFunction instances, or null if no functions</returns>
-    private static Dictionary<string, AIFunction>? BuildFunctionMap(IList<AITool>? tools)
+    private static Dictionary<string, AIFunction>? BuildFunctionMap(
+        IList<AITool>? serverConfiguredTools,
+        IList<AITool>? requestTools)
     {
-        if (tools is not { Count: > 0 })
+        if (serverConfiguredTools is not { Count: > 0 } && 
+            requestTools is not { Count: > 0 })
         {
             return null;
         }
 
-        var map = new Dictionary<string, AIFunction>(tools.Count, StringComparer.Ordinal);
+        var map = new Dictionary<string, AIFunction>(StringComparer.Ordinal);
         
-        for (int i = 0; i < tools.Count; i++)
+        // Add server-configured tools first (lower priority)
+        if (serverConfiguredTools is { Count: > 0 })
         {
-            if (tools[i] is AIFunction af)
+            for (int i = 0; i < serverConfiguredTools.Count; i++)
             {
-                map[af.Name] = af;
+                if (serverConfiguredTools[i] is AIFunction af)
+                {
+                    map[af.Name] = af;
+                }
+            }
+        }
+        
+        // Add request tools second (higher priority, can override server-configured)
+        if (requestTools is { Count: > 0 })
+        {
+            for (int i = 0; i < requestTools.Count; i++)
+            {
+                if (requestTools[i] is AIFunction af)
+                {
+                    map[af.Name] = af; // Overwrites if exists
+                }
             }
         }
         
@@ -1987,6 +2196,12 @@ public class AgentTurn
     private readonly IChatClient _baseClient;
 
     /// <summary>
+    /// The ConversationId from the most recent response (if the service manages history server-side).
+    /// Null if the service doesn't track conversation history.
+    /// </summary>
+    public string? LastResponseConversationId { get; private set; }
+
+    /// <summary>
     /// Initializes a new instance of AgentTurn
     /// </summary>
     /// <param name="baseClient">The underlying chat client to use for LLM calls</param>
@@ -1996,7 +2211,8 @@ public class AgentTurn
     }
 
     /// <summary>
-    /// Runs a single turn with the LLM and yields ChatResponseUpdates representing the response
+    /// Runs a single turn with the LLM and yields ChatResponseUpdates representing the response.
+    /// Captures ConversationId from the response for server-side history tracking optimization.
     /// </summary>
     /// <param name="messages">The conversation history to send to the LLM</param>
     /// <param name="options">Optional chat options</param>
@@ -2007,8 +2223,17 @@ public class AgentTurn
         ChatOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        // Reset ConversationId at start of new turn
+        LastResponseConversationId = null;
+
         await foreach (var update in RunAsyncCore(messages, options, cancellationToken))
         {
+            // Capture ConversationId from first update that has one
+            if (LastResponseConversationId == null && update.ConversationId != null)
+            {
+                LastResponseConversationId = update.ConversationId;
+            }
+
             yield return update;
         }
     }
@@ -3324,4 +3549,82 @@ public record InternalToolCallResultEvent(
     string Result) : InternalAgentEvent;
 
 #endregion
+#endregion
+
+#region Function Invocation Context
+
+/// <summary>
+/// Provides ambient context about the currently executing function.
+/// Flows across async calls via AsyncLocal storage in Agent class.
+/// </summary>
+/// <remarks>
+/// This enables plugins and filters to access function invocation metadata
+/// without explicit parameter passing. Inspired by Microsoft.Extensions.AI's
+/// FunctionInvokingChatClient pattern but adapted for HPD-Agent's architecture.
+/// 
+/// Use cases:
+/// - Logging which agent/iteration called the function
+/// - Cancellation propagation based on iteration limits
+/// - Telemetry correlation via CallId
+/// - Security auditing (know which agent invoked sensitive functions)
+/// </remarks>
+public class FunctionInvocationContext
+{
+    /// <summary>
+    /// The function being invoked.
+    /// </summary>
+    public AIFunction Function { get; init; } = null!;
+
+    /// <summary>
+    /// Name of the function being invoked.
+    /// </summary>
+    public string FunctionName => Function?.Name ?? string.Empty;
+
+    /// <summary>
+    /// Description of the function being invoked.
+    /// </summary>
+    public string? FunctionDescription => Function?.Description;
+
+    /// <summary>
+    /// Arguments being passed to the function.
+    /// </summary>
+    public IDictionary<string, object?> Arguments { get; init; } = new Dictionary<string, object?>();
+
+    /// <summary>
+    /// Unique identifier for this function call (for correlation).
+    /// </summary>
+    public string CallId { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Name of the agent that initiated this function call.
+    /// </summary>
+    public string? AgentName { get; init; }
+
+    /// <summary>
+    /// Current iteration number in the agent's execution loop.
+    /// </summary>
+    public int Iteration { get; init; }
+
+    /// <summary>
+    /// Total number of function calls made in this agent run so far.
+    /// </summary>
+    public int TotalFunctionCallsInRun { get; init; }
+
+    /// <summary>
+    /// The agent run context (if available).
+    /// </summary>
+    public AgentRunContext? RunContext { get; init; }
+
+    /// <summary>
+    /// Extensible metadata dictionary for custom data.
+    /// </summary>
+    public Dictionary<string, object> Metadata { get; init; } = new();
+
+    /// <summary>
+    /// Gets a string representation for logging/debugging.
+    /// </summary>
+    public override string ToString() =>
+        $"Function: {FunctionName}, CallId: {CallId}, Agent: {AgentName ?? "Unknown"}, Iteration: {Iteration}";
+}
+
 #endregion

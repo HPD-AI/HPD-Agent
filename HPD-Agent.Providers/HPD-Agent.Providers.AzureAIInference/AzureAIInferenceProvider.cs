@@ -15,10 +15,25 @@ internal class AzureAIInferenceProvider : IProviderFeatures
 
     public IChatClient CreateChatClient(ProviderConfig config, IServiceProvider? services = null)
     {
-        var settings = config.ProviderSpecific?.AzureAIInference;
+        string endpoint = config.Endpoint;
+        if (string.IsNullOrEmpty(endpoint))
+        {
+            if (config.AdditionalProperties?.TryGetValue("Endpoint", out var endpointObj) == true)
+            {
+                endpoint = endpointObj?.ToString();
+            }
+        }
+        endpoint ??= Environment.GetEnvironmentVariable("AZURE_AI_INFERENCE_ENDPOINT");
 
-        var endpoint = config.Endpoint ?? settings?.Endpoint ?? Environment.GetEnvironmentVariable("AZURE_AI_INFERENCE_ENDPOINT");
-        var apiKey = config.ApiKey ?? settings?.ApiKey ?? Environment.GetEnvironmentVariable("AZURE_AI_INFERENCE_API_KEY");
+        string apiKey = config.ApiKey;
+        if (string.IsNullOrEmpty(apiKey))
+        {
+            if (config.AdditionalProperties?.TryGetValue("ApiKey", out var apiKeyObj) == true)
+            {
+                apiKey = apiKeyObj?.ToString();
+            }
+        }
+        apiKey ??= Environment.GetEnvironmentVariable("AZURE_AI_INFERENCE_API_KEY");
 
         if (string.IsNullOrEmpty(endpoint))
         {
@@ -58,15 +73,31 @@ internal class AzureAIInferenceProvider : IProviderFeatures
         if (string.IsNullOrEmpty(config.ModelName))
             errors.Add("Model name is required for Azure AI Inference");
 
-        var settings = config.ProviderSpecific?.AzureAIInference;
-        var endpoint = config.Endpoint ?? settings?.Endpoint ?? Environment.GetEnvironmentVariable("AZURE_AI_INFERENCE_ENDPOINT");
-        var apiKey = config.ApiKey ?? settings?.ApiKey ?? Environment.GetEnvironmentVariable("AZURE_AI_INFERENCE_API_KEY");
+        string endpoint = config.Endpoint;
+        if (string.IsNullOrEmpty(endpoint))
+        {
+            if (config.AdditionalProperties?.TryGetValue("Endpoint", out var endpointObj) == true)
+            {
+                endpoint = endpointObj?.ToString();
+            }
+        }
+        endpoint ??= Environment.GetEnvironmentVariable("AZURE_AI_INFERENCE_ENDPOINT");
+
+        string apiKey = config.ApiKey;
+        if (string.IsNullOrEmpty(apiKey))
+        {
+            if (config.AdditionalProperties?.TryGetValue("ApiKey", out var apiKeyObj) == true)
+            {
+                apiKey = apiKeyObj?.ToString();
+            }
+        }
+        apiKey ??= Environment.GetEnvironmentVariable("AZURE_AI_INFERENCE_API_KEY");
 
         if (string.IsNullOrEmpty(endpoint))
-            errors.Add("Endpoint is required. Configure it in ProviderConfig or via the AZURE_AI_INFERENCE_ENDPOINT environment variable.");
+            errors.Add("Endpoint is required. Configure it in ProviderConfig, AdditionalProperties, or via the AZURE_AI_INFERENCE_ENDPOINT environment variable.");
         
         if (string.IsNullOrEmpty(apiKey))
-            errors.Add("API Key is required. Configure it in ProviderConfig or via the AZURE_AI_INFERENCE_API_KEY environment variable.");
+            errors.Add("API Key is required. Configure it in ProviderConfig, AdditionalProperties, or via the AZURE_AI_INFERENCE_API_KEY environment variable.");
 
         return errors.Count > 0 
             ? ProviderValidationResult.Failure(errors.ToArray())

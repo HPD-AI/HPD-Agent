@@ -15,21 +15,31 @@ internal class BedrockProvider : IProviderFeatures
 
     public IChatClient CreateChatClient(ProviderConfig config, IServiceProvider? services = null)
     {
-        var settings = config.ProviderSpecific?.Bedrock;
+        string region = null;
+        if (config.AdditionalProperties?.TryGetValue("Region", out var regionObj) == true)
+        {
+            region = regionObj?.ToString();
+        }
+        region ??= Environment.GetEnvironmentVariable("AWS_REGION");
 
-        var region = settings?.Region
-            ?? Environment.GetEnvironmentVariable("AWS_REGION");
+        string accessKey = null;
+        if (config.AdditionalProperties?.TryGetValue("AccessKeyId", out var accessKeyObj) == true)
+        {
+            accessKey = accessKeyObj?.ToString();
+        }
+        accessKey ??= Environment.GetEnvironmentVariable("AWS_ACCESS_KEY_ID");
 
-        var accessKey = settings?.AccessKeyId
-            ?? Environment.GetEnvironmentVariable("AWS_ACCESS_KEY_ID");
-
-        var secretKey = settings?.SecretAccessKey
-            ?? Environment.GetEnvironmentVariable("AWS_SECRET_ACCESS_KEY");
+        string secretKey = null;
+        if (config.AdditionalProperties?.TryGetValue("SecretAccessKey", out var secretKeyObj) == true)
+        {
+            secretKey = secretKeyObj?.ToString();
+        }
+        secretKey ??= Environment.GetEnvironmentVariable("AWS_SECRET_ACCESS_KEY");
             
         if (string.IsNullOrEmpty(region))
         {
             throw new InvalidOperationException(
-                "For the Bedrock provider, the AWS Region must be configured via ProviderSpecific settings or the AWS_REGION environment variable.");
+                "For the Bedrock provider, the AWS Region must be configured via AdditionalProperties or the AWS_REGION environment variable.");
         }
 
         IAmazonBedrockRuntime bedrockRuntime;
@@ -71,11 +81,15 @@ internal class BedrockProvider : IProviderFeatures
         if (string.IsNullOrEmpty(config.ModelName))
             errors.Add("Model name is required for AWS Bedrock");
 
-        var settings = config.ProviderSpecific?.Bedrock;
-        var region = settings?.Region ?? Environment.GetEnvironmentVariable("AWS_REGION");
+        string region = null;
+        if (config.AdditionalProperties?.TryGetValue("Region", out var regionObj) == true)
+        {
+            region = regionObj?.ToString();
+        }
+        region ??= Environment.GetEnvironmentVariable("AWS_REGION");
 
         if (string.IsNullOrEmpty(region))
-            errors.Add("AWS Region is required for Bedrock. Configure it in ProviderSpecific settings or via the AWS_REGION environment variable.");
+            errors.Add("AWS Region is required for Bedrock. Configure it in AdditionalProperties or via the AWS_REGION environment variable.");
 
         return errors.Count > 0 
             ? ProviderValidationResult.Failure(errors.ToArray())

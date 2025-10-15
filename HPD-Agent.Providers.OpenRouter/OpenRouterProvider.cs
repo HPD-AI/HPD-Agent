@@ -16,7 +16,17 @@ internal class OpenRouterProvider : IProviderFeatures
         if (string.IsNullOrEmpty(config.ApiKey))
             throw new ArgumentException("OpenRouter requires an API key");
 
-        var settings = config.ProviderSpecific?.OpenRouter;
+        string? httpReferer = null;
+        if (config.AdditionalProperties?.TryGetValue("HttpReferer", out var refererObj) == true)
+        {
+            httpReferer = refererObj?.ToString();
+        }
+
+        string? appName = null;
+        if (config.AdditionalProperties?.TryGetValue("AppName", out var appNameObj) == true)
+        {
+            appName = appNameObj?.ToString();
+        }
 
         var httpClient = new HttpClient
         {
@@ -24,8 +34,8 @@ internal class OpenRouterProvider : IProviderFeatures
         };
 
         httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {config.ApiKey}");
-        httpClient.DefaultRequestHeaders.Add("HTTP-Referer", settings?.HttpReferer ?? "https://github.com/hpd-agent");
-        httpClient.DefaultRequestHeaders.Add("X-Title", settings?.AppName ?? "HPD-Agent");
+        httpClient.DefaultRequestHeaders.Add("HTTP-Referer", httpReferer ?? "https://github.com/hpd-agent");
+        httpClient.DefaultRequestHeaders.Add("X-Title", appName ?? "HPD-Agent");
 
         return new OpenRouterChatClient(httpClient, config.ModelName);
     }

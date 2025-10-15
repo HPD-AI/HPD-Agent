@@ -14,20 +14,41 @@ internal class OnnxRuntimeProvider : IProviderFeatures
 
     public IChatClient CreateChatClient(ProviderConfig config, IServiceProvider? services = null)
     {
-        var settings = config.ProviderSpecific?.OnnxRuntime;
-
-        var modelPath = settings?.ModelPath ?? Environment.GetEnvironmentVariable("ONNX_MODEL_PATH");
+        string modelPath = null;
+        if (config.AdditionalProperties?.TryGetValue("ModelPath", out var modelPathObj) == true)
+        {
+            modelPath = modelPathObj?.ToString();
+        }
+        modelPath ??= Environment.GetEnvironmentVariable("ONNX_MODEL_PATH");
 
         if (string.IsNullOrEmpty(modelPath))
         {
             throw new InvalidOperationException("For the OnnxRuntime provider, the ModelPath must be configured.");
         }
 
+        IList<string> stopSequences = null;
+        if (config.AdditionalProperties?.TryGetValue("StopSequences", out var stopSequencesObj) == true && stopSequencesObj is IList<string> sequences)
+        {
+            stopSequences = sequences;
+        }
+
+        bool enableCaching = false;
+        if (config.AdditionalProperties?.TryGetValue("EnableCaching", out var enableCachingObj) == true && enableCachingObj is bool caching)
+        {
+            enableCaching = caching;
+        }
+
+        Func<IEnumerable<ChatMessage>, ChatOptions?, string> promptFormatter = null;
+        if (config.AdditionalProperties?.TryGetValue("PromptFormatter", out var promptFormatterObj) == true && promptFormatterObj is Func<IEnumerable<ChatMessage>, ChatOptions?, string> formatter)
+        {
+            promptFormatter = formatter;
+        }
+
         var options = new OnnxRuntimeGenAIChatClientOptions
         {
-            StopSequences = settings?.StopSequences,
-            EnableCaching = settings?.EnableCaching ?? false,
-            PromptFormatter = settings?.PromptFormatter
+            StopSequences = stopSequences,
+            EnableCaching = enableCaching,
+            PromptFormatter = promptFormatter
         };
         
         return new OnnxRuntimeGenAIChatClient(modelPath, options);
@@ -54,11 +75,15 @@ internal class OnnxRuntimeProvider : IProviderFeatures
     public ProviderValidationResult ValidateConfiguration(ProviderConfig config)
     {
         var errors = new List<string>();
-        var settings = config.ProviderSpecific?.OnnxRuntime;
-        var modelPath = settings?.ModelPath ?? Environment.GetEnvironmentVariable("ONNX_MODEL_PATH");
+        string modelPath = null;
+        if (config.AdditionalProperties?.TryGetValue("ModelPath", out var modelPathObj) == true)
+        {
+            modelPath = modelPathObj?.ToString();
+        }
+        modelPath ??= Environment.GetEnvironmentVariable("ONNX_MODEL_PATH");
 
         if (string.IsNullOrEmpty(modelPath))
-            errors.Add("ModelPath is required. Configure it in ProviderSpecific settings or via the ONNX_MODEL_PATH environment variable.");
+            errors.Add("ModelPath is required. Configure it in AdditionalProperties or via the ONNX_MODEL_PATH environment variable.");
 
         return errors.Count > 0 
             ? ProviderValidationResult.Failure(errors.ToArray())

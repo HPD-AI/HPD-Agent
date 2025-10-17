@@ -17,11 +17,13 @@ public static class ExternalToolScopingWrapper
     /// <param name="serverName">Name of the MCP server (e.g., "filesystem", "github")</param>
     /// <param name="tools">Tools from this MCP server</param>
     /// <param name="maxFunctionNamesInDescription">Maximum number of function names to include in description (default: 10)</param>
+    /// <param name="postExpansionInstructions">Optional instructions shown to the agent after plugin expansion</param>
     /// <returns>Container function and scoped tools with metadata</returns>
     public static (AIFunction container, List<AIFunction> scopedTools) WrapMCPServerTools(
         string serverName,
         List<AIFunction> tools,
-        int maxFunctionNamesInDescription = 10)
+        int maxFunctionNamesInDescription = 10,
+        string? postExpansionInstructions = null)
     {
         if (string.IsNullOrEmpty(serverName))
             throw new ArgumentException("Server name cannot be null or empty", nameof(serverName));
@@ -42,11 +44,18 @@ public static class ExternalToolScopingWrapper
         var description = $"MCP Server '{serverName}'. Contains {allFunctionNames.Count} functions: {functionNamesList}{moreCount}";
         var fullFunctionList = string.Join(", ", allFunctionNames);
 
+        // Build return message with optional post-expansion instructions
+        var returnMessage = $"{serverName} server expanded. Available functions: {fullFunctionList}";
+        if (!string.IsNullOrEmpty(postExpansionInstructions))
+        {
+            returnMessage += $"\n\n{postExpansionInstructions}";
+        }
+
         // Create container function
         var container = HPDAIFunctionFactory.Create(
             async (arguments, cancellationToken) =>
             {
-                return $"{serverName} server expanded. Available functions: {fullFunctionList}";
+                return returnMessage;
             },
             new HPDAIFunctionFactoryOptions
             {
@@ -78,10 +87,12 @@ public static class ExternalToolScopingWrapper
     /// </summary>
     /// <param name="tools">Frontend tools to wrap</param>
     /// <param name="maxFunctionNamesInDescription">Maximum number of function names to include in description (default: 10)</param>
+    /// <param name="postExpansionInstructions">Optional instructions shown to the agent after plugin expansion</param>
     /// <returns>Container function and scoped tools with metadata</returns>
     public static (AIFunction container, List<AIFunction> scopedTools) WrapFrontendTools(
         List<AIFunction> tools,
-        int maxFunctionNamesInDescription = 10)
+        int maxFunctionNamesInDescription = 10,
+        string? postExpansionInstructions = null)
     {
         if (tools == null || tools.Count == 0)
             throw new ArgumentException("Tools list cannot be null or empty", nameof(tools));
@@ -99,11 +110,18 @@ public static class ExternalToolScopingWrapper
         var description = $"Frontend UI tools for user interaction. Contains {allFunctionNames.Count} functions: {functionNamesList}{moreCount}";
         var fullFunctionList = string.Join(", ", allFunctionNames);
 
+        // Build return message with optional post-expansion instructions
+        var returnMessage = $"Frontend tools expanded. Available functions: {fullFunctionList}";
+        if (!string.IsNullOrEmpty(postExpansionInstructions))
+        {
+            returnMessage += $"\n\n{postExpansionInstructions}";
+        }
+
         // Create container function
         var container = HPDAIFunctionFactory.Create(
             async (arguments, cancellationToken) =>
             {
-                return $"Frontend tools expanded. Available functions: {fullFunctionList}";
+                return returnMessage;
             },
             new HPDAIFunctionFactoryOptions
             {

@@ -53,7 +53,7 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
         var namespaceName = GetNamespace(classDecl);
 
         // Check for [PluginScope] attribute
-        var (hasScopeAttribute, scopeDescription) = GetPluginScopeAttribute(classDecl);
+        var (hasScopeAttribute, scopeDescription, postExpansionInstructions) = GetPluginScopeAttribute(classDecl);
 
         return new PluginInfo
         {
@@ -62,7 +62,8 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
             Namespace = namespaceName,
             Functions = functions!,
             HasScopeAttribute = hasScopeAttribute,
-            ScopeDescription = scopeDescription
+            ScopeDescription = scopeDescription,
+            PostExpansionInstructions = postExpansionInstructions
         };
     }
     
@@ -80,9 +81,10 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
                 var first = group.First()!;
                 var allFunctions = group.SelectMany(p => p!.Functions).ToList();
 
-                // Preserve HasScopeAttribute and ScopeDescription from any partial class that has it
+                // Preserve HasScopeAttribute, ScopeDescription, and PostExpansionInstructions from any partial class that has it
                 var hasScopeAttribute = group.Any(p => p!.HasScopeAttribute);
                 var scopeDescription = group.FirstOrDefault(p => p!.HasScopeAttribute)?.ScopeDescription;
+                var postExpansionInstructions = group.FirstOrDefault(p => p!.HasScopeAttribute)?.PostExpansionInstructions;
 
                 return new PluginInfo
                 {
@@ -91,7 +93,8 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
                     Namespace = first.Namespace,
                     Functions = allFunctions,
                     HasScopeAttribute = hasScopeAttribute,
-                    ScopeDescription = scopeDescription
+                    ScopeDescription = scopeDescription,
+                    PostExpansionInstructions = postExpansionInstructions
                 };
             })
             .ToList();
@@ -1168,9 +1171,9 @@ private static string GenerateContextResolutionMethods(PluginInfo plugin)
     }
 
     /// <summary>
-    /// Detects [PluginScope] attribute on a class and extracts its description.
+    /// Detects [PluginScope] attribute on a class and extracts its description and post-expansion instructions.
     /// </summary>
-    private static (bool hasScopeAttribute, string? scopeDescription) GetPluginScopeAttribute(ClassDeclarationSyntax classDecl)
+    private static (bool hasScopeAttribute, string? scopeDescription, string? postExpansionInstructions) GetPluginScopeAttribute(ClassDeclarationSyntax classDecl)
     {
         var scopeAttributes = classDecl.AttributeLists
             .SelectMany(attrList => attrList.Attributes)
@@ -1182,14 +1185,17 @@ private static string GenerateContextResolutionMethods(PluginInfo plugin)
             if (arguments.HasValue && arguments.Value.Count >= 1)
             {
                 var description = ExtractStringLiteral(arguments.Value[0].Expression);
-                return (true, description);
+                var postExpansionInstructions = arguments.Value.Count >= 2
+                    ? ExtractStringLiteral(arguments.Value[1].Expression)
+                    : null;
+                return (true, description, postExpansionInstructions);
             }
 
             // Attribute present but no description
-            return (true, null);
+            return (true, null, null);
         }
 
-        return (false, null);
+        return (false, null, null);
     }
 
     /// <summary>
@@ -1384,6 +1390,17 @@ private static string GenerateContextResolutionMethods(PluginInfo plugin)
             : plugin.Description;
         var fullDescription = $"{description}. Contains {plugin.Functions.Count} functions: {functionList}";
 
+        // Build the return message with optional post-expansion instructions
+        var returnMessage = $"{plugin.Name} expanded. Available functions: {functionList}";
+        if (!string.IsNullOrEmpty(plugin.PostExpansionInstructions))
+        {
+            returnMessage += $"\n\n{plugin.PostExpansionInstructions}";
+        }
+
+        // Escape the return message for C# verbatim string literal (@"...")
+        // In verbatim strings, quotes are escaped by doubling them
+        var escapedReturnMessage = returnMessage.Replace("\"", "\"\"");
+
         sb.AppendLine("        /// <summary>");
         sb.AppendLine($"        /// Container function for {plugin.Name} plugin scoping.");
         sb.AppendLine("        /// </summary>");
@@ -1392,7 +1409,7 @@ private static string GenerateContextResolutionMethods(PluginInfo plugin)
         sb.AppendLine("            return HPDAIFunctionFactory.Create(");
         sb.AppendLine("                async (arguments, cancellationToken) =>");
         sb.AppendLine("                {");
-        sb.AppendLine($"                    return \"{plugin.Name} expanded. Available functions: {functionList}\";");
+        sb.AppendLine($"                    return @\"{escapedReturnMessage}\";");  // Using @ for verbatim string
         sb.AppendLine("                },");
         sb.AppendLine("                new HPDAIFunctionFactoryOptions");
         sb.AppendLine("                {");

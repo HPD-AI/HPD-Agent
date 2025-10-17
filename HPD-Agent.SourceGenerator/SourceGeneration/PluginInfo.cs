@@ -27,6 +27,12 @@ internal class PluginInfo
     /// Description from [PluginScope] attribute (if present)
     /// </summary>
     public string? ScopeDescription { get; set; }
+
+    /// <summary>
+    /// Post-expansion instructions from [PluginScope] attribute (if present)
+    /// These instructions are shown to the agent after the plugin is expanded.
+    /// </summary>
+    public string? PostExpansionInstructions { get; set; }
 }
 
 /// <summary>

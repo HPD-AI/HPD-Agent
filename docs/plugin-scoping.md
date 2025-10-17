@@ -1,8 +1,8 @@
 # Plugin Scoping
 
 **Status**: ✅ Implemented & Working
-**Version**: 2.0 (Added MCP & Frontend Tool Support)
-**Last Updated**: 2025-01-12
+**Version**: 2.1 (Added Post-Expansion Instructions)
+**Last Updated**: 2025-01-17
 
 ## Overview
 
@@ -88,6 +88,30 @@ After the agent calls `MathPlugin()`, the math functions expand and become avail
 │ Result: 8                                                    │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+### Container Results Not Persisted in History
+
+**Important**: Container expansion results are **filtered out of the persistent chat history**. They are only visible to the LLM during the current message turn.
+
+**Why?**
+- Expansion state resets after each message turn (containers collapse)
+- If the agent needs the plugin again next turn, it must re-invoke the container
+- Keeping expansion messages in history would accumulate redundant data
+- Post-expansion instructions would waste tokens on every subsequent message
+
+**Implementation**:
+```csharp
+// In Agent.cs - after ExecuteToolsAsync
+// Filter out container expansion results from persistent history
+var nonContainerResults = toolResultMessage.Contents
+    .Where(c => !IsContainerExpansionResult(c))
+    .ToList();
+
+currentMessages.Add(new ChatMessage(ChatRole.Tool, nonContainerResults)); // ← Only non-container results
+turnHistory.Add(toolResultMessage); // ← LLM sees ALL results within current turn
+```
+
+**Result**: Container expansions provide context within the turn, then disappear from history.
 
 ### Message-Turn-Bounded State
 
@@ -210,6 +234,269 @@ The agent will:
 2. Invoke `MathPlugin()` when it needs math operations
 3. See individual math functions (`Add`, `Multiply`, etc.) after expansion
 4. Call the specific function it needs
+
+## Post-Expansion Instructions
+
+**Version**: 2.1+
+**Purpose**: Provide just-in-time guidance to the LLM after plugin expansion
+
+### Overview
+
+Post-Expansion Instructions allow you to include plugin-specific guidance, best practices, workflow patterns, and safety warnings that are shown to the agent **only when the plugin is expanded**. This provides context-aware documentation without wasting tokens on unused plugins.
+
+**Key Benefits**:
+- **Zero-cost until needed** - Instructions only consume tokens when the plugin is actually used
+- **Plugin-specific guidance** - Tailor instructions to each plugin's unique behavior
+- **Reduced hallucination** - Explicit instructions prevent common usage errors
+- **Workflow documentation** - Guide the LLM through multi-step patterns
+
+### Usage for C# Plugins
+
+Add the optional `postExpansionInstructions` parameter to `[PluginScope]`:
+
+```csharp
+[PluginScope(
+    description: "Mathematical operations including addition, subtraction, multiplication, and more.",
+    postExpansionInstructions: @"
+Best practices for using MathPlugin:
+- For complex calculations, break them into atomic operations (Add, Subtract, Multiply)
+- Use Square(x) for x², it's optimized and clearer than Multiply(x, x)
+- Some functions are conditional based on context (see function descriptions)
+
+Performance tips:
+- Chain operations by calling functions sequentially
+- Add() requires permission - approve once to use multiple times
+- All operations return immediately (no async overhead)
+
+Example workflow:
+1. Use Multiply for basic calculations
+2. If you need x², prefer Square over Multiply(x,x)
+3. For negative results, ensure Subtract is available in current context
+    "
+)]
+public class MathPlugin
+{
+    // ... functions ...
+}
+```
+
+**What the agent sees after expansion**:
+
+```
+MathPlugin expanded. Available functions: Add, Multiply, Square, Subtract
+
+Best practices for using MathPlugin:
+- For complex calculations, break them into atomic operations (Add, Subtract, Multiply)
+- Use Square(x) for x², it's optimized and clearer than Multiply(x, x)
+...
+```
+
+### Usage for MCP Tools
+
+Configure instructions in `PluginScopingConfig` using the `MCPServerInstructions` dictionary:
+
+```csharp
+var agentConfig = new AgentConfig
+{
+    PluginScoping = new PluginScopingConfig
+    {
+        ScopeMCPTools = true,
+        MCPServerInstructions = new Dictionary<string, string>
+        {
+            ["filesystem"] = @"
+IMPORTANT SAFETY:
+- Always use absolute paths, not relative
+- Call FileExists before operations to avoid errors
+- DeleteFile is permanent - confirm with user first
+
+Performance tips:
+- For large files >10MB, use streaming operations
+- Batch operations when possible to reduce overhead
+            ",
+            ["github"] = @"
+Authentication required:
+- Call GetAuthToken first before any other operations
+- Tokens expire after 1 hour - re-authenticate if you get 401 errors
+
+Rate limits:
+- 100 requests/minute for this API tier
+- Cache results aggressively to avoid hitting limits
+
+Error handling:
+- 429 (rate limit): Wait 60 seconds, retry
+- 401 (auth failed): Call GetAuthToken again
+            "
+        }
+    }
+};
+```
+
+**What the agent sees after expanding MCP_filesystem**:
+
+```
+filesystem server expanded. Available functions: ReadFile, WriteFile, DeleteFile, ...
+
+IMPORTANT SAFETY:
+- Always use absolute paths, not relative
+- Call FileExists before operations to avoid errors
+...
+```
+
+### Usage for Frontend Tools
+
+Configure instructions for all frontend tools:
+
+```csharp
+var agentConfig = new AgentConfig
+{
+    PluginScoping = new PluginScopingConfig
+    {
+        ScopeFrontendTools = true,
+        FrontendToolsInstructions = @"
+These tools interact with the user interface:
+- ConfirmAction: ALWAYS use before destructive operations
+- ShowNotification: For non-blocking status updates
+- RequestInput: When you need user input to proceed
+- ShowProgress: For operations taking >2 seconds
+
+Best practices:
+- Always provide clear, user-friendly messages
+- Use ConfirmAction for anything that modifies data
+- ShowProgress for long-running operations
+        "
+    }
+};
+```
+
+### Use Cases & Examples
+
+#### Use Case 1: API Client Safety
+
+```csharp
+[PluginScope(
+    description: "External weather API client",
+    postExpansionInstructions: @"
+CRITICAL - READ BEFORE USING:
+1. Authentication: Call GetAuthToken() first - required for all operations
+2. Rate limits: Max 10 calls per minute - cache results for 5+ minutes
+3. Error handling:
+   - 429 (rate limit): Wait 60 seconds, retry once
+   - 401 (auth failed): Call GetAuthToken() again
+   - 503 (service down): Inform user, don't retry
+
+Required workflow:
+1. GetAuthToken()
+2. Then call GetWeather/GetForecast/etc
+3. Cache results to avoid redundant calls
+    "
+)]
+public class WeatherAPIPlugin { ... }
+```
+
+#### Use Case 2: Database Operations
+
+```csharp
+[PluginScope(
+    description: "Database operations for customer data",
+    postExpansionInstructions: @"
+TRANSACTION WORKFLOW (REQUIRED):
+1. BeginTransaction()
+2. Execute Query/Update/Delete operations
+3. CommitTransaction() on success OR RollbackTransaction() on error
+
+NEVER call Query/Update/Delete without an active transaction.
+
+Performance:
+- Use batch operations for >10 records (BatchInsert, BatchUpdate)
+- Avoid SELECT * - specify columns for better performance
+- Use ExecuteScalar for single values
+
+Safety:
+- ALL destructive operations require user confirmation first
+- Never expose sensitive data (use RedactedLog for logging)
+    "
+)]
+public class DatabasePlugin { ... }
+```
+
+#### Use Case 3: File System Safety
+
+```csharp
+[PluginScope(
+    description: "File system operations",
+    postExpansionInstructions: @"
+Path handling:
+- ALWAYS use absolute paths (use GetAbsolutePath helper)
+- Check FileExists/DirectoryExists before operations
+- Use PathSeparator constant for cross-platform compatibility
+
+File size guidelines:
+- Files <10MB: Use ReadFile/WriteFile (in-memory)
+- Files >10MB: Use ReadFileStream/WriteFileStream (streaming)
+
+Safety rules:
+- DeleteFile/DeleteDirectory are PERMANENT - confirm with user
+- When overwriting files, warn user first
+- Validate file extensions before opening (security)
+    "
+)]
+public class FileSystemPlugin { ... }
+```
+
+### Token Economics
+
+**Traditional Approach** (system prompt):
+```
+System Prompt includes:
+- MathPlugin usage guide: 200 tokens
+- FileSystemPlugin safety guide: 300 tokens
+- DatabasePlugin patterns: 250 tokens
+= 750 tokens EVERY message (even if plugins unused)
+```
+
+**With PostExpansionInstructions**:
+```
+- Turn 1 (no plugins): 0 instruction tokens
+- Turn 2 (expand MathPlugin): 200 instruction tokens (only Math)
+- Turn 3 (expand FileSystemPlugin): 300 instruction tokens (only FileSystem)
+= Pay only for what you use, when you use it
+```
+
+### Benefits
+
+1. **Just-In-Time Guidance** - Instructions appear exactly when the agent needs them
+2. **Zero Token Cost Until Used** - No token waste on unused plugins
+3. **Plugin-Specific Context** - Each plugin has its own tailored instructions
+4. **Reduced Errors** - Explicit guidance prevents common mistakes
+5. **Workflow Documentation** - Multi-step patterns documented inline
+6. **Environment-Specific** - Different instructions for dev vs production
+
+### Best Practices
+
+1. **Be Specific** - Include exact function names and call order
+2. **Highlight Safety** - Emphasize destructive operations and confirmations
+3. **Provide Examples** - Show concrete workflow patterns
+4. **Mention Rate Limits** - Include API quotas and retry logic
+5. **Document Context** - Explain when certain functions are available
+6. **Keep It Concise** - Focus on critical information only
+
+**Good Example**:
+```csharp
+postExpansionInstructions: @"
+Required workflow:
+1. Call GetAuthToken() first
+2. Then call GetWeather(location)
+3. Cache results for 5+ minutes
+
+Rate limit: 10 calls/minute
+Error handling: On 429, wait 60 seconds and retry once
+"
+```
+
+**Bad Example**:
+```csharp
+postExpansionInstructions: "Be careful with this plugin"  // ❌ Too vague
+```
 
 ## MCP Tools Scoping
 
@@ -1064,6 +1351,49 @@ var agent = new AgentBuilder(config)
 - [Agent Developer Documentation](./Agent-Developer-Documentation.md) - Complete agent API reference
 
 ## Changelog
+
+### 2025-01-17 - v2.1 (Post-Expansion Instructions)
+
+**New Features**:
+- ✅ **Post-Expansion Instructions** - Provide just-in-time guidance to LLM after plugin expansion
+- ✅ **C# Plugin Support** - Optional `postExpansionInstructions` parameter in `[PluginScope]` attribute
+- ✅ **MCP Tool Support** - `MCPServerInstructions` dictionary in `PluginScopingConfig`
+- ✅ **Frontend Tool Support** - `FrontendToolsInstructions` string in `PluginScopingConfig`
+- ✅ **Zero-Cost Until Used** - Instructions only consume tokens when plugin is expanded
+- ✅ **Workflow Documentation** - Document multi-step patterns, safety rules, and best practices
+
+**Files Modified**:
+- `PluginScopeAttribute.cs` - Added optional `postExpansionInstructions` parameter
+- `PluginInfo.cs` (source generator) - Added `PostExpansionInstructions` property
+- `HPDPluginSourceGenerator.cs` - Extract and embed post-expansion instructions in container return value
+- `ExternalToolScopingWrapper.cs` - Added `postExpansionInstructions` parameter to wrapper methods
+- `AgentConfig.cs` - Added `MCPServerInstructions` and `FrontendToolsInstructions` config properties
+
+**Usage Example**:
+```csharp
+[PluginScope(
+    description: "Mathematical operations",
+    postExpansionInstructions: @"
+        Best practices:
+        - Break complex calculations into atomic operations
+        - Use Square(x) for x², it's optimized
+        - Chain operations by calling sequentially
+    "
+)]
+public class MathPlugin { ... }
+```
+
+**Benefits**:
+- Plugin-specific guidance appears exactly when needed
+- Reduces hallucination by providing explicit instructions
+- Zero token cost for unused plugins
+- Supports environment-specific instructions (dev vs production)
+
+**Important Implementation Detail**:
+- Container expansion results are **filtered out** of persistent chat history
+- They are only visible to the LLM during the current message turn
+- This prevents redundant expansion messages from accumulating in history
+- Keeps history clean and token-efficient
 
 ### 2025-01-12 - v2.0 (MCP & Frontend Tool Support)
 

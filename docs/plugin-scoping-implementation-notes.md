@@ -365,6 +365,210 @@ From the AI model's perspective:
 
 ---
 
+## Bug #4: Container Expansion Results Polluting Chat History
+
+**File**: `HPD-Agent/Agent/Agent.cs` (RunAgenticAsync method, lines 862-904)
+**Date Discovered**: 2025-01-17
+**Impact**: Medium (token waste, history pollution)
+
+### The Problem
+
+Container expansion results were being added to the **persistent chat history** (`currentMessages`), even though they become **stale and useless** after the message turn ends.
+
+**What Was Happening**:
+1. User says: "multiply 393943 and 394934"
+2. Agent invokes `ExpandMathPlugin()` container
+3. Container returns: `"ExpandMathPlugin expanded. Available functions: Add, Multiply, ... Best practices: ..."`
+4. This result gets added to `currentMessages` (persistent history)
+5. Agent uses `Multiply()` and returns result
+6. Message turn ends → `expandedPlugins` goes out of scope (local variable)
+7. **Next message turn**: Containers are collapsed again, but old expansion message is still in history
+8. LLM sees stale expansion message referencing functions that are no longer available
+9. Each expansion adds more stale messages to history
+
+**Why This Matters**:
+- **Token waste**: Old expansion messages consume tokens on every future message
+- **History pollution**: Stale references to unavailable functions
+- **Confusion**: LLM might think functions are available when they're not
+- **PostExpansionInstructions waste**: Instructions accumulate but are useless after reset
+
+### The Discovery Process
+
+**User Testing Revealed**:
+User asked the LLM in a follow-up turn: "Do you remember seeing these instructions?" (showing the PostExpansionInstructions).
+
+LLM response: **"No, I do not have that specific text in my instructions."**
+
+But then user asked: "Do you see the results of the previous calculations you made?"
+
+LLM response: **"Yes, I can. I see the multiplication result: 155581484762"**
+
+**Conclusion**: The LLM could see regular function results but NOT the container expansion instructions in the next turn!
+
+### Why The Original Mechanism "Worked"
+
+The original code DID add container results to history (line 867):
+```csharp
+// Add tool results to history
+currentMessages.Add(toolResultMessage);  // ALL results, including containers
+```
+
+But it "worked" because:
+1. `expandedPlugins` is a local variable created at the start of `RunAgenticAsync` (line 585)
+2. When the method returns, `expandedPlugins` goes out of scope
+3. Next message turn creates a NEW empty `expandedPlugins`
+4. Old expansion messages are in history, but containers are collapsed again
+5. The expansion messages become **semantically useless** (reference unavailable functions)
+6. LLM learns to ignore them (but they still waste tokens)
+
+**This is not a good design!** It relies on the LLM "figuring out" that the stale messages are useless, rather than explicitly filtering them.
+
+### The Fix
+
+**Explicitly filter container expansion results from persistent history**:
+
+```csharp
+// Execute tools
+var toolResultMessage = await _toolScheduler.ExecuteToolsAsync(
+    currentMessages, toolRequests, effectiveOptions, agentRunContext, _name, expandedPlugins, effectiveCancellationToken).ConfigureAwait(false);
+
+// Filter out container expansion results from persistent history
+// Container expansions are only relevant within the current message turn
+// since expansion state resets after each message turn (expandedPlugins is local variable)
+// Without filtering, expansion messages accumulate in history but become stale/useless
+var nonContainerResults = new List<AIContent>();
+foreach (var content in toolResultMessage.Contents)
+{
+    if (content is FunctionResultContent result)
+    {
+        // Check if this result is from a container function
+        var isContainerResult = toolRequests.Any(tr =>
+            tr.CallId == result.CallId &&
+            effectiveOptions?.Tools?.OfType<AIFunction>()
+                .FirstOrDefault(t => t.Name == tr.Name)
+                ?.AdditionalProperties?.TryGetValue("IsContainer", out var isContainer) == true &&
+            isContainer is bool isCont && isCont);
+
+        if (!isContainerResult)
+        {
+            nonContainerResults.Add(content);
+        }
+    }
+    else
+    {
+        nonContainerResults.Add(content);
+    }
+}
+
+// Add filtered results to persistent history (excluding container expansions)
+// This keeps history clean and avoids accumulating stale expansion messages
+if (nonContainerResults.Count > 0)
+{
+    var filteredMessage = new ChatMessage(ChatRole.Tool, nonContainerResults);
+    currentMessages.Add(filteredMessage);  // ← Only non-container results
+}
+
+// Add ALL results (including container expansions) to turn history
+// The LLM needs to see container expansions within the current turn to know what functions are available
+turnHistory.Add(toolResultMessage);  // ← LLM sees containers within turn
+```
+
+### Key Design Points
+
+**1. Two History Contexts**:
+- `currentMessages` - Persistent history across message turns (FILTERED - no containers)
+- `turnHistory` - Current turn context sent to LLM (UNFILTERED - includes containers)
+
+**2. Container Results Are Ephemeral**:
+- Needed within the turn (so LLM sees available functions and instructions)
+- Useless after the turn (containers collapse, functions unavailable)
+- Should not persist in history
+
+**3. Regular Function Results Persist**:
+- `Add(5, 3) → 8` stays in history (useful context)
+- `ExpandMathPlugin() → "...Best practices..."` does NOT stay in history (becomes stale)
+
+**4. PostExpansionInstructions Benefit Most**:
+- Without filtering: Instructions accumulate in history, waste tokens
+- With filtering: Instructions provide value when needed, then disappear
+
+### Testing & Verification
+
+**Before Fix** (❌ Polluted History):
+```
+Turn 1:
+  User: "multiply 393943 and 394934"
+  Tool Calls: ExpandMathPlugin(), Multiply(393943, 394934)
+  Results in history:
+    - ExpandMathPlugin → "Expanded. Available functions: Add, Multiply... Best practices..."
+    - Multiply → 155581484762
+
+Turn 2:
+  User: "do you remember those instructions?"
+  currentMessages contains:
+    - Turn 1: ExpandMathPlugin expansion message (STALE - containers collapsed)
+    - Turn 1: Multiply result (still useful)
+  LLM: "No, I don't remember those instructions" (ignoring stale message)
+```
+
+**After Fix** (✅ Clean History):
+```
+Turn 1:
+  User: "multiply 393943 and 394934"
+  Tool Calls: ExpandMathPlugin(), Multiply(393943, 394934)
+  Results in turnHistory (sent to LLM): Both expansion and multiplication
+  Results in currentMessages (persistent): Only multiplication result
+
+Turn 2:
+  User: "do you remember those instructions?"
+  currentMessages contains:
+    - Turn 1: Multiply result (still useful)
+    - (No stale expansion message)
+  LLM: "No" (correctly doesn't see instructions - they weren't persisted)
+```
+
+### Why This Fix Is Better Than Original
+
+**Original "Works"**:
+- Containers collapse automatically (local variable)
+- Expansion messages become semantically useless
+- LLM learns to ignore them
+- ⚠️ But still wastes tokens on every message
+
+**New Fix**:
+- Containers collapse automatically (same mechanism)
+- Expansion messages explicitly filtered out
+- History stays clean
+- ✅ No token waste, no confusion
+
+**The Difference**: **Explicit > Implicit**. Don't rely on the LLM "figuring out" that stale messages are useless. Filter them proactively.
+
+### Impact on PostExpansionInstructions
+
+This fix makes PostExpansionInstructions even more valuable:
+
+**Token Economics**:
+```
+Without Fix:
+- Turn 1: PostExpansionInstructions added (200 tokens)
+- Turn 2: Stale instructions still in history (200 wasted tokens)
+- Turn 3: Stale instructions still in history (200 wasted tokens)
+= 400 tokens wasted
+
+With Fix:
+- Turn 1: PostExpansionInstructions visible in turn (200 tokens)
+- Turn 2: Instructions filtered out (0 tokens)
+- Turn 3: Instructions filtered out (0 tokens)
+= 0 tokens wasted
+```
+
+**Scaling**:
+If you have 5 plugins with instructions (200 tokens each):
+- Without fix: Up to 5000 tokens wasted after 5 expansions
+- With fix: 0 tokens wasted (all filtered)
+
+---
+
 ## v2.0: Extending to MCP and Frontend Tools
 
 ### The New Challenge
@@ -1020,6 +1224,40 @@ Agent: (auto-expands MathPlugin before responding)
 
 ## Changelog
 
+### 2025-01-17 - v2.1 (Post-Expansion Instructions + History Filtering)
+
+**New Features**:
+- ✅ Post-Expansion Instructions for C# plugins, MCP tools, and Frontend tools
+- ✅ Container expansion results explicitly filtered from persistent history
+- ✅ Clean history management (no stale expansion messages)
+- ✅ Optimal token economics (instructions only consume tokens when used)
+
+**Bugs Fixed**:
+- Bug #4: Container expansion results polluting chat history
+  - Expansion messages were accumulating in persistent history
+  - Became stale/useless after message turn ended (containers collapse)
+  - Fix: Explicit filtering - only non-container results added to `currentMessages`
+  - Impact: Eliminates token waste from stale expansion messages
+
+**Files Modified**:
+- `Agent.cs` - Added explicit filtering of container results from `currentMessages`
+- `PluginScopeAttribute.cs` - Added `PostExpansionInstructions` parameter
+- `PluginInfo.cs` - Added `PostExpansionInstructions` property
+- `HPDPluginSourceGenerator.cs` - Extract and embed post-expansion instructions
+- `ExternalToolScopingWrapper.cs` - Added post-expansion instructions support
+- `AgentConfig.cs` - Added `MCPServerInstructions` and `FrontendToolsInstructions`
+
+**Key Insight**:
+- Two history contexts: `currentMessages` (persistent, filtered) vs `turnHistory` (current turn, unfiltered)
+- Container results needed within turn (LLM sees available functions)
+- Container results useless after turn (functions unavailable, containers collapsed)
+- **Explicit > Implicit**: Don't rely on LLM ignoring stale messages, filter proactively
+
+**Testing**:
+- Verified LLM does NOT see expansion instructions in next turn (correct behavior)
+- Verified LLM DOES see regular function results in next turn (correct behavior)
+- Confirmed no token waste from accumulated expansion messages
+
 ### 2025-01-12 - v2.0 (MCP & Frontend Tool Support)
 
 **New Features**:
@@ -1116,6 +1354,6 @@ A: Not implemented yet. See "Future Enhancements" section for how to add it.
 
 ---
 
-**Last Updated**: 2025-01-12
+**Last Updated**: 2025-01-17
 **Next Review**: When adding new plugin scoping features or encountering issues
 **Contact**: This is your own code - you wrote this! Trust your past self.

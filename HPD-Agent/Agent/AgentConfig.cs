@@ -643,6 +643,21 @@ public class PluginScopingConfig
     /// Default: 10.
     /// </summary>
     public int MaxFunctionNamesInDescription { get; set; } = 10;
+
+    /// <summary>
+    /// Optional post-expansion instructions for specific MCP servers.
+    /// Key = MCP server name (e.g., "filesystem", "github")
+    /// Value = Instructions shown to the agent after that server's container is expanded.
+    /// Example: { "filesystem", "IMPORTANT: Always use absolute paths. Check FileExists before operations." }
+    /// </summary>
+    public Dictionary<string, string>? MCPServerInstructions { get; set; }
+
+    /// <summary>
+    /// Optional post-expansion instructions for Frontend tools container.
+    /// Shown to the agent after expanding the FrontendTools container.
+    /// Example: "These tools interact with the user. Use ConfirmAction for destructive operations."
+    /// </summary>
+    public string? FrontendToolsInstructions { get; set; }
 }
 
 #endregion

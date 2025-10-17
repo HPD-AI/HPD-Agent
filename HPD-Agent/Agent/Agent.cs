@@ -863,8 +863,44 @@ public class Agent : IChatClient
                 var toolResultMessage = await _toolScheduler.ExecuteToolsAsync(
                     currentMessages, toolRequests, effectiveOptions, agentRunContext, _name, expandedPlugins, effectiveCancellationToken).ConfigureAwait(false);
 
-                // Add tool results to history
-                currentMessages.Add(toolResultMessage);
+                // Filter out container expansion results from persistent history
+                // Container expansions are only relevant within the current message turn
+                // since expansion state resets after each message turn (expandedPlugins is local variable)
+                // Without filtering, expansion messages accumulate in history but become stale/useless
+                var nonContainerResults = new List<AIContent>();
+                foreach (var content in toolResultMessage.Contents)
+                {
+                    if (content is FunctionResultContent result)
+                    {
+                        // Check if this result is from a container function
+                        var isContainerResult = toolRequests.Any(tr =>
+                            tr.CallId == result.CallId &&
+                            effectiveOptions?.Tools?.OfType<AIFunction>()
+                                .FirstOrDefault(t => t.Name == tr.Name)
+                                ?.AdditionalProperties?.TryGetValue("IsContainer", out var isContainer) == true &&
+                            isContainer is bool isCont && isCont);
+
+                        if (!isContainerResult)
+                        {
+                            nonContainerResults.Add(content);
+                        }
+                    }
+                    else
+                    {
+                        nonContainerResults.Add(content);
+                    }
+                }
+
+                // Add filtered results to persistent history (excluding container expansions)
+                // This keeps history clean and avoids accumulating stale expansion messages
+                if (nonContainerResults.Count > 0)
+                {
+                    var filteredMessage = new ChatMessage(ChatRole.Tool, nonContainerResults);
+                    currentMessages.Add(filteredMessage);
+                }
+
+                // Add ALL results (including container expansions) to turn history
+                // The LLM needs to see container expansions within the current turn to know what functions are available
                 turnHistory.Add(toolResultMessage);
 
                 // Check for errors in tool results

@@ -46,6 +46,29 @@ public class Agent : IChatClient
     private readonly HPD.Agent.ErrorHandling.IProviderErrorHandler _providerErrorHandler;
 
     /// <summary>
+    /// Shared event channel for ALL filter executions across agent lifetime.
+    /// Events written here are immediately visible to RunAgenticLoopInternal's background drainer.
+    /// Lifetime: Entire agent lifetime (created in constructor, completed in Dispose)
+    /// Thread-safety: Channel is thread-safe for concurrent writes
+    /// </summary>
+    private readonly Channel<InternalAgentEvent> _filterEventChannel =
+        Channel.CreateUnbounded<InternalAgentEvent>(new UnboundedChannelOptions
+        {
+            SingleWriter = false,  // Multiple filters can emit concurrently
+            SingleReader = true,   // Only background drainer reads
+            AllowSynchronousContinuations = false  // Performance & safety
+        });
+
+    /// <summary>
+    /// Shared response coordination across all filter invocations.
+    /// Maps requestId -> (TaskCompletionSource, CancellationTokenSource)
+    /// Lifetime: Entire agent lifetime (not per-context)
+    /// Thread-safe: ConcurrentDictionary handles concurrent access
+    /// </summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (TaskCompletionSource<InternalAgentEvent>, CancellationTokenSource)>
+        _filterResponseWaiters = new();
+
+    /// <summary>
     /// Agent configuration object containing all settings
     /// </summary>
     public AgentConfig? Config { get; private set; }
@@ -102,6 +125,96 @@ public class Agent : IChatClient
     /// Error handling policy for normalizing provider errors
     /// </summary>
     public ErrorHandlingPolicy ErrorPolicy => _errorPolicy;
+
+    /// <summary>
+    /// Internal access to filter event channel writer for context setup.
+    /// </summary>
+    internal ChannelWriter<InternalAgentEvent> FilterEventWriter => _filterEventChannel.Writer;
+
+    /// <summary>
+    /// Internal access to filter event channel reader for RunAgenticLoopInternal.
+    /// </summary>
+    internal ChannelReader<InternalAgentEvent> FilterEventReader => _filterEventChannel.Reader;
+
+    /// <summary>
+    /// Sends a response to a filter waiting for a specific request.
+    /// Called by external handlers (AGUI, Console, etc.) when user provides input.
+    /// Thread-safe: Can be called from any thread.
+    /// </summary>
+    /// <param name="requestId">The unique identifier for the request</param>
+    /// <param name="response">The response event to deliver</param>
+    /// <exception cref="ArgumentNullException">If response is null</exception>
+    public void SendFilterResponse(string requestId, InternalAgentEvent response)
+    {
+        if (response == null)
+            throw new ArgumentNullException(nameof(response));
+
+        if (_filterResponseWaiters.TryRemove(requestId, out var entry))
+        {
+            entry.Item1.TrySetResult(response);
+            entry.Item2.Dispose();
+        }
+        // Note: If requestId not found, silently ignore (response may have timed out)
+    }
+
+    /// <summary>
+    /// Internal method for filters to wait for responses.
+    /// Called by AiFunctionContext.WaitForResponseAsync().
+    /// </summary>
+    internal async Task<T> WaitForFilterResponseAsync<T>(
+        string requestId,
+        TimeSpan timeout,
+        CancellationToken cancellationToken) where T : InternalAgentEvent
+    {
+        var tcs = new TaskCompletionSource<InternalAgentEvent>();
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cts.CancelAfter(timeout);
+
+        _filterResponseWaiters[requestId] = (tcs, cts);
+
+        // Register cancellation/timeout cleanup
+        // IMPORTANT: Distinguishes between timeout and external cancellation
+        cts.Token.Register(() =>
+        {
+            if (_filterResponseWaiters.TryRemove(requestId, out var entry))
+            {
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    // External cancellation (user stopped agent)
+                    entry.Item1.TrySetCanceled(cancellationToken);
+                }
+                else
+                {
+                    // Timeout (no response received in time)
+                    entry.Item1.TrySetException(
+                        new TimeoutException($"No response received for request '{requestId}' within {timeout}"));
+                }
+                entry.Item2.Dispose();
+            }
+        });
+
+        try
+        {
+            var response = await tcs.Task;
+
+            // Type safety check with clear error message
+            if (response is not T typedResponse)
+            {
+                throw new InvalidOperationException(
+                    $"Expected response of type {typeof(T).Name}, but received {response.GetType().Name}");
+            }
+
+            return typedResponse;
+        }
+        finally
+        {
+            // Cleanup on success (timeout/cancellation cleanup handled by registration above)
+            if (_filterResponseWaiters.TryRemove(requestId, out var entry))
+            {
+                entry.Item2.Dispose();
+            }
+        }
+    }
 
     /// <summary>
     /// Extracts and merges ChatOptions from AgentRunOptions (for workflow compatibility).
@@ -176,10 +289,11 @@ public class Agent : IChatClient
             chatReducer,
             config.HistoryReduction);
         _functionCallProcessor = new FunctionCallProcessor(
-            scopedFilterManager, 
-            _permissionManager, 
-            _aiFunctionFilters, 
-            config.MaxAgenticIterations, 
+            this, // NEW: Pass agent reference for filter event coordination
+            scopedFilterManager,
+            _permissionManager,
+            _aiFunctionFilters,
+            config.MaxAgenticIterations,
             config.ErrorHandling,
             config.ServerConfiguredTools,
             config.AgenticLoop);  // NEW: Pass agentic loop config for TerminateOnUnknownCalls
@@ -544,11 +658,33 @@ public class Agent : IChatClient
         // Track conversation ID consistently
         _conversationId = conversationId;
 
-        // Emit MESSAGE TURN started event
-        yield return new InternalMessageTurnStartedEvent(messageTurnId, conversationId);
+        // NEW: Queue to buffer filter events from background drainer
+        var filterEventQueue = new System.Collections.Concurrent.ConcurrentQueue<InternalAgentEvent>();
+        var eventDrainCts = CancellationTokenSource.CreateLinkedTokenSource(effectiveCancellationToken);
 
-        // Collect all response updates to build final history
-        var responseUpdates = new List<ChatResponseUpdate>();
+        // NEW: Start background task to continuously drain filter events
+        var filterEventDrainTask = Task.Run(async () =>
+        {
+            try
+            {
+                await foreach (var evt in _filterEventChannel.Reader.ReadAllAsync(eventDrainCts.Token))
+                {
+                    filterEventQueue.Enqueue(evt);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected when eventDrainCts is cancelled
+            }
+        }, eventDrainCts.Token);
+
+        try
+        {
+            // Emit MESSAGE TURN started event
+            yield return new InternalMessageTurnStartedEvent(messageTurnId, conversationId);
+
+            // Collect all response updates to build final history
+            var responseUpdates = new List<ChatResponseUpdate>();
 
         // Prepare messages using MessageProcessor
         ReductionMetadata? reductionMetadata = null;
@@ -630,6 +766,12 @@ public class Agent : IChatClient
 
             // Emit AGENT TURN started event
             yield return new InternalAgentTurnStartedEvent(iteration);
+
+            // NEW: Yield any filter events that accumulated before iteration start
+            while (filterEventQueue.TryDequeue(out var filterEvt))
+            {
+                yield return filterEvt;
+            }
 
             var toolRequests = new List<FunctionCallContent>();
             var assistantContents = new List<AIContent>();
@@ -880,6 +1022,12 @@ public class Agent : IChatClient
                     }
                 }
 
+                // NEW: Periodically yield filter events during LLM streaming
+                while (filterEventQueue.TryDequeue(out var filterEvt))
+                {
+                    yield return filterEvt;
+                }
+
                 // Check for stream completion
                 if (update.FinishReason != null)
                 {
@@ -958,9 +1106,22 @@ public class Agent : IChatClient
                 // Note: Tool call start/args events are now emitted immediately during streaming (see above)
                 // This ensures true streaming with zero latency for function call visibility
 
-                // Execute tools
+                // NEW: Yield filter events before tool execution
+                while (filterEventQueue.TryDequeue(out var filterEvt))
+                {
+                    yield return filterEvt;
+                }
+
+                // Execute tools (filter events flow to shared channel during execution)
                 var toolResultMessage = await _toolScheduler.ExecuteToolsAsync(
                     currentMessages, toolRequests, effectiveOptions, agentRunContext, _name, expandedPlugins, expandedSkills, effectiveCancellationToken).ConfigureAwait(false);
+
+                // NEW: Yield filter events that accumulated DURING tool execution
+                // This is where permission events become visible to handlers!
+                while (filterEventQueue.TryDequeue(out var filterEvt))
+                {
+                    yield return filterEvt;
+                }
 
                 // Filter out container expansion results from persistent history
                 // Container expansions are only relevant within the current message turn
@@ -1158,6 +1319,12 @@ public class Agent : IChatClient
         // Note: TextMessageEnd is now emitted INSIDE the loop after each agent turn
         // This ensures proper event pairing per AGUI spec
 
+        // NEW: Final drain of filter events after loop
+        while (filterEventQueue.TryDequeue(out var filterEvt))
+        {
+            yield return filterEvt;
+        }
+
         // Emit MESSAGE TURN finished event
         yield return new InternalMessageTurnFinishedEvent(messageTurnId, conversationId);
 
@@ -1173,9 +1340,23 @@ public class Agent : IChatClient
             orchestrationActivity?.SetTag("agent.history_messages_removed", reductionMetadata.MessagesRemovedCount);
         }
 
-        // FIX #8: ALWAYS complete history task to prevent hanging
-        // This is guaranteed to be called even if exceptions occur during enumeration
-        historyCompletionSource.TrySetResult(turnHistory);
+            // FIX #8: ALWAYS complete history task to prevent hanging
+            // This is guaranteed to be called even if exceptions occur during enumeration
+            historyCompletionSource.TrySetResult(turnHistory);
+        }
+        finally
+        {
+            // Signal event drainer to stop and wait for completion
+            eventDrainCts.Cancel();
+            try
+            {
+                await filterEventDrainTask;
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected
+            }
+        }
     }
 
     /// <summary>
@@ -2122,27 +2303,6 @@ Best practices:
         activity?.SetTag("agent.success", true);
     }
 
-    /// <summary>
-    /// Converts Extensions.AI ChatMessage collection to AGUI BaseMessage collection.
-    /// Filters out tool-related messages since AG-UI handles tools via events, not message history.
-    /// </summary>
-    private static IReadOnlyList<BaseMessage> ConvertThreadToAGUIMessages(IEnumerable<ChatMessage> messages)
-    {
-        return messages
-            .Where(m => !HasToolContent(m)) // Skip messages with tool calls/results
-            .Select(AGUIEventConverter.ConvertChatMessageToBaseMessage)
-            .ToList();
-    }
-
-    /// <summary>
-    /// Checks if a message contains tool-related content (FunctionCallContent or FunctionResultContent).
-    /// These messages should be excluded from AG-UI message history as tools are handled via events.
-    /// </summary>
-    private static bool HasToolContent(ChatMessage message)
-    {
-        return message.Contents.Any(c => c is FunctionCallContent or FunctionResultContent);
-    }
-
     #endregion
 
 }
@@ -2209,6 +2369,7 @@ public class AGUIEventHandler : IAGUIAgent
 /// </summary>
 public class FunctionCallProcessor
 {
+    private readonly Agent _agent; // NEW: Reference to agent for filter event coordination
     private readonly ScopedFilterManager? _scopedFilterManager;
     private readonly PermissionManager _permissionManager;
     private readonly IReadOnlyList<IAiFunctionFilter> _aiFunctionFilters;
@@ -2218,6 +2379,7 @@ public class FunctionCallProcessor
     private readonly AgenticLoopConfig? _agenticLoopConfig;
 
     public FunctionCallProcessor(
+        Agent agent, // NEW: Added parameter
         ScopedFilterManager? scopedFilterManager,
         PermissionManager permissionManager,
         IReadOnlyList<IAiFunctionFilter>? aiFunctionFilters,
@@ -2226,6 +2388,7 @@ public class FunctionCallProcessor
         IList<AITool>? serverConfiguredTools = null,
         AgenticLoopConfig? agenticLoopConfig = null)
     {
+        _agent = agent ?? throw new ArgumentNullException(nameof(agent));
         _scopedFilterManager = scopedFilterManager;
         _permissionManager = permissionManager ?? throw new ArgumentNullException(nameof(permissionManager));
         _aiFunctionFilters = aiFunctionFilters ?? new List<IAiFunctionFilter>();
@@ -2271,7 +2434,10 @@ public class FunctionCallProcessor
             {
                 Function = FindFunctionInMap(functionCall.Name, functionMap),
                 RunContext = agentRunContext,
-                AgentName = agentName
+                AgentName = agentName,
+                // NEW: Point to Agent's shared channel for event emission
+                OutboundEvents = _agent.FilterEventWriter,
+                Agent = _agent
             };
 
             // Pass the CallId through metadata for tracking
@@ -2335,9 +2501,27 @@ public class FunctionCallProcessor
 
             // Build and execute the filter pipeline using FilterChain
             var pipeline = FilterChain.BuildAiFunctionPipeline(allStandardFilters, finalInvoke);
-            await pipeline(context).ConfigureAwait(false);
 
-            // Mark function as completed in run context
+            // Execute pipeline SYNCHRONOUSLY (no Task.Run!)
+            // Events flow directly to shared channel, drained by background task
+            try
+            {
+                await pipeline(context).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                // Emit error event before handling
+                context.OutboundEvents?.TryWrite(new InternalFilterErrorEvent(
+                    "FilterPipeline",
+                    $"Error in filter pipeline: {ex.Message}",
+                    ex));
+
+                // Mark context as terminated
+                context.IsTerminated = true;
+                context.Result = $"Error executing function '{functionCall.Name}': {ex.Message}";
+            }
+
+            // Mark function as completed in run context (even if failed - prevents infinite loops)
             agentRunContext.CompleteFunction(functionCall.Name);
 
             var functionResult = new FunctionResultContent(functionCall.CallId, context.Result);
@@ -4320,6 +4504,86 @@ public record InternalToolCallResultEvent(
     string Result) : InternalAgentEvent;
 
 #endregion
+
+#region Filter Events
+
+/// <summary>
+/// Filter requests permission to execute a function.
+/// Handler should prompt user and send InternalPermissionResponseEvent.
+/// </summary>
+public record InternalPermissionRequestEvent(
+    string PermissionId,
+    string FunctionName,
+    string? Description,
+    string CallId,
+    IDictionary<string, object?>? Arguments) : InternalAgentEvent;
+
+/// <summary>
+/// Response to permission request.
+/// Sent by external handler (AGUI, Console) back to waiting filter.
+/// </summary>
+public record InternalPermissionResponseEvent(
+    string PermissionId,
+    bool Approved,
+    string? Reason = null,
+    PermissionChoice Choice = PermissionChoice.Ask) : InternalAgentEvent;
+
+/// <summary>
+/// Emitted after permission is approved (for observability).
+/// </summary>
+public record InternalPermissionApprovedEvent(
+    string PermissionId) : InternalAgentEvent;
+
+/// <summary>
+/// Emitted after permission is denied (for observability).
+/// </summary>
+public record InternalPermissionDeniedEvent(
+    string PermissionId,
+    string Reason) : InternalAgentEvent;
+
+/// <summary>
+/// Filter requests permission to continue beyond max iterations.
+/// </summary>
+public record InternalContinuationRequestEvent(
+    string ContinuationId,
+    int CurrentIteration,
+    int MaxIterations) : InternalAgentEvent;
+
+/// <summary>
+/// Response to continuation request.
+/// </summary>
+public record InternalContinuationResponseEvent(
+    string ContinuationId,
+    bool Approved,
+    int ExtensionAmount = 0) : InternalAgentEvent;
+
+/// <summary>
+/// Filter reports progress (one-way, no response needed).
+/// </summary>
+public record InternalFilterProgressEvent(
+    string FilterName,
+    string Message,
+    int? PercentComplete = null) : InternalAgentEvent;
+
+/// <summary>
+/// Filter reports an error (one-way, no response needed).
+/// </summary>
+public record InternalFilterErrorEvent(
+    string FilterName,
+    string ErrorMessage,
+    Exception? Exception = null) : InternalAgentEvent;
+
+/// <summary>
+/// Generic custom event for user-defined scenarios.
+/// Users can also create their own event types by deriving from InternalAgentEvent.
+/// </summary>
+public record InternalCustomFilterEvent(
+    string FilterName,
+    string EventType,
+    IDictionary<string, object?> Data) : InternalAgentEvent;
+
+#endregion
+
 #endregion
 
 #region Function Invocation Context

@@ -47,10 +47,101 @@ public class AiFunctionContext :  FunctionInvocationContext
     /// </summary>
     public new AIFunctionArguments Arguments { get; }
 
+    /// <summary>
+    /// Channel writer for emitting events during filter execution.
+    /// Points to Agent's shared channel - events are immediately visible to background drainer.
+    ///
+    /// Thread-safety: Multiple filters in the pipeline can emit concurrently.
+    /// Event ordering: FIFO within each filter, interleaved across filters.
+    /// Lifetime: Valid for entire filter execution.
+    /// </summary>
+    internal System.Threading.Channels.ChannelWriter<InternalAgentEvent>? OutboundEvents { get; set; }
+
+    /// <summary>
+    /// Reference to the agent for response coordination.
+    /// Lifetime: Set by ProcessFunctionCallsAsync, valid for entire filter execution.
+    /// </summary>
+    internal Agent? Agent { get; set; }
+
     public AiFunctionContext(ToolCallRequest toolCallRequest)
     {
         ToolCallRequest = toolCallRequest ?? throw new ArgumentNullException(nameof(toolCallRequest));
         Arguments = new AIFunctionArguments(toolCallRequest.Arguments);
+    }
+
+    /// <summary>
+    /// Emits an event that will be yielded by RunAgenticLoopInternal.
+    /// Events are delivered immediately to background drainer (not batched).
+    ///
+    /// Thread-safety: Safe to call from any filter in the pipeline.
+    /// Performance: Non-blocking write (unbounded channel).
+    /// Event ordering: Guaranteed FIFO per filter, interleaved across filters.
+    /// Real-time visibility: Handler sees event WHILE filter is executing (not after).
+    /// </summary>
+    /// <param name="evt">The event to emit</param>
+    /// <exception cref="ArgumentNullException">If event is null</exception>
+    /// <exception cref="InvalidOperationException">If OutboundEvents channel is not configured</exception>
+    public void Emit(InternalAgentEvent evt)
+    {
+        if (evt == null)
+            throw new ArgumentNullException(nameof(evt));
+
+        if (OutboundEvents == null)
+            throw new InvalidOperationException("Event emission not configured for this context");
+
+        // Non-blocking write to shared channel
+        // Background drainer will see this immediately
+        if (!OutboundEvents.TryWrite(evt))
+        {
+            // Channel was completed - agent is shutting down
+            // This is not an error, just means events emitted during cleanup won't be delivered
+        }
+    }
+
+    /// <summary>
+    /// Emits an event and returns immediately (async version for bounded channels if needed).
+    /// Current implementation uses unbounded channels, so this is identical to Emit().
+    /// Kept for future extensibility if bounded channels are introduced.
+    /// </summary>
+    public async Task EmitAsync(InternalAgentEvent evt, CancellationToken cancellationToken = default)
+    {
+        if (evt == null)
+            throw new ArgumentNullException(nameof(evt));
+
+        if (OutboundEvents == null)
+            throw new InvalidOperationException("Event emission not configured for this context");
+
+        await OutboundEvents.WriteAsync(evt, cancellationToken);
+    }
+
+    /// <summary>
+    /// Waits for a response event with automatic timeout and cancellation handling.
+    /// Used for request/response patterns in interactive filters (permissions, approvals, etc.)
+    ///
+    /// Thread-safety: Safe to call from any filter.
+    /// Cancellation: Respects both timeout and external cancellation token.
+    /// Type safety: Validates response type and throws clear error on mismatch.
+    /// Cleanup: Automatically removes TCS from waiters dictionary on completion/timeout/cancellation.
+    /// </summary>
+    /// <typeparam name="T">Type of response event to wait for</typeparam>
+    /// <param name="requestId">Unique identifier for this request</param>
+    /// <param name="timeout">Maximum time to wait for response (default: 5 minutes)</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>The response event</returns>
+    /// <exception cref="TimeoutException">Thrown if no response received within timeout</exception>
+    /// <exception cref="OperationCanceledException">Thrown if cancellation requested</exception>
+    /// <exception cref="InvalidOperationException">Thrown if Agent reference not set or response type mismatch</exception>
+    public async Task<T> WaitForResponseAsync<T>(
+        string requestId,
+        TimeSpan? timeout = null,
+        CancellationToken cancellationToken = default) where T : InternalAgentEvent
+    {
+        if (Agent == null)
+            throw new InvalidOperationException("Agent reference not configured for this context");
+
+        var effectiveTimeout = timeout ?? TimeSpan.FromMinutes(5);
+
+        return await Agent.WaitForFilterResponseAsync<T>(requestId, effectiveTimeout, cancellationToken);
     }
 }
 

@@ -76,55 +76,58 @@ projectsApi.MapGet("/{projectId}", (string projectId, ProjectManager pm) =>
         ? Results.Ok(ToProjectDto(project))
         : Results.NotFound());
 
-// 🎯 CLEAN CONVERSATION API  
+// 🎯 CLEAN CONVERSATION API (Threads = Conversations)
 projectsApi.MapGet("/{projectId}/conversations", (string projectId, ProjectManager pm) =>
     pm.GetProject(projectId) is { } project
-        ? Results.Ok(project.Conversations.Select(ToConversationDto))
+        ? Results.Ok(project.Threads.Select(ToThreadDto))
         : Results.NotFound());
 
 projectsApi.MapPost("/{projectId}/conversations", (string projectId, CreateConversationRequest request, ProjectManager pm) =>
 {
     if (pm.GetProject(projectId) is not { } project)
         return Results.NotFound();
-    
-    // ✨ CLEAN: Create agent and conversation together
-    var agent = pm.CreateAgent();
-    var conversation = project.CreateConversation(agent);
+
+    // ✨ CLEAN: Create thread (state container)
+    var thread = project.CreateThread();
     if (!string.IsNullOrEmpty(request.Name))
-        conversation.AddMetadata("DisplayName", request.Name);
-    
-    return Results.Created($"/projects/{projectId}/conversations/{conversation.Id}", ToConversationDto(conversation));
+        thread.AddMetadata("DisplayName", request.Name);
+
+    return Results.Created($"/projects/{projectId}/conversations/{thread.Id}", ToThreadDto(thread));
 });
 
 projectsApi.MapGet("/{projectId}/conversations/{conversationId}", (string projectId, string conversationId, ProjectManager pm) =>
-    pm.GetConversation(projectId, conversationId) is { } conversation
-        ? Results.Ok(ToConversationWithMessagesDto(conversation))
+    pm.GetThread(projectId, conversationId) is { } thread
+        ? Results.Ok(ToThreadWithMessagesDto(thread))
         : Results.NotFound());
 
 projectsApi.MapDelete("/{projectId}/conversations/{conversationId}", (string projectId, string conversationId, ProjectManager pm) =>
 {
     if (pm.GetProject(projectId) is not { } project)
         return Results.NotFound();
-    
-    if (project.RemoveConversation(conversationId))
+
+    if (project.RemoveThread(conversationId))
         return Results.NoContent();
-    
+
     return Results.NotFound();
 });
 
 // 🎯 CLEAN AGENT API
 var agentApi = app.MapGroup("/agent").WithTags("Agent");
 
-// ✨ SIMPLIFIED: Context-aware chat (no complex setup)
+// ✨ SIMPLIFIED: Context-aware chat (stateless pattern)
 agentApi.MapPost("/projects/{projectId}/conversations/{conversationId}/chat",
     async (string projectId, string conversationId, ChatRequest request, ProjectManager pm) =>
 {
-    if (pm.GetConversation(projectId, conversationId) is not { } conversation)
+    if (pm.GetThread(projectId, conversationId) is not { } thread)
         return Results.NotFound();
 
-    // 🚀 Use new AIAgent RunAsync interface
+    // Create stateless conversation for this request
+    var agent = pm.CreateAgent();
+    var conversation = new Conversation(agent);
+
+    // 🚀 Use AIAgent RunAsync interface with thread
     var userMessage = new ChatMessage(ChatRole.User, request.Message);
-    var agentResponse = await conversation.RunAsync([userMessage]);
+    var agentResponse = await conversation.RunAsync([userMessage], thread);
 
     // Convert AgentRunResponse to our API response format
     return Results.Ok(ToAgentResponse(agentResponse));
@@ -134,12 +137,16 @@ agentApi.MapPost("/projects/{projectId}/conversations/{conversationId}/chat",
 agentApi.MapPost("/projects/{projectId}/conversations/{conversationId}/stream",
     async (string projectId, string conversationId, RunAgentInput aguiInput, ProjectManager pm, HttpContext context) =>
 {
-    var conversation = pm.GetConversation(projectId, conversationId);
-    if (conversation == null)
+    var thread = pm.GetThread(projectId, conversationId);
+    if (thread == null)
     {
         context.Response.StatusCode = 404;
         return;
     }
+
+    // Create stateless conversation for this request
+    var agent = pm.CreateAgent();
+    var conversation = new Conversation(agent);
 
     // Prepare SSE headers (CORS handled by middleware)
     context.Response.Headers.Append("Content-Type", "text/event-stream");
@@ -151,8 +158,8 @@ agentApi.MapPost("/projects/{projectId}/conversations/{conversationId}/stream",
 
     try
     {
-        // ✅ Use the new Conversation.RunStreamingAsync(RunAgentInput) AGUI overload
-        await foreach (var update in conversation.RunStreamingAsync(aguiInput, context.RequestAborted))
+        // ✅ Use the new Conversation.RunStreamingAsync(RunAgentInput, thread) AGUI overload
+        await foreach (var update in conversation.RunStreamingAsync(aguiInput, thread, context.RequestAborted))
         {
             // Serialize AgentRunResponseUpdate to JSON
             var serializerOptions = new JsonSerializerOptions
@@ -180,16 +187,16 @@ agentApi.MapPost("/projects/{projectId}/conversations/{conversationId}/stream",
     }
 });
 
-// 🚀 WEBSOCKET: Real-time bi-directional streaming using new ConversationStreamingResult
-agentApi.MapGet("/projects/{projectId}/conversations/{conversationId}/ws", 
+// 🚀 WEBSOCKET: Real-time bi-directional streaming using stateless conversation
+agentApi.MapGet("/projects/{projectId}/conversations/{conversationId}/ws",
     async (string projectId, string conversationId, HttpContext context, ProjectManager pm) =>
 {
     if (context.WebSockets.IsWebSocketRequest)
     {
         using var webSocket = await context.WebSockets.AcceptWebSocketAsync();
-        var conversation = pm.GetConversation(projectId, conversationId);
+        var thread = pm.GetThread(projectId, conversationId);
 
-        if (conversation == null)
+        if (thread == null)
         {
             await webSocket.CloseAsync(
                 System.Net.WebSockets.WebSocketCloseStatus.NormalClosure, 
@@ -200,17 +207,21 @@ agentApi.MapGet("/projects/{projectId}/conversations/{conversationId}/ws",
 
         try
         {
+            // Create stateless conversation for this request
+            var agent = pm.CreateAgent();
+            var conversation = new Conversation(agent);
+
             // Wait for an initial message from the client to start the stream
             var buffer = new byte[1024 * 4];
             var receiveResult = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
             var userMessage = System.Text.Encoding.UTF8.GetString(buffer, 0, receiveResult.Count);
 
-            // Use new AIAgent RunStreamingAsync interface
+            // Use new AIAgent RunStreamingAsync interface with thread
             var chatMessage = new ChatMessage(ChatRole.User, userMessage);
 
             bool isFinished = false;
             long totalTokens = 0;
-            await foreach (var update in conversation.RunStreamingAsync([chatMessage], cancellationToken: CancellationToken.None))
+            await foreach (var update in conversation.RunStreamingAsync([chatMessage], thread, cancellationToken: CancellationToken.None))
             {
                 // Extract text content from update
                 foreach (var content in update.Contents ?? [])
@@ -284,20 +295,20 @@ agentApi.MapGet("/projects/{projectId}/conversations/{conversationId}/ws",
 
 app.Run();
 
-// ✨ CLEAN HELPER FUNCTIONS (Fixed CS1998)
-static ProjectDto ToProjectDto(Project p) => new(p.Id, p.Name, p.Description, p.CreatedAt, p.LastActivity, p.ConversationCount);
+// ✨ CLEAN HELPER FUNCTIONS (Updated for stateless pattern)
+static ProjectDto ToProjectDto(Project p) => new(p.Id, p.Name, p.Description, p.CreatedAt, p.LastActivity, p.ThreadCount);
 
-static ConversationDto ToConversationDto(Conversation c) => new(c.Id, c.GetDisplayName(), c.CreatedAt, c.LastActivity, c.Messages.Count);
+static ConversationDto ToThreadDto(ConversationThread t) => new(t.Id, t.GetDisplayName(), t.CreatedAt, t.LastActivity, t.Messages.Count);
 
-static ConversationWithMessagesDto ToConversationWithMessagesDto(Conversation c) => new(
-    c.Id, 
-    c.GetDisplayName(),  // ✨ Direct method call like console app
-    c.CreatedAt, 
-    c.LastActivity, 
-    c.Messages.Count,
-    c.Messages.Select(msg => new ConversationMessageDto(
+static ConversationWithMessagesDto ToThreadWithMessagesDto(ConversationThread t) => new(
+    t.Id,
+    t.GetDisplayName(),
+    t.CreatedAt,
+    t.LastActivity,
+    t.Messages.Count,
+    t.Messages.Select(msg => new ConversationMessageDto(
         msg.Role.ToString().ToLowerInvariant(),
-        ExtractTextFromMessage(msg),  // ✨ Use helper method to extract text
+        ExtractTextFromMessage(msg),
         DateTime.UtcNow)).ToArray());
 
 static AgentChatResponse ToAgentResponse(AgentRunResponse response) => new(
@@ -391,8 +402,8 @@ public class ProjectManager
     public Project? GetProject(string projectId) => _projects.GetValueOrDefault(projectId);
     public IEnumerable<Project> ListProjects() => _projects.Values.OrderByDescending(p => p.LastActivity);
     public bool DeleteProject(string projectId) => _projects.TryRemove(projectId, out _);
-    public Conversation? GetConversation(string projectId, string conversationId) =>
-        GetProject(projectId)?.GetConversation(conversationId);
+    public ConversationThread? GetThread(string projectId, string threadId) =>
+        GetProject(projectId)?.GetThread(threadId);
 }
 
 // ✅ FIXED: DTOs moved to end for top-level statements (CS8803)

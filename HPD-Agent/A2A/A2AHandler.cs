@@ -13,8 +13,8 @@ public class A2AHandler
     private readonly Agent _agent;
     private readonly ITaskManager _taskManager;
 
-    // This dictionary will map an A2A taskId to an HPD-Agent Conversation
-    private readonly ConcurrentDictionary<string, Conversation> _activeConversations = new();
+    // This dictionary will map an A2A taskId to an HPD-Agent Conversation + Thread (stateless pattern)
+    private readonly ConcurrentDictionary<string, (Conversation conversation, ConversationThread thread)> _activeConversations = new();
 
     public A2AHandler(Agent agent, ITaskManager taskManager)
     {
@@ -67,7 +67,7 @@ public class A2AHandler
         return Task.FromResult(agentCard);
     }
 
-    private async Task ProcessAndRespondAsync(AgentTask task, Conversation conversation, Message a2aMessage, CancellationToken cancellationToken)
+    private async Task ProcessAndRespondAsync(AgentTask task, (Conversation conversation, ConversationThread thread) convData, Message a2aMessage, CancellationToken cancellationToken)
     {
         try
         {
@@ -76,15 +76,15 @@ public class A2AHandler
 
             // 2. Convert A2A message to HPD-Agent message using your mapper
             var hpdMessage = A2AMapper.ToHpdChatMessage(a2aMessage);
-            
-            // 3. Add the new message to the conversation history before calling the agent
-            conversation.AddMessage(hpdMessage);
+
+            // 3. Add the new message to the thread history before calling the agent
+            await convData.thread.AddMessageAsync(hpdMessage, cancellationToken);
 
             // 4. Send the *entire* conversation history to your agent and get the response
-            var response = await _agent.GetResponseAsync(conversation.Messages, null, cancellationToken);
-            
-            // 5. Add the agent's response to the conversation history
-            conversation.AddMessage(response.Messages.Last());
+            var response = await _agent.GetResponseAsync(convData.thread.Messages, null, cancellationToken);
+
+            // 5. Add the agent's response to the thread history
+            await convData.thread.AddMessageAsync(response.Messages.Last(), cancellationToken);
             
             // 6. Create an A2A artifact from the response using your mapper
             var artifact = A2AMapper.ToA2AArtifact(response);
@@ -107,26 +107,27 @@ public class A2AHandler
 
     private async Task OnTaskCreatedAsync(AgentTask task, CancellationToken cancellationToken)
     {
-        // A new task starts a new conversation
+        // A new task starts a new conversation + thread (stateless pattern)
         var conversation = new Conversation(_agent);
-        _activeConversations[task.Id] = conversation;
+        var thread = (ConversationThread)conversation.GetNewThread();
+        _activeConversations[task.Id] = (conversation, thread);
 
         var lastMessage = task.History?.LastOrDefault();
         if (lastMessage != null)
         {
-            await ProcessAndRespondAsync(task, conversation, lastMessage, cancellationToken);
+            await ProcessAndRespondAsync(task, (conversation, thread), lastMessage, cancellationToken);
         }
     }
 
     private async Task OnTaskUpdatedAsync(AgentTask task, CancellationToken cancellationToken)
     {
         // An updated task continues an existing conversation
-        if (_activeConversations.TryGetValue(task.Id, out var conversation))
+        if (_activeConversations.TryGetValue(task.Id, out var convData))
         {
             var lastMessage = task.History?.LastOrDefault();
             if (lastMessage != null)
             {
-                await ProcessAndRespondAsync(task, conversation, lastMessage, cancellationToken);
+                await ProcessAndRespondAsync(task, convData, lastMessage, cancellationToken);
             }
         }
         else
@@ -134,19 +135,20 @@ public class A2AHandler
             // Handle the case where the task is updated but we don't have a conversation for it.
             // This might happen if the server restarts. We can recreate the conversation from history.
             var newConversation = new Conversation(_agent);
+            var newThread = (ConversationThread)newConversation.GetNewThread();
             if(task.History != null)
             {
                 foreach(var msg in task.History)
                 {
-                    newConversation.AddMessage(A2AMapper.ToHpdChatMessage(msg));
+                    await newThread.AddMessageAsync(A2AMapper.ToHpdChatMessage(msg), cancellationToken);
                 }
             }
-            _activeConversations[task.Id] = newConversation;
+            _activeConversations[task.Id] = (newConversation, newThread);
 
             var lastMessage = task.History?.LastOrDefault();
             if (lastMessage != null)
             {
-                    await ProcessAndRespondAsync(task, newConversation, lastMessage, cancellationToken);
+                    await ProcessAndRespondAsync(task, (newConversation, newThread), lastMessage, cancellationToken);
             }
         }
     }

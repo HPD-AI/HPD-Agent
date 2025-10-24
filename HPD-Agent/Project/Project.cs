@@ -48,8 +48,11 @@ public class Project
     /// <summary>Last activity across all conversations (UTC).</summary>
     public DateTime LastActivity { get; private set; }
 
-    /// <summary>All conversations in this project.</summary>
-    public List<Conversation> Conversations { get; } = new();
+    /// <summary>
+    /// All conversation threads in this project.
+    /// Each thread contains the state and history for one conversation.
+    /// </summary>
+    public List<ConversationThread> Threads { get; } = new();
 
     // Note: AgentInjectedMemoryManager removed - use Agent-level DynamicMemory instead
     // See AgentBuilder.WithDynamicMemory() and DynamicMemoryStore abstraction
@@ -95,58 +98,80 @@ public class Project
     }
 
 
-    /// <summary>Creates a conversation with the specified agent</summary>
-    public Conversation CreateConversation(Agent agent)
+    /// <summary>
+    /// Creates a new conversation thread within this project.
+    /// The conversation orchestrator (stateless) must be created separately.
+    /// </summary>
+    /// <param name="conversation">The stateless conversation orchestrator to use</param>
+    /// <returns>A new thread associated with this project</returns>
+    /// <remarks>
+    /// Usage:
+    /// <code>
+    /// var conversation = new Conversation(agent);
+    /// var thread = project.CreateThread(conversation);
+    /// await conversation.RunAsync(messages, thread);
+    /// </code>
+    /// </remarks>
+    public ConversationThread CreateThread(Conversation conversation)
     {
-        var conv = new Conversation(agent);
-        conv.AddMetadata("Project", this);
-        Conversations.Add(conv);
+        var thread = conversation.GetNewThread(this);
+        Threads.Add(thread);
         UpdateActivity();
-        return conv;
+        return thread;
     }
 
     /// <summary>
-    /// Creates a new conversation with the first agent from the provided list.
-    /// Multi-agent orchestration should use AgentWorkflowBuilder instead.
+    /// Creates a new conversation thread within this project without a conversation instance.
+    /// Useful when you want to create the thread first and conversation later.
     /// </summary>
-    public Conversation CreateConversation(IEnumerable<Agent> agents)
+    /// <returns>A new thread associated with this project</returns>
+    /// <remarks>
+    /// Usage:
+    /// <code>
+    /// var thread = project.CreateThread();
+    /// var conversation = new Conversation(agent);
+    /// await conversation.RunAsync(messages, thread);
+    /// </code>
+    /// </remarks>
+    public ConversationThread CreateThread()
     {
-        var agentList = agents.ToList();
-        if (!agentList.Any())
-        {
-            throw new ArgumentException("At least one agent must be provided.", nameof(agents));
-        }
-
-        var conv = new Conversation(this, agentList.First());
-        Conversations.Add(conv);
+        var thread = new ConversationThread();
+        thread.AddMetadata("Project", this);
+        Threads.Add(thread);
         UpdateActivity();
-        return conv;
+        return thread;
     }
 
 
     /// <summary>Update last activity timestamp.</summary>
     public void UpdateActivity() => LastActivity = DateTime.UtcNow;
 
-    // Convenience methods for managing conversations
-    /// <summary>Finds a conversation by ID.</summary>
-    public Conversation? GetConversation(string conversationId)
-        => Conversations.FirstOrDefault(c => c.Id == conversationId);
+    // Convenience methods for managing threads
+    /// <summary>Finds a conversation thread by ID.</summary>
+    public ConversationThread? GetThread(string threadId)
+        => Threads.FirstOrDefault(t => t.Id == threadId);
 
-    /// <summary>Removes a conversation by ID.</summary>
-    public bool RemoveConversation(string conversationId)
+    /// <summary>Removes a conversation thread by ID.</summary>
+    public bool RemoveThread(string threadId)
     {
-        var conv = GetConversation(conversationId);
-        if (conv != null)
+        var thread = GetThread(threadId);
+        if (thread != null)
         {
-            Conversations.Remove(conv);
+            Threads.Remove(thread);
             UpdateActivity();
             return true;
         }
         return false;
     }
 
-    /// <summary>Gets the number of conversations.</summary>
-    public int ConversationCount => Conversations.Count;
+    /// <summary>Gets the number of conversation threads.</summary>
+    public int ThreadCount => Threads.Count;
+
+    /// <summary>
+    /// Gets the number of conversations (alias for ThreadCount for backward compatibility).
+    /// </summary>
+    [Obsolete("Use ThreadCount instead. Each thread represents a conversation.")]
+    public int ConversationCount => ThreadCount;
 
     /// <summary>
     /// Uploads a shared document to the project using the configured strategy.
@@ -197,8 +222,8 @@ public class Project
     /// <returns>Project activity summary</returns>
     public async Task<ProjectSummary> GetSummaryAsync()
     {
-        var totalMessages = Conversations.Sum(c => c.Messages.Count);
-        var activeConversations = Conversations.Count(c => c.Messages.Any());
+        var totalMessages = Threads.Sum(t => t.Messages.Count);
+        var activeThreads = Threads.Count(t => t.Messages.Any());
         var documents = await DocumentManager.GetDocumentsAsync();
         
         return new ProjectSummary
@@ -206,39 +231,39 @@ public class Project
             Id = Id,
             Name = Name,
             Description = Description,
-            ConversationCount = Conversations.Count,
-            ActiveConversationCount = activeConversations,
+            ConversationCount = Threads.Count,
+            ActiveConversationCount = activeThreads,
             TotalMessages = totalMessages,
             DocumentCount = documents.Count,
             CreatedAt = CreatedAt,
             LastActivity = LastActivity
         };
     }
-    
+
     /// <summary>
-    /// PHASE 2: Gets the most recent conversation in this project.
+    /// PHASE 2: Gets the most recent conversation thread in this project.
     /// Convenience method for common project navigation patterns.
     /// </summary>
-    /// <returns>Most recent conversation or null if none exist</returns>
-    public Conversation? GetMostRecentConversation()
+    /// <returns>Most recent thread or null if none exist</returns>
+    public ConversationThread? GetMostRecentThread()
     {
-        return Conversations.OrderByDescending(c => c.LastActivity).FirstOrDefault();
+        return Threads.OrderByDescending(t => t.LastActivity).FirstOrDefault();
     }
-    
-    
+
+
     /// <summary>
-    /// PHASE 2: Searches conversations in this project by text content.
+    /// PHASE 2: Searches conversation threads in this project by text content.
     /// Simple text-based search across conversation messages.
     /// </summary>
     /// <param name="searchTerm">Term to search for</param>
     /// <param name="maxResults">Maximum number of results to return (default 10)</param>
-    /// <returns>Conversations containing the search term</returns>
-    public IEnumerable<Conversation> SearchConversations(string searchTerm, int maxResults = 10)
+    /// <returns>Conversation threads containing the search term</returns>
+    public IEnumerable<ConversationThread> SearchThreads(string searchTerm, int maxResults = 10)
     {
         if (string.IsNullOrWhiteSpace(searchTerm))
-            return Enumerable.Empty<Conversation>();
-            
-        var results = Conversations
+            return Enumerable.Empty<ConversationThread>();
+
+        var results = Threads
             .Where(c => c.Messages.Any(m => 
                 m.Text?.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) == true))
             .OrderByDescending(c => c.LastActivity)

@@ -36,28 +36,7 @@ public class MathPluginMetadataContext : IPluginMetadataContext
     public IEnumerable<string> GetPropertyNames() => _properties.Keys;
 }
 
-[PluginScope(
-    description: "Mathematical operations including addition, subtraction, multiplication, and more. Invoke first to get access to functions",
-    postExpansionInstructions: @"
-Best practices for using MathPlugin:
-- For complex calculations, break them into atomic operations (Add, Subtract, Multiply)
-- Use Square(x) for x², it's optimized and clearer than Multiply(x, x)
-- Some functions are conditional and only visible based on context:
-  * Abs() - Only available when AllowNegative=false
-  * Square() - Only available when MaxValue>1000
-  * Subtract() - Only available when AllowNegative=true
-  * Min() - Only available when MaxValue<500
 
-Performance tips:
-- Chain operations by calling functions sequentially
-- Add() requires permission - approve once to use multiple times
-- All operations return immediately (no async overhead)
-
-Example workflow:
-1. Use Multiply for basic calculations
-2. If you need x², prefer Square over Multiply(x,x)
-3. For negative results, ensure Subtract is available in current context
-    ")]
 public class ExpandMathPlugin
 {
     [AIFunction<MathPluginMetadataContext>]

@@ -26,7 +26,7 @@ static Task<(Project, ConversationThread, Agent)> CreateAIAssistant(IConfigurati
     {
         Name = "AI Assistant",
         SystemInstructions = "You are an accountant agent. You can do sequential and parallel tool calls. You can also plan out stuff ebfore you start if the task requires sub steps",
-        MaxAgenticIterations = 50,
+        MaxAgenticIterations = 20,  // Reduced from 50 to avoid rate limits
         HistoryReduction = new HistoryReductionConfig
         {
             Enabled = true,
@@ -80,7 +80,7 @@ static Task<(Project, ConversationThread, Agent)> CreateAIAssistant(IConfigurati
         .WithPlanMode() // Plan mode enabled with defaults
         .WithPlugin<ExpandMathPlugin>()
         .WithPlugin<FinancialAnalysisPlugin>()
-        .WithConsolePermissions() // Function permissions only via ConsolePermissionFilter
+        .WithPermissions() // ✨ NEW: Unified permission filter - events handled in streaming loop
         .Build();
 
     // 🎯 Project with smart defaults
@@ -163,6 +163,75 @@ static async Task RunInteractiveChat(Agent agent, ConversationThread thread)
                 // Use agent.RunStreamingAsync with thread parameter
                 await foreach (var update in agent.RunStreamingAsync([userMessage], thread, cancellationToken: cts.Token))
                 {
+                    // ✨ Handle permission requests from the unified filter
+                    if (update.IsPermissionEvent && update.PermissionData?.Type == PermissionEventType.Request)
+                    {
+                        // Close any open sections
+                        if (!isFirstReasoningChunk || !isFirstTextChunk)
+                        {
+                            Console.WriteLine(); // End section
+                            Console.ResetColor();
+                            isFirstReasoningChunk = true;
+                            isFirstTextChunk = true;
+                        }
+
+                        var perm = update.PermissionData;
+                        Console.ForegroundColor = ConsoleColor.Cyan;
+                        Console.WriteLine($"\n🔐 Permission Request");
+                        Console.WriteLine($"   Function: {perm.FunctionName}");
+                        if (!string.IsNullOrEmpty(perm.Description))
+                            Console.WriteLine($"   Purpose: {perm.Description}");
+                        Console.WriteLine($"   Options: [A]llow once, Allow [F]orever, [D]eny once, Deny F[o]rever");
+                        Console.Write("   Your choice (press Enter): ");
+                        Console.ResetColor();
+
+                        // Read user's permission choice (first character of input line)
+                        var userInput = Console.ReadLine();
+                        var choice = string.IsNullOrEmpty(userInput) ? 'd' : char.ToLower(userInput[0]);
+
+                        bool approved;
+                        PermissionChoice permChoice;
+
+                        switch (choice)
+                        {
+                            case 'A' or 'a':
+                                approved = true;
+                                permChoice = PermissionChoice.Ask;
+                                break;
+                            case 'F' or 'f':
+                                approved = true;
+                                permChoice = PermissionChoice.AlwaysAllow;
+                                break;
+                            case 'D' or 'd':
+                                approved = false;
+                                permChoice = PermissionChoice.Ask;
+                                break;
+                            case 'O' or 'o':
+                                approved = false;
+                                permChoice = PermissionChoice.AlwaysDeny;
+                                break;
+                            default:
+                                approved = false;
+                                permChoice = PermissionChoice.Ask;
+                                break;
+                        }
+
+                        // Send response back to the filter via agent
+                        agent.SendFilterResponse(
+                            perm.PermissionId!,
+                            new InternalPermissionResponseEvent(
+                                perm.PermissionId!,
+                                approved,
+                                approved ? null : "User denied permission",
+                                permChoice
+                            )
+                        );
+
+                        Console.ForegroundColor = approved ? ConsoleColor.Green : ConsoleColor.Red;
+                        Console.WriteLine($"   {(approved ? "✓ Approved" : "✗ Denied")}");
+                        Console.ResetColor();
+                    }
+
                     // Display different content types from the streaming updates
                     foreach (var content in update.Contents ?? [])
                     {
@@ -177,7 +246,7 @@ static async Task RunInteractiveChat(Agent agent, ConversationThread thread)
                                 Console.ResetColor();
                                 isFirstTextChunk = true; // Reset for next text block
                             }
-                            
+
                             // Show header when starting new reasoning section
                             if (isFirstReasoningChunk)
                             {
@@ -186,7 +255,7 @@ static async Task RunInteractiveChat(Agent agent, ConversationThread thread)
                                 Console.Write("💭 Thinking: ");
                                 isFirstReasoningChunk = false;
                             }
-                            
+
                             // Stream reasoning text naturally
                             Console.ForegroundColor = ConsoleColor.DarkGray;
                             Console.Write(reasoningContent.Text);
@@ -201,7 +270,7 @@ static async Task RunInteractiveChat(Agent agent, ConversationThread thread)
                                 Console.ResetColor();
                                 isFirstReasoningChunk = true; // Reset for next reasoning block
                             }
-                            
+
                             // Show text header on first text chunk
                             if (isFirstTextChunk)
                             {
@@ -209,7 +278,7 @@ static async Task RunInteractiveChat(Agent agent, ConversationThread thread)
                                 Console.Write("📝 Response: ");
                                 isFirstTextChunk = false;
                             }
-                            
+
                             Console.Write(textContent.Text);
                         }
                         // Display tool calls
@@ -223,7 +292,7 @@ static async Task RunInteractiveChat(Agent agent, ConversationThread thread)
                                 isFirstReasoningChunk = true; // Reset for next reasoning block
                                 isFirstTextChunk = true; // Reset for next text block
                             }
-                            
+
                             Console.ForegroundColor = ConsoleColor.Yellow;
                             Console.Write($"\n🔧 Using tool: {toolCall.Name}");
                             Console.ResetColor();

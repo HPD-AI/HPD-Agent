@@ -43,7 +43,11 @@ using HPD;
 [JsonSerializable(typeof(FinishEvent))]
 
 // AG-UI Protocol types (already in AGUIJsonContext, but explicit reference for API)
+// AG-UI Protocol types (already in AGUIJsonContext, but explicit reference for API)
 [JsonSerializable(typeof(RunAgentInput))]
+
+// Add AgentRunResponseUpdate for streaming serialization
+[JsonSerializable(typeof(Microsoft.Agents.AI.AgentRunResponseUpdate))]
 internal partial class AppJsonSerializerContext : JsonSerializerContext
 {
 }

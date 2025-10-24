@@ -1,5 +1,6 @@
 using A2A;
 using Microsoft.Extensions.AI;
+using Microsoft.Agents.AI;
 using System;
 using System.Linq;
 
@@ -22,7 +23,7 @@ public static class A2AMapper
     /// <summary>
     /// Converts the text content from an HPD-Agent ChatResponse into an A2A Artifact.
     /// </summary>
-    public static Artifact ToA2AArtifact(ChatResponse hpdResponse)
+    public static Artifact ToA2AArtifact(AgentRunResponse hpdResponse)
     {
         var responseText = hpdResponse.Messages.LastOrDefault()?.Text ?? "No response.";
 

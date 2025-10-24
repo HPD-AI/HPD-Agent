@@ -126,10 +126,10 @@ agentApi.MapPost("/projects/{projectId}/conversations/{conversationId}/chat",
 
     // 🚀 Use agent RunAsync directly with thread
     var userMessage = new ChatMessage(ChatRole.User, request.Message);
-    var response = await agent.RunAsync([userMessage], thread);
-
-    // Convert ChatResponse to our API response format
-    return Results.Ok(ToAgentResponse(response));
+        var agentRunResponse = await agent.RunAsync([userMessage], thread);
+        var chatResponse = new ChatResponse(agentRunResponse.Messages.ToArray());
+        // Convert ChatResponse to our API response format
+        return Results.Ok(ToAgentResponse(chatResponse));
 });
 
 // ✨ NEW: AG-UI Protocol streaming endpoint (using RunAgentInput overload)
@@ -159,14 +159,8 @@ agentApi.MapPost("/projects/{projectId}/conversations/{conversationId}/stream",
         // ✅ Use agent.RunStreamingAGUIAsync directly with thread
         await foreach (var update in agent.RunStreamingAGUIAsync(aguiInput, thread, context.RequestAborted))
         {
-            // Serialize AgentRunResponseUpdate to JSON
-            var serializerOptions = new JsonSerializerOptions
-            {
-                TypeInfoResolver = JsonResolvers.Combined,
-                DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-            };
-            var eventJson = System.Text.Json.JsonSerializer.Serialize(update, update.GetType(), serializerOptions);
+            // Serialize AgentRunResponseUpdate to JSON using source-generated context
+            var eventJson = System.Text.Json.JsonSerializer.Serialize(update, AppJsonSerializerContext.Default.AgentRunResponseUpdate);
 
             // Write complete SSE event in one operation to prevent truncation
             await writer.WriteAsync($"data: {eventJson}\n\n");

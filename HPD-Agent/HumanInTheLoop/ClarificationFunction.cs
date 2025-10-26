@@ -1,0 +1,102 @@
+using System;
+using System.ComponentModel;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Extensions.AI;
+
+/// <summary>
+/// Provides a clarification function that enables parent/orchestrator agents to ask users for
+/// additional information during execution. This supports human-in-the-loop workflows where
+/// sub-agents return questions that the parent agent cannot answer on its own.
+/// </summary>
+public static class ClarificationFunction
+{
+    /// <summary>
+    /// Creates an AIFunction that allows parent/orchestrator agents to request clarification from the user
+    /// mid-turn. This function emits clarification events that bubble up to the root agent's event handlers,
+    /// enabling the user to provide answers without ending the current message turn.
+    /// </summary>
+    /// <param name="options">Optional function configuration options</param>
+    /// <returns>An AIFunction that can be registered on parent/orchestrator agents</returns>
+    /// <remarks>
+    /// Usage example:
+    /// <code>
+    /// var orchestrator = new Agent(...);
+    /// var codingAgent = new Agent(...);
+    ///
+    /// // Register sub-agent and clarification function on PARENT
+    /// orchestrator.AddFunction(codingAgent.AsAIFunction());
+    /// orchestrator.AddFunction(ClarificationFunction.Create());
+    ///
+    /// // Flow:
+    /// // 1. Orchestrator calls codingAgent("Build auth")
+    /// // 2. CodingAgent returns: "I need to know which framework?"
+    /// // 3. Orchestrator doesn't know, so it calls AskUserForClarification("Which framework?")
+    /// // 4. User responds: "Express"
+    /// // 5. Orchestrator continues in same turn, calls codingAgent("Build Express auth")
+    /// </code>
+    /// </remarks>
+    public static AIFunction Create(AIFunctionFactoryOptions? options = null)
+    {
+        [Description("Ask the user for clarification or additional information needed to complete the task. Only use if sub-agents asks you a question you cannot answer.")]
+        async Task<string> AskUserForClarificationAsync(
+            [Description("The question to ask the user. Be specific and clear about what information you need.")]
+            string question,
+            CancellationToken cancellationToken)
+        {
+            // Get the current function execution context
+            var context = Agent.CurrentFunctionContext as AiFunctionContext;
+
+            if (context == null)
+            {
+                throw new InvalidOperationException(
+                    "AskUserForClarification can only be called from within an agent function execution context. " +
+                    "Ensure this function is registered with an agent that has proper context setup.");
+            }
+
+            if (string.IsNullOrWhiteSpace(question))
+            {
+                throw new ArgumentException("Question cannot be empty", nameof(question));
+            }
+
+            // Generate unique request ID for correlation
+            var requestId = Guid.NewGuid().ToString();
+
+            // Emit clarification request event (will bubble to root agent/orchestrator)
+            // Include the agent name so UI can show which agent is asking
+            context.Emit(new InternalClarificationRequestEvent(
+                requestId,
+                SourceName: "ClarificationFunction",
+                question,
+                AgentName: context.AgentName,
+                Options: null));
+
+            // Wait for user's response (blocks here while event is processed)
+            InternalClarificationResponseEvent response;
+            try
+            {
+                response = await context.WaitForResponseAsync<InternalClarificationResponseEvent>(
+                    requestId,
+                    timeout: TimeSpan.FromMinutes(5),
+                    cancellationToken);
+            }
+            catch (TimeoutException)
+            {
+                return "⚠️ Clarification request timed out after 5 minutes. Please proceed with available information or ask the user to respond more promptly.";
+            }
+            catch (OperationCanceledException)
+            {
+                return "⚠️ Clarification request was cancelled. Please proceed with available information.";
+            }
+
+            // Return the user's answer
+            return response.Answer;
+        }
+
+        options ??= new AIFunctionFactoryOptions();
+        options.Name ??= "AskUserForClarification";
+        options.Description ??= "Ask the user for clarification or additional information when needed to complete a task.";
+
+        return AIFunctionFactory.Create(AskUserForClarificationAsync, options);
+    }
+}

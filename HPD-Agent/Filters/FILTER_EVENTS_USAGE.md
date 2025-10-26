@@ -2,6 +2,18 @@
 
 This guide shows how to use the new bidirectional filter event system.
 
+## Table of Contents
+
+- [Overview](#overview)
+- [Event Interfaces](#event-interfaces) - `IFilterEvent` and `IPermissionEvent`
+- [Quick Start](#quick-start) - Get up and running in 5 minutes
+- [Handling Events at Different Levels](#handling-events-at-different-levels) - Infrastructure, Domain, Specific
+- [When to Create Custom Permission Filters](#when-to-create-custom-permission-filters) - **Start here if you need advanced permissions**
+- [Custom Event Types](#custom-event-types) - Create your own filter and permission events
+- [Key Features](#key-features) - Real-time streaming, protocol agnostic, thread-safe
+- [Best Practices](#best-practices)
+- [Examples](#examples)
+
 ## Overview
 
 The filter event system allows filters to:
@@ -10,6 +22,70 @@ The filter event system allows filters to:
 - **Work with any protocol** (AGUI, Console, Web, etc.)
 
 All events flow through a **shared channel** and are **streamed in real-time** to handlers.
+
+### Quick Decision Guide
+
+**Use the default permission filter if:**
+- ✅ You need simple approve/deny decisions
+- ✅ You're building a console app or simple UI
+- ✅ You don't need to modify function arguments
+- ✅ Binary permissions are enough
+
+**Create a custom permission filter if:**
+- 🔧 You need richer decision states (approved with changes, deferred, requires preview)
+- 🔧 You need to modify function arguments before execution
+- 🔧 You have multi-stage approval workflows
+- 🔧 You need enterprise metadata (cost, risk, compliance)
+- 🔧 You want risk-based or cost-based auto-decisions
+
+See [When to Create Custom Permission Filters](#when-to-create-custom-permission-filters) for details.
+
+## Event Interfaces
+
+The system provides two marker interfaces for categorizing filter events:
+
+### `IBidirectionalEvent`
+Marker interface for all events supporting bidirectional communication. Allows applications to handle events uniformly for monitoring, logging, and UI routing.
+
+```csharp
+public interface IBidirectionalEvent
+{
+    string SourceName { get; }
+}
+```
+
+### `IPermissionEvent : IBidirectionalEvent`
+Marker interface for permission-related events. A specialized subset of bidirectional events that require user interaction and approval workflows.
+
+```csharp
+public interface IPermissionEvent : IBidirectionalEvent
+{
+    string PermissionId { get; }
+}
+```
+
+**Event Hierarchy:**
+```
+InternalAgentEvent (base)
+    ↓
+IBidirectionalEvent (all bidirectional events)
+│   - SourceName: string
+│
+├── InternalFilterProgressEvent
+├── InternalFilterErrorEvent
+├── Custom events (user-defined, implement IBidirectionalEvent)
+│
+└── IPermissionEvent (permission-specific)
+    │   - SourceName: string (inherited)
+    │   - PermissionId: string
+    │
+    ├── InternalPermissionRequestEvent
+    ├── InternalPermissionResponseEvent
+    ├── InternalPermissionApprovedEvent
+    ├── InternalPermissionDeniedEvent
+    ├── InternalContinuationRequestEvent
+    └── InternalContinuationResponseEvent
+```
 
 ---
 
@@ -54,20 +130,121 @@ var agent = new AgentBuilder()
 ```csharp
 await foreach (var evt in agent.RunStreamingAsync(thread, options))
 {
+    // Option A: Handle specific event types
     switch (evt)
     {
         case InternalFilterProgressEvent progress:
-            Console.WriteLine($"[{progress.FilterName}] {progress.Message}");
+            Console.WriteLine($"[{progress.SourceName}] {progress.Message}");
             break;
 
         case InternalTextDeltaEvent text:
             Console.Write(text.Text);
             break;
     }
+
+    // Option B: Handle all filter events uniformly
+    if (evt is IBidirectionalEvent bidirEvt)
+    {
+        _filterMonitor.Track(bidirEvt.SourceName);
+    }
+
+    // Option C: Handle permission events uniformly
+    if (evt is IPermissionEvent permEvt)
+    {
+        await _permissionHandler.HandleAsync(permEvt);
+    }
 }
 ```
 
 That's it! Events automatically flow from filters to handlers.
+
+## Handling Events at Different Levels
+
+The event system supports three levels of handling:
+
+### Level 1: Infrastructure - All Filter Events (`IFilterEvent`)
+
+Handle all filter events uniformly for monitoring, logging, or UI routing:
+
+```csharp
+await foreach (var evt in agent.RunStreamingAsync(...))
+{
+    if (evt is IFilterEvent filterEvt)
+    {
+        // Works for ALL filter events (progress, errors, permissions, custom)
+        await _filterMonitor.TrackAsync(filterEvt.FilterName);
+        await _filterLogger.LogAsync($"[{filterEvt.FilterName}] {evt.GetType().Name}");
+    }
+}
+```
+
+### Level 2: Domain - Permission Events (`IPermissionEvent`)
+
+Handle all permission events for approval workflows:
+
+```csharp
+await foreach (var evt in agent.RunStreamingAsync(...))
+{
+    if (evt is IPermissionEvent permEvt)
+    {
+        // Works for ALL permission events (requests, responses, approvals, denials)
+        await _auditLog.RecordAsync(permEvt.PermissionId, permEvt.FilterName, evt);
+        await _permissionPipeline.ProcessAsync(permEvt);
+    }
+}
+```
+
+### Level 3: Specific - Individual Event Types
+
+Handle specific event types for exact behavior:
+
+```csharp
+await foreach (var evt in agent.RunStreamingAsync(...))
+{
+    switch (evt)
+    {
+        case InternalPermissionRequestEvent req:
+            // Specific handling for permission requests
+            await PromptUserAsync(req);
+            break;
+
+        case InternalFilterProgressEvent progress:
+            // Specific handling for progress
+            UpdateProgressBar(progress.PercentComplete);
+            break;
+    }
+}
+```
+
+### Combining All Three Levels
+
+```csharp
+await foreach (var evt in agent.RunStreamingAsync(...))
+{
+    // Level 1: Infrastructure (all filters)
+    if (evt is IFilterEvent filterEvt)
+    {
+        await _filterMonitor.TrackAsync(filterEvt.FilterName);
+    }
+
+    // Level 2: Domain (permissions)
+    if (evt is IPermissionEvent permEvt)
+    {
+        await _auditLog.RecordAsync(permEvt);
+    }
+
+    // Level 3: Specific (individual events)
+    switch (evt)
+    {
+        case InternalPermissionRequestEvent req:
+            await PromptUserAsync(req);
+            break;
+        case InternalTextDeltaEvent text:
+            Console.Write(text.Text);
+            break;
+    }
+}
+```
 
 ---
 
@@ -93,14 +270,18 @@ context.Emit(new InternalFilterErrorEvent(
 
 #### Custom Events
 ```csharp
-context.Emit(new InternalCustomFilterEvent(
+// Define your own event type
+public record MyCustomEvent(
+    string SourceName,
+    string CustomData,
+    int Count
+) : InternalAgentEvent, IBidirectionalEvent;
+
+// Emit it
+context.Emit(new MyCustomEvent(
     "MyFilter",
-    "MyEventType",
-    new Dictionary<string, object?>
-    {
-        ["CustomData"] = "value",
-        ["Count"] = 42
-    }));
+    "value",
+    42));
 ```
 
 ### Bidirectional Events (Request/Response)
@@ -112,6 +293,7 @@ var permissionId = Guid.NewGuid().ToString();
 // 1. Emit request
 context.Emit(new InternalPermissionRequestEvent(
     permissionId,
+    sourceName: "MyPermissionFilter",
     functionName: "DeleteFile",
     description: "Delete important file",
     callId: "...",
@@ -142,6 +324,13 @@ else
 ```csharp
 public class SimplePermissionFilter : IAiFunctionFilter
 {
+    private readonly string _filterName;
+
+    public SimplePermissionFilter(string filterName = "SimplePermissionFilter")
+    {
+        _filterName = filterName;
+    }
+
     public async Task InvokeAsync(AiFunctionContext context, Func<AiFunctionContext, Task> next)
     {
         var permissionId = Guid.NewGuid().ToString();
@@ -149,6 +338,7 @@ public class SimplePermissionFilter : IAiFunctionFilter
         // Emit request
         context.Emit(new InternalPermissionRequestEvent(
             permissionId,
+            _filterName,
             context.ToolCallRequest.FunctionName,
             "Permission required",
             callId: "...",
@@ -162,12 +352,12 @@ public class SimplePermissionFilter : IAiFunctionFilter
 
             if (response.Approved)
             {
-                context.Emit(new InternalPermissionApprovedEvent(permissionId));
+                context.Emit(new InternalPermissionApprovedEvent(permissionId, _filterName));
                 await next(context);
             }
             else
             {
-                context.Emit(new InternalPermissionDeniedEvent(permissionId, "User denied"));
+                context.Emit(new InternalPermissionDeniedEvent(permissionId, _filterName, "User denied"));
                 context.Result = "Permission denied";
                 context.IsTerminated = true;
             }
@@ -203,9 +393,10 @@ public async Task RunWithPermissionsAsync(Agent agent)
                     agent.SendFilterResponse(permReq.PermissionId,
                         new InternalPermissionResponseEvent(
                             permReq.PermissionId,
+                            permReq.FilterName,
                             approved,
                             approved ? null : "User denied",
-                            PermissionChoice.AllowOnce));
+                            PermissionChoice.Ask));
                 });
                 break;
 
@@ -221,23 +412,29 @@ public async Task RunWithPermissionsAsync(Agent agent)
 
 ## Custom Event Types
 
-You can create your own event types:
+You can create your own event types and implement the marker interfaces for automatic categorization:
+
+### Custom Filter Events
 
 ```csharp
-// 1. Define custom event
+// 1. Define custom event that implements IFilterEvent
 public record DatabaseQueryStartEvent(
+    string SourceName,
     string QueryId,
     string Query,
-    TimeSpan EstimatedDuration) : InternalAgentEvent;
+    TimeSpan EstimatedDuration) : InternalAgentEvent, IFilterEvent;
 
 // 2. Emit in filter
 public class DatabaseFilter : IAiFunctionFilter
 {
+    private readonly string _filterName = "DatabaseFilter";
+
     public async Task InvokeAsync(AiFunctionContext context, Func<AiFunctionContext, Task> next)
     {
         var queryId = Guid.NewGuid().ToString();
 
         context.Emit(new DatabaseQueryStartEvent(
+            _filterName,
             queryId,
             query: "SELECT * FROM users",
             EstimatedDuration: TimeSpan.FromSeconds(2)));
@@ -249,14 +446,285 @@ public class DatabaseFilter : IAiFunctionFilter
 // 3. Handle in event loop
 await foreach (var evt in agent.RunStreamingAsync(...))
 {
+    // Option A: Handle generically as a filter event
+    if (evt is IFilterEvent filterEvt)
+    {
+        _filterMonitor.Track(filterEvt.FilterName);  // Works automatically!
+    }
+
+    // Option B: Handle specifically
     switch (evt)
     {
         case DatabaseQueryStartEvent dbEvt:
-            Console.WriteLine($"Query starting: {dbEvt.Query}");
+            Console.WriteLine($"[{dbEvt.FilterName}] Query starting: {dbEvt.Query}");
             break;
     }
 }
 ```
+
+### Custom Permission Events
+
+```csharp
+// Define rich custom permission event
+public record EnterprisePermissionRequestEvent(
+    string PermissionId,
+    string SourceName,
+    string FunctionName,
+    IDictionary<string, object?>? Arguments,
+
+    // Custom enterprise fields
+    decimal EstimatedCost,
+    SecurityLevel SecurityLevel,
+    string[] RequiredApprovers
+) : InternalAgentEvent, IPermissionEvent;  // ← Implements IPermissionEvent
+
+public record EnterprisePermissionResponseEvent(
+    string PermissionId,
+    string SourceName,
+    bool Approved,
+
+    // Custom enterprise fields
+    Guid WorkflowInstanceId,
+    string[] ApproverChain
+) : InternalAgentEvent, IPermissionEvent;
+
+// Use in custom filter
+public class EnterprisePermissionFilter : IPermissionFilter
+{
+    private readonly string _filterName = "EnterprisePermissionFilter";
+
+    public async Task InvokeAsync(AiFunctionContext context, Func<AiFunctionContext, Task> next)
+    {
+        var permissionId = Guid.NewGuid().ToString();
+
+        // Emit rich custom event
+        context.Emit(new EnterprisePermissionRequestEvent(
+            permissionId,
+            _filterName,
+            context.ToolCallRequest.FunctionName,
+            context.ToolCallRequest.Arguments,
+            EstimatedCost: CalculateCost(context),
+            SecurityLevel: DetermineSecurityLevel(context),
+            RequiredApprovers: new[] { "manager@company.com" }));
+
+        var response = await context.WaitForResponseAsync<EnterprisePermissionResponseEvent>(
+            permissionId);
+
+        if (response.Approved)
+            await next(context);
+        else
+            context.IsTerminated = true;
+    }
+}
+
+// Handle in application
+await foreach (var evt in agent.RunStreamingAsync(...))
+{
+    // Infrastructure: ALL permission events (built-in AND custom)
+    if (evt is IPermissionEvent permEvt)
+    {
+        await _auditLog.RecordAsync(permEvt.PermissionId, permEvt.FilterName, evt);
+    }
+
+    // Specific: Handle your custom event
+    switch (evt)
+    {
+        case EnterprisePermissionRequestEvent enterpriseReq:
+            // Show rich UI with cost, security level, approvers
+            await ShowEnterprisePermissionUI(enterpriseReq);
+            break;
+    }
+}
+```
+
+---
+
+## When to Create Custom Permission Filters
+
+### Default Permission Filter: Good for Most Use Cases
+
+The built-in `PermissionFilter` is perfect for 90% of applications:
+
+```csharp
+var agent = new AgentBuilder()
+    .WithPermissions()  // Uses default PermissionFilter
+    .Build();
+
+// Simple binary decisions: Allow or Deny
+case InternalPermissionRequestEvent req:
+    var approved = Console.ReadLine()?.ToLower() == "y";
+    agent.SendFilterResponse(req.PermissionId,
+        new InternalPermissionResponseEvent(
+            req.PermissionId,
+            req.FilterName,
+            approved));
+```
+
+**Use default when you need:**
+- ✅ Simple approve/deny decisions
+- ✅ Basic permission storage (always allow, always deny, ask)
+- ✅ Console or simple UI prompts
+- ✅ Low complexity permission logic
+
+### Custom Permission Filters: For Advanced Scenarios
+
+Create a custom permission filter when you need:
+
+#### **1. Richer Decision States**
+
+The default has binary `Approved` (true/false). You might need:
+
+```csharp
+public enum RichDecisionType
+{
+    Approved,              // Yes, execute as-is
+    ApprovedWithChanges,   // Yes, but modify function arguments
+    Denied,                // No, don't execute
+    Deferred,              // Send to approval workflow, ask later
+    RequiresPreview,       // Show preview first, then ask again
+    PartiallyApproved      // Approve some operations, deny others
+}
+```
+
+#### **2. Parameter Modification**
+
+User sees: `DeleteFile("/important/data.txt")`
+User wants: "Yes, but move to trash instead of permanent delete"
+
+```csharp
+// Custom response event with modified arguments
+new RichPermissionResponseEvent(
+    permissionId,
+    filterName,
+    Decision: RichDecisionType.ApprovedWithChanges,
+    ModifiedArguments: new Dictionary<string, object?>
+    {
+        ["filePath"] = "/trash/data.txt",
+        ["permanent"] = false  // Changed from true
+    });
+
+// Filter applies changes before execution
+if (response.Decision == RichDecisionType.ApprovedWithChanges)
+{
+    foreach (var (key, value) in response.ModifiedArguments ?? new Dictionary<string, object?>())
+    {
+        context.ToolCallRequest.Arguments[key] = value;
+    }
+    await next(context);
+}
+```
+
+#### **3. Multi-Stage Approval Workflows**
+
+```csharp
+// Stage 1: Request permission
+context.Emit(new WorkflowPermissionRequestEvent(
+    permissionId,
+    filterName,
+    functionName,
+    RequiredApprovers: new[] { "manager@company.com" },
+    WorkflowType: WorkflowType.ManagerApproval));
+
+// Stage 2: Deferred to workflow
+var response = await context.WaitForResponseAsync<WorkflowPermissionResponseEvent>(...);
+if (response.Decision == WorkflowDecision.Deferred)
+{
+    // Workflow engine processes approval
+    // User gets notification later when approved
+    context.Result = $"Sent to approval workflow {response.WorkflowId}";
+    context.IsTerminated = true;
+}
+```
+
+#### **4. Rich Metadata**
+
+Attach enterprise data to permission events:
+
+```csharp
+public record EnterprisePermissionRequestEvent(
+    string PermissionId,
+    string SourceName,
+    string FunctionName,
+    IDictionary<string, object?>? Arguments,
+
+    // Enterprise-specific metadata
+    decimal EstimatedCost,
+    RiskLevel RiskLevel,
+    string[] RequiredApprovers,
+    ComplianceRequirement[] ComplianceFlags,
+    string DepartmentId,
+    string ProjectId
+) : InternalAgentEvent, IPermissionEvent;
+```
+
+#### **5. Cost-Based or Risk-Based Auto-Decisions**
+
+```csharp
+public class RiskBasedPermissionFilter : IPermissionFilter
+{
+    public async Task InvokeAsync(AiFunctionContext context, Func<AiFunctionContext, Task> next)
+    {
+        var riskScore = CalculateRisk(
+            context.ToolCallRequest.FunctionName,
+            context.ToolCallRequest.Arguments);
+
+        if (riskScore < 30)
+        {
+            // Low risk - auto-approve
+            await next(context);
+        }
+        else if (riskScore < 70)
+        {
+            // Medium risk - ask user
+            var approved = await AskUserAsync(context);
+            if (approved) await next(context);
+        }
+        else
+        {
+            // High risk - auto-deny
+            context.Result = "Operation blocked: too risky";
+            context.IsTerminated = true;
+        }
+    }
+}
+```
+
+### Benefits of `IPermissionEvent` for Custom Filters
+
+When you create custom permission events that implement `IPermissionEvent`, you **automatically benefit** from application infrastructure:
+
+```csharp
+// Application handles ALL permission events uniformly
+await foreach (var evt in agent.RunStreamingAsync(...))
+{
+    // Works for built-in AND custom permission events!
+    if (evt is IPermissionEvent permEvt)
+    {
+        // Audit logging
+        await _auditLog.RecordAsync(permEvt.PermissionId, permEvt.FilterName, evt);
+
+        // Compliance validation
+        await _complianceChecker.ValidateAsync(permEvt);
+
+        // Metrics tracking
+        await _metrics.TrackPermissionAsync(permEvt.FilterName);
+    }
+
+    // Then handle your specific custom event
+    switch (evt)
+    {
+        case EnterprisePermissionRequestEvent enterpriseReq:
+            await ShowEnterpriseUI(enterpriseReq);
+            break;
+    }
+}
+```
+
+**No need to duplicate infrastructure for each custom filter!**
+
+### Complete Custom Permission Filter Example
+
+See the [Custom Permission Events](#custom-permission-events) section for a full working example.
 
 ---
 
@@ -403,3 +871,4 @@ See `ExampleFilters.cs` for:
 - `SimplePermissionFilter` - Bidirectional request/response
 
 Happy filtering! 🎉
+ß

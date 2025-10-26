@@ -9,8 +9,9 @@ context.Emit(new InternalFilterProgressEvent("FilterName", "message", percentCom
 // Error
 context.Emit(new InternalFilterErrorEvent("FilterName", "error message", exception));
 
-// Custom
-context.Emit(new InternalCustomFilterEvent("FilterName", "EventType", dataDictionary));
+// Custom (define your own event type)
+public record MyCustomEvent(string FilterName, string Data) : InternalAgentEvent, IFilterEvent;
+context.Emit(new MyCustomEvent("FilterName", "custom data"));
 ```
 
 ## Bidirectional Events (Request/Response)
@@ -92,7 +93,7 @@ case MyCustomEvent custom:
 |-------|----------|----------------|
 | `InternalFilterProgressEvent` | Progress tracking | No |
 | `InternalFilterErrorEvent` | Error reporting | No |
-| `InternalCustomFilterEvent` | Custom data | No |
+| Custom events (implement `IFilterEvent`) | User-defined data | No |
 | `InternalPermissionRequestEvent` | Permission request | Yes (request) |
 | `InternalPermissionResponseEvent` | Permission response | Yes (response) |
 | `InternalContinuationRequestEvent` | Max iterations extension | Yes (request) |

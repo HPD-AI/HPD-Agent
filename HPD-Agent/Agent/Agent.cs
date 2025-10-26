@@ -7,6 +7,7 @@ using HPD.Agent.Providers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Serialization;
+using System.Collections.Concurrent;
 
 /// <summary>
 /// Agent facade that delegates to specialized components for clean separation of concerns.
@@ -32,6 +33,12 @@ public class Agent : AIAgent
     // AsyncLocal storage for function invocation context (flows across async calls)
     private static readonly AsyncLocal<FunctionInvocationContext?> _currentFunctionContext = new();
 
+    // AsyncLocal storage for root agent tracking in nested agent calls
+    // Used for event bubbling from nested agents to their orchestrator
+    // When an agent calls another agent (via AsAIFunction), this tracks the top-level orchestrator
+    // Flows automatically through AsyncLocal propagation across nested async calls
+    private static readonly AsyncLocal<Agent?> _rootAgent = new();
+
     // Specialized component fields for delegation
     private readonly MessageProcessor _messageProcessor;
     private readonly FunctionCallProcessor _functionCallProcessor;
@@ -42,32 +49,11 @@ public class Agent : AIAgent
     private readonly PluginScopingManager _pluginScopingManager;
     private readonly HPD_Agent.Skills.SkillScopingManager? _skillScopingManager;
     private readonly PermissionManager _permissionManager;
+    private readonly BidirectionalEventCoordinator _eventCoordinator;
     private readonly IReadOnlyList<IAiFunctionFilter> _aiFunctionFilters;
     private readonly IReadOnlyList<IMessageTurnFilter> _messageTurnFilters;
     private readonly HPD.Agent.ErrorHandling.IProviderErrorHandler _providerErrorHandler;
 
-    /// <summary>
-    /// Shared event channel for ALL filter executions across agent lifetime.
-    /// Events written here are immediately visible to RunAgenticLoopInternal's background drainer.
-    /// Lifetime: Entire agent lifetime (created in constructor, completed in Dispose)
-    /// Thread-safety: Channel is thread-safe for concurrent writes
-    /// </summary>
-    private readonly Channel<InternalAgentEvent> _filterEventChannel =
-        Channel.CreateUnbounded<InternalAgentEvent>(new UnboundedChannelOptions
-        {
-            SingleWriter = false,  // Multiple filters can emit concurrently
-            SingleReader = true,   // Only background drainer reads
-            AllowSynchronousContinuations = false  // Performance & safety
-        });
-
-    /// <summary>
-    /// Shared response coordination across all filter invocations.
-    /// Maps requestId -> (TaskCompletionSource, CancellationTokenSource)
-    /// Lifetime: Entire agent lifetime (not per-context)
-    /// Thread-safe: ConcurrentDictionary handles concurrent access
-    /// </summary>
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (TaskCompletionSource<InternalAgentEvent>, CancellationTokenSource)>
-        _filterResponseWaiters = new();
 
     /// <summary>
     /// Agent configuration object containing all settings
@@ -102,6 +88,36 @@ public class Agent : AIAgent
     }
 
     /// <summary>
+    /// Gets or sets the root agent in the current execution chain.
+    /// Returns null if no root agent is set (single-agent execution).
+    /// </summary>
+    /// <remarks>
+    /// This property enables event bubbling from nested agents to their orchestrator.
+    /// When an agent calls another agent (via AsAIFunction), this tracks the top-level orchestrator.
+    ///
+    /// Flow example:
+    /// <code>
+    /// User → Orchestrator.RunAsync()
+    ///   Agent.RootAgent = orchestrator  // Set by Orchestrator
+    ///   ↓
+    ///   Orchestrator calls: CodingAgent(query)
+    ///     Agent.RootAgent is still orchestrator ✓ (AsyncLocal flows!)
+    ///     ↓
+    ///     CodingAgent.Emit(event)
+    ///       → Writes to CodingAgent's channel
+    ///       → ALSO writes to orchestrator's channel (bubbling!)
+    /// </code>
+    ///
+    /// This is set automatically by RunAgenticLoopInternal when starting execution
+    /// and is used by BidirectionalEventCoordinator for event bubbling.
+    /// </remarks>
+    public static Agent? RootAgent
+    {
+        get => _rootAgent.Value;
+        internal set => _rootAgent.Value = value;
+    }
+
+    /// <summary>
     /// Metadata about this chat client, compatible with Microsoft.Extensions.AI patterns
     /// </summary>
     public ChatClientMetadata Metadata => _metadata;
@@ -128,93 +144,47 @@ public class Agent : AIAgent
     public ErrorHandlingPolicy ErrorPolicy => _errorPolicy;
 
     /// <summary>
-    /// Internal access to filter event channel writer for context setup.
+    /// Internal access to event coordinator for context setup and nested agent configuration.
     /// </summary>
-    internal ChannelWriter<InternalAgentEvent> FilterEventWriter => _filterEventChannel.Writer;
+    internal BidirectionalEventCoordinator EventCoordinator => _eventCoordinator;
+
+    /// <summary>
+    /// Internal access to filter event channel writer for context setup.
+    /// Delegates to the event coordinator.
+    /// </summary>
+    internal ChannelWriter<InternalAgentEvent> FilterEventWriter => _eventCoordinator.EventWriter;
 
     /// <summary>
     /// Internal access to filter event channel reader for RunAgenticLoopInternal.
+    /// Delegates to the event coordinator.
     /// </summary>
-    internal ChannelReader<InternalAgentEvent> FilterEventReader => _filterEventChannel.Reader;
+    internal ChannelReader<InternalAgentEvent> FilterEventReader => _eventCoordinator.EventReader;
 
     /// <summary>
     /// Sends a response to a filter waiting for a specific request.
     /// Called by external handlers (AGUI, Console, etc.) when user provides input.
     /// Thread-safe: Can be called from any thread.
+    /// Delegates to the event coordinator.
     /// </summary>
     /// <param name="requestId">The unique identifier for the request</param>
     /// <param name="response">The response event to deliver</param>
     /// <exception cref="ArgumentNullException">If response is null</exception>
     public void SendFilterResponse(string requestId, InternalAgentEvent response)
     {
-        if (response == null)
-            throw new ArgumentNullException(nameof(response));
-
-        if (_filterResponseWaiters.TryRemove(requestId, out var entry))
-        {
-            entry.Item1.TrySetResult(response);
-            entry.Item2.Dispose();
-        }
-        // Note: If requestId not found, silently ignore (response may have timed out)
+        _eventCoordinator.SendResponse(requestId, response);
     }
 
     /// <summary>
     /// Internal method for filters to wait for responses.
     /// Called by AiFunctionContext.WaitForResponseAsync().
+    /// Delegates to the event coordinator.
     /// </summary>
     internal async Task<T> WaitForFilterResponseAsync<T>(
         string requestId,
         TimeSpan timeout,
         CancellationToken cancellationToken) where T : InternalAgentEvent
     {
-        var tcs = new TaskCompletionSource<InternalAgentEvent>();
-        var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        cts.CancelAfter(timeout);
-
-        _filterResponseWaiters[requestId] = (tcs, cts);
-
-        // Register cancellation/timeout cleanup
-        // IMPORTANT: Distinguishes between timeout and external cancellation
-        cts.Token.Register(() =>
-        {
-            if (_filterResponseWaiters.TryRemove(requestId, out var entry))
-            {
-                if (cancellationToken.IsCancellationRequested)
-                {
-                    // External cancellation (user stopped agent)
-                    entry.Item1.TrySetCanceled(cancellationToken);
-                }
-                else
-                {
-                    // Timeout (no response received in time)
-                    entry.Item1.TrySetException(
-                        new TimeoutException($"No response received for request '{requestId}' within {timeout}"));
-                }
-                entry.Item2.Dispose();
-            }
-        });
-
-        try
-        {
-            var response = await tcs.Task;
-
-            // Type safety check with clear error message
-            if (response is not T typedResponse)
-            {
-                throw new InvalidOperationException(
-                    $"Expected response of type {typeof(T).Name}, but received {response.GetType().Name}");
-            }
-
-            return typedResponse;
-        }
-        finally
-        {
-            // Cleanup on success (timeout/cancellation cleanup handled by registration above)
-            if (_filterResponseWaiters.TryRemove(requestId, out var entry))
-            {
-                entry.Item2.Dispose();
-            }
-        }
+        return await _eventCoordinator.WaitForResponseAsync<T>(requestId, timeout, cancellationToken);
     }
 
     /// <summary>
@@ -273,6 +243,9 @@ public class Agent : AIAgent
         // Fix: Store and use AI function filters
         _aiFunctionFilters = aiFunctionFilters ?? new List<IAiFunctionFilter>();
         _messageTurnFilters = messageTurnFilters ?? new List<IMessageTurnFilter>();
+
+        // Create bidirectional event coordinator for filter events and human-in-the-loop
+        _eventCoordinator = new BidirectionalEventCoordinator();
 
         // Create permission manager
         _permissionManager = new PermissionManager(permissionFilters);
@@ -456,6 +429,12 @@ public class Agent : AIAgent
         orchestrationActivity?.SetTag("agent.provider", ProviderKey);
         orchestrationActivity?.SetTag("agent.model", ModelId);
 
+        // Track root agent for event bubbling across nested agent calls
+        // If RootAgent is null, this is the top-level agent - set ourselves as root
+        // If RootAgent is already set, we're nested - keep the existing root
+        var previousRootAgent = RootAgent;
+        RootAgent ??= this;
+
         // Process documents if provided (protocol-agnostic feature)
         if (documentPaths?.Length > 0)
         {
@@ -498,7 +477,7 @@ public class Agent : AIAgent
         {
             try
             {
-                await foreach (var evt in _filterEventChannel.Reader.ReadAllAsync(eventDrainCts.Token))
+                await foreach (var evt in _eventCoordinator.EventReader.ReadAllAsync(eventDrainCts.Token))
                 {
                     filterEventQueue.Enqueue(evt);
                 }
@@ -1205,6 +1184,10 @@ public class Agent : AIAgent
             {
                 // Expected
             }
+
+            // Restore previous root agent (important for nested calls)
+            // This ensures AsyncLocal state is properly cleaned up
+            RootAgent = previousRootAgent;
         }
     }
 
@@ -2296,18 +2279,9 @@ public class FunctionCallProcessor
         }
 
         // Set AsyncLocal function invocation context for ambient access
-        Agent.CurrentFunctionContext = new FunctionInvocationContext
-        {
-            Function = context.Function,
-            Arguments = context.ToolCallRequest.Arguments,
-            CallId = context.Metadata.TryGetValue("CallId", out var callIdObj) && callIdObj is string callId 
-                ? callId 
-                : Guid.NewGuid().ToString(),
-            AgentName = context.AgentName,
-            Iteration = context.RunContext?.CurrentIteration ?? 0,
-            TotalFunctionCallsInRun = context.RunContext?.CompletedFunctions.Count ?? 0,
-            RunContext = context.RunContext
-        };
+        // Store the full AiFunctionContext so plugins can access Emit() and WaitForResponseAsync()
+        // for human-in-the-loop interactions (permissions, clarifications, etc.)
+        Agent.CurrentFunctionContext = context;
 
         var retryExecutor = new FunctionRetryExecutor(_errorHandlingConfig);
         
@@ -4054,6 +4028,47 @@ internal static class EventStreamAdapter
                     OriginalInternalEvent = contResp
                 },
 
+                // Clarification request
+                InternalClarificationRequestEvent clarReq => new ExtendedAgentRunResponseUpdate
+                {
+                    AgentId = threadId,
+                    AuthorName = agentName,
+                    ClarificationData = new ClarificationEventData
+                    {
+                        Type = ClarificationEventType.Request,
+                        RequestId = clarReq.RequestId,
+                        AgentName = clarReq.AgentName,
+                        Question = clarReq.Question,
+                        Options = clarReq.Options
+                    },
+                    EventMetadata = new EventMetadata
+                    {
+                        EventType = nameof(InternalClarificationRequestEvent),
+                        Timestamp = DateTimeOffset.UtcNow
+                    },
+                    OriginalInternalEvent = clarReq
+                },
+
+                // Clarification response
+                InternalClarificationResponseEvent clarResp => new ExtendedAgentRunResponseUpdate
+                {
+                    AgentId = threadId,
+                    AuthorName = agentName,
+                    ClarificationData = new ClarificationEventData
+                    {
+                        Type = ClarificationEventType.Response,
+                        RequestId = clarResp.RequestId,
+                        Question = clarResp.Question,
+                        Answer = clarResp.Answer
+                    },
+                    EventMetadata = new EventMetadata
+                    {
+                        EventType = nameof(InternalClarificationResponseEvent),
+                        Timestamp = DateTimeOffset.UtcNow
+                    },
+                    OriginalInternalEvent = clarResp
+                },
+
                 // Filter progress
                 InternalFilterProgressEvent filterProgress => new ExtendedAgentRunResponseUpdate
                 {
@@ -4062,7 +4077,7 @@ internal static class EventStreamAdapter
                     FilterData = new FilterEventData
                     {
                         Type = FilterEventType.Progress,
-                        FilterName = filterProgress.FilterName,
+                        SourceName = filterProgress.SourceName,
                         ProgressMessage = filterProgress.Message,
                         PercentComplete = filterProgress.PercentComplete
                     },
@@ -4082,7 +4097,7 @@ internal static class EventStreamAdapter
                     FilterData = new FilterEventData
                     {
                         Type = FilterEventType.Error,
-                        FilterName = filterError.FilterName,
+                        SourceName = filterError.SourceName,
                         ErrorMessage = filterError.ErrorMessage,
                         Exception = filterError.Exception
                     },
@@ -4092,26 +4107,6 @@ internal static class EventStreamAdapter
                         Timestamp = DateTimeOffset.UtcNow
                     },
                     OriginalInternalEvent = filterError
-                },
-
-                // Custom filter event
-                InternalCustomFilterEvent customFilter => new ExtendedAgentRunResponseUpdate
-                {
-                    AgentId = threadId,
-                    AuthorName = agentName,
-                    FilterData = new FilterEventData
-                    {
-                        Type = FilterEventType.Custom,
-                        FilterName = customFilter.FilterName,
-                        CustomEventType = customFilter.EventType,
-                        CustomData = customFilter.Data
-                    },
-                    EventMetadata = new EventMetadata
-                    {
-                        EventType = nameof(InternalCustomFilterEvent),
-                        Timestamp = DateTimeOffset.UtcNow
-                    },
-                    OriginalInternalEvent = customFilter
                 },
 
                 // Unknown event types - return null to filter out
@@ -4212,7 +4207,314 @@ internal static class EventStreamAdapter
 }
 
 #endregion
+#region
 
+/// <summary>
+/// Manages bidirectional event coordination for request/response patterns.
+/// Used by filters (permissions, clarifications) and supports nested agent communication.
+/// Thread-safe for concurrent event emission and response coordination.
+/// </summary>
+/// <remarks>
+/// This coordinator provides the infrastructure for:
+/// - Event emission from filters to handlers (one-way communication)
+/// - Request/response patterns (bidirectional communication)
+/// - Event bubbling in nested agent scenarios (parent coordinator support)
+///
+/// Lifecycle:
+/// - Created once per Agent instance
+/// - Lives for entire Agent lifetime
+/// - Disposed when Agent is disposed
+///
+/// Thread-safety:
+/// - All public methods are thread-safe
+/// - Multiple filters can emit concurrently
+/// - Event channel supports multiple producers, single consumer
+/// </remarks>
+public class BidirectionalEventCoordinator : IDisposable
+{
+    /// <summary>
+    /// Shared event channel for all events.
+    /// Unbounded to prevent blocking during event emission.
+    /// Thread-safe: Multiple producers (filters), single consumer (background drainer).
+    /// </summary>
+    private readonly Channel<InternalAgentEvent> _eventChannel;
+
+    /// <summary>
+    /// Response coordination for bidirectional patterns.
+    /// Maps requestId -> (TaskCompletionSource, CancellationTokenSource)
+    /// Thread-safe: ConcurrentDictionary handles concurrent access.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, (TaskCompletionSource<InternalAgentEvent>, CancellationTokenSource)>
+        _responseWaiters = new();
+
+    /// <summary>
+    /// Parent coordinator for event bubbling in nested agent scenarios.
+    /// Set via SetParent() when an agent is used as a tool by another agent.
+    /// Events emitted to this coordinator will also bubble to the parent.
+    /// </summary>
+    private BidirectionalEventCoordinator? _parentCoordinator;
+
+    /// <summary>
+    /// Creates a new bidirectional event coordinator.
+    /// </summary>
+    public BidirectionalEventCoordinator()
+    {
+        _eventChannel = Channel.CreateUnbounded<InternalAgentEvent>(new UnboundedChannelOptions
+        {
+            SingleWriter = false,  // Multiple filters can emit concurrently
+            SingleReader = true,   // Only background drainer reads
+            AllowSynchronousContinuations = false  // Performance & safety
+        });
+    }
+
+    /// <summary>
+    /// Gets the channel writer for event emission.
+    /// Used by filters and contexts to emit events directly to the channel.
+    /// </summary>
+    /// <remarks>
+    /// Note: For most use cases, prefer Emit() method over direct channel access
+    /// as it handles event bubbling to parent coordinators.
+    /// </remarks>
+    public ChannelWriter<InternalAgentEvent> EventWriter => _eventChannel.Writer;
+
+    /// <summary>
+    /// Gets the channel reader for event consumption.
+    /// Used by the agent's background drainer to read events.
+    /// </summary>
+    public ChannelReader<InternalAgentEvent> EventReader => _eventChannel.Reader;
+
+    /// <summary>
+    /// Sets the parent coordinator for event bubbling in nested agent scenarios.
+    /// When a parent is set, all events emitted via Emit() will bubble to the parent.
+    /// </summary>
+    /// <param name="parent">The parent coordinator to bubble events to</param>
+    /// <exception cref="ArgumentNullException">If parent is null</exception>
+    /// <remarks>
+    /// Use this when an agent is being used as a tool by another agent (via AsAIFunction).
+    /// This enables events from nested agents to be visible to the orchestrator.
+    ///
+    /// Example:
+    /// <code>
+    /// var orchestratorAgent = new Agent(...);
+    /// var codingAgent = new Agent(...);
+    ///
+    /// // When setting up CodingAgent as a tool
+    /// codingAgent.EventCoordinator.SetParent(orchestratorAgent.EventCoordinator);
+    /// </code>
+    /// </remarks>
+    public void SetParent(BidirectionalEventCoordinator parent)
+    {
+        _parentCoordinator = parent ?? throw new ArgumentNullException(nameof(parent));
+    }
+
+    /// <summary>
+    /// Emits an event to this coordinator and bubbles to parent (if set).
+    /// Thread-safe: Can be called from any thread.
+    /// </summary>
+    /// <param name="evt">The event to emit</param>
+    /// <exception cref="ArgumentNullException">If event is null</exception>
+    /// <remarks>
+    /// This is the preferred way to emit events as it handles parent bubbling automatically.
+    ///
+    /// Event flow:
+    /// 1. Event is written to local channel (visible to this agent's background drainer)
+    /// 2. If parent coordinator is set, event is recursively emitted to parent (bubbling)
+    ///
+    /// For nested agents:
+    /// - Events bubble up the chain until reaching the root orchestrator
+    /// - Each level's event loop sees the event
+    /// - Handlers at any level can process the event
+    /// </remarks>
+    public void Emit(InternalAgentEvent evt)
+    {
+        if (evt == null)
+            throw new ArgumentNullException(nameof(evt));
+
+        // Emit to local channel
+        _eventChannel.Writer.TryWrite(evt);
+
+        // Bubble to parent coordinator (if nested agent)
+        // This creates a chain: NestedAgent -> Orchestrator -> RootOrchestrator
+        _parentCoordinator?.Emit(evt);
+    }
+
+    /// <summary>
+    /// Sends a response to a filter waiting for a specific request.
+    /// Called by external handlers (AGUI, Console, etc.) when user provides input.
+    /// Thread-safe: Can be called from any thread.
+    /// </summary>
+    /// <param name="requestId">The unique identifier for the request</param>
+    /// <param name="response">The response event to deliver</param>
+    /// <exception cref="ArgumentNullException">If response is null</exception>
+    /// <remarks>
+    /// If requestId is not found (e.g., timeout already occurred), the call is silently ignored.
+    /// This is intentional to avoid race conditions between timeout and response.
+    ///
+    /// Example:
+    /// <code>
+    /// // In handler
+    /// await foreach (var evt in agent.RunStreamingAsync(...))
+    /// {
+    ///     if (evt is InternalPermissionRequestEvent permReq)
+    ///     {
+    ///         var approved = PromptUser(permReq);
+    ///         coordinator.SendResponse(permReq.PermissionId,
+    ///             new InternalPermissionResponseEvent(permReq.PermissionId, approved));
+    ///     }
+    /// }
+    /// </code>
+    /// </remarks>
+    public void SendResponse(string requestId, InternalAgentEvent response)
+    {
+        if (response == null)
+            throw new ArgumentNullException(nameof(response));
+
+        if (_responseWaiters.TryRemove(requestId, out var entry))
+        {
+            entry.Item1.TrySetResult(response);
+            entry.Item2.Dispose();
+        }
+        // Note: If requestId not found, silently ignore (response may have timed out)
+    }
+
+    /// <summary>
+    /// Wait for a response to a previously emitted request event.
+    /// Blocks until response received, timeout expires, or cancellation requested.
+    /// </summary>
+    /// <typeparam name="T">Expected response event type</typeparam>
+    /// <param name="requestId">Unique identifier matching the request event</param>
+    /// <param name="timeout">Maximum time to wait for response</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>The typed response event</returns>
+    /// <exception cref="TimeoutException">No response received within timeout</exception>
+    /// <exception cref="OperationCanceledException">Operation was cancelled</exception>
+    /// <exception cref="InvalidOperationException">Response type mismatch</exception>
+    /// <remarks>
+    /// This method is used by filters that need bidirectional communication:
+    /// 1. Filter emits request event (e.g., InternalPermissionRequestEvent)
+    /// 2. Filter calls WaitForResponseAsync() - BLOCKS HERE
+    /// 3. Handler receives request event (via agent's event loop)
+    /// 4. User provides input
+    /// 5. Handler calls SendResponse()
+    /// 6. Filter receives response and continues
+    ///
+    /// Important: The filter is blocked during step 2-5, but events still flow
+    /// because of the polling mechanism in RunAgenticLoopInternal.
+    ///
+    /// Timeout vs. Cancellation:
+    /// - TimeoutException: No response received within the specified timeout
+    /// - OperationCanceledException: External cancellation (e.g., user stopped agent)
+    ///
+    /// Example:
+    /// <code>
+    /// // In filter
+    /// var requestId = Guid.NewGuid().ToString();
+    /// coordinator.Emit(new InternalPermissionRequestEvent(requestId, ...));
+    ///
+    /// try
+    /// {
+    ///     var response = await coordinator.WaitForResponseAsync&lt;InternalPermissionResponseEvent&gt;(
+    ///         requestId,
+    ///         TimeSpan.FromMinutes(5),
+    ///         cancellationToken);
+    ///
+    ///     if (response.Approved)
+    ///         await next(context);
+    ///     else
+    ///         context.IsTerminated = true;
+    /// }
+    /// catch (TimeoutException)
+    /// {
+    ///     context.Result = "Permission request timed out";
+    ///     context.IsTerminated = true;
+    /// }
+    /// </code>
+    /// </remarks>
+    public async Task<T> WaitForResponseAsync<T>(
+        string requestId,
+        TimeSpan timeout,
+        CancellationToken cancellationToken) where T : InternalAgentEvent
+    {
+        var tcs = new TaskCompletionSource<InternalAgentEvent>();
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cts.CancelAfter(timeout);
+
+        _responseWaiters[requestId] = (tcs, cts);
+
+        // Register cancellation/timeout cleanup
+        // IMPORTANT: Distinguishes between timeout and external cancellation
+        cts.Token.Register(() =>
+        {
+            if (_responseWaiters.TryRemove(requestId, out var entry))
+            {
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    // External cancellation (user stopped agent)
+                    entry.Item1.TrySetCanceled(cancellationToken);
+                }
+                else
+                {
+                    // Timeout (no response received in time)
+                    entry.Item1.TrySetException(
+                        new TimeoutException($"No response received for request '{requestId}' within {timeout}"));
+                }
+                entry.Item2.Dispose();
+            }
+        });
+
+        try
+        {
+            var response = await tcs.Task;
+
+            // Type safety check with clear error message
+            if (response is not T typedResponse)
+            {
+                throw new InvalidOperationException(
+                    $"Expected response of type {typeof(T).Name}, but received {response.GetType().Name}");
+            }
+
+            return typedResponse;
+        }
+        finally
+        {
+            // Cleanup on success (timeout/cancellation cleanup handled by registration above)
+            if (_responseWaiters.TryRemove(requestId, out var entry))
+            {
+                entry.Item2.Dispose();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Disposes the coordinator, completing the event channel and cancelling all pending waiters.
+    /// Should be called when the agent is being disposed.
+    /// </summary>
+    /// <remarks>
+    /// Cleanup sequence:
+    /// 1. Complete the event channel (no more events can be emitted)
+    /// 2. Cancel all pending response waiters
+    /// 3. Dispose all cancellation token sources
+    /// 4. Clear the waiters dictionary
+    ///
+    /// This ensures clean shutdown even if there are pending bidirectional requests.
+    /// </remarks>
+    public void Dispose()
+    {
+        // Complete the channel first
+        _eventChannel.Writer.Complete();
+
+        // Cancel all pending waiters
+        foreach (var waiter in _responseWaiters.Values)
+        {
+            waiter.Item1.TrySetCanceled();
+            waiter.Item2.Dispose();
+        }
+        _responseWaiters.Clear();
+    }
+}
+
+
+#endregion
 #region Function Retry Executor
 
 /// <summary>
@@ -4289,11 +4591,11 @@ internal class FunctionRetryExecutor
 
                 // Calculate retry delay using priority system
                 var delay = await CalculateRetryDelay(
-                    ex, 
-                    attempt, 
-                    retryDelay, 
-                    customRetryStrategy, 
-                    providerHandler, 
+                    ex,
+                    attempt,
+                    retryDelay,
+                    customRetryStrategy,
+                    providerHandler,
                     maxRetries,
                     functionName,
                     cancellationToken).ConfigureAwait(false);
@@ -4360,10 +4662,10 @@ internal class FunctionRetryExecutor
                 var maxDelayFromConfig = _errorConfig?.MaxRetryDelay ?? TimeSpan.FromSeconds(30);
                 var backoffMultiplier = _errorConfig?.BackoffMultiplier ?? 2.0;
                 var providerDelay = providerHandler.GetRetryDelay(
-                    errorDetails, 
-                    attempt, 
-                    baseRetryDelay, 
-                    backoffMultiplier, 
+                    errorDetails,
+                    attempt,
+                    baseRetryDelay,
+                    backoffMultiplier,
                     maxDelayFromConfig);
 
                 if (!providerDelay.HasValue)
@@ -4653,15 +4955,45 @@ public record InternalToolCallResultEvent(
 #region Filter Events
 
 /// <summary>
+/// Marker interface for events that support bidirectional communication.
+/// Events implementing this interface can:
+/// - Be emitted during execution
+/// - Bubble to parent agents via AsyncLocal
+/// - Wait for responses using WaitForResponseAsync
+/// </summary>
+public interface IBidirectionalEvent
+{
+    /// <summary>
+    /// Name of the filter that emitted this event.
+    /// </summary>
+    string SourceName { get; }
+}
+
+/// <summary>
+/// Marker interface for permission-related filter events.
+/// Permission events are a specialized subset of filter events
+/// that require user interaction and approval workflows.
+/// </summary>
+public interface IPermissionEvent : IBidirectionalEvent
+{
+    /// <summary>
+    /// Unique identifier for this permission interaction.
+    /// Used to correlate requests and responses.
+    /// </summary>
+    string PermissionId { get; }
+}
+
+/// <summary>
 /// Filter requests permission to execute a function.
 /// Handler should prompt user and send InternalPermissionResponseEvent.
 /// </summary>
 public record InternalPermissionRequestEvent(
     string PermissionId,
+    string SourceName,
     string FunctionName,
     string? Description,
     string CallId,
-    IDictionary<string, object?>? Arguments) : InternalAgentEvent;
+    IDictionary<string, object?>? Arguments) : InternalAgentEvent, IPermissionEvent;
 
 /// <summary>
 /// Response to permission request.
@@ -4669,63 +5001,113 @@ public record InternalPermissionRequestEvent(
 /// </summary>
 public record InternalPermissionResponseEvent(
     string PermissionId,
+    string SourceName,
     bool Approved,
     string? Reason = null,
-    PermissionChoice Choice = PermissionChoice.Ask) : InternalAgentEvent;
+    PermissionChoice Choice = PermissionChoice.Ask) : InternalAgentEvent, IPermissionEvent;
 
 /// <summary>
 /// Emitted after permission is approved (for observability).
 /// </summary>
 public record InternalPermissionApprovedEvent(
-    string PermissionId) : InternalAgentEvent;
+    string PermissionId,
+    string SourceName) : InternalAgentEvent, IPermissionEvent;
 
 /// <summary>
 /// Emitted after permission is denied (for observability).
 /// </summary>
 public record InternalPermissionDeniedEvent(
     string PermissionId,
-    string Reason) : InternalAgentEvent;
+    string SourceName,
+    string Reason) : InternalAgentEvent, IPermissionEvent;
 
 /// <summary>
 /// Filter requests permission to continue beyond max iterations.
 /// </summary>
 public record InternalContinuationRequestEvent(
     string ContinuationId,
+    string SourceName,
     int CurrentIteration,
-    int MaxIterations) : InternalAgentEvent;
+    int MaxIterations) : InternalAgentEvent, IPermissionEvent
+{
+    /// <summary>
+    /// Explicit interface implementation for IPermissionEvent.PermissionId
+    /// Maps ContinuationId to PermissionId for consistency.
+    /// </summary>
+    string IPermissionEvent.PermissionId => ContinuationId;
+}
 
 /// <summary>
 /// Response to continuation request.
 /// </summary>
 public record InternalContinuationResponseEvent(
     string ContinuationId,
+    string SourceName,
     bool Approved,
-    int ExtensionAmount = 0) : InternalAgentEvent;
+    int ExtensionAmount = 0) : InternalAgentEvent, IPermissionEvent
+{
+    /// <summary>
+    /// Explicit interface implementation for IPermissionEvent.PermissionId
+    /// Maps ContinuationId to PermissionId for consistency.
+    /// </summary>
+    string IPermissionEvent.PermissionId => ContinuationId;
+}
+
+/// <summary>
+/// Marker interface for clarification-related events.
+/// Clarification events enable agents/plugins to ask the user for additional information
+/// during execution, supporting human-in-the-loop workflows beyond just permissions.
+/// </summary>
+public interface IClarificationEvent : IBidirectionalEvent
+{
+    /// <summary>
+    /// Unique identifier for this clarification interaction.
+    /// Used to correlate requests and responses.
+    /// </summary>
+    string RequestId { get; }
+
+    /// <summary>
+    /// The question being asked to the user.
+    /// </summary>
+    string Question { get; }
+}
+
+/// <summary>
+/// Agent/plugin requests user clarification or additional input.
+/// Handler should prompt user and send InternalClarificationResponseEvent.
+/// </summary>
+public record InternalClarificationRequestEvent(
+    string RequestId,
+    string SourceName,
+    string Question,
+    string? AgentName = null,
+    string[]? Options = null) : InternalAgentEvent, IClarificationEvent;
+
+/// <summary>
+/// Response to clarification request.
+/// Sent by external handler (AGUI, Console) back to waiting agent/plugin.
+/// </summary>
+public record InternalClarificationResponseEvent(
+    string RequestId,
+    string SourceName,
+    string Question,
+    string Answer) : InternalAgentEvent, IClarificationEvent;
 
 /// <summary>
 /// Filter reports progress (one-way, no response needed).
 /// </summary>
 public record InternalFilterProgressEvent(
-    string FilterName,
+    string SourceName,
     string Message,
-    int? PercentComplete = null) : InternalAgentEvent;
+    int? PercentComplete = null) : InternalAgentEvent, IBidirectionalEvent;
 
 /// <summary>
 /// Filter reports an error (one-way, no response needed).
 /// </summary>
 public record InternalFilterErrorEvent(
-    string FilterName,
+    string SourceName,
     string ErrorMessage,
-    Exception? Exception = null) : InternalAgentEvent;
-
-/// <summary>
-/// Generic custom event for user-defined scenarios.
-/// Users can also create their own event types by deriving from InternalAgentEvent.
-/// </summary>
-public record InternalCustomFilterEvent(
-    string FilterName,
-    string EventType,
-    IDictionary<string, object?> Data) : InternalAgentEvent;
+    Exception? Exception = null) : InternalAgentEvent, IBidirectionalEvent;
 
 #endregion
 
@@ -4774,6 +5156,11 @@ public class ExtendedAgentRunResponseUpdate : AgentRunResponseUpdate
     /// Continuation-related event data (iteration limit requests)
     /// </summary>
     public ContinuationEventData? ContinuationData { get; set; }
+
+    /// <summary>
+    /// Clarification-related event data (requests and responses)
+    /// </summary>
+    public ClarificationEventData? ClarificationData { get; set; }
 
     /// <summary>
     /// Filter-related event data (progress, errors, custom events)
@@ -5003,6 +5390,51 @@ public enum PermissionEventType
 }
 
 /// <summary>
+/// Clarification event data for UI handlers
+/// </summary>
+public class ClarificationEventData
+{
+    /// <summary>
+    /// Type of clarification event
+    /// </summary>
+    public ClarificationEventType Type { get; set; }
+
+    /// <summary>
+    /// The unique request ID
+    /// </summary>
+    public string? RequestId { get; set; }
+
+    /// <summary>
+    /// The name of the agent asking for clarification
+    /// </summary>
+    public string? AgentName { get; set; }
+
+    /// <summary>
+    /// The question being asked
+    /// </summary>
+    public string? Question { get; set; }
+
+    /// <summary>
+    /// Optional list of suggested answers/options
+    /// </summary>
+    public string[]? Options { get; set; }
+
+    /// <summary>
+    /// The user's answer (for response events)
+    /// </summary>
+    public string? Answer { get; set; }
+}
+
+/// <summary>
+/// Types of clarification events
+/// </summary>
+public enum ClarificationEventType
+{
+    Request,
+    Response
+}
+
+/// <summary>
 /// Continuation event data
 /// </summary>
 public class ContinuationEventData
@@ -5060,7 +5492,7 @@ public class FilterEventData
     /// <summary>
     /// The filter name
     /// </summary>
-    public string? FilterName { get; set; }
+    public string? SourceName { get; set; }
 
     /// <summary>
     /// Progress message (for progress events)

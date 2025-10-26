@@ -72,29 +72,34 @@ public class AiFunctionContext :  FunctionInvocationContext
     /// <summary>
     /// Emits an event that will be yielded by RunAgenticLoopInternal.
     /// Events are delivered immediately to background drainer (not batched).
+    /// Automatically bubbles events to parent agent if this is a nested agent call.
     ///
     /// Thread-safety: Safe to call from any filter in the pipeline.
     /// Performance: Non-blocking write (unbounded channel).
     /// Event ordering: Guaranteed FIFO per filter, interleaved across filters.
     /// Real-time visibility: Handler sees event WHILE filter is executing (not after).
+    /// Event bubbling: If Agent.RootAgent is set, events bubble to orchestrator.
     /// </summary>
     /// <param name="evt">The event to emit</param>
     /// <exception cref="ArgumentNullException">If event is null</exception>
-    /// <exception cref="InvalidOperationException">If OutboundEvents channel is not configured</exception>
+    /// <exception cref="InvalidOperationException">If Agent reference is not configured</exception>
     public void Emit(InternalAgentEvent evt)
     {
         if (evt == null)
             throw new ArgumentNullException(nameof(evt));
 
-        if (OutboundEvents == null)
-            throw new InvalidOperationException("Event emission not configured for this context");
+        if (Agent == null)
+            throw new InvalidOperationException("Agent reference not configured for this context");
 
-        // Non-blocking write to shared channel
-        // Background drainer will see this immediately
-        if (!OutboundEvents.TryWrite(evt))
+        // Emit to local agent's coordinator
+        Agent.EventCoordinator.Emit(evt);
+
+        // If we're a nested agent (RootAgent is set and different from us), bubble to root
+        // RootAgent is a static property on the global Agent class
+        var rootAgent = global::Agent.RootAgent;
+        if (rootAgent != null && rootAgent != Agent)
         {
-            // Channel was completed - agent is shutting down
-            // This is not an error, just means events emitted during cleanup won't be delivered
+            rootAgent.EventCoordinator.Emit(evt);
         }
     }
 

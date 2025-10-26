@@ -737,13 +737,15 @@ public record InternalFilterErrorEvent(
 
 ```csharp
 /// <summary>
-/// Generic custom event for user-defined scenarios.
-/// Users can also create their own event types by deriving from InternalAgentEvent.
+/// Users can create their own event types by deriving from InternalAgentEvent
+/// and implementing IFilterEvent for automatic infrastructure integration.
 /// </summary>
-public record InternalCustomFilterEvent(
-    string FilterName,
-    string EventType,
-    IDictionary<string, object?> Data) : InternalAgentEvent;
+/// <example>
+/// public record MyCustomEvent(
+///     string FilterName,
+///     string CustomData
+/// ) : InternalAgentEvent, IFilterEvent;
+/// </example>
 ```
 
 ---

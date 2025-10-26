@@ -44,6 +44,28 @@ public class ProgressLoggingFilter : IAiFunctionFilter
 }
 
 /// <summary>
+/// Example custom event for cost tracking.
+/// Demonstrates how to create custom filter events that implement IFilterEvent.
+/// </summary>
+public record CostEstimateEvent(
+    string SourceName,
+    string FunctionName,
+    decimal EstimatedCost,
+    string Currency
+) : InternalAgentEvent, IBidirectionalEvent;
+
+/// <summary>
+/// Example custom event for actual cost tracking.
+/// </summary>
+public record ActualCostEvent(
+    string SourceName,
+    string FunctionName,
+    decimal ActualCost,
+    string Currency,
+    double DurationMs
+) : InternalAgentEvent, IBidirectionalEvent;
+
+/// <summary>
 /// Example filter that emits custom events.
 /// Demonstrates user extensibility - users can define their own event types.
 /// </summary>
@@ -53,33 +75,25 @@ public class CostTrackingFilter : IAiFunctionFilter
     {
         var startTime = DateTime.UtcNow;
 
-        // Emit cost estimate using custom event
-        context.Emit(new InternalCustomFilterEvent(
+        // Emit cost estimate using custom event type
+        context.Emit(new CostEstimateEvent(
             "CostTrackingFilter",
-            "CostEstimate",
-            new Dictionary<string, object?>
-            {
-                ["FunctionName"] = context.ToolCallRequest.FunctionName,
-                ["EstimatedCost"] = 0.05m,
-                ["Currency"] = "USD"
-            }));
+            context.ToolCallRequest.FunctionName,
+            0.05m,
+            "USD"));
 
         await next(context);
 
         var duration = DateTime.UtcNow - startTime;
         var actualCost = CalculateCost(duration);
 
-        // Emit actual cost
-        context.Emit(new InternalCustomFilterEvent(
+        // Emit actual cost using custom event type
+        context.Emit(new ActualCostEvent(
             "CostTrackingFilter",
-            "ActualCost",
-            new Dictionary<string, object?>
-            {
-                ["FunctionName"] = context.ToolCallRequest.FunctionName,
-                ["ActualCost"] = actualCost,
-                ["Currency"] = "USD",
-                ["DurationMs"] = duration.TotalMilliseconds
-            }));
+            context.ToolCallRequest.FunctionName,
+            actualCost,
+            "USD",
+            duration.TotalMilliseconds));
     }
 
     private decimal CalculateCost(TimeSpan duration)
@@ -116,6 +130,7 @@ public class SimplePermissionFilter : IAiFunctionFilter
         var permissionId = Guid.NewGuid().ToString();
         context.Emit(new InternalPermissionRequestEvent(
             permissionId,
+            "SimplePermissionFilter",
             context.ToolCallRequest.FunctionName,
             $"Permission required to execute {context.ToolCallRequest.FunctionName}",
             context.Metadata.TryGetValue("CallId", out var callId) ? callId?.ToString() ?? "" : "",
@@ -134,6 +149,7 @@ public class SimplePermissionFilter : IAiFunctionFilter
         {
             context.Emit(new InternalPermissionDeniedEvent(
                 permissionId,
+                "SimplePermissionFilter",
                 "Permission request timed out"));
             context.Result = "Permission request timed out";
             context.IsTerminated = true;
@@ -143,6 +159,7 @@ public class SimplePermissionFilter : IAiFunctionFilter
         {
             context.Emit(new InternalPermissionDeniedEvent(
                 permissionId,
+                "SimplePermissionFilter",
                 "Permission request cancelled"));
             context.Result = "Permission request cancelled";
             context.IsTerminated = true;
@@ -152,7 +169,7 @@ public class SimplePermissionFilter : IAiFunctionFilter
         // Handle response
         if (response.Approved)
         {
-            context.Emit(new InternalPermissionApprovedEvent(permissionId));
+            context.Emit(new InternalPermissionApprovedEvent(permissionId, "SimplePermissionFilter"));
 
             // Continue execution
             await next(context);
@@ -161,6 +178,7 @@ public class SimplePermissionFilter : IAiFunctionFilter
         {
             context.Emit(new InternalPermissionDeniedEvent(
                 permissionId,
+                "SimplePermissionFilter",
                 response.Reason ?? "Permission denied"));
             context.Result = response.Reason ?? "Permission denied";
             context.IsTerminated = true;

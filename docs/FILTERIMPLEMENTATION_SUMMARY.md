@@ -45,7 +45,7 @@ We successfully implemented the **Bidirectional Event-Emitting Filters** system 
 - `InternalContinuationRequestEvent` / `InternalContinuationResponseEvent`
 - `InternalFilterProgressEvent`
 - `InternalFilterErrorEvent`
-- `InternalCustomFilterEvent`
+- Custom events (user-defined, implement `IFilterEvent`)
 
 **Modified RunAgenticLoopInternal:**
 - Added background event drainer task

@@ -10,16 +10,19 @@ public class PermissionFilter : IPermissionFilter
 {
     private readonly IPermissionStorage? _storage;
     private readonly AgentConfig? _config;
+    private readonly string _filterName;
 
     /// <summary>
     /// Creates a new unified permission filter.
     /// </summary>
     /// <param name="storage">Optional permission storage for persistent decisions</param>
     /// <param name="config">Optional agent configuration for continuation settings</param>
-    public PermissionFilter(IPermissionStorage? storage = null, AgentConfig? config = null)
+    /// <param name="filterName">Optional name for this filter instance (defaults to "PermissionFilter")</param>
+    public PermissionFilter(IPermissionStorage? storage = null, AgentConfig? config = null, string? filterName = null)
     {
         _storage = storage;
         _config = config;
+        _filterName = filterName ?? "PermissionFilter";
     }
 
     public async Task InvokeAsync(AiFunctionContext context, Func<AiFunctionContext, Task> next)
@@ -93,6 +96,7 @@ public class PermissionFilter : IPermissionFilter
         // Emit permission request event (standardized, protocol-agnostic)
         context.Emit(new InternalPermissionRequestEvent(
             permissionId,
+            _filterName,
             functionName,
             context.Function.Description ?? "No description available",
             callId ?? string.Empty,
@@ -111,6 +115,7 @@ public class PermissionFilter : IPermissionFilter
             // Emit denial event for observability
             context.Emit(new InternalPermissionDeniedEvent(
                 permissionId,
+                _filterName,
                 "Permission request timed out after 5 minutes"));
 
             context.Result = "Permission request timed out. Please respond to permission requests promptly.";
@@ -122,6 +127,7 @@ public class PermissionFilter : IPermissionFilter
             // Emit denial event for observability
             context.Emit(new InternalPermissionDeniedEvent(
                 permissionId,
+                _filterName,
                 "Permission request was cancelled"));
 
             context.Result = "Permission request was cancelled.";
@@ -133,7 +139,7 @@ public class PermissionFilter : IPermissionFilter
         if (response.Approved)
         {
             // Emit approval event for observability
-            context.Emit(new InternalPermissionApprovedEvent(permissionId));
+            context.Emit(new InternalPermissionApprovedEvent(permissionId, _filterName));
 
             // Store persistent choice if user requested it
             if (_storage != null && response.Choice != PermissionChoice.Ask)
@@ -163,6 +169,7 @@ public class PermissionFilter : IPermissionFilter
             // Emit denial event for observability
             context.Emit(new InternalPermissionDeniedEvent(
                 permissionId,
+                _filterName,
                 response.Reason ?? "User denied permission"));
 
             context.Result = response.Reason ?? $"Execution of '{functionName}' was denied by the user.";
@@ -189,6 +196,7 @@ public class PermissionFilter : IPermissionFilter
         // Emit continuation request event
         context.Emit(new InternalContinuationRequestEvent(
             continuationId,
+            _filterName,
             context.RunContext!.CurrentIteration + 1, // Display as 1-based
             context.RunContext.MaxIterations));
 

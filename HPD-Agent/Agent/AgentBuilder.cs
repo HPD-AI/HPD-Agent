@@ -510,6 +510,9 @@ public class AgentBuilder
         // Automatically finalize web search configuration if providers were configured
         AgentBuilderWebSearchExtensions.FinalizeWebSearch(this);
 
+        // Auto-register plugins referenced by skills
+        AutoRegisterPluginsFromSkills();
+
         // Create plugin functions using per-plugin contexts and merge with default options
         var pluginFunctions = new List<AIFunction>();
         foreach (var registration in _pluginManager.GetPluginRegistrations())
@@ -834,10 +837,125 @@ public class AgentBuilder
         var tools = _config.Provider.DefaultChatOptions.Tools?.ToList() ?? new List<AITool>();
         tools.Add(function);
         _config.Provider.DefaultChatOptions.Tools = tools;
-        
+
+
         // Enable auto tool mode if not already set
         if (_config.Provider.DefaultChatOptions.ToolMode == null)
             _config.Provider.DefaultChatOptions.ToolMode = ChatToolMode.Auto;
+    }
+
+    /// <summary>
+    /// Auto-registers plugins that are referenced by skills
+    /// This enables type-safe skill references without manual plugin registration
+    /// </summary>
+    [RequiresUnreferencedCode("Auto-registration uses reflection to discover and register plugins.")]
+    private void AutoRegisterPluginsFromSkills()
+    {
+        // Get all currently registered plugins
+        var registeredPluginNames = new HashSet<string>(
+            _pluginManager.GetPluginRegistrations()
+                .Select(r => r.PluginType.Name),
+            StringComparer.OrdinalIgnoreCase);
+
+        // Discover referenced plugins from all registered plugins
+        var referencedPlugins = DiscoverReferencedPlugins(_pluginManager.GetPluginRegistrations());
+
+        // Auto-register any referenced plugins that aren't already registered
+        foreach (var pluginName in referencedPlugins)
+        {
+            if (!registeredPluginNames.Contains(pluginName))
+            {
+                _logger?.CreateLogger<AgentBuilder>()
+                    .LogInformation("Auto-registering plugin '{PluginName}' (referenced by skills)", pluginName);
+
+                var pluginType = FindPluginTypeByName(pluginName);
+                if (pluginType == null)
+                {
+                    _logger?.CreateLogger<AgentBuilder>()
+                        .LogWarning("Plugin '{PluginName}' is referenced by skills but could not be found. Ensure the plugin assembly is referenced.", pluginName);
+                    continue;
+                }
+
+                // Register the plugin
+                _pluginManager.RegisterPlugin(pluginType);
+                registeredPluginNames.Add(pluginName);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Discovers all plugins referenced by skills in registered plugins
+    /// </summary>
+    private HashSet<string> DiscoverReferencedPlugins(IEnumerable<PluginRegistration> registrations)
+    {
+        var referencedPlugins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var registration in registrations)
+        {
+            // Call generated GetReferencedPlugins() method if it exists
+            var registrationType = registration.PluginType.Assembly.GetType(
+                $"{registration.PluginType.Namespace}.{registration.PluginType.Name}Registration");
+
+            if (registrationType == null)
+                continue;
+
+            var method = registrationType.GetMethod(
+                "GetReferencedPlugins",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+
+            if (method == null)
+                continue;
+
+            try
+            {
+                var plugins = method.Invoke(null, null) as string[];
+                if (plugins != null)
+                {
+                    foreach (var plugin in plugins)
+                    {
+                        referencedPlugins.Add(plugin);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.CreateLogger<AgentBuilder>()
+                    .LogWarning(ex, "Failed to call GetReferencedPlugins() for {PluginType}", registration.PluginType.Name);
+            }
+        }
+
+        return referencedPlugins;
+    }
+
+    /// <summary>
+    /// Finds a plugin type by name searching all loaded assemblies
+    /// </summary>
+    private Type? FindPluginTypeByName(string pluginName)
+    {
+        // Search all loaded assemblies for the plugin type
+        var assemblies = AppDomain.CurrentDomain.GetAssemblies();
+
+        foreach (var assembly in assemblies)
+        {
+            try
+            {
+                var types = assembly.GetTypes();
+                var pluginType = types.FirstOrDefault(t =>
+                    t.Name.Equals(pluginName, StringComparison.OrdinalIgnoreCase) &&
+                    t.IsClass &&
+                    t.IsPublic);
+
+                if (pluginType != null)
+                    return pluginType;
+            }
+            catch (System.Reflection.ReflectionTypeLoadException)
+            {
+                // Skip assemblies we can't load
+                continue;
+            }
+        }
+
+        return null;
     }
 }
 

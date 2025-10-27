@@ -46,8 +46,7 @@ public class Agent : AIAgent
     private readonly ToolScheduler _toolScheduler;
     private readonly AGUIEventHandler _aguiEventHandler;
     private readonly AGUIEventConverter _aguiConverter;
-    private readonly PluginScopingManager _pluginScopingManager;
-    private readonly HPD_Agent.Skills.SkillScopingManager? _skillScopingManager;
+    private readonly HPD_Agent.Scoping.UnifiedScopingManager _scopingManager;
     private readonly PermissionManager _permissionManager;
     private readonly BidirectionalEventCoordinator _eventCoordinator;
     private readonly IReadOnlyList<IAiFunctionFilter> _aiFunctionFilters;
@@ -272,9 +271,14 @@ public class Agent : AIAgent
             config.ServerConfiguredTools,
             config.AgenticLoop);  // NEW: Pass agentic loop config for TerminateOnUnknownCalls
         _agentTurn = new AgentTurn(_baseClient);
-        _pluginScopingManager = new PluginScopingManager();
-        _skillScopingManager = skillScopingManager; // Optional: null if skills not used
-        _toolScheduler = new ToolScheduler(this, _functionCallProcessor, _permissionManager, config, _pluginScopingManager, _skillScopingManager);
+
+        // Initialize unified scoping manager
+        var skills = skillScopingManager?.GetSkills() ?? Enumerable.Empty<HPD_Agent.Skills.SkillDefinition>();
+        var initialTools = (mergedOptions ?? config.Provider?.DefaultChatOptions)?.Tools?
+            .OfType<AIFunction>().ToList() ?? new List<AIFunction>();
+        _scopingManager = new HPD_Agent.Scoping.UnifiedScopingManager(skills, initialTools, null);
+
+        _toolScheduler = new ToolScheduler(this, _functionCallProcessor, _permissionManager, config, _scopingManager);
         _aguiConverter = new AGUIEventConverter();
         _aguiEventHandler = new AGUIEventHandler(this);
     }
@@ -537,17 +541,7 @@ public class Agent : AIAgent
         // Skill scoping: Track expanded skills (message-turn scoped)
         var expandedSkills = new HashSet<string>();
 
-        // Auto-expand skills marked with AutoExpand = true (replaces "always visible" use case)
-        if (_skillScopingManager != null)
-        {
-            foreach (var skill in _skillScopingManager.GetSkills())
-            {
-                if (skill.AutoExpand)
-                {
-                    expandedSkills.Add(skill.Name);
-                }
-            }
-        }
+        // Auto-expand skills marked with AutoExpand = true will be handled by UnifiedScopingManager
 
         // ConversationId history optimization (inspired by Microsoft's FunctionInvokingChatClient)
         // When the inner client manages history server-side (indicated by returning a ConversationId),
@@ -608,76 +602,8 @@ public class Agent : AIAgent
                 }
 
                 // Get plugin-scoped functions (containers + non-plugin + expanded plugin functions)
-                var scopedFunctions = _pluginScopingManager.GetToolsForAgentTurn(aiFunctions, expandedPlugins);
-
-                // Add skill-based functions if skill scoping is enabled
-                if (_skillScopingManager != null)
-                {
-                    // Skills-Only Mode: Hide ALL non-skill-referenced functions/plugins
-                    if (Config?.PluginScoping?.SkillsOnlyMode == true)
-                    {
-                        // Get all functions referenced by ANY skill
-                        var skillReferencedFunctions = _skillScopingManager.GetAllSkillReferencedFunctions();
-
-                        // Remove ALL plugin containers (skills become only interface)
-                        scopedFunctions.RemoveAll(f => _pluginScopingManager.IsContainer(f));
-
-                        // Remove all functions NOT referenced by any skill
-                        scopedFunctions.RemoveAll(f =>
-                            !_skillScopingManager.IsSkillContainer(f) &&
-                            f.Name != null &&
-                            !skillReferencedFunctions.Contains(f.Name));
-                    }
-                    else
-                    {
-                        // Normal mode: Selective suppression/hiding
-
-                        // Get plugin containers to suppress (skills with SuppressPluginContainers = true)
-                        var suppressedPlugins = _skillScopingManager.GetSuppressedPluginContainers();
-
-                        // Get functions hidden by Scoped skills
-                        var hiddenBySkills = _skillScopingManager.GetHiddenFunctionsBySkills(expandedSkills);
-
-                        // Filter out suppressed plugin containers
-                        if (suppressedPlugins.Count > 0)
-                        {
-                            scopedFunctions.RemoveAll(f =>
-                                _pluginScopingManager.IsContainer(f) &&
-                                suppressedPlugins.Contains(_pluginScopingManager.GetPluginName(f)));
-                        }
-
-                        // Filter out functions hidden by Scoped skills
-                        if (hiddenBySkills.Count > 0)
-                        {
-                            scopedFunctions.RemoveAll(f =>
-                                !_pluginScopingManager.IsContainer(f) &&
-                                !_skillScopingManager.IsSkillContainer(f) &&
-                                f.Name != null &&
-                                hiddenBySkills.Contains(f.Name));
-                        }
-                    }
-
-                    // Get unexpanded skill containers
-                    var skillContainers = _skillScopingManager.GetUnexpandedSkillContainers(expandedSkills);
-                    scopedFunctions.AddRange(skillContainers);
-
-                    // Get functions from expanded skills (with deduplication)
-                    var expandedSkillFunctions = _skillScopingManager.GetFunctionsForExpandedSkills(expandedSkills);
-
-                    // Deduplicate: remove any functions already in scopedFunctions
-                    var existingFunctionNames = new HashSet<string>(
-                        scopedFunctions.Where(f => f.Name != null).Select(f => f.Name!),
-                        StringComparer.OrdinalIgnoreCase);
-
-                    foreach (var skillFunction in expandedSkillFunctions)
-                    {
-                        if (skillFunction.Name != null && !existingFunctionNames.Contains(skillFunction.Name))
-                        {
-                            scopedFunctions.Add(skillFunction);
-                            existingFunctionNames.Add(skillFunction.Name);
-                        }
-                    }
-                }
+                // Use unified scoping manager that handles both plugins and skills
+                var scopedFunctions = _scopingManager.GetToolsForAgentTurn(aiFunctions, expandedPlugins, expandedSkills);
 
                 // Manual cast to AITool list (still better than LINQ Cast + ToList)
                 var scopedTools = new List<AITool>(scopedFunctions.Count);
@@ -2943,8 +2869,7 @@ public class ToolScheduler
     private readonly FunctionCallProcessor _functionCallProcessor;
     private readonly PermissionManager _permissionManager;
     private readonly AgentConfig? _config;
-    private readonly PluginScopingManager _pluginScopingManager;
-    private readonly HPD_Agent.Skills.SkillScopingManager? _skillScopingManager;
+    private readonly HPD_Agent.Scoping.UnifiedScopingManager _scopingManager;
 
     /// <summary>
     /// Initializes a new instance of ToolScheduler
@@ -2960,15 +2885,13 @@ public class ToolScheduler
         FunctionCallProcessor functionCallProcessor,
         PermissionManager permissionManager,
         AgentConfig? config,
-        PluginScopingManager pluginScopingManager,
-        HPD_Agent.Skills.SkillScopingManager? skillScopingManager = null)
+        HPD_Agent.Scoping.UnifiedScopingManager scopingManager)
     {
         _agent = agent ?? throw new ArgumentNullException(nameof(agent));
         _functionCallProcessor = functionCallProcessor ?? throw new ArgumentNullException(nameof(functionCallProcessor));
         _permissionManager = permissionManager ?? throw new ArgumentNullException(nameof(permissionManager));
         _config = config;
-        _pluginScopingManager = pluginScopingManager ?? throw new ArgumentNullException(nameof(pluginScopingManager));
-        _skillScopingManager = skillScopingManager; // Optional: null if skills not used
+        _scopingManager = scopingManager ?? throw new ArgumentNullException(nameof(scopingManager));
     }
 
     /// <summary>
@@ -3031,7 +2954,7 @@ public class ToolScheduler
             if (function != null)
             {
                 // Check if it's a plugin container
-                if (_pluginScopingManager.IsContainer(function))
+                if (function.AdditionalProperties?.TryGetValue("IsContainer", out var isCont) == true && isCont is bool isC && isC)
                 {
                     var pluginName = function.AdditionalProperties
                         ?.TryGetValue("PluginName", out var value) == true && value is string pn
@@ -3041,11 +2964,12 @@ public class ToolScheduler
                     pluginContainerExpansions[toolRequest.CallId] = pluginName;
                 }
                 // Check if it's a skill container
-                else if (_skillScopingManager != null && _skillScopingManager.IsSkillContainer(function))
-                {
-                    var skillName = _skillScopingManager.GetSkillName(function);
-                    skillContainerExpansions[toolRequest.CallId] = skillName;
-                }
+                // Skill container expansion tracking removed - handled by UnifiedScopingManager
+                // else if (_scopingManager.IsSkillContainer(function))
+                // {
+                //     var skillName = function.Name;
+                //     skillContainerExpansions[toolRequest.CallId] = skillName;
+                // }
             }
         }
 
@@ -3112,7 +3036,7 @@ public class ToolScheduler
             if (function != null)
             {
                 // Check if it's a plugin container
-                if (_pluginScopingManager.IsContainer(function))
+                if (function.AdditionalProperties?.TryGetValue("IsContainer", out var isCont) == true && isCont is bool isC && isC)
                 {
                     var pluginName = function.AdditionalProperties
                         ?.TryGetValue("PluginName", out var value) == true && value is string pn
@@ -3122,11 +3046,12 @@ public class ToolScheduler
                     pluginContainerExpansions[toolRequest.CallId] = pluginName;
                 }
                 // Check if it's a skill container
-                else if (_skillScopingManager != null && _skillScopingManager.IsSkillContainer(function))
-                {
-                    var skillName = _skillScopingManager.GetSkillName(function);
-                    skillContainerExpansions[toolRequest.CallId] = skillName;
-                }
+                // Skill container expansion tracking removed - handled by UnifiedScopingManager
+                // else if (_scopingManager.IsSkillContainer(function))
+                // {
+                //     var skillName = function.Name;
+                //     skillContainerExpansions[toolRequest.CallId] = skillName;
+                // }
             }
         }
 

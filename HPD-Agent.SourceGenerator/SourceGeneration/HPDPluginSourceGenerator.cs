@@ -28,12 +28,32 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
     
     private static bool IsPluginClass(SyntaxNode node, CancellationToken cancellationToken = default)
     {
-        return node is ClassDeclarationSyntax classDecl &&
-               classDecl.Modifiers.Any(SyntaxKind.PublicKeyword) &&
-               classDecl.Members.OfType<MethodDeclarationSyntax>()
-                   .Any(method => method.AttributeLists
-                       .SelectMany(attrList => attrList.Attributes)
-                       .Any(attr => attr.Name.ToString().Contains("AIFunction")));
+        if (node is not ClassDeclarationSyntax classDecl)
+            return false;
+
+        if (!classDecl.Modifiers.Any(SyntaxKind.PublicKeyword))
+            return false;
+
+        var methods = classDecl.Members.OfType<MethodDeclarationSyntax>().ToList();
+
+        // Check for [AIFunction] methods (traditional plugins)
+        var hasAIFunctionMethods = methods.Any(method => method.AttributeLists
+            .SelectMany(attrList => attrList.Attributes)
+            .Any(attr => attr.Name.ToString().Contains("AIFunction")));
+
+        if (hasAIFunctionMethods)
+            return true;
+
+        // Check for skill methods (public static Skill MethodName(...))
+        // We need to do a simple check here without semantic model
+        // Full validation happens in GetPluginDeclaration
+        var hasSkillMethods = methods.Any(method =>
+            method.Modifiers.Any(SyntaxKind.PublicKeyword) &&
+            method.Modifiers.Any(SyntaxKind.StaticKeyword) &&
+            method.ReturnType.ToString().Contains("Skill") &&
+            !method.AttributeLists.Any()); // Skills don't have attributes
+
+        return hasSkillMethods;
     }
     
     private static PluginInfo? GetPluginDeclaration(GeneratorSyntaxContext context, CancellationToken cancellationToken)
@@ -41,6 +61,7 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
         var classDecl = (ClassDeclarationSyntax)context.Node;
         var semanticModel = context.SemanticModel;
 
+        // Analyze [AIFunction] methods
         var functions = classDecl.Members
             .OfType<MethodDeclarationSyntax>()
             .Where(method => HasAIFunctionAttribute(method, semanticModel))
@@ -48,23 +69,46 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
             .Where(func => func != null)
             .ToList();
 
-        if (!functions.Any()) return null;
+        // Analyze skill methods (public static Skill MethodName(...))
+        var skills = classDecl.Members
+            .OfType<MethodDeclarationSyntax>()
+            .Where(method => SkillAnalyzer.IsSkillMethod(method, semanticModel))
+            .Select(method => SkillAnalyzer.AnalyzeSkill(method, semanticModel, context))
+            .Where(skill => skill != null)
+            .ToList();
+
+        // Must have at least one function or skill
+        if (!functions.Any() && !skills.Any()) return null;
 
         var namespaceName = GetNamespace(classDecl);
 
         // Check for [PluginScope] attribute
         var (hasScopeAttribute, scopeDescription, postExpansionInstructions) = GetPluginScopeAttribute(classDecl);
 
+        // Build description
+        var description = BuildPluginDescription(functions.Count, skills.Count);
+
         return new PluginInfo
         {
             Name = classDecl.Identifier.ValueText,
-            Description = $"Plugin containing {functions.Count} AI functions.",
+            Description = description,
             Namespace = namespaceName,
             Functions = functions!,
+            Skills = skills!,
             HasScopeAttribute = hasScopeAttribute,
             ScopeDescription = scopeDescription,
             PostExpansionInstructions = postExpansionInstructions
         };
+    }
+
+    private static string BuildPluginDescription(int functionCount, int skillCount)
+    {
+        if (functionCount > 0 && skillCount > 0)
+            return $"Plugin containing {functionCount} AI functions and {skillCount} skills.";
+        else if (functionCount > 0)
+            return $"Plugin containing {functionCount} AI functions.";
+        else
+            return $"Skill container with {skillCount} skills.";
     }
     
     private static void GeneratePluginRegistrations(SourceProductionContext context, ImmutableArray<PluginInfo?> plugins)
@@ -80,6 +124,7 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
                 // Merge all partial class parts into one plugin
                 var first = group.First()!;
                 var allFunctions = group.SelectMany(p => p!.Functions).ToList();
+                var allSkills = group.SelectMany(p => p!.Skills).ToList();
 
                 // Preserve HasScopeAttribute, ScopeDescription, and PostExpansionInstructions from any partial class that has it
                 var hasScopeAttribute = group.Any(p => p!.HasScopeAttribute);
@@ -89,9 +134,10 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
                 return new PluginInfo
                 {
                     Name = first.Name,
-                    Description = $"Plugin containing {allFunctions.Count} AI functions.",
+                    Description = BuildPluginDescription(allFunctions.Count, allSkills.Count),
                     Namespace = first.Namespace,
                     Functions = allFunctions,
+                    Skills = allSkills,
                     HasScopeAttribute = hasScopeAttribute,
                     ScopeDescription = scopeDescription,
                     PostExpansionInstructions = postExpansionInstructions
@@ -104,9 +150,17 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
         debugInfo.AppendLine($"// Merged into {pluginGroups.Count} unique plugins");
         foreach (var plugin in pluginGroups)
         {
-            debugInfo.AppendLine($"// Plugin: {plugin.Namespace}.{plugin.Name} with {plugin.Functions.Count} functions");
+            debugInfo.AppendLine($"// Plugin: {plugin.Namespace}.{plugin.Name} with {plugin.Functions.Count} functions and {plugin.Skills.Count} skills");
         }
         context.AddSource("_SourceGeneratorDebug.g.cs", debugInfo.ToString());
+
+        // Resolve skills before validation and code generation
+        var allSkills = pluginGroups.SelectMany(p => p.Skills).ToList();
+        if (allSkills.Any())
+        {
+            var skillResolver = new SkillResolver(allSkills);
+            skillResolver.ResolveAllSkills();
+        }
 
         foreach (var plugin in pluginGroups)
         {
@@ -128,7 +182,7 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
                                 ValidateConditionalExpression(context, function.ConditionalExpression!, contextType, function.ValidationData.Method, $"function {function.Name}");
                             }
                             ValidateFunctionContextUsage(context, function, function.ValidationData.Method);
-                            
+
                             foreach (var parameter in function.Parameters.Where(p => p.IsConditional))
                             {
                                 if (!string.IsNullOrEmpty(parameter.ConditionalExpression))
@@ -140,7 +194,7 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
                     }
                 }
             }
-            
+
             var source = GeneratePluginRegistration(plugin);
             context.AddSource($"{plugin.Name}Registration.g.cs", source);
         }
@@ -150,14 +204,25 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
     {
         var unconditionalFunctions = plugin.Functions.Where(f => !f.IsConditional).ToList();
         var conditionalFunctions = plugin.Functions.Where(f => f.IsConditional).ToList();
-        
+
         var sb = new StringBuilder();
         sb.AppendLine("    /// <summary>");
         sb.AppendLine($"    /// Creates an AIFunction list for the {plugin.Name} plugin.");
         sb.AppendLine("    /// </summary>");
-        sb.AppendLine($"    /// <param name=\"instance\">The plugin instance</param>");
-        sb.AppendLine($"    /// <param name=\"context\">The execution context (optional)</param>");
-        sb.AppendLine($"    public static List<AIFunction> CreatePlugin({plugin.Name} instance, IPluginMetadataContext? context = null)");
+
+        // Handle skill-only classes (no instance parameter needed)
+        if (plugin.IsSkillOnly)
+        {
+            sb.AppendLine($"    /// <param name=\"context\">The execution context (optional)</param>");
+            sb.AppendLine($"    public static List<AIFunction> CreatePlugin(IPluginMetadataContext? context = null)");
+        }
+        else
+        {
+            sb.AppendLine($"    /// <param name=\"instance\">The plugin instance</param>");
+            sb.AppendLine($"    /// <param name=\"context\">The execution context (optional)</param>");
+            sb.AppendLine($"    public static List<AIFunction> CreatePlugin({plugin.Name} instance, IPluginMetadataContext? context = null)");
+        }
+
         sb.AppendLine("    {");
         sb.AppendLine("        var functions = new List<AIFunction>();");
 
@@ -178,7 +243,7 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
                 sb.AppendLine($"        functions.Add({GenerateFunctionRegistration(function, plugin)});");
             }
         }
-        
+
         if (conditionalFunctions.Any())
         {
             sb.AppendLine();
@@ -191,7 +256,13 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
                 sb.AppendLine("        }");
             }
         }
-        
+
+        // Add skills
+        if (plugin.Skills.Any())
+        {
+            sb.Append(SkillCodeGenerator.GenerateSkillRegistrations(plugin));
+        }
+
         sb.AppendLine();
         sb.AppendLine("        return functions;");
         sb.AppendLine("    }");
@@ -227,7 +298,7 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
         }
 
         sb.AppendLine(GenerateArgumentsDtoAndContext(plugin));
-        
+
         sb.AppendLine("    /// <summary>");
         sb.AppendLine($"    /// Generated registration code for {plugin.Name} plugin.");
         sb.AppendLine("    /// </summary>");
@@ -235,15 +306,32 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
         sb.AppendLine($"    public static partial class {plugin.Name}Registration");
         sb.AppendLine("    {");
 
+        // Generate GetReferencedPlugins() if there are skills
+        if (plugin.Skills.Any())
+        {
+            sb.AppendLine(SkillCodeGenerator.GenerateGetReferencedPluginsMethod(plugin));
+            sb.AppendLine();
+        }
+
         // Generate plugin metadata accessor (always generated for consistency)
-        sb.AppendLine(GeneratePluginMetadataMethod(plugin));
+        if (plugin.Skills.Any())
+        {
+            sb.AppendLine(SkillCodeGenerator.UpdatePluginMetadataWithSkills(plugin, ""));
+        }
+        else
+        {
+            sb.AppendLine(GeneratePluginMetadataMethod(plugin));
+        }
         sb.AppendLine();
 
-        // Generate container function and helper if plugin is scoped
-        if (plugin.HasScopeAttribute)
+        // Generate container function and helper if plugin is scoped OR has skills
+        if (plugin.HasScopeAttribute || plugin.Skills.Any())
         {
-            sb.AppendLine(GenerateContainerFunction(plugin));
-            sb.AppendLine();
+            if (plugin.HasScopeAttribute)
+            {
+                sb.AppendLine(GenerateContainerFunction(plugin));
+                sb.AppendLine();
+            }
             sb.AppendLine(GenerateEmptySchemaMethod());
             sb.AppendLine();
         }
@@ -270,14 +358,20 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
             sb.AppendLine();
             sb.AppendLine(GenerateContextResolutionMethods(plugin));
         }
-        
+
+        // Generate skill code
+        if (plugin.Skills.Any())
+        {
+            sb.AppendLine(SkillCodeGenerator.GenerateAllSkillCode(plugin));
+        }
+
         sb.AppendLine("    }");
-        
+
         if (!string.IsNullOrEmpty(plugin.Namespace))
         {
             sb.AppendLine("}");
         }
-        
+
         return sb.ToString();
     }
 

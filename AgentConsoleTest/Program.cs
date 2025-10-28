@@ -27,16 +27,10 @@ static Task<(Project, ConversationThread, Agent)> CreateAIAssistant(IConfigurati
         Name = "AI Assistant",
         SystemInstructions = "You are an accountant agent. You can do sequential and parallel tool calls. You can also plan out stuff ebfore you start if the task requires sub steps",
         MaxAgenticIterations = 20,  // Reduced from 50 to avoid rate limits
-        HistoryReduction = new HistoryReductionConfig
-        {
-            Enabled = true,
-            Strategy = HistoryReductionStrategy.MessageCounting,
-            TargetMessageCount = 50  // Increased from 20 to allow longer conversations
-        },
         Provider = new ProviderConfig
         {
             ProviderKey = "openrouter",
-            ModelName = "z-ai/glm-4.6", // 🧠 Reasoning model - FREE on OpenRouter!
+            ModelName = "openrouter/andromeda-alpha", // 🧠 Reasoning model - FREE on OpenRouter!
             // Alternative reasoning models:
             // "deepseek/deepseek-r1-distill-qwen-32b" - smaller/faster
             // "openai/o1" - OpenAI's reasoning model (expensive)
@@ -74,6 +68,7 @@ static Task<(Project, ConversationThread, Agent)> CreateAIAssistant(IConfigurati
     var agent = new AgentBuilder(agentConfig)
         .WithAPIConfiguration(config) // Pass appsettings.json for API key resolution
         .WithLogging()
+        .WithTavilyWebSearch()
         .WithDynamicMemory(opts => opts
             .WithStorageDirectory("./agent-memory-storage")
             .WithMaxTokens(6000))
@@ -238,7 +233,7 @@ static async Task RunInteractiveChat(Agent agent, ConversationThread thread)
                     {
                         // Display reasoning content (thinking process) in gray - streams naturally
                         // CHECK REASONING FIRST since TextReasoningContent derives from TextContent
-                        if (content is TextReasoningContent reasoningContent && !string.IsNullOrEmpty(reasoningContent.Text))
+                        if (content is TextReasoningContent reasoningContent && !string.IsNullOrWhiteSpace(reasoningContent.Text))
                         {
                             // If transitioning from text to reasoning, close text section
                             if (!isFirstTextChunk)
@@ -262,7 +257,7 @@ static async Task RunInteractiveChat(Agent agent, ConversationThread thread)
                             Console.Write(reasoningContent.Text);
                         }
                         // Display text content (final answer)
-                        else if (content is TextContent textContent && !string.IsNullOrEmpty(textContent.Text))
+                        else if (content is TextContent textContent && !string.IsNullOrWhiteSpace(textContent.Text))
                         {
                             // If transitioning from reasoning to text, end reasoning section
                             if (!isFirstReasoningChunk)

@@ -59,7 +59,7 @@ T4: ❌ Filter waits forever (or times out after 5 minutes)
 
 ## The Fix
 
-### New Implementation (Agent.cs:946-973)
+### New Implementation (Agent.cs - Current)
 
 ```csharp
 // Execute tools with periodic event draining to prevent deadlock
@@ -75,8 +75,8 @@ while (!executeTask.IsCompleted)
     var delayTask = Task.Delay(10, effectiveCancellationToken);
     await Task.WhenAny(executeTask, delayTask).ConfigureAwait(false);
 
-    // Yield any events that accumulated during execution
-    while (filterEventQueue.TryDequeue(out var filterEvt))
+    // Yield any events that accumulated during execution (direct polling, no intermediate queue)
+    while (_eventCoordinator.EventReader.TryRead(out var filterEvt))
     {
         yield return filterEvt;
     }
@@ -85,8 +85,8 @@ while (!executeTask.IsCompleted)
 // Get the result (this won't block since task is complete)
 var toolResultMessage = await executeTask.ConfigureAwait(false);
 
-// NEW: Final drain - yield any remaining events after tool execution
-while (filterEventQueue.TryDequeue(out var filterEvt))
+// Final drain - yield any remaining events after tool execution
+while (_eventCoordinator.EventReader.TryRead(out var filterEvt))
 {
     yield return filterEvt;
 }
@@ -104,17 +104,19 @@ while (filterEventQueue.TryDequeue(out var filterEvt))
 
 ```
 T0: Filter calls Emit(PermissionRequestEvent)
-    ↓ (writes to _filterEventChannel)
-T1: Background drainer reads from channel
-    ↓ (enqueues to filterEventQueue)
-T2: ✅ Polling loop detects event in queue (within 10ms)
-    ↓ (drains queue and yields event)
-T3: ✅ Consumer receives event (while filter is still blocked)
+    ↓ (writes to event channel)
+T1: ✅ Polling loop detects event via TryRead (within 10ms)
+    ↓ (yields event directly from channel)
+T2: ✅ Consumer receives event (while filter is still blocked)
     ↓ (consumer calls agent.SendFilterResponse())
-T4: ✅ Filter receives response and unblocks
-    ↓ (ExecuteToolsAsync completes)
-T5: ✅ Final drain catches any remaining events
+T3: ✅ Filter receives response and unblocks
+    ↓ (filter emits approval event, calls next())
+T4: ✅ Actual function executes
+T5: ✅ ExecuteToolsAsync completes
+T6: ✅ Final drain catches approval event and any other remaining events
 ```
+
+**Key Change (v2.1):** Removed background drainer task. Events are now polled directly from the channel via `TryRead()`, reducing latency and eliminating one layer of buffering.
 
 ---
 
@@ -263,18 +265,20 @@ AI:
 
 Replace lines 588-603 with the polling implementation shown above.
 
-### Section 9 (Lines 1153-1287) - Update Timeline Guarantee
+### Timeline Update (v2.1 - Direct Polling)
 
-Update lines 1166-1174 to reflect the polling mechanism:
+Current implementation with removed drainer:
 
 ```
-T0: Filter.Emit(PermissionRequestEvent)        → Shared channel
-T1: Background drainer reads                    → filterEventQueue
-T2: Main loop polling (every 10ms)             → TryDequeue
-T3: yield return event (within 10ms)           ← FILTER STILL BLOCKED
-T4: Handler receives event
-T5: Handler sends response                      → Agent.SendFilterResponse()
-T6: Filter.WaitForResponseAsync() receives      → Filter unblocks
+T0: Filter.Emit(PermissionRequestEvent)        → Event channel
+T1: Main loop polling (every 10ms)             → TryRead from channel
+T2: yield return event (within 10ms)           ← FILTER STILL BLOCKED
+T3: Handler receives event
+T4: Handler sends response                      → Agent.SendFilterResponse()
+T5: Filter.WaitForResponseAsync() receives      → Filter unblocks
+T6: Filter emits approval event                 → Event channel
+T7: Filter calls next()                         → Actual function executes
+T8: Final drain catches approval event
 ```
 
 ### New Section - Add Performance Characteristics

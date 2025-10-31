@@ -114,10 +114,33 @@ public class Project
     public ConversationThread CreateThread()
     {
         var thread = new ConversationThread();
-        thread.AddMetadata("Project", this);
-        Threads.Add(thread);
+        thread.SetProject(this); // Use the new SetProject method
         UpdateActivity();
         return thread;
+    }
+
+    /// <summary>
+    /// Adds an existing conversation thread to this project.
+    /// This enables "thread-first, project-later" workflows where threads are created
+    /// independently and then associated with a project.
+    /// </summary>
+    /// <param name="thread">The thread to add to this project</param>
+    /// <remarks>
+    /// The thread will automatically receive project documents via ProjectInjectedMemoryFilter.
+    /// If the thread is already associated with this project, this is a no-op.
+    ///
+    /// Usage:
+    /// <code>
+    /// var thread = new ConversationThread();
+    /// // ... use thread independently ...
+    /// project.AddThread(thread); // Now thread joins project context
+    /// </code>
+    /// </remarks>
+    public void AddThread(ConversationThread thread)
+    {
+        ArgumentNullException.ThrowIfNull(thread);
+        thread.SetProject(this);
+        UpdateActivity();
     }
 
 

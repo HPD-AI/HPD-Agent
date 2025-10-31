@@ -7,7 +7,7 @@ using HPD_Agent.Memory.Agent.PlanMode;
 /// <summary>
 /// HPD-Agent AI plugin for Plan Mode management.
 /// Provides functions for agents to create and manage execution plans.
-/// Uses ConversationContext.CurrentConversationId to identify which conversation's plan to manipulate.
+/// Uses Agent.CurrentFunctionContext.RunContext.ConversationId to identify which conversation's plan to manipulate.
 /// </summary>
 public class AgentPlanPlugin
 {
@@ -26,7 +26,7 @@ public class AgentPlanPlugin
         [Description("The goal or objective this plan aims to accomplish")] string goal,
         [Description("Array of step descriptions (e.g., ['Analyze code', 'Refactor auth', 'Run tests'])")] string[] steps)
     {
-        var conversationId = ConversationContext.CurrentConversationId;
+        var conversationId = Agent.CurrentFunctionContext?.RunContext?.ConversationId;
         if (string.IsNullOrEmpty(conversationId))
         {
             return "Error: No conversation context available.";
@@ -55,7 +55,7 @@ public class AgentPlanPlugin
         [Description("The new status: 'pending', 'in_progress', 'completed', or 'blocked'")] string status,
         [Description("Optional notes about this step's progress, findings, or blockers")] string? notes = null)
     {
-        var conversationId = ConversationContext.CurrentConversationId;
+        var conversationId = Agent.CurrentFunctionContext?.RunContext?.ConversationId;
         if (string.IsNullOrEmpty(conversationId))
         {
             return "Error: No conversation context available.";
@@ -105,7 +105,7 @@ public class AgentPlanPlugin
         [Description("Description of the new step to add")] string description,
         [Description("Optional: ID of step to insert after (e.g., '2'). If omitted, adds to end.")] string? afterStepId = null)
     {
-        var conversationId = ConversationContext.CurrentConversationId;
+        var conversationId = Agent.CurrentFunctionContext?.RunContext?.ConversationId;
         if (string.IsNullOrEmpty(conversationId))
         {
             return "Error: No conversation context available.";
@@ -135,7 +135,7 @@ public class AgentPlanPlugin
     public async Task<string> AddContextNoteAsync(
         [Description("The note to add (e.g., 'Discovered auth uses JWT not sessions')")] string note)
     {
-        var conversationId = ConversationContext.CurrentConversationId;
+        var conversationId = Agent.CurrentFunctionContext?.RunContext?.ConversationId;
         if (string.IsNullOrEmpty(conversationId))
         {
             return "Error: No conversation context available.";
@@ -163,7 +163,7 @@ public class AgentPlanPlugin
     [Description("Mark the entire plan as complete. Use this when all steps are done and the goal is achieved.")]
     public async Task<string> CompletePlanAsync()
     {
-        var conversationId = ConversationContext.CurrentConversationId;
+        var conversationId = Agent.CurrentFunctionContext?.RunContext?.ConversationId;
         if (string.IsNullOrEmpty(conversationId))
         {
             return "Error: No conversation context available.";

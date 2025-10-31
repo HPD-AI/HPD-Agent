@@ -14,7 +14,7 @@ namespace HPDAgent.Memory.Extensions;
 /// <summary>
 /// Extension methods for registering HPD-Agent.Memory services.
 /// </summary>
-public static class MemoryServiceCollectionExtensions
+public static partial class MemoryServiceCollectionExtensions
 {
     /// <summary>
     /// Register core HPD-Agent.Memory services with in-memory storage.
@@ -122,38 +122,31 @@ public static class MemoryServiceCollectionExtensions
         return services;
     }
 
-    /// <summary>
-    /// Add multiple pipeline handlers from an assembly.
-    /// Scans for types implementing IPipelineHandler&lt;TContext&gt;.
-    /// </summary>
-    public static IServiceCollection AddPipelineHandlersFromAssembly<TContext>(
-        this IServiceCollection services,
-        System.Reflection.Assembly assembly)
-        where TContext : IPipelineContext
-    {
-        var handlerInterface = typeof(IPipelineHandler<TContext>);
-        var handlerTypes = assembly.GetTypes()
-            .Where(t => t.IsClass && !t.IsAbstract && handlerInterface.IsAssignableFrom(t));
-
-        foreach (var handlerType in handlerTypes)
-        {
-            // Register as singleton
-            services.TryAddSingleton(handlerType);
-
-            // Register with orchestrator
-            services.AddSingleton(sp =>
-            {
-                var orchestrator = sp.GetRequiredService<IPipelineOrchestrator<TContext>>();
-                var handler = (IPipelineHandler<TContext>)sp.GetRequiredService(handlerType);
-
-                // Fire and forget - orchestrator will handle async registration
-                _ = orchestrator.AddHandlerAsync(handler);
-
-                return handler;
-            });
-        }
-
-        return services;
-    }
+    // NOTE: The AddPipelineHandlersFromAssembly method has been REMOVED for Native AOT compatibility.
+    // It used Assembly.GetTypes() which requires runtime reflection and is not Native AOT compatible.
+    //
+    // MIGRATION GUIDE:
+    // Old (reflection-based, NOT Native AOT compatible):
+    //   services.AddPipelineHandlersFromAssembly<DocumentIngestionContext>(typeof(MyHandler).Assembly);
+    //
+    // New Option 1 (recommended - automatic via source generation):
+    //   Mark your handlers with [PipelineHandler] attribute and use generated extension methods:
+    //   [PipelineHandler(StepName = "extract-text")]
+    //   public class TextExtractionHandler : IPipelineHandler<DocumentIngestionContext> { }
+    //
+    //   Then register:
+    //   services.AddGeneratedDocumentIngestionHandlers();  // Auto-discovers all [PipelineHandler] marked handlers
+    //   // or
+    //   services.AddAllGeneratedHandlers();  // Registers ALL handlers across all context types
+    //
+    // New Option 2 (manual, explicit registration):
+    //   services.AddPipelineHandler<DocumentIngestionContext, TextExtractionHandler>("extract-text");
+    //   services.AddPipelineHandler<DocumentIngestionContext, ChunkingHandler>("chunking");
+    //
+    // The source generator approach (Option 1) is STRONGLY RECOMMENDED as it provides:
+    // - Full Native AOT compatibility (zero runtime reflection)
+    // - Better performance (compile-time code generation)
+    // - Type safety and IDE support
+    // - Automatic discovery without manual registration
 
 }

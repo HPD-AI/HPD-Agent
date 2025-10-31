@@ -191,6 +191,52 @@ public class ConversationThread : AgentThread
 
     #endregion
 
+    #region Project Association
+
+    /// <summary>
+    /// Associates this thread with a project, enabling shared document context.
+    /// The thread will automatically receive documents uploaded to the project via ProjectInjectedMemoryFilter.
+    /// </summary>
+    /// <param name="project">The project to associate with this thread</param>
+    /// <remarks>
+    /// This method provides flexibility for "thread-first, project-later" workflows.
+    /// The thread is automatically added to the project's thread list.
+    ///
+    /// Usage:
+    /// <code>
+    /// var thread = new ConversationThread();
+    /// thread.SetProject(myProject); // Thread now receives project documents
+    /// await agent.RunAsync("Hello", thread);
+    /// </code>
+    /// </remarks>
+    public void SetProject(Project project)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+
+        // Store project in metadata (used by filters)
+        AddMetadata("Project", project);
+
+        // Register thread with project if not already present
+        if (!project.Threads.Contains(this))
+        {
+            project.Threads.Add(this);
+        }
+
+        project.UpdateActivity();
+    }
+
+    /// <summary>
+    /// Gets the project associated with this thread, if any.
+    /// </summary>
+    /// <returns>The associated project, or null if thread is not part of a project</returns>
+    public Project? GetProject()
+    {
+        _metadata.TryGetValue("Project", out var proj);
+        return proj as Project;
+    }
+
+    #endregion
+
     /// <summary>
     /// Service discovery - provides AgentThreadMetadata (Microsoft pattern)
     /// </summary>

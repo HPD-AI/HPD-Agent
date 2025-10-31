@@ -23,6 +23,11 @@
     <!-- Reference to generic pipeline infrastructure and RAG abstractions -->
     <ProjectReference Include="..\HPD.Pipeline\HPD.Pipeline.csproj" />
     <ProjectReference Include="..\HPD.Memory.Abstractions\HPD.Memory.Abstractions.csproj" />
+
+    <!-- Source generator for automatic handler registration (Native AOT compatible) -->
+    <ProjectReference Include="..\..\..\HPD-Agent.SourceGenerator\HPD-Agent.SourceGenerator.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <ItemGroup>

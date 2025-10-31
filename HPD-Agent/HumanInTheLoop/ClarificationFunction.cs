@@ -17,6 +17,7 @@ public static class ClarificationFunction
     /// enabling the user to provide answers without ending the current message turn.
     /// </summary>
     /// <param name="options">Optional function configuration options</param>
+    /// <param name="timeout">Maximum time to wait for user response. Defaults to 5 minutes.</param>
     /// <returns>An AIFunction that can be registered on parent/orchestrator agents</returns>
     /// <remarks>
     /// Usage example:
@@ -26,7 +27,7 @@ public static class ClarificationFunction
     ///
     /// // Register sub-agent and clarification function on PARENT
     /// orchestrator.AddFunction(codingAgent.AsAIFunction());
-    /// orchestrator.AddFunction(ClarificationFunction.Create());
+    /// orchestrator.AddFunction(ClarificationFunction.Create(timeout: TimeSpan.FromMinutes(10)));
     ///
     /// // Flow:
     /// // 1. Orchestrator calls codingAgent("Build auth")
@@ -36,7 +37,7 @@ public static class ClarificationFunction
     /// // 5. Orchestrator continues in same turn, calls codingAgent("Build Express auth")
     /// </code>
     /// </remarks>
-    public static AIFunction Create(AIFunctionFactoryOptions? options = null)
+    public static AIFunction Create(AIFunctionFactoryOptions? options = null, TimeSpan? timeout = null)
     {
         [Description("Ask the user for clarification or additional information needed to complete the task. Only use if sub-agents asks you a question you cannot answer.")]
         async Task<string> AskUserForClarificationAsync(
@@ -73,16 +74,17 @@ public static class ClarificationFunction
 
             // Wait for user's response (blocks here while event is processed)
             InternalClarificationResponseEvent response;
+            var effectiveTimeout = timeout ?? TimeSpan.FromMinutes(5);
             try
             {
                 response = await context.WaitForResponseAsync<InternalClarificationResponseEvent>(
                     requestId,
-                    timeout: TimeSpan.FromMinutes(5),
+                    timeout: effectiveTimeout,
                     cancellationToken);
             }
             catch (TimeoutException)
             {
-                return "⚠️ Clarification request timed out after 5 minutes. Please proceed with available information or ask the user to respond more promptly.";
+                return $"⚠️ Clarification request timed out after {effectiveTimeout.TotalMinutes} minutes. Please proceed with available information or ask the user to respond more promptly.";
             }
             catch (OperationCanceledException)
             {

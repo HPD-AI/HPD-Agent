@@ -509,7 +509,7 @@ public class Agent : AIAgent
         string? lastAssistantMessageId = null;
 
         // Create agent run context for tracking across all function calls
-        var agentRunContext = new AgentRunContext(messageTurnId, conversationId, _maxFunctionCalls);
+        var agentRunContext = new AgentRunContext(messageTurnId, conversationId, _maxFunctionCalls, this.Name);
 
         // Track consecutive same-function calls for circuit breaker
         var lastSignaturePerTool = new Dictionary<string, string>();
@@ -806,18 +806,23 @@ public class Agent : AIAgent
 
                 // Create assistant message for history WITHOUT reasoning (save tokens)
                 var historyContents = assistantContents.Where(c => c is not TextReasoningContent).ToList();
-                
+
                 // FIX Bug #2: Only add to history if there's meaningful TEXT content (non-empty, non-whitespace)
                 // FunctionCallContent alone doesn't need a separate assistant message - it's just metadata
                 var hasNonEmptyText = historyContents
                     .OfType<TextContent>()
                     .Any(t => !string.IsNullOrWhiteSpace(t.Text));
-                
+
                 if (hasNonEmptyText)
                 {
                     var historyMessage = new ChatMessage(ChatRole.Assistant, historyContents);
                     turnHistory.Add(historyMessage);
                 }
+
+                // Clear responseUpdates after processing this tool-calling iteration
+                // Prevents accumulating updates from multiple iterations (responseUpdates is declared outside loop)
+                // Must be outside the hasNonEmptyText check to handle tool-only responses
+                responseUpdates.Clear();
 
                 // Note: Tool call start/args events are now emitted immediately during streaming (see above)
                 // This ensures true streaming with zero latency for function call visibility
@@ -1097,13 +1102,25 @@ public class Agent : AIAgent
         string? modelId = null;
         string? responseId = null;
         DateTimeOffset? createdAt = null;
+        UsageDetails? usage = null;
 
         foreach (var update in updates)
         {
             if (update.Contents != null)
             {
-                // Only include TextContent (exclude TextReasoningContent to save tokens in future turns)
-                allContents.AddRange(update.Contents.Where(c => c is TextContent && c is not TextReasoningContent));
+                foreach (var content in update.Contents)
+                {
+                    // Extract usage from UsageContent (streaming providers send this in final chunk)
+                    if (content is UsageContent usageContent)
+                    {
+                        usage = usageContent.Details;
+                    }
+                    // Only include TextContent in message (exclude TextReasoningContent to save tokens)
+                    else if (content is TextContent && content is not TextReasoningContent)
+                    {
+                        allContents.Add(content);
+                    }
+                }
             }
 
             if (update.FinishReason != null)
@@ -1126,7 +1143,8 @@ public class Agent : AIAgent
             {
                 FinishReason = finishReason,
                 ModelId = modelId,
-                CreatedAt = createdAt
+                CreatedAt = createdAt,
+                Usage = usage
             };
         }
 
@@ -1140,7 +1158,8 @@ public class Agent : AIAgent
         {
             FinishReason = finishReason,
             ModelId = modelId,
-            CreatedAt = createdAt
+            CreatedAt = createdAt,
+            Usage = usage
         };
     }
 
@@ -1521,14 +1540,15 @@ Best practices:
 
     /// <summary>
     /// Creates a new conversation thread within a project context.
-    /// The project reference is stored in the thread's metadata.
+    /// The project reference is stored in the thread's metadata and the thread
+    /// is automatically added to the project's thread list.
     /// </summary>
     /// <param name="project">The project to associate with this thread</param>
     /// <returns>A new ConversationThread with project metadata</returns>
     public ConversationThread CreateThread(Project project)
     {
         var thread = new ConversationThread();
-        thread.AddMetadata("Project", project);
+        thread.SetProject(project);
         return thread;
     }
 
@@ -1562,14 +1582,7 @@ Best practices:
             }
         }
 
-        // Create ConversationExecutionContext for AsyncLocal context
-        var executionContext = new ConversationExecutionContext(conversationThread.Id)
-        {
-            AgentName = this.Name
-        };
-
-        // Set AsyncLocal context for plugins (e.g., PlanMode) to access
-        ConversationContext.Set(executionContext);
+        // Note: ConversationContext is set in RunAgenticLoopInternal when agentRunContext is created
 
         IReadOnlyList<ChatMessage> finalHistory;
         try
@@ -1636,8 +1649,7 @@ Best practices:
         }
         finally
         {
-            // Clear context to prevent leaks
-            ConversationContext.Clear();
+            // Context is cleared automatically per function call in Agent.CurrentFunctionContext
         }
 
         // Update thread with final messages
@@ -1689,14 +1701,7 @@ Best practices:
             }
         }
 
-        // Create ConversationExecutionContext for AsyncLocal context
-        var executionContext = new ConversationExecutionContext(conversationThread.Id)
-        {
-            AgentName = this.Name
-        };
-
-        // Set AsyncLocal context for plugins (e.g., PlanMode) to access
-        ConversationContext.Set(executionContext);
+        // Note: ConversationContext is set in RunAgenticLoopInternal when agentRunContext is created
 
         IReadOnlyList<ChatMessage> finalHistory;
         try
@@ -1765,8 +1770,7 @@ Best practices:
         }
         finally
         {
-            // Clear context to prevent leaks
-            ConversationContext.Clear();
+            // Context is cleared automatically per function call in Agent.CurrentFunctionContext
         }
 
         // Update thread with final messages
@@ -2423,49 +2427,30 @@ public class MessageProcessor
 
     /// <summary>
     /// Checks if reduction should be triggered based on percentage of context window.
-    /// Gemini CLI-inspired approach with user-specified context window size.
+    /// TODO: NOT IMPLEMENTED - Token tracking requires Token Flow Architecture Map.
+    /// See docs/NEED_FOR_TOKEN_FLOW_ARCHITECTURE_MAP.md for details.
+    /// Falls back to message-count reduction (Priority 3).
     /// </summary>
     private bool ShouldReduceByPercentage(List<ChatMessage> messagesList, int lastSummaryIndex)
     {
-        var contextWindow = _reductionConfig!.ContextWindowSize!.Value;
-        var triggerPercentage = _reductionConfig.TokenBudgetTriggerPercentage!.Value;
-        var triggerThreshold = (int)(contextWindow * triggerPercentage);
-
-        if (lastSummaryIndex >= 0)
-        {
-            // Count tokens AFTER last summary (incremental token tracking)
-            var messagesAfterSummary = messagesList.Skip(lastSummaryIndex + 1);
-            var tokensAfterSummary = messagesAfterSummary.CalculateTotalTokens();
-            return tokensAfterSummary > triggerThreshold;
-        }
-        else
-        {
-            // Count all message tokens (first reduction)
-            var totalTokens = messagesList.CalculateTotalTokens();
-            return totalTokens > triggerThreshold;
-        }
+        // TODO: Token tracking not implemented - requires architecture map
+        // This would track ephemeral context (system prompts, RAG docs, memory)
+        // and persistent context (user/assistant/tool messages) separately
+        return false;
     }
 
     /// <summary>
     /// Checks if reduction should be triggered based on absolute token budget.
-    /// Uses existing MaxTokenBudget configuration.
+    /// TODO: NOT IMPLEMENTED - Token tracking requires Token Flow Architecture Map.
+    /// See docs/NEED_FOR_TOKEN_FLOW_ARCHITECTURE_MAP.md for details.
+    /// Falls back to message-count reduction (Priority 3).
     /// </summary>
     private bool ShouldReduceByTokens(List<ChatMessage> messagesList, int lastSummaryIndex)
     {
-        var maxBudget = _reductionConfig!.MaxTokenBudget!.Value;
-        var threshold = _reductionConfig.TokenBudgetThreshold;
-
-        if (lastSummaryIndex >= 0)
-        {
-            var messagesAfterSummary = messagesList.Skip(lastSummaryIndex + 1);
-            var tokensAfterSummary = messagesAfterSummary.CalculateTotalTokens();
-            return tokensAfterSummary > (maxBudget + threshold);
-        }
-        else
-        {
-            var totalTokens = messagesList.CalculateTotalTokens();
-            return totalTokens > (maxBudget + threshold);
-        }
+        // TODO: Token tracking not implemented - requires architecture map
+        // This would track ephemeral context (system prompts, RAG docs, memory)
+        // and persistent context (user/assistant/tool messages) separately
+        return false;
     }
 
     /// <summary>

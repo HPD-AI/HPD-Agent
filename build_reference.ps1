@@ -5,15 +5,20 @@ $REFERENCE_DIR = "Reference"
 # List your reference repositories here
 $REPOS = @(
     "https://github.com/dotnet/extensions.git",
-    #"https://github.com/microsoft/semantic-kernel.git",
+    "https://github.com/microsoft/semantic-kernel.git",
     "https://github.com/microsoft/agent-framework.git",
-    #"https://github.com/google-gemini/gemini-cli.git",
-    "https://github.com/langchain-ai/langgraph.git"
-    #"https://github.com/pydantic/pydantic-ai.git",
-    #"https://github.com/strands-agents/sdk-python.git",
-    #"https://github.com/ag-ui-protocol/ag-ui.git",
-    #"https://github.com/google-gemini/gemini-cli.git",
-    #"https://github.com/openai/codex.git"
+    "https://github.com/google-gemini/gemini-cli.git",
+    "https://github.com/langchain-ai/langgraph.git",
+    "https://github.com/pydantic/pydantic-ai.git",
+    "https://github.com/strands-agents/sdk-python.git",
+    "https://github.com/ag-ui-protocol/ag-ui.git",
+    "https://github.com/google-gemini/gemini-cli.git",
+    "https://github.com/openai/codex.git",
+    "https://github.com/langchain-ai/langchain.git",
+    "https://github.com/microsoft/vscode-copilot-chat.git",
+    "https://github.com/Aider-AI/aider.git",
+    "https://github.com/microsoft/kernel-memory.git"
+
     # Add more repo URLs as needed
 )
 

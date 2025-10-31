@@ -188,6 +188,12 @@ public class AgentRunContext
     public string ConversationId { get; }
 
     /// <summary>
+    /// Name of the agent executing in this run (optional).
+    /// Used for telemetry, logging, and plugin context.
+    /// </summary>
+    public string? AgentName { get; set; }
+
+    /// <summary>
     /// When this agent run started
     /// </summary>
     public DateTime StartTime { get; }
@@ -237,10 +243,11 @@ public class AgentRunContext
     /// <summary>
     /// Constructor for AgentRunContext
     /// </summary>
-    public AgentRunContext(string runId, string conversationId, int maxIterations = 10)
+    public AgentRunContext(string runId, string conversationId, int maxIterations = 10, string? agentName = null)
     {
         RunId = runId ?? throw new ArgumentNullException(nameof(runId));
         ConversationId = conversationId ?? throw new ArgumentNullException(nameof(conversationId));
+        AgentName = agentName;
         StartTime = DateTime.UtcNow;
         MaxIterations = maxIterations;
     }
@@ -297,5 +304,27 @@ public class AgentRunContext
     public bool HasExceededErrorLimit(int maxConsecutiveErrors)
     {
         return ConsecutiveErrorCount > maxConsecutiveErrors;
+    }
+
+    /// <summary>
+    /// Checks if execution is approaching a timeout threshold.
+    /// </summary>
+    /// <param name="threshold">Time buffer before timeout (e.g., 30 seconds)</param>
+    /// <param name="maxDuration">Maximum allowed duration (defaults to 5 minutes)</param>
+    /// <returns>True if elapsed time is within threshold of max duration</returns>
+    public bool IsNearTimeout(TimeSpan threshold, TimeSpan? maxDuration = null)
+    {
+        var max = maxDuration ?? TimeSpan.FromMinutes(5);
+        return ElapsedTime > (max - threshold);
+    }
+
+    /// <summary>
+    /// Checks if execution is near the iteration limit.
+    /// </summary>
+    /// <param name="buffer">Number of iterations before limit (e.g., 2 means stop if 2 iterations remain)</param>
+    /// <returns>True if current iteration is within buffer of max iterations</returns>
+    public bool IsNearIterationLimit(int buffer = 2)
+    {
+        return CurrentIteration >= MaxIterations - buffer;
     }
 }

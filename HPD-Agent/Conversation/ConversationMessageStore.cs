@@ -243,7 +243,8 @@ public abstract class ConversationMessageStore : ChatMessageStore
 
     /// <summary>
     /// Calculates the total token count for all messages in the store.
-    /// Uses provider-accurate counts when available, estimates otherwise.
+    /// Only includes tokens reported by LLM providers - no estimation.
+    /// Messages without provider token counts contribute 0 to the total.
     /// </summary>
     public virtual async Task<int> GetTotalTokenCountAsync(CancellationToken cancellationToken = default)
     {
@@ -253,7 +254,7 @@ public abstract class ConversationMessageStore : ChatMessageStore
 
     /// <summary>
     /// Calculates token count for messages after the last summary.
-    /// Used for token-aware cache checking (Phase 2 when implemented).
+    /// Only includes provider-reported tokens - no estimation.
     /// </summary>
     public virtual async Task<int> GetTokenCountAfterLastSummaryAsync(CancellationToken cancellationToken = default)
     {

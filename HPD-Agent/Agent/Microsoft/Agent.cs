@@ -63,6 +63,23 @@ public sealed class Agent : AIAgent
     public ChatOptions? DefaultOptions => _core.DefaultOptions;
 
     /// <summary>
+    /// Switches the agent to use a different LLM provider at runtime.
+    /// Delegates to the core agent for provider switching.
+    /// </summary>
+    /// <param name="providerKey">Provider identifier (e.g., "openai", "anthropic", "ollama")</param>
+    /// <param name="modelName">Model name to use with the provider</param>
+    /// <param name="apiKey">Optional API key (uses existing key from config if not provided)</param>
+    /// <param name="endpoint">Optional custom endpoint (for providers like Azure OpenAI or self-hosted models)</param>
+    public void SwitchProvider(
+        string providerKey,
+        string modelName,
+        string? apiKey = null,
+        string? endpoint = null)
+    {
+        _core.SwitchProvider(providerKey, modelName, apiKey, endpoint);
+    }
+
+    /// <summary>
     /// Runs the agent with messages and an explicit thread for state management (non-streaming).
     /// </summary>
     /// <param name="messages">Messages to process</param>

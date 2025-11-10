@@ -24,11 +24,12 @@ namespace HPD.Agent;
 /// </summary>
 internal sealed class Agent
 {
-    private readonly IChatClient _baseClient;
+    private IChatClient _baseClient; // Mutable for runtime provider switching
     private readonly string _name;
     private readonly ScopedFilterManager? _scopedFilterManager;
     private readonly int _maxFunctionCalls;
     private readonly IProviderRegistry _providerRegistry;
+    private readonly IServiceProvider? _serviceProvider; // Store for runtime provider switching
 
     // Microsoft.Extensions.AI compliance fields
     private readonly ChatClientMetadata _metadata;
@@ -55,14 +56,14 @@ internal sealed class Agent
     // Specialized component fields for delegation
     private readonly MessageProcessor _messageProcessor;
     private readonly FunctionCallProcessor _functionCallProcessor;
-    private readonly AgentTurn _agentTurn;
+    private AgentTurn _agentTurn; // Mutable for runtime provider switching
     private readonly ToolScheduler _toolScheduler;
     private readonly HPD_Agent.Scoping.UnifiedScopingManager _scopingManager;
     private readonly PermissionManager _permissionManager;
     private readonly BidirectionalEventCoordinator _eventCoordinator;
     private readonly IReadOnlyList<IAiFunctionFilter> _aiFunctionFilters;
     private readonly IReadOnlyList<IMessageTurnFilter> _messageTurnFilters;
-    private readonly HPD.Agent.ErrorHandling.IProviderErrorHandler _providerErrorHandler;
+    private HPD.Agent.ErrorHandling.IProviderErrorHandler _providerErrorHandler; // Mutable for runtime provider switching
 
     // Observability components (following component delegation pattern)
     private readonly AgentTelemetryService? _telemetryService;
@@ -250,6 +251,7 @@ internal sealed class Agent
         _maxFunctionCalls = config.MaxAgenticIterations;
         _providerErrorHandler = providerErrorHandler;
         _providerRegistry = providerRegistry; // New
+        _serviceProvider = serviceProvider; // Store for runtime provider switching
 
         // TEMPORARY: Inject the resolved handler into the config object
         // so that FunctionCallProcessor can access it without changing its signature yet.
@@ -304,7 +306,11 @@ internal sealed class Agent
             config.ErrorHandling,
             config.ServerConfiguredTools,
             config.AgenticLoop);  // NEW: Pass agentic loop config for TerminateOnUnknownCalls
-        _agentTurn = new AgentTurn(_baseClient);
+        _agentTurn = new AgentTurn(
+            _baseClient,
+            config.ConfigureOptions,
+            config.ChatClientMiddleware,
+            serviceProvider);
 
         // Initialize unified scoping manager
         var skills = skillScopingManager?.GetSkills() ?? Enumerable.Empty<HPD_Agent.Skills.SkillDefinition>();
@@ -368,6 +374,117 @@ internal sealed class Agent
     /// Scoped filter manager for applying filters based on function/plugin scope
     /// </summary>
     public ScopedFilterManager? ScopedFilterManager => _scopedFilterManager;
+
+    /// <summary>
+    /// Switches the agent to use a different LLM provider at runtime.
+    /// This allows dynamic provider switching without rebuilding the agent.
+    /// </summary>
+    /// <param name="providerKey">Provider identifier (e.g., "openai", "anthropic", "ollama")</param>
+    /// <param name="modelName">Model name to use with the provider</param>
+    /// <param name="apiKey">Optional API key (uses existing key from config if not provided)</param>
+    /// <param name="endpoint">Optional custom endpoint (for providers like Azure OpenAI or self-hosted models)</param>
+    /// <exception cref="ArgumentException">Thrown when provider key or model name is empty</exception>
+    /// <exception cref="InvalidOperationException">Thrown when provider is not found or configuration is invalid</exception>
+    /// <example>
+    /// <code>
+    /// var agent = new AgentBuilder()
+    ///     .WithProvider("openai", "gpt-4", "sk-...")
+    ///     .Build();
+    ///
+    /// // Use with OpenAI
+    /// await agent.RunAsync(messages);
+    ///
+    /// // Switch to Anthropic at runtime
+    /// agent.SwitchProvider("anthropic", "claude-3-sonnet-20240229", "sk-ant-...");
+    ///
+    /// // Continue using with Claude
+    /// await agent.RunAsync(messages);
+    /// </code>
+    /// </example>
+    public void SwitchProvider(
+        string providerKey,
+        string modelName,
+        string? apiKey = null,
+        string? endpoint = null)
+    {
+        if (string.IsNullOrWhiteSpace(providerKey))
+            throw new ArgumentException("Provider key cannot be empty", nameof(providerKey));
+
+        if (string.IsNullOrWhiteSpace(modelName))
+            throw new ArgumentException("Model name cannot be empty", nameof(modelName));
+
+        // Get provider from registry
+        var provider = _providerRegistry.GetProvider(providerKey);
+        if (provider == null)
+        {
+            var available = _providerRegistry.GetRegisteredProviders();
+            throw new InvalidOperationException(
+                $"Provider '{providerKey}' not found. Available providers: {string.Join(", ", available)}. " +
+                $"Make sure you've added the provider package (e.g., HPD-Agent.Providers.{char.ToUpper(providerKey[0])}{providerKey.Substring(1)}).");
+        }
+
+        // Create new provider config
+        var newConfig = new ProviderConfig
+        {
+            ProviderKey = providerKey,
+            ModelName = modelName,
+            ApiKey = apiKey ?? Config?.Provider?.ApiKey, // Use existing key if not provided
+            Endpoint = endpoint ?? Config?.Provider?.Endpoint,
+            // Preserve existing default options
+            DefaultChatOptions = Config?.Provider?.DefaultChatOptions
+        };
+
+        // Validate configuration
+        var validation = provider.ValidateConfiguration(newConfig);
+        if (!validation.IsValid)
+        {
+            throw new InvalidOperationException(
+                $"Invalid configuration for provider '{providerKey}': {string.Join(", ", validation.Errors)}");
+        }
+
+        // Create new chat client
+        IChatClient newClient;
+        try
+        {
+            newClient = provider.CreateChatClient(newConfig, _serviceProvider);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                $"Failed to create chat client for provider '{providerKey}': {ex.Message}", ex);
+        }
+
+        if (newClient == null)
+            throw new InvalidOperationException($"Provider '{providerKey}' returned null chat client");
+
+        // Create new error handler
+        var newErrorHandler = provider.CreateErrorHandler();
+        if (newErrorHandler == null)
+            throw new InvalidOperationException($"Provider '{providerKey}' returned null error handler");
+
+        // Update agent state
+        _baseClient = newClient;
+        _providerErrorHandler = newErrorHandler;
+
+        // Recreate AgentTurn with new client (middleware is preserved automatically!)
+        _agentTurn = new AgentTurn(
+            _baseClient,
+            Config?.ConfigureOptions,
+            Config?.ChatClientMiddleware,
+            _serviceProvider);
+
+        // Update config
+        if (Config != null)
+        {
+            Config.Provider = newConfig;
+
+            // Update error handling config with new provider handler
+            if (Config.ErrorHandling != null)
+            {
+                Config.ErrorHandling.ProviderHandler = _providerErrorHandler;
+            }
+        }
+    }
 
     #region internal loop
     /// <summary>
@@ -3337,6 +3454,9 @@ internal class MessageProcessor
 internal class AgentTurn
 {
     private readonly IChatClient _baseClient;
+    private readonly Action<ChatOptions>? _configureOptions;
+    private readonly List<Func<IChatClient, IServiceProvider?, IChatClient>>? _middleware;
+    private readonly IServiceProvider? _serviceProvider;
 
     /// <summary>
     /// The ConversationId from the most recent response (if the service manages history server-side).
@@ -3348,9 +3468,19 @@ internal class AgentTurn
     /// Initializes a new instance of AgentTurn
     /// </summary>
     /// <param name="baseClient">The underlying chat client to use for LLM calls</param>
-    public AgentTurn(IChatClient baseClient)
+    /// <param name="configureOptions">Optional callback to configure options before each LLM call</param>
+    /// <param name="middleware">Optional middleware to wrap the client dynamically on each request</param>
+    /// <param name="serviceProvider">Optional service provider for middleware dependency injection</param>
+    public AgentTurn(
+        IChatClient baseClient,
+        Action<ChatOptions>? configureOptions = null,
+        List<Func<IChatClient, IServiceProvider?, IChatClient>>? middleware = null,
+        IServiceProvider? serviceProvider = null)
     {
         _baseClient = baseClient ?? throw new ArgumentNullException(nameof(baseClient));
+        _configureOptions = configureOptions;
+        _middleware = middleware;
+        _serviceProvider = serviceProvider;
     }
 
     /// <summary>
@@ -3386,8 +3516,29 @@ internal class AgentTurn
         ChatOptions? options,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        // Get the streaming response from the base client
-        var stream = _baseClient.GetStreamingResponseAsync(messages, options, cancellationToken);
+        // Apply runtime options configuration callback if configured
+        if (_configureOptions != null && options != null)
+        {
+            _configureOptions(options);
+        }
+
+        // Apply middleware dynamically (if any)
+        // This allows runtime provider switching - new providers automatically get wrapped
+        var effectiveClient = _baseClient;
+        if (_middleware != null && _middleware.Count > 0)
+        {
+            foreach (var mw in _middleware)
+            {
+                effectiveClient = mw(effectiveClient, _serviceProvider);
+                if (effectiveClient == null)
+                {
+                    throw new InvalidOperationException("Chat client middleware returned null");
+                }
+            }
+        }
+
+        // Get the streaming response from the effective client (base or wrapped)
+        var stream = effectiveClient.GetStreamingResponseAsync(messages, options, cancellationToken);
 
         IAsyncEnumerator<ChatResponseUpdate>? enumerator = null;
         Exception? errorToYield = null;

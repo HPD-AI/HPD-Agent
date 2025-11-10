@@ -143,14 +143,14 @@ public class AgentConfig
     /// <para>
     /// <b>Example:</b>
     /// <code>
-    /// var agent = new Agent(new AgentConfig 
+    /// var agent = new Agent(new AgentConfig
     /// {
     ///     ServerConfiguredTools = [get_weather_function, search_web_function]
     /// });
-    /// 
+    ///
     /// // Request doesn't include tools (they're server-configured)
     /// var response = await agent.GetResponseAsync(messages, new ChatOptions());
-    /// 
+    ///
     /// // LLM calls "get_weather" (server knows about it)
     /// // Agent finds it in ServerConfiguredTools and executes it
     /// </code>
@@ -158,6 +158,77 @@ public class AgentConfig
     /// </remarks>
     [JsonIgnore] // Don't serialize AIFunction instances
     public IList<AITool>? ServerConfiguredTools { get; set; }
+
+    /// <summary>
+    /// Optional callback to configure or transform ChatOptions before each LLM call.
+    /// This allows dynamic runtime configuration without middleware.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This callback is invoked before every LLM request, allowing you to:
+    /// - Dynamically adjust temperature, top_p, etc. based on runtime conditions
+    /// - Add request-specific metadata or tracking
+    /// - Enforce constraints (e.g., cap max tokens)
+    /// - Implement custom option transformation logic
+    /// </para>
+    /// <para>
+    /// <b>Example:</b>
+    /// <code>
+    /// var config = new AgentConfig
+    /// {
+    ///     ConfigureOptions = opts =>
+    ///     {
+    ///         // Cap temperature at 0.8
+    ///         opts.Temperature = Math.Min(opts.Temperature ?? 1.0f, 0.8f);
+    ///
+    ///         // Add request ID for tracking
+    ///         opts.AdditionalProperties ??= new();
+    ///         opts.AdditionalProperties["request_id"] = Guid.NewGuid().ToString();
+    ///     }
+    /// };
+    /// </code>
+    /// </para>
+    /// </remarks>
+    [JsonIgnore] // Don't serialize callbacks
+    public Action<ChatOptions>? ConfigureOptions { get; set; }
+
+    /// <summary>
+    /// Optional middleware to wrap the IChatClient for custom processing.
+    /// Middleware is applied dynamically on each request, allowing runtime provider switching to work.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Unlike traditional middleware that wraps the client at build time, this middleware is applied
+    /// on every request. This means:
+    /// - Runtime provider switching still works (new provider gets wrapped automatically)
+    /// - No performance overhead when middleware list is null/empty
+    /// - Middleware can be added/removed at runtime if needed
+    /// </para>
+    /// <para>
+    /// <b>Use Cases:</b>
+    /// - Custom rate limiting
+    /// - Cost tracking and budgets
+    /// - Request/response logging
+    /// - Response caching
+    /// - Content filtering
+    /// - Retry policies
+    /// </para>
+    /// <para>
+    /// <b>Example:</b>
+    /// <code>
+    /// var config = new AgentConfig
+    /// {
+    ///     ChatClientMiddleware = new()
+    ///     {
+    ///         (client, services) => new RateLimitingChatClient(client),
+    ///         (client, services) => new CostTrackingChatClient(client, services)
+    ///     }
+    /// };
+    /// </code>
+    /// </para>
+    /// </remarks>
+    [JsonIgnore] // Don't serialize middleware delegates
+    public List<Func<IChatClient, IServiceProvider?, IChatClient>>? ChatClientMiddleware { get; set; }
 }
 
 #region Supporting Configuration Classes

@@ -53,6 +53,23 @@ public sealed class Agent
     public string Name => _core.Name;
 
     /// <summary>
+    /// Switches the agent to use a different LLM provider at runtime.
+    /// Delegates to the core agent for provider switching.
+    /// </summary>
+    /// <param name="providerKey">Provider identifier (e.g., "openai", "anthropic", "ollama")</param>
+    /// <param name="modelName">Model name to use with the provider</param>
+    /// <param name="apiKey">Optional API key (uses existing key from config if not provided)</param>
+    /// <param name="endpoint">Optional custom endpoint (for providers like Azure OpenAI or self-hosted models)</param>
+    public void SwitchProvider(
+        string providerKey,
+        string modelName,
+        string? apiKey = null,
+        string? endpoint = null)
+    {
+        _core.SwitchProvider(providerKey, modelName, apiKey, endpoint);
+    }
+
+    /// <summary>
     /// Runs the agent with AGUI protocol input and streams events to the provided channel.
     /// This is the primary AGUI protocol entry point.
     /// </summary>

@@ -59,9 +59,6 @@ public class AgentBuilder
     // MCP runtime fields
     internal MCPClientManager? _mcpClientManager;
 
-    // Microsoft.Extensions.AI middleware pipeline
-    private readonly List<Func<IChatClient, IServiceProvider, IChatClient>> _middlewares = new();
-
     /// <summary>
     /// Creates a new builder with default configuration.
     /// Automatically discovers and registers all loaded provider packages.
@@ -375,17 +372,58 @@ public class AgentBuilder
     }
 
     /// <summary>
-    /// Adds options configuration middleware
+    /// Configures a callback to transform ChatOptions before each LLM call.
+    /// This allows dynamic runtime configuration without middleware complexity.
     /// </summary>
+    /// <param name="configureOptions">Callback to modify ChatOptions before each request</param>
+    /// <example>
+    /// <code>
+    /// builder.WithOptionsConfiguration(opts =>
+    /// {
+    ///     opts.Temperature = Math.Min(opts.Temperature ?? 1.0f, 0.8f);
+    ///     opts.AdditionalProperties ??= new();
+    ///     opts.AdditionalProperties["request_id"] = Guid.NewGuid().ToString();
+    /// });
+    /// </code>
+    /// </example>
     public AgentBuilder WithOptionsConfiguration(Action<ChatOptions> configureOptions)
     {
-        _middlewares.Add((client, services) =>
-        {
-            return new ConfigureOptionsChatClient(client, configureOptions);
-        });
+        _config.ConfigureOptions = configureOptions ?? throw new ArgumentNullException(nameof(configureOptions));
         return this;
     }
 
+    /// <summary>
+    /// Adds middleware to wrap the IChatClient for custom processing.
+    /// Middleware is applied dynamically on each request, so runtime provider switching still works.
+    /// </summary>
+    /// <param name="middleware">Function that wraps an IChatClient with custom behavior</param>
+    /// <returns>The builder instance for chaining</returns>
+    /// <remarks>
+    /// <para>
+    /// Unlike traditional middleware that wraps at build time, this middleware is applied
+    /// on every request. This means runtime provider switching automatically applies your
+    /// middleware to the new provider.
+    /// </para>
+    /// <para>
+    /// Middleware is applied in the order added (first added = outermost wrapper).
+    /// </para>
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// builder
+    ///     .UseChatClientMiddleware((client, services) =>
+    ///         new RateLimitingChatClient(client, maxRequestsPerMinute: 60))
+    ///     .UseChatClientMiddleware((client, services) =>
+    ///         new CostTrackingChatClient(client, services?.GetService&lt;ICostTracker&gt;()));
+    /// </code>
+    /// </example>
+    public AgentBuilder UseChatClientMiddleware(Func<IChatClient, IServiceProvider?, IChatClient> middleware)
+    {
+        ArgumentNullException.ThrowIfNull(middleware);
+        _config.ChatClientMiddleware ??= new();
+        _config.ChatClientMiddleware.Add(middleware);
+        return this;
+    }
 
     /// <summary>
     /// Sets the agent name
@@ -662,20 +700,10 @@ public class AgentBuilder
             throw new InvalidOperationException($"The factory for provider '{providerKey}' returned a null error handler.");
 
 
-        // Apply middleware pipeline in order
+        // Use base client directly (no middleware pipeline)
+        // Observability (telemetry, logging, caching) is integrated directly into Agent.cs
+        // See: Proposals/Urgent/MIDDLEWARE_DIRECT_INTEGRATION.md
         var clientToUse = _baseClient;
-        if (_middlewares.Count > 0)
-        {
-            var serviceProvider = _serviceProvider ?? EmptyServiceProvider.Instance;
-            foreach (var middleware in _middlewares)
-            {
-                clientToUse = middleware(clientToUse, serviceProvider);
-                if (clientToUse == null)
-                {
-                    throw new InvalidOperationException("Middleware returned null client");
-                }
-            }
-        }
 
         // Dynamic Memory registration is handled by WithDynamicMemory() extension method
         // No need to register here in Build() - the extension already adds filter and plugin
@@ -2109,14 +2137,6 @@ public class ErrorHandlingPolicy
 
 
 #endregion
-/// <summary>
-/// Empty service provider for middleware when no service provider is available
-/// </summary>
-internal class EmptyServiceProvider : IServiceProvider
-{
-    public static readonly EmptyServiceProvider Instance = new();
-    public object? GetService(Type serviceType) => null;
-}
 
 #region Configuration Extensions
 

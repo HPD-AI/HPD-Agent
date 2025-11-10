@@ -15,7 +15,7 @@ var (project, thread, agent) = await CreateAIAssistant(config);
 
 Console.WriteLine($"✅ AI Assistant ready: {agent.Name}");
 Console.WriteLine($"📁 Project: {project.Name}");
-
+/*
 // 📄 Upload documents from FY25q4-zip folder to project
 try
 {
@@ -33,7 +33,7 @@ catch (Exception ex)
 {
     Console.WriteLine($"❌ Failed to upload documents: {ex.Message}");
 }
-
+*/
 Console.WriteLine();
 
 // 🎯 Interactive Chat Loop
@@ -51,7 +51,7 @@ static Task<(Project, ConversationThread, Agent)> CreateAIAssistant(IConfigurati
         Provider = new ProviderConfig
         {
             ProviderKey = "openrouter",
-            ModelName = "moonshotai/kimi-k2-thinking", // 🧠 Reasoning model - FREE on OpenRouter!
+            ModelName = "google/gemini-2.5-pro", // 🧠 Reasoning model - FREE on OpenRouter!
             // Alternative reasoning models:
             // "deepseek/deepseek-r1-distill-qwen-32b" - smaller/faster
             // "openai/o1" - OpenAI's reasoning model (expensive)

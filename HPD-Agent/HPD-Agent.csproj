@@ -45,6 +45,12 @@
     <!-- JSON Schema -->
     <PackageReference Include="JsonSchema.Net.Generation" Version="4.1.1" />
 
+    <!-- OpenTelemetry for observability (Gen AI Semantic Conventions v1.38) -->
+    <PackageReference Include="System.Diagnostics.DiagnosticSource" Version="9.0.0" />
+    <PackageReference Include="OpenTelemetry.Api" Version="1.11.0" />
+
+    <!-- Distributed Caching -->
+    <PackageReference Include="Microsoft.Extensions.Caching.Abstractions" Version="9.0.9" />
 
   </ItemGroup>
 

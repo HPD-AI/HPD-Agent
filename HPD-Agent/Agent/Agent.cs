@@ -2,6 +2,7 @@
 using System.Threading.Channels;
 using System.Runtime.CompilerServices;
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using HPD.Agent.Providers;
 using System.Security.Cryptography;
 using System.Text;
@@ -10,6 +11,8 @@ using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.Extensions.Logging;
 
 namespace HPD.Agent;
 
@@ -61,6 +64,14 @@ internal sealed class Agent
     private readonly IReadOnlyList<IMessageTurnFilter> _messageTurnFilters;
     private readonly HPD.Agent.ErrorHandling.IProviderErrorHandler _providerErrorHandler;
 
+    // Observability components (following component delegation pattern)
+    private readonly AgentTelemetryService? _telemetryService;
+    private readonly AgentLoggingService? _loggingService;
+
+    // Caching infrastructure (inline pattern - wraps stream lifecycle)
+    private readonly IDistributedCache? _cache;
+    private readonly CachingConfig? _cachingConfig;
+    private readonly JsonSerializerOptions _jsonOptions;
 
     /// <summary>
     /// Agent configuration object containing all settings
@@ -229,7 +240,8 @@ internal sealed class Agent
         HPD_Agent.Skills.SkillScopingManager? skillScopingManager = null, // New: Optional skill scoping
         IReadOnlyList<IPermissionFilter>? permissionFilters = null,
         IReadOnlyList<IAiFunctionFilter>? aiFunctionFilters = null,
-        IReadOnlyList<IMessageTurnFilter>? messageTurnFilters = null)
+        IReadOnlyList<IMessageTurnFilter>? messageTurnFilters = null,
+        IServiceProvider? serviceProvider = null) // NEW: Optional service provider for observability
     {
         Config = config ?? throw new ArgumentNullException(nameof(config));
         _baseClient = baseClient ?? throw new ArgumentNullException(nameof(baseClient));
@@ -301,6 +313,30 @@ internal sealed class Agent
         _scopingManager = new HPD_Agent.Scoping.UnifiedScopingManager(skills, initialTools, null);
 
         _toolScheduler = new ToolScheduler(this, _functionCallProcessor, _permissionManager, config, _scopingManager);
+
+        // ═══════════════════════════════════════════════════════
+        // INITIALIZE OBSERVABILITY SERVICES
+        // ═══════════════════════════════════════════════════════
+
+        // Resolve optional dependencies from service provider
+        var loggerFactory = serviceProvider?.GetService(typeof(ILoggerFactory))
+            as ILoggerFactory;
+        _cache = serviceProvider?.GetService(typeof(IDistributedCache)) as IDistributedCache;
+        _jsonOptions = global::Microsoft.Extensions.AI.AIJsonUtilities.DefaultOptions;
+        _cachingConfig = config.Caching;
+
+        // Create telemetry service if enabled
+        if (config.Telemetry?.Enabled ?? true)
+        {
+            _telemetryService = new AgentTelemetryService(config.Telemetry ?? new TelemetryConfig());
+        }
+
+        // Create logging service if enabled and logger available
+        if (loggerFactory != null && (config.Logging?.Enabled ?? true))
+        {
+            var logger = loggerFactory.CreateLogger<Agent>();
+            _loggingService = new AgentLoggingService(logger, config.Logging ?? new LoggingConfig());
+        }
     }
 
     /// <summary>
@@ -358,6 +394,11 @@ internal sealed class Agent
         TaskCompletionSource<ReductionMetadata?> reductionCompletionSource,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        // ═══════════════════════════════════════════════════════
+        // OBSERVABILITY: Track orchestration start time
+        // ═══════════════════════════════════════════════════════
+        var orchestrationStartTime = DateTime.UtcNow;
+
         // Create orchestration activity to group all agent turns and function calls
         using var orchestrationActivity = ActivitySource.StartActivity(
             "agent.orchestration",
@@ -440,9 +481,31 @@ internal sealed class Agent
 
             // Track expanded plugins/skills (message-turn scoped)
             // Note: These are now tracked in state.ExpandedPlugins and state.ExpandedSkills
-            
+
             // Collect all response updates to build final history
             var responseUpdates = new List<ChatResponseUpdate>();
+
+            // ═══════════════════════════════════════════════════════
+            // OBSERVABILITY: Start telemetry and logging
+            // ═══════════════════════════════════════════════════════
+            Activity? telemetryActivity = null;
+            try
+            {
+                telemetryActivity = _telemetryService?.StartOrchestration(
+                    _name,
+                    effectiveOptions?.ModelId ?? ModelId,
+                    ProviderKey,
+                    config.MaxIterations,
+                    effectiveMessages,
+                    effectiveOptions,
+                    state);
+
+                _loggingService?.LogOrchestrationStart(_name, effectiveMessages, effectiveOptions);
+            }
+            catch (Exception)
+            {
+                // Observability errors shouldn't break agent execution
+            }
 
             // ═══════════════════════════════════════════════════════
             // MAIN AGENTIC LOOP (Hybrid: Pure Decisions + Inline Execution)
@@ -474,6 +537,41 @@ internal sealed class Agent
                 // ═══════════════════════════════════════════════════
 
                 var decision = decisionEngine.DecideNextAction(state, lastResponse, config);
+
+                // ═══════════════════════════════════════════════════
+                // OBSERVABILITY: Log and record decision
+                // ═══════════════════════════════════════════════════
+                try
+                {
+                    _loggingService?.LogIterationStart(_name, state.Iteration, config.MaxIterations);
+                    _loggingService?.LogDecision(_name, decision, state);
+                    _telemetryService?.RecordDecision(telemetryActivity, decision, state, _name, config);
+
+                    // If circuit breaker triggered, log and record it specifically
+                    if (decision is AgentDecision.Terminate terminate &&
+                        terminate.Reason.Contains("Circuit breaker", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Extract function name from termination reason (format: "Circuit breaker triggered: function 'X' called...")
+                        var match = System.Text.RegularExpressions.Regex.Match(
+                            terminate.Reason,
+                            @"function '([^']+)' called (\d+)");
+                        if (match.Success)
+                        {
+                            var functionName = match.Groups[1].Value;
+                            var count = int.Parse(match.Groups[2].Value);
+                            _loggingService?.LogCircuitBreakerTriggered(_name, functionName, count);
+                            _telemetryService?.RecordCircuitBreakerTrigger(
+                                _name,
+                                functionName,
+                                count,
+                                config.MaxConsecutiveFunctionCalls ?? int.MaxValue);
+                        }
+                    }
+                }
+                catch (Exception)
+                {
+                    // Observability errors shouldn't break execution
+                }
 
                 // Drain filter events after decision-making, before execution
                 // CRITICAL: Ensures events emitted during decision logic are yielded before LLM streaming starts
@@ -1006,6 +1104,33 @@ internal sealed class Agent
             {
                 orchestrationActivity?.SetTag("agent.history_reduction_occurred", true);
                 orchestrationActivity?.SetTag("agent.history_messages_removed", reductionMetadata.MessagesRemovedCount);
+            }
+
+            // ═══════════════════════════════════════════════════════
+            // OBSERVABILITY: Record completion metrics
+            // ═══════════════════════════════════════════════════════
+            try
+            {
+                var duration = DateTime.UtcNow - orchestrationStartTime;
+                UsageDetails? usage = lastResponse?.Usage;
+                ChatFinishReason? finishReason = lastResponse?.FinishReason;
+
+                _loggingService?.LogCompletion(_name, state.Iteration, turnHistory);
+                _telemetryService?.RecordCompletion(
+                    telemetryActivity,
+                    state,
+                    usage,
+                    finishReason,
+                    effectiveOptions?.ModelId ?? ModelId,
+                    ProviderKey,
+                    turnHistory,
+                    duration);
+
+                telemetryActivity?.Dispose();
+            }
+            catch (Exception)
+            {
+                // Observability errors shouldn't break execution
             }
 
             historyCompletionSource.TrySetResult(turnHistory);
@@ -5176,5 +5301,411 @@ public class FunctionInvocationContext
     public override string ToString() =>
         $"Function: {FunctionName}, CallId: {CallId}, Agent: {AgentName ?? "Unknown"}, Iteration: {Iteration}";
 }
+# endregion
 
-#endregion
+/// <summary>
+/// Structured logging service with state awareness for agent execution.
+/// Provides detailed insights into agent orchestration flow.
+/// </summary>
+internal sealed class AgentLoggingService
+{
+    private readonly ILogger _logger;
+    private readonly bool _enableSensitiveData;
+
+    public AgentLoggingService(ILogger logger, LoggingConfig config)
+    {
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _enableSensitiveData = config.EnableSensitiveData;
+    }
+
+    public void LogOrchestrationStart(
+        string agentName,
+        IEnumerable<ChatMessage> messages,
+        ChatOptions? options)
+    {
+        if (!_logger.IsEnabled(LogLevel.Debug)) return;
+
+        _logger.LogDebug(
+            "Agent '{AgentName}' starting agentic loop with {MessageCount} messages, Model: {Model}",
+            agentName,
+            messages.Count(),
+            options?.ModelId ?? "default");
+
+        if (_enableSensitiveData && _logger.IsEnabled(LogLevel.Trace))
+        {
+            _logger.LogTrace(
+                "Agent '{AgentName}' initial messages: {Messages}",
+                agentName,
+                System.Text.Json.JsonSerializer.Serialize(messages));
+        }
+    }
+
+    public void LogDecision(
+        string agentName,
+        AgentDecision decision,
+        AgentLoopState state)
+    {
+        if (!_logger.IsEnabled(LogLevel.Debug)) return;
+
+        _logger.LogDebug(
+            "Agent '{AgentName}' iteration {Iteration}: Decision={Decision}, " +
+            "State(Failures={Failures}, Plugins={Plugins}, Functions={Functions})",
+            agentName,
+            state.Iteration,
+            decision.GetType().Name,
+            state.ConsecutiveFailures,
+            state.ExpandedPlugins.Count,
+            state.CompletedFunctions.Count);
+    }
+
+    public void LogIterationStart(
+        string agentName,
+        int iteration,
+        int maxIterations)
+    {
+        if (!_logger.IsEnabled(LogLevel.Debug)) return;
+
+        _logger.LogDebug(
+            "Agent '{AgentName}' iteration {Iteration}/{MaxIterations} started",
+            agentName,
+            iteration,
+            maxIterations);
+    }
+
+    public void LogCompletion(
+        string agentName,
+        int iteration,
+        IEnumerable<ChatMessage> response)
+    {
+        if (!_logger.IsEnabled(LogLevel.Information)) return;
+
+        _logger.LogInformation(
+            "Agent '{AgentName}' completed after {Iterations} iterations with {ResponseCount} messages",
+            agentName,
+            iteration,
+            response.Count());
+
+        if (_enableSensitiveData && _logger.IsEnabled(LogLevel.Trace))
+        {
+            _logger.LogTrace(
+                "Agent '{AgentName}' final response: {Response}",
+                agentName,
+                System.Text.Json.JsonSerializer.Serialize(response));
+        }
+    }
+
+    public void LogCircuitBreakerTriggered(
+        string agentName,
+        string functionName,
+        int consecutiveCount)
+    {
+        _logger.LogWarning(
+            "Agent '{AgentName}' circuit breaker triggered: '{FunctionName}' called {Count} times consecutively",
+            agentName,
+            functionName,
+            consecutiveCount);
+    }
+
+    public void LogCancellation(string agentName)
+    {
+        _logger.LogInformation(
+            "Agent '{AgentName}' execution cancelled",
+            agentName);
+    }
+
+    public void LogError(string agentName, Exception ex)
+    {
+        _logger.LogError(
+            ex,
+            "Agent '{AgentName}' encountered error: {ErrorMessage}",
+            agentName,
+            ex.Message);
+    }
+}
+
+/// <summary>
+/// OpenTelemetry instrumentation service for agent orchestration.
+/// Implements Gen AI Semantic Conventions v1.38.
+/// </summary>
+internal sealed class AgentTelemetryService : IDisposable
+{
+    private readonly ActivitySource _activitySource;
+    private readonly Meter _meter;
+    private readonly bool _enableSensitiveData;
+    private readonly JsonSerializerOptions _jsonOptions;
+
+    // Standard Gen AI metrics (v1.38)
+    private readonly Histogram<int> _tokenUsageHistogram;
+    private readonly Histogram<double> _operationDurationHistogram;
+
+    // HPD-Agent specific metrics
+    private readonly Counter<int> _decisionCounter;
+    private readonly Counter<int> _circuitBreakerCounter;
+    private readonly Histogram<int> _iterationHistogram;
+
+    public AgentTelemetryService(TelemetryConfig config)
+    {
+        var sourceName = config.SourceName ?? "HPD.Agent";
+        _activitySource = new ActivitySource(sourceName);
+        _meter = new Meter(sourceName);
+
+        // Check environment variable for sensitive data override
+        var envVar = Environment.GetEnvironmentVariable("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT");
+        _enableSensitiveData = config.EnableSensitiveData ||
+                               (envVar?.Equals("true", StringComparison.OrdinalIgnoreCase) ?? false);
+
+        _jsonOptions = global::Microsoft.Extensions.AI.AIJsonUtilities.DefaultOptions;
+
+        // Standard Gen AI metrics
+        _tokenUsageHistogram = _meter.CreateHistogram<int>(
+            "gen_ai.client.token.usage",
+            "tokens",
+            "Measures number of input and output tokens used");
+
+        _operationDurationHistogram = _meter.CreateHistogram<double>(
+            "gen_ai.client.operation.duration",
+            "s",
+            "Generative AI operation duration");
+
+        // Agent-specific metrics (unique to HPD-Agent)
+        _decisionCounter = _meter.CreateCounter<int>(
+            "hpd.agent.decision.count",
+            "decisions",
+            "Agent decision engine execution count");
+
+        _circuitBreakerCounter = _meter.CreateCounter<int>(
+            "hpd.agent.circuit_breaker.triggered",
+            "triggers",
+            "Circuit breaker activation count");
+
+        _iterationHistogram = _meter.CreateHistogram<int>(
+            "hpd.agent.iteration.count",
+            "iterations",
+            "Distribution of iteration counts per agent run");
+    }
+
+    public Activity? StartOrchestration(
+        string agentName,
+        string? modelId,
+        string? providerKey,
+        int maxIterations,
+        IEnumerable<ChatMessage> messages,
+        ChatOptions? options,
+        AgentLoopState initialState)
+    {
+        var activity = _activitySource.StartActivity(
+            string.IsNullOrWhiteSpace(options?.ModelId) ? "chat" : $"chat {options.ModelId}",
+            ActivityKind.Client);
+
+        if (activity is { IsAllDataRequested: true })
+        {
+            // Standard Gen AI tags
+            activity
+                .AddTag("gen_ai.operation.name", "chat")
+                .AddTag("gen_ai.request.model", options?.ModelId ?? modelId)
+                .AddTag("gen_ai.system", providerKey);
+
+            // Agent-specific tags (state-aware)
+            activity
+                .AddTag("agent.name", agentName)
+                .AddTag("agent.max_iterations", maxIterations)
+                .AddTag("agent.run_id", initialState.RunId)
+                .AddTag("agent.conversation_id", initialState.ConversationId)
+                .AddTag("agent.initial_message_count", initialState.CurrentMessages.Count);
+
+            // Sensitive data (opt-in)
+            if (_enableSensitiveData)
+            {
+                try
+                {
+                    var messagesJson = JsonSerializer.Serialize(messages, _jsonOptions);
+                    activity.AddTag("gen_ai.prompt", messagesJson);
+                }
+                catch (Exception)
+                {
+                    // Serialization errors shouldn't break execution
+                }
+            }
+        }
+
+        return activity;
+    }
+
+    public void RecordDecision(
+        Activity? activity,
+        AgentDecision decision,
+        AgentLoopState state,
+        string agentName,
+        AgentConfiguration config)
+    {
+        if (activity is { IsAllDataRequested: true })
+        {
+            // Decision type tag
+            var decisionType = decision switch
+            {
+                AgentDecision.CallLLM => "call_llm",
+                AgentDecision.Complete => "complete",
+                AgentDecision.Terminate => "terminate",
+                _ => "unknown"
+            };
+
+            activity.AddTag($"agent.iteration.{state.Iteration}.decision", decisionType);
+
+            // State snapshot at decision point
+            activity
+                .AddTag($"agent.iteration.{state.Iteration}.consecutive_failures", state.ConsecutiveFailures)
+                .AddTag($"agent.iteration.{state.Iteration}.expanded_plugins", state.ExpandedPlugins.Count)
+                .AddTag($"agent.iteration.{state.Iteration}.completed_functions", state.CompletedFunctions.Count);
+
+            // Circuit breaker proximity warning
+            if (state.ConsecutiveCountPerTool.Any())
+            {
+                var maxConsecutive = state.ConsecutiveCountPerTool.Values.Max();
+                var threshold = config.MaxConsecutiveFunctionCalls ?? int.MaxValue;
+                if (maxConsecutive >= threshold - 1)
+                {
+                    activity.AddTag("agent.circuit_breaker.near_threshold", true);
+                }
+            }
+        }
+
+        // Record metric
+        _decisionCounter.Add(1, new TagList
+        {
+            { "agent.name", agentName },
+            { "decision.type", decision switch
+                {
+                    AgentDecision.CallLLM => "call_llm",
+                    AgentDecision.Complete => "complete",
+                    AgentDecision.Terminate => "terminate",
+                    _ => "unknown"
+                }
+            },
+            { "iteration", state.Iteration.ToString() }
+        });
+    }
+
+    public void RecordCircuitBreakerTrigger(
+        string agentName,
+        string functionName,
+        int consecutiveCount,
+        int threshold)
+    {
+        _circuitBreakerCounter.Add(1, new TagList
+        {
+            { "agent.name", agentName },
+            { "function.name", functionName },
+            { "consecutive_count", consecutiveCount.ToString() }
+        });
+    }
+
+    public void RecordCompletion(
+        Activity? activity,
+        AgentLoopState finalState,
+        UsageDetails? usage,
+        ChatFinishReason? finishReason,
+        string? modelId,
+        string? providerKey,
+        IEnumerable<ChatMessage> turnHistory,
+        TimeSpan duration)
+    {
+        if (activity is { IsAllDataRequested: true })
+        {
+            // Total iterations
+            activity.AddTag("agent.total_iterations", finalState.Iteration);
+
+            // Finish reason
+            if (finishReason.HasValue)
+            {
+                activity.AddTag("gen_ai.response.finish_reasons", finishReason.Value.ToString());
+            }
+
+            // Token usage (if available)
+            if (usage != null)
+            {
+                if (usage.InputTokenCount.HasValue)
+                {
+                    activity.AddTag("gen_ai.usage.input_tokens", usage.InputTokenCount.Value);
+                }
+                if (usage.OutputTokenCount.HasValue)
+                {
+                    activity.AddTag("gen_ai.usage.output_tokens", usage.OutputTokenCount.Value);
+                }
+                if (usage.TotalTokenCount.HasValue)
+                {
+                    activity.AddTag("gen_ai.usage.total_tokens", usage.TotalTokenCount.Value);
+                }
+            }
+
+            // Sensitive data (opt-in)
+            if (_enableSensitiveData)
+            {
+                try
+                {
+                    var responseJson = JsonSerializer.Serialize(turnHistory, _jsonOptions);
+                    activity.AddTag("gen_ai.completion", responseJson);
+                }
+                catch (Exception)
+                {
+                    // Serialization errors shouldn't break execution
+                }
+            }
+
+            // Set status
+            activity.SetStatus(ActivityStatusCode.Ok);
+        }
+
+        // Record metrics
+        if (usage != null)
+        {
+            var tags = new TagList
+            {
+                { "gen_ai.request.model", modelId },
+                { "gen_ai.system", providerKey },
+                { "agent.name", finalState.AgentName }
+            };
+
+            if (usage.InputTokenCount.HasValue)
+            {
+                var inputTags = new TagList
+                {
+                    { "gen_ai.request.model", modelId },
+                    { "gen_ai.system", providerKey },
+                    { "agent.name", finalState.AgentName },
+                    { "gen_ai.token.type", "input" }
+                };
+                _tokenUsageHistogram.Record((int)usage.InputTokenCount.Value, inputTags);
+            }
+            if (usage.OutputTokenCount.HasValue)
+            {
+                var outputTags = new TagList
+                {
+                    { "gen_ai.request.model", modelId },
+                    { "gen_ai.system", providerKey },
+                    { "agent.name", finalState.AgentName },
+                    { "gen_ai.token.type", "output" }
+                };
+                _tokenUsageHistogram.Record((int)usage.OutputTokenCount.Value, outputTags);
+            }
+        }
+
+        _operationDurationHistogram.Record(duration.TotalSeconds, new TagList
+        {
+            { "gen_ai.request.model", modelId },
+            { "gen_ai.system", providerKey },
+            { "agent.name", finalState.AgentName }
+        });
+
+        _iterationHistogram.Record(finalState.Iteration, new TagList
+        {
+            { "agent.name", finalState.AgentName },
+            { "gen_ai.request.model", modelId }
+        });
+    }
+
+    public void Dispose()
+    {
+        _activitySource.Dispose();
+        _meter.Dispose();
+    }
+}

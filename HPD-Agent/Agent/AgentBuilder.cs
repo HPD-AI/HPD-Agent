@@ -55,8 +55,6 @@ public class AgentBuilder
     internal readonly Dictionary<Type, object> _providerConfigs = new();
     internal IServiceProvider? _serviceProvider;
     internal ILoggerFactory? _logger;
-    private ActivitySource? _activitySource; // OpenTelemetry ActivitySource for observability
-    private Meter? _meter; // OpenTelemetry Meter for metrics
 
     // MCP runtime fields
     internal MCPClientManager? _mcpClientManager;
@@ -227,7 +225,9 @@ public class AgentBuilder
 
     /// <summary>
     /// Provides the service provider for resolving dependencies.
-    /// This is required if you use `UseRegisteredEmbeddingGenerator()` for contextual functions.
+    /// Required for:
+    /// - Observability: ILoggerFactory (for structured logging), IDistributedCache (for response caching)
+    /// - Contextual functions: Embedding generators via UseRegisteredEmbeddingGenerator()
     /// </summary>
     public AgentBuilder WithServiceProvider(IServiceProvider serviceProvider)
     {
@@ -269,123 +269,109 @@ public class AgentBuilder
         return this;
     }
 
+    // ═══════════════════════════════════════════════════════
+    // AGENT-LEVEL OBSERVABILITY (Component Delegation Pattern)
+    // ═══════════════════════════════════════════════════════
+    // Following HPD-Agent's established pattern of specialized components,
+    // observability is handled by dedicated services integrated into Agent.cs:
+    // - AgentTelemetryService: OpenTelemetry tracing & metrics
+    // - AgentLoggingService: Structured logging with state awareness
+    //
+    // Why not middleware? See: Proposals/Urgent/OBSERVABILITY_SERVICE_INTEGRATION.md
+    // - Can't access agent-specific context (decisions, state, circuit breaker)
+    // - Only instruments LLM calls, not orchestration loop
+    // - Doesn't leverage AgentLoopState for rich context
+    // ═══════════════════════════════════════════════════════
+
     /// <summary>
-    /// Wraps the base chat client with OpenTelemetry middleware to enable standardized telemetry for LLM calls,
-    /// and adds a filter to create detailed traces and metrics for tool calls.
-    /// This enables complete observability: Agent Turn traces, LLM Call traces, Tool Call traces, and Tool Call metrics.
-    /// Can be called at any point in the builder chain - telemetry will be applied during Build().
+    /// Enables agent-level telemetry tracking (orchestration, decisions, state).
+    /// Implements Gen AI Semantic Conventions v1.38 for agent orchestration.
+    /// Requires: WithServiceProvider() with ILoggerFactory
     /// </summary>
-    /// <param name="sourceName">An optional source name for the telemetry data. Defaults to "HPD.Agent".</param>
-    /// <param name="configure">An optional callback to configure the OpenTelemetryChatClient instance.</param>
-    public AgentBuilder WithOpenTelemetry(string? sourceName = "HPD.Agent", Action<OpenTelemetryChatClient>? configure = null)
+    /// <param name="sourceName">ActivitySource/Meter name (default: "HPD.Agent")</param>
+    /// <param name="enableSensitiveData">Include prompts/responses in traces (default: false)</param>
+    /// <returns>The builder for chaining</returns>
+    public AgentBuilder WithTelemetry(string? sourceName = null, bool enableSensitiveData = false)
     {
-        // Add telemetry as a middleware that will be applied during Build()
-        _middlewares.Add((client, services) =>
+        _config.Telemetry = new TelemetryConfig
         {
-            var loggerFactory = services.GetService<ILoggerFactory>();
-            var builder = new ChatClientBuilder(client);
-            builder.UseOpenTelemetry(loggerFactory, sourceName, configure);
-            return builder.Build(services);
-        });
-
-        // === Add Tool Call Tracing and Metrics ===
-        // Create or reuse the ActivitySource and Meter
-        _activitySource ??= new ActivitySource(sourceName ?? "HPD.Agent");
-        _meter ??= new Meter(sourceName ?? "HPD.Agent");
-
-        // Create and register the observability filter with both tracing and metrics support
-        var observabilityFilter = new ObservabilityAiFunctionFilter(_activitySource, _meter);
-        this.WithFilter(observabilityFilter);
-
+            Enabled = true,
+            SourceName = sourceName ?? "HPD.Agent",
+            EnableSensitiveData = enableSensitiveData
+        };
         return this;
     }
 
     /// <summary>
-    /// Adds distributed caching to reduce redundant LLM calls
+    /// Enables agent-level structured logging (decisions, iterations, completions).
+    /// Provides state-aware insights into agent execution flow.
+    /// Requires: WithServiceProvider() with ILoggerFactory
     /// </summary>
-    public AgentBuilder WithCaching(IDistributedCache? cache = null, Action<DistributedCachingChatClient>? configure = null)
-    {
-        _middlewares.Add((client, services) =>
-        {
-            var cacheInstance = cache ?? services.GetService<IDistributedCache>();
-            if (cacheInstance == null)
-            {
-                _logger?.CreateLogger<AgentBuilder>().LogWarning("Caching requested but no IDistributedCache available");
-                return client;
-            }
-            var cachingClient = new DistributedCachingChatClient(client, cacheInstance);
-            configure?.Invoke(cachingClient);
-            return cachingClient;
-        });
-        return this;
-    }
-
-    /// <summary>
-    /// Adds message reduction to handle long conversation histories
-    /// Note: This method will be fully functional when Microsoft.Extensions.AI includes the ReducingChatClient
-    /// </summary>
-    public AgentBuilder WithMessageReducer(object? reducer = null, Action<object>? configure = null)
-    {
-        _middlewares.Add((client, services) =>
-        {
-            // TODO: Implement when ReducingChatClient is available in Microsoft.Extensions.AI
-            _logger?.CreateLogger<AgentBuilder>().LogWarning("Message reduction not yet implemented - ReducingChatClient not available");
-            return client;
-        });
-        return this;
-    }
-
-    /// <summary>
-    /// Adds comprehensive logging for all operations (chat + functions)
-    /// </summary>
+    /// <param name="enableSensitiveData">Include prompts/responses at Trace level (default: false)</param>
+    /// <param name="includeFunctionInvocations">Also log function invocations via LoggingAiFunctionFilter (default: true)</param>
+    /// <param name="configureFunctionFilter">Optional callback to configure the function logging filter</param>
+    /// <returns>The builder for chaining</returns>
     public AgentBuilder WithLogging(
-        ILoggerFactory? loggerFactory = null, 
-        bool includeChats = true,
-        bool includeFunctions = true,
-        Action<LoggingChatClient>? configureChat = null,
-        Action<LoggingAiFunctionFilter>? configureFunction = null)
+        bool enableSensitiveData = false,
+        bool includeFunctionInvocations = true,
+        Action<LoggingAiFunctionFilter>? configureFunctionFilter = null)
     {
-        // Add chat logging middleware
-        if (includeChats)
+        // Configure agent-level logging service
+        _config.Logging = new LoggingConfig
         {
-            _middlewares.Add((client, services) =>
-            {
-                var factory = loggerFactory ?? _logger ?? services.GetService<ILoggerFactory>();
-                if (factory == null || factory == NullLoggerFactory.Instance)
-                {
-                    return client; // Skip if no real logger available
-                }
-                var loggingClient = new LoggingChatClient(client, factory.CreateLogger<LoggingChatClient>());
-                configureChat?.Invoke(loggingClient);
-                return loggingClient;
-            });
-        }
-        
-        // Add function logging filter using the same approach as permission filters
-        if (includeFunctions)
+            Enabled = true,
+            EnableSensitiveData = enableSensitiveData
+        };
+
+        // Optionally add function invocation logging filter
+        if (includeFunctionInvocations)
         {
-            var factory = loggerFactory ?? _logger;
-            var functionFilter = new LoggingAiFunctionFilter(factory);
-            configureFunction?.Invoke(functionFilter);
-            
-            // Use the same registration approach as permission filters
+            var functionFilter = new LoggingAiFunctionFilter(_logger);
+            configureFunctionFilter?.Invoke(functionFilter);
             this.WithFilter(functionFilter);
         }
-        
+
         return this;
     }
 
     /// <summary>
-    /// Adds function invocation logging for advanced users who want explicit control
+    /// Enables distributed caching for LLM response caching.
+    /// Dramatically reduces latency and cost for repeated queries.
+    /// Requires: WithServiceProvider() with IDistributedCache registered
     /// </summary>
-    public AgentBuilder WithFunctionLogging(ILoggerFactory? loggerFactory = null, Action<LoggingAiFunctionFilter>? configure = null)
+    /// <param name="cacheExpiration">Cache TTL (default: 30 minutes)</param>
+    /// <param name="cacheStatefulConversations">Allow caching with ConversationId (default: false)</param>
+    /// <returns>The builder for chaining</returns>
+    public AgentBuilder WithCaching(TimeSpan? cacheExpiration = null, bool cacheStatefulConversations = false)
     {
-        var factory = loggerFactory ?? _logger;
-        var filter = new LoggingAiFunctionFilter(factory);
-        configure?.Invoke(filter);
-        
-        // Use the same registration approach as permission filters
-        return this.WithFilter(filter);
+        _config.Caching = new CachingConfig
+        {
+            Enabled = true,
+            CacheExpiration = cacheExpiration ?? TimeSpan.FromMinutes(30),
+            CacheStatefulConversations = cacheStatefulConversations,
+            CoalesceStreamingUpdates = true
+        };
+        return this;
+    }
+
+    /// <summary>
+    /// Disables agent-level telemetry (opt-out).
+    /// By default, telemetry is enabled when WithServiceProvider() is called with ILoggerFactory.
+    /// </summary>
+    public AgentBuilder WithoutTelemetry()
+    {
+        _config.Telemetry = new TelemetryConfig { Enabled = false };
+        return this;
+    }
+
+    /// <summary>
+    /// Disables agent-level logging (opt-out).
+    /// By default, logging is enabled when WithServiceProvider() is called with ILoggerFactory.
+    /// </summary>
+    public AgentBuilder WithoutLogging()
+    {
+        _config.Logging = new LoggingConfig { Enabled = false };
+        return this;
     }
 
     /// <summary>
@@ -555,7 +541,8 @@ public class AgentBuilder
             buildData.SkillScopingManager,
             _permissionFilters,
             _globalFilters,
-            _messageTurnFilters);
+            _messageTurnFilters,
+            _serviceProvider); // Pass service provider for observability
 
         return agent;
     }

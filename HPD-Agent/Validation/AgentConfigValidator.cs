@@ -178,6 +178,27 @@ public class AgentConfigValidator : AbstractValidator<AgentConfig>
             });
         });
 
+        // Observability configuration validation
+        When(config => config.Telemetry != null, () =>
+        {
+            RuleFor(config => config.Telemetry!.SourceName)
+                .NotEmpty()
+                .WithMessage("TelemetryConfig.SourceName cannot be empty when telemetry is configured.");
+        });
+
+        When(config => config.Caching?.Enabled == true, () =>
+        {
+            RuleFor(config => config.Caching!.CacheExpiration)
+                .NotNull()
+                .WithMessage("CachingConfig.CacheExpiration must be set when caching is enabled.")
+                .GreaterThan(TimeSpan.Zero)
+                .WithMessage("CachingConfig.CacheExpiration must be greater than zero.");
+
+            RuleFor(config => config.Caching!.CacheExpiration)
+                .LessThan(TimeSpan.FromDays(7))
+                .WithMessage("CachingConfig.CacheExpiration should not exceed 7 days (prevents stale cache).");
+        });
+
         // Cross-configuration validation rules
         RuleFor(config => config)
             .Must(HaveValidProviderModelCombination)

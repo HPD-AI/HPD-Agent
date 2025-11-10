@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using HPD.Agent.Internal.Filters;
 using Microsoft.Extensions.AI;
 using System;
 using System.Collections.Generic;
@@ -9,7 +10,7 @@ using System.Threading.Tasks;
 /// Prompt filter that injects agent knowledge documents into system context.
 /// Used with FullTextInjection strategy to make agent knowledge available in every prompt.
 /// </summary>
-public class StaticMemoryFilter : IPromptFilter
+internal class StaticMemoryFilter : IPromptFilter
 {
     private readonly StaticMemoryStore _store;
     private readonly string? _knowledgeId;

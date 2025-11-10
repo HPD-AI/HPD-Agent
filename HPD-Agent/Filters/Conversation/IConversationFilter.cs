@@ -1,11 +1,13 @@
 using Microsoft.Extensions.AI;
 
+namespace HPD.Agent.Internal.Filters;
+
 /// <summary>
-/// Filter interface for processing completed message turns.
+/// Internal filter interface for processing completed message turns.
 /// Executes after agent response and all tool calls are complete.
-/// Applications implement this to capture state changes made by agent tool calls.
+/// NOT exposed to users - implementation detail for HPD-Agent internals.
 /// </summary>
-public interface IMessageTurnFilter
+internal interface IMessageTurnFilter
 {
     /// <summary>
     /// Processes a completed message turn

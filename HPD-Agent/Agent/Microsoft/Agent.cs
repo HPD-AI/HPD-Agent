@@ -1,4 +1,5 @@
 using Microsoft.Extensions.AI;
+using HPD.Agent.Internal.Filters;
 using Microsoft.Agents.AI;
 using System.Threading.Channels;
 using System.Runtime.CompilerServices;
@@ -19,9 +20,10 @@ public sealed class Agent : AIAgent
     private readonly Func<AIContextProviderFactoryContext, AIContextProvider>? _contextProviderFactory;
 
     /// <summary>
-    /// Initializes a new Microsoft protocol agent instance
+    /// Initializes a new Microsoft protocol agent instance.
+    /// Internal constructor - use AgentBuilder to create agents.
     /// </summary>
-    public Agent(
+    internal Agent(
         AgentConfig config,
         IChatClient baseClient,
         ChatOptions? mergedOptions,

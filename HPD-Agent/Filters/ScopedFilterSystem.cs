@@ -1,9 +1,13 @@
 using Microsoft.Extensions.AI;
+using HPD.Agent.Internal.Filters;
+
+namespace HPD.Agent.Internal.Filters;
 
 /// <summary>
-/// Represents the scope of a filter - what functions it applies to
+/// Represents the scope of a filter - what functions it applies to.
+/// Internal enum for HPD-Agent internals.
 /// </summary>
-public enum FilterScope
+internal enum FilterScope
 {
     /// <summary>Filter applies to all functions globally</summary>
     Global,
@@ -14,9 +18,10 @@ public enum FilterScope
 }
 
 /// <summary>
-/// Associates a filter with its scope and target
+/// Associates a filter with its scope and target.
+/// Internal class for HPD-Agent internals.
 /// </summary>
-public class ScopedFilter
+internal class ScopedFilter
 {
     public IAiFunctionFilter Filter { get; }
     public FilterScope Scope { get; }
@@ -46,9 +51,10 @@ public class ScopedFilter
 }
 
 /// <summary>
-/// Manages the collection of scoped filters and provides methods to retrieve applicable filters
+/// Manages the collection of scoped filters and provides methods to retrieve applicable filters.
+/// Internal class for HPD-Agent internals.
 /// </summary>
-public class ScopedFilterManager
+internal class ScopedFilterManager
 {
     private readonly List<ScopedFilter> _scopedFilters = new();
     private readonly Dictionary<string, string> _functionToPluginMap = new();

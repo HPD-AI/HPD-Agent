@@ -1,11 +1,14 @@
 using Microsoft.Extensions.AI;
 
+namespace HPD.Agent.Internal.Filters;
+
 /// <summary>
-/// Filter interface for function invocation pipeline.
+/// Internal filter interface for function invocation pipeline.
 /// Operates on FunctionInvocationContext which provides full orchestration capabilities
 /// including bidirectional communication, event emission, and filter pipeline control.
+/// NOT exposed to users - implementation detail for HPD-Agent internals.
 /// </summary>
-public interface IAiFunctionFilter
+internal interface IAiFunctionFilter
 {
     Task InvokeAsync(
         HPD.Agent.FunctionInvocationContext context,
@@ -14,8 +17,9 @@ public interface IAiFunctionFilter
 
 /// <summary>
 /// Represents a function call request from the LLM.
+/// Internal class for HPD-Agent internals.
 /// </summary>
-public class ToolCallRequest
+internal class ToolCallRequest
 {
     public required string FunctionName { get; set; }
     public required IDictionary<string, object?> Arguments { get; set; }

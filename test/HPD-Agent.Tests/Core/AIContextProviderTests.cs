@@ -2,6 +2,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Agents.AI;
 using Xunit;
 using HPD.Agent;
+using HPD.Agent.Internal.Filters;
 using HPD_Agent.Tests.Infrastructure;
 using System.Text.Json;
 

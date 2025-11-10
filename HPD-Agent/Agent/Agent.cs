@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.AI;
 using System.Threading.Channels;
+using HPD.Agent.Internal.Filters;
 using System.Runtime.CompilerServices;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
@@ -5126,7 +5127,11 @@ public record InternalFilterErrorEvent(
 /// - Telemetry, logging, and security auditing
 /// - Nested agent coordination and event bubbling
 /// </remarks>
-public class FunctionInvocationContext
+/// <summary>
+/// Context for function invocations in the filter pipeline.
+/// Internal class for HPD-Agent internals.
+/// </summary>
+internal class FunctionInvocationContext
 {
     /// <summary>
     /// The AI function being invoked.

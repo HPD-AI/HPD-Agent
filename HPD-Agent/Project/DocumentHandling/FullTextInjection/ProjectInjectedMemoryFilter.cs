@@ -1,10 +1,11 @@
 using Microsoft.Extensions.Logging;
+using HPD.Agent.Internal.Filters;
 using Microsoft.Extensions.AI;
 
 /// <summary>
 /// Prompt filter that injects project documents into system context
 /// </summary>
-public class ProjectInjectedMemoryFilter : IPromptFilter
+internal class ProjectInjectedMemoryFilter : IPromptFilter
 {
     private readonly ProjectInjectedMemoryOptions _options;
     private readonly ILogger<ProjectInjectedMemoryFilter>? _logger;

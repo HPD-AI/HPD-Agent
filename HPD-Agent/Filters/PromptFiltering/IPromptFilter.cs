@@ -1,11 +1,13 @@
 using Microsoft.Extensions.AI;
 
+namespace HPD.Agent.Internal.Filters;
 
 /// <summary>
-/// Filter interface for modifying prompts before they're sent to the LLM
+/// Internal filter interface for modifying prompts before they're sent to the LLM
 /// and optionally processing results after invocation.
+/// NOT exposed to users - implementation detail for HPD-Agent internals.
 /// </summary>
-public interface IPromptFilter
+internal interface IPromptFilter
 {
     /// <summary>
     /// Called before the LLM is invoked to modify messages, options, and context.

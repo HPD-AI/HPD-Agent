@@ -1,4 +1,5 @@
 using System;
+using HPD.Agent.Internal.Filters;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -7,8 +8,9 @@ using HPD.Agent;
 
 /// <summary>
 /// Simple logging filter for orchestration-level AI function calls. Logs input arguments before execution and result after execution.
+/// Internal filter for HPD-Agent internals.
 /// </summary>
-public class LoggingAiFunctionFilter : IAiFunctionFilter
+internal class LoggingAiFunctionFilter : IAiFunctionFilter
 {
     private readonly ILogger? _logger;
 

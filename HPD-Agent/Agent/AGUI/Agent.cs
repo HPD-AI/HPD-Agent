@@ -1,4 +1,5 @@
 using Microsoft.Extensions.AI;
+using HPD.Agent.Internal.Filters;
 using System.Threading.Channels;
 using System.Runtime.CompilerServices;
 using HPD.Agent.Providers;
@@ -16,9 +17,10 @@ public sealed class Agent
     private readonly AGUIEventConverter _converter;
 
     /// <summary>
-    /// Initializes a new AGUI protocol agent instance
+    /// Initializes a new AGUI protocol agent instance.
+    /// Internal constructor - use AgentBuilder to create agents.
     /// </summary>
-    public Agent(
+    internal Agent(
         AgentConfig config,
         IChatClient baseClient,
         ChatOptions? mergedOptions,

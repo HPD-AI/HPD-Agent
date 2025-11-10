@@ -1,4 +1,5 @@
 using HPD.Agent.Providers;
+using HPD.Agent.Internal.Filters;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -556,8 +557,7 @@ public class AgentBuilder
     /// </example>
     public AgentBuilder WithLogging(
         bool enableSensitiveData = false,
-        bool includeFunctionInvocations = true,
-        Action<LoggingAiFunctionFilter>? configureFunctionFilter = null)
+        bool includeFunctionInvocations = true)
     {
         // Configure agent-level logging service for HPD-specific orchestration logging
         _config.Logging = new LoggingConfig
@@ -593,7 +593,6 @@ public class AgentBuilder
         if (includeFunctionInvocations)
         {
             var functionFilter = new LoggingAiFunctionFilter(_logger);
-            configureFunctionFilter?.Invoke(functionFilter);
             this.WithFilter(functionFilter);
         }
 
@@ -1570,8 +1569,9 @@ public class AgentBuilder
 #region Filter Extensions
 /// <summary>
 /// Extension methods for configuring prompt and function filters for the AgentBuilder.
+/// Internal - not exposed to users. Use AIContextProvider for public API.
 /// </summary>
-public static class AgentBuilderFilterExtensions
+internal static class AgentBuilderFilterExtensions
 {
     /// <summary>
     /// Adds Function Invocation filters that apply to all tool calls in conversations

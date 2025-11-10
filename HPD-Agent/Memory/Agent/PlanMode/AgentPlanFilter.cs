@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using HPD.Agent.Internal.Filters;
 using Microsoft.Extensions.AI;
 using System.Collections.Generic;
 using System.Linq;
@@ -9,7 +10,7 @@ using HPD_Agent.Memory.Agent.PlanMode;
 /// Prompt filter that injects the current plan into system messages.
 /// Only injects when a plan exists.
 /// </summary>
-public class AgentPlanFilter : IPromptFilter
+internal class AgentPlanFilter : IPromptFilter
 {
     private readonly AgentPlanStore _store;
     private readonly ILogger<AgentPlanFilter>? _logger;

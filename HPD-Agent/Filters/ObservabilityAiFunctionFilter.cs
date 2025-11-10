@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using HPD.Agent.Internal.Filters;
 using System.Diagnostics.Metrics;
 using System.Text.Json;
 using Microsoft.Extensions.AI;

@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using HPD.Agent.Internal.Filters;
 using Microsoft.Extensions.AI;
 using System.Text;
 
@@ -6,7 +7,7 @@ using System.Text;
 /// <summary>
 /// Prompt filter that injects memory content into the system message.
 /// </summary>
-public class DynamicMemoryFilter : IPromptFilter
+internal class DynamicMemoryFilter : IPromptFilter
 {
     private readonly DynamicMemoryStore _store;
     private readonly DynamicMemoryOptions _options;

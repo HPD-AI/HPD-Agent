@@ -1,4 +1,5 @@
 using System;
+using HPD.Agent.Internal.Filters;
 using HPD.Agent;
 using System.Threading.Tasks;
 

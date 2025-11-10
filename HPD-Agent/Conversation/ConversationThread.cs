@@ -194,6 +194,39 @@ public class ConversationThread : AgentThread
     }
 
     /// <summary>
+    /// Optional AI context provider for protocol-specific enrichment.
+    /// Used by Microsoft.Agents.AI protocol for memory/RAG injection before LLM calls.
+    /// Null for protocols that don't use this pattern or threads without context enrichment.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is automatically set via factory pattern when using Microsoft protocol:
+    /// <code>
+    /// var agent = new AgentBuilder()
+    ///     .WithContextProviderFactory(ctx => new MyMemoryProvider())
+    ///     .BuildMicrosoftAgent();
+    ///
+    /// var thread = agent.CreateThread();  // Provider created automatically
+    /// </code>
+    /// </para>
+    /// <para>
+    /// The provider's <see cref="AIContextProvider.InvokingAsync"/> method is called before each LLM
+    /// invocation to inject additional context (memories, RAG documents, dynamic tools, etc.).
+    /// The provider's <see cref="AIContextProvider.InvokedAsync"/> method is called after the LLM
+    /// responds to enable learning and state updates.
+    /// </para>
+    /// <para>
+    /// <b>Per-Thread Override:</b> You can override the factory-provided provider on specific threads:
+    /// <code>
+    /// var thread = agent.CreateThread();
+    /// thread.AIContextProvider = new VectorDBProvider();  // Override for this thread only
+    /// </code>
+    /// </para>
+    /// </remarks>
+    [System.Text.Json.Serialization.JsonIgnore]  // Don't serialize the instance, only its state
+    public AIContextProvider? AIContextProvider { get; set; }
+
+    /// <summary>
     /// Creates a new conversation thread with default in-memory storage.
     /// </summary>
     public ConversationThread()
@@ -465,7 +498,8 @@ public class ConversationThread : AgentThread
             Metadata = _metadata.ToDictionary(kv => kv.Key, kv => kv.Value),
             CreatedAt = CreatedAt,
             LastActivity = LastActivity,
-            ServiceThreadId = ServiceThreadId
+            ServiceThreadId = ServiceThreadId,
+            AIContextProviderState = AIContextProvider?.Serialize(jsonSerializerOptions)
         };
 
         // Use source-generated JSON context for AOT compatibility
@@ -479,18 +513,30 @@ public class ConversationThread : AgentThread
     /// </summary>
     /// <param name="snapshot">Serialized thread snapshot</param>
     /// <param name="options">Optional JSON serializer options</param>
+    /// <param name="contextProviderFactory">Optional factory for restoring AIContextProvider from serialized state</param>
     /// <returns>Deserialized conversation thread</returns>
     /// <remarks>
+    /// <para>
     /// For Native AOT support, register factories before deserializing:
     /// <code>
     /// ConversationThread.RegisterStoreFactory(new InMemoryConversationMessageStoreFactory());
     /// var thread = ConversationThread.Deserialize(snapshot);
     /// </code>
     /// Falls back to reflection if no factory is registered (non-AOT scenarios).
+    /// </para>
+    /// <para>
+    /// To restore AIContextProvider state, provide a factory:
+    /// <code>
+    /// var thread = ConversationThread.Deserialize(
+    ///     snapshot,
+    ///     contextProviderFactory: (state, opts) => new MyMemoryProvider(state, opts));
+    /// </code>
+    /// </para>
     /// </remarks>
     public static ConversationThread Deserialize(
         ConversationThreadSnapshot snapshot,
-        JsonSerializerOptions? options = null)
+        JsonSerializerOptions? options = null,
+        Func<JsonElement, JsonSerializerOptions?, AIContextProvider>? contextProviderFactory = null)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
 
@@ -558,6 +604,17 @@ public class ConversationThread : AgentThread
             thread._metadata[key] = value;
         }
 
+        // Restore AIContextProvider state if factory provided and state exists
+        if (snapshot.AIContextProviderState.HasValue &&
+            snapshot.AIContextProviderState.Value.ValueKind != System.Text.Json.JsonValueKind.Undefined &&
+            snapshot.AIContextProviderState.Value.ValueKind != System.Text.Json.JsonValueKind.Null &&
+            contextProviderFactory != null)
+        {
+            thread.AIContextProvider = contextProviderFactory(
+                snapshot.AIContextProviderState.Value,
+                options);
+        }
+
         return thread;
     }
 
@@ -618,4 +675,11 @@ public record ConversationThreadSnapshot
     public required DateTime CreatedAt { get; init; }
     public required DateTime LastActivity { get; init; }
     public string? ServiceThreadId { get; init; }
+
+    /// <summary>
+    /// Serialized state of the AIContextProvider (if any).
+    /// Used by Microsoft protocol to restore provider state across sessions.
+    /// Null if thread doesn't use an AIContextProvider.
+    /// </summary>
+    public JsonElement? AIContextProviderState { get; init; }
 }

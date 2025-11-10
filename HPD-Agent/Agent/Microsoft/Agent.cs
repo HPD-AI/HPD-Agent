@@ -16,6 +16,7 @@ namespace HPD.Agent.Microsoft;
 public sealed class Agent : AIAgent
 {
     private readonly CoreAgent _core;
+    private readonly Func<AIContextProviderFactoryContext, AIContextProvider>? _contextProviderFactory;
 
     /// <summary>
     /// Initializes a new Microsoft protocol agent instance
@@ -31,7 +32,8 @@ public sealed class Agent : AIAgent
         IReadOnlyList<IPermissionFilter>? permissionFilters = null,
         IReadOnlyList<IAiFunctionFilter>? aiFunctionFilters = null,
         IReadOnlyList<IMessageTurnFilter>? messageTurnFilters = null,
-        IServiceProvider? serviceProvider = null)
+        IServiceProvider? serviceProvider = null,
+        Func<AIContextProviderFactoryContext, AIContextProvider>? contextProviderFactory = null)
     {
         _core = new CoreAgent(
             config,
@@ -45,6 +47,8 @@ public sealed class Agent : AIAgent
             aiFunctionFilters,
             messageTurnFilters,
             serviceProvider);
+
+        _contextProviderFactory = contextProviderFactory;
     }
 
     /// <summary>
@@ -82,10 +86,61 @@ public sealed class Agent : AIAgent
         // Convert AgentRunOptions to ChatOptions (for now, create empty ChatOptions)
         var chatOptions = options != null ? new ChatOptions() : null;
 
-        // Get current messages once
+        IList<ChatMessage>? aiContextMessages = null;
+        Exception? invokeException = null;
+
+        // ══════════════════════════════════════════════════════════════════════════
+        // STEP 1: AIContextProvider Pre-Invocation (Microsoft-specific enrichment)
+        // ══════════════════════════════════════════════════════════════════════════
+        if (conversationThread.AIContextProvider != null)
+        {
+            try
+            {
+                // Provider sees only NEW input messages (matches Microsoft's pattern)
+                var invokingContext = new AIContextProvider.InvokingContext(messages);
+                var aiContext = await conversationThread.AIContextProvider.InvokingAsync(
+                    invokingContext,
+                    cancellationToken);
+
+                // Merge messages (provider messages BEFORE user input)
+                if (aiContext.Messages is { Count: > 0 })
+                {
+                    aiContextMessages = aiContext.Messages;
+                    messages = aiContext.Messages.Concat(messages).ToList();
+                }
+
+                // Merge tools
+                if (aiContext.Tools is { Count: > 0 })
+                {
+                    chatOptions ??= new ChatOptions();
+                    chatOptions.Tools ??= new List<AITool>();
+                    foreach (var tool in aiContext.Tools)
+                        chatOptions.Tools.Add(tool);
+                }
+
+                // Merge instructions
+                if (!string.IsNullOrWhiteSpace(aiContext.Instructions))
+                {
+                    chatOptions ??= new ChatOptions();
+                    chatOptions.Instructions = string.IsNullOrWhiteSpace(chatOptions.Instructions)
+                        ? aiContext.Instructions
+                        : $"{chatOptions.Instructions}\n{aiContext.Instructions}";
+                }
+            }
+            catch
+            {
+                // TODO: Consider emitting error event for observability
+                // For now, log and continue (don't fail the turn)
+                // Could use: yield return new InternalFilterErrorEvent("AIContextProvider.InvokingAsync", ex.Message, ex);
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════════════════════
+        // STEP 2: Add enriched messages to thread
+        // ══════════════════════════════════════════════════════════════════════════
         var currentMessages = await conversationThread.GetMessagesAsync(cancellationToken);
 
-        // Add workflow messages to thread state
+        // Add workflow messages to thread state (now includes provider messages if any)
         foreach (var msg in messages)
         {
             if (!currentMessages.Contains(msg))
@@ -97,55 +152,191 @@ public sealed class Agent : AIAgent
         // Refresh messages after adding new ones
         currentMessages = await conversationThread.GetMessagesAsync(cancellationToken);
 
-        IReadOnlyList<ChatMessage> finalHistory;
+        // ══════════════════════════════════════════════════════════════════════════
+        // STEP 3: Call core agent (receives enriched messages - doesn't know they're special!)
+        // ══════════════════════════════════════════════════════════════════════════
+        IReadOnlyList<ChatMessage> turnMessages;
         try
         {
-            // Call core agent directly and track history from events
-            var turnHistory = new List<ChatMessage>();
-            var historyCompletionSource = new TaskCompletionSource<IReadOnlyList<ChatMessage>>(TaskCreationOptions.RunContinuationsAsynchronously);
-
+            // Call core agent and collect messages from events
             var internalStream = _core.RunAsync(
                 currentMessages,
                 chatOptions,
                 cancellationToken);
 
-            // Consume stream and track messages (non-streaming path)
+            // Track messages built from events
+            var turnMessageList = new List<ChatMessage>();
+            var currentAssistantContents = new List<AIContent>();
+            var currentToolResults = new List<ChatMessage>();
+
+            // Consume stream and build messages from events (non-streaming path)
             await foreach (var internalEvent in internalStream.WithCancellation(cancellationToken))
             {
-                // Track history completion events
-                if (internalEvent is InternalAgentTurnFinishedEvent turnFinished)
+                // Build messages from content events
+                switch (internalEvent)
                 {
-                    // Get the final conversation state when agent turn completes
-                    var finalMessages = await conversationThread.GetMessagesAsync(cancellationToken);
-                    historyCompletionSource.TrySetResult(finalMessages.ToList());
+                    case InternalTextDeltaEvent textDelta:
+                        currentAssistantContents.Add(new TextContent(textDelta.Text));
+                        break;
+
+                    case InternalReasoningDeltaEvent reasoning:
+                        currentAssistantContents.Add(new TextReasoningContent(reasoning.Text));
+                        break;
+
+                    case InternalToolCallStartEvent toolStart:
+                        currentAssistantContents.Add(new FunctionCallContent(toolStart.CallId, toolStart.Name));
+                        break;
+
+                    case InternalToolCallResultEvent toolResult:
+                        currentToolResults.Add(new ChatMessage(ChatRole.Tool, 
+                            [new FunctionResultContent(toolResult.CallId, toolResult.Result)]));
+                        break;
+
+                    case InternalTextMessageEndEvent:
+                    case InternalReasoningMessageEndEvent:
+                    case InternalToolCallEndEvent:
+                        // Message completed - add to turn messages if we have content
+                        if (currentAssistantContents.Count > 0)
+                        {
+                            // Combine text and reasoning contents into a single text message
+                            var combinedText = string.Join("", currentAssistantContents
+                                .Where(c => c is TextContent || c is TextReasoningContent)
+                                .Select(c => c is TextContent tc ? tc.Text : ((TextReasoningContent)c).Text));
+
+                            var functionCalls = currentAssistantContents.OfType<FunctionCallContent>().ToList();
+
+                            if (!string.IsNullOrEmpty(combinedText) && functionCalls.Count > 0)
+                            {
+                                // Both text and tool calls
+                                var contents = new List<AIContent> { new TextContent(combinedText) };
+                                contents.AddRange(functionCalls);
+                                turnMessageList.Add(new ChatMessage(ChatRole.Assistant, contents));
+                            }
+                            else if (!string.IsNullOrEmpty(combinedText))
+                            {
+                                // Text only
+                                turnMessageList.Add(new ChatMessage(ChatRole.Assistant, combinedText));
+                            }
+                            else if (functionCalls.Count > 0)
+                            {
+                                // Tool calls only
+                                turnMessageList.Add(new ChatMessage(ChatRole.Assistant, functionCalls.Cast<AIContent>().ToList()));
+                            }
+
+                            currentAssistantContents.Clear();
+                        }
+
+                        // Add tool results if any
+                        if (currentToolResults.Count > 0)
+                        {
+                            turnMessageList.AddRange(currentToolResults);
+                            currentToolResults.Clear();
+                        }
+                        break;
                 }
             }
 
-            // Get final history from completion source or current thread state
-            finalHistory = historyCompletionSource.Task.IsCompletedSuccessfully 
-                ? await historyCompletionSource.Task
-                : (await conversationThread.GetMessagesAsync(cancellationToken)).ToList();
+            // Finalize any remaining content
+            if (currentAssistantContents.Count > 0)
+            {
+                var combinedText = string.Join("", currentAssistantContents
+                    .Where(c => c is TextContent || c is TextReasoningContent)
+                    .Select(c => c is TextContent tc ? tc.Text : ((TextReasoningContent)c).Text));
+
+                var functionCalls = currentAssistantContents.OfType<FunctionCallContent>().ToList();
+
+                if (!string.IsNullOrEmpty(combinedText) || functionCalls.Count > 0)
+                {
+                    if (!string.IsNullOrEmpty(combinedText) && functionCalls.Count > 0)
+                    {
+                        var contents = new List<AIContent> { new TextContent(combinedText) };
+                        contents.AddRange(functionCalls);
+                        turnMessageList.Add(new ChatMessage(ChatRole.Assistant, contents));
+                    }
+                    else if (!string.IsNullOrEmpty(combinedText))
+                    {
+                        turnMessageList.Add(new ChatMessage(ChatRole.Assistant, combinedText));
+                    }
+                    else
+                    {
+                        turnMessageList.Add(new ChatMessage(ChatRole.Assistant, functionCalls.Cast<AIContent>().ToList()));
+                    }
+                }
+            }
+
+            if (currentToolResults.Count > 0)
+            {
+                turnMessageList.AddRange(currentToolResults);
+            }
+
+            // Add collected messages to thread
+            foreach (var msg in turnMessageList)
+            {
+                await conversationThread.AddMessageAsync(msg, cancellationToken);
+            }
+
+            turnMessages = turnMessageList;
+        }
+        catch (Exception ex)
+        {
+            invokeException = ex;
+            turnMessages = Array.Empty<ChatMessage>();
+
+            // Call InvokedAsync with error before re-throwing
+            if (conversationThread.AIContextProvider != null)
+            {
+                try
+                {
+                    await conversationThread.AIContextProvider.InvokedAsync(
+                        new AIContextProvider.InvokedContext(messages)
+                        {
+                            ResponseMessages = null,
+                            InvokeException = invokeException
+                        },
+                        cancellationToken);
+                }
+                catch
+                {
+                    // Ignore errors in error handler
+                }
+            }
+
+            throw;
         }
         finally
         {
             // Context is cleared automatically per function call in Agent.CurrentFunctionContext
         }
 
-        // Refresh messages after turn completes and before checking final history
-        currentMessages = await conversationThread.GetMessagesAsync(cancellationToken);
-
-        // Update thread with final messages
-        foreach (var msg in finalHistory)
+        // ══════════════════════════════════════════════════════════════════════════
+        // STEP 4: AIContextProvider Post-Invocation (Microsoft-specific learning)
+        // ══════════════════════════════════════════════════════════════════════════
+        if (conversationThread.AIContextProvider != null && invokeException == null)
         {
-            if (!currentMessages.Contains(msg))
+            try
             {
-                await conversationThread.AddMessageAsync(msg, cancellationToken);
+                // Get just the new response messages (assistant messages from this turn)
+                var responseMessages = turnMessages
+                    .Where(m => m.Role == ChatRole.Assistant)
+                    .ToList();
+
+                await conversationThread.AIContextProvider.InvokedAsync(
+                    new AIContextProvider.InvokedContext(messages)
+                    {
+                        ResponseMessages = responseMessages,
+                        InvokeException = null
+                    },
+                    cancellationToken);
+            }
+            catch
+            {
+                // Ignore errors in post-processing
             }
         }
 
-        // Convert to AgentRunResponse
+        // Convert to AgentRunResponse (only return messages from THIS turn)
         var response = new AgentRunResponse();
-        foreach (var msg in finalHistory)
+        foreach (var msg in turnMessages)
         {
             response.Messages.Add(msg);
         }
@@ -174,10 +365,60 @@ public sealed class Agent : AIAgent
         // Convert AgentRunOptions to ChatOptions (for now, create empty ChatOptions)
         var chatOptions = options != null ? new ChatOptions() : null;
 
-        // Get current messages once
+        IList<ChatMessage>? aiContextMessages = null;
+        Exception? invokeException = null;
+
+        // ══════════════════════════════════════════════════════════════════════════
+        // STEP 1: AIContextProvider Pre-Invocation (Microsoft-specific enrichment)
+        // ══════════════════════════════════════════════════════════════════════════
+        if (conversationThread.AIContextProvider != null)
+        {
+            try
+            {
+                // Provider sees only NEW input messages (matches Microsoft's pattern)
+                var invokingContext = new AIContextProvider.InvokingContext(messages);
+                var aiContext = await conversationThread.AIContextProvider.InvokingAsync(
+                    invokingContext,
+                    cancellationToken);
+
+                // Merge messages (provider messages BEFORE user input)
+                if (aiContext.Messages is { Count: > 0 })
+                {
+                    aiContextMessages = aiContext.Messages;
+                    messages = aiContext.Messages.Concat(messages).ToList();
+                }
+
+                // Merge tools
+                if (aiContext.Tools is { Count: > 0 })
+                {
+                    chatOptions ??= new ChatOptions();
+                    chatOptions.Tools ??= new List<AITool>();
+                    foreach (var tool in aiContext.Tools)
+                        chatOptions.Tools.Add(tool);
+                }
+
+                // Merge instructions
+                if (!string.IsNullOrWhiteSpace(aiContext.Instructions))
+                {
+                    chatOptions ??= new ChatOptions();
+                    chatOptions.Instructions = string.IsNullOrWhiteSpace(chatOptions.Instructions)
+                        ? aiContext.Instructions
+                        : $"{chatOptions.Instructions}\n{aiContext.Instructions}";
+                }
+            }
+            catch
+            {
+                // TODO: Consider emitting error event for observability
+                // For now, log and continue (don't fail the turn)
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════════════════════
+        // STEP 2: Add enriched messages to thread
+        // ══════════════════════════════════════════════════════════════════════════
         var currentMessages = await conversationThread.GetMessagesAsync(cancellationToken);
 
-        // Add workflow messages to thread state
+        // Add workflow messages to thread state (now includes provider messages if any)
         foreach (var msg in messages)
         {
             if (!currentMessages.Contains(msg))
@@ -189,58 +430,130 @@ public sealed class Agent : AIAgent
         // Refresh messages after adding new ones
         currentMessages = await conversationThread.GetMessagesAsync(cancellationToken);
 
-        IReadOnlyList<ChatMessage> finalHistory;
-        try
+        // Track the message count BEFORE the turn so we can identify new messages
+        var messageCountBeforeTurn = currentMessages.Count;
+
+        // ══════════════════════════════════════════════════════════════════════════
+        // STEP 3: Call core agent and stream events (receives enriched messages)
+        // ══════════════════════════════════════════════════════════════════════════
+        IReadOnlyList<ChatMessage> turnMessages;
+        Exception? streamingException = null;
+
+        // Call core agent and adapt events to Microsoft protocol
+        var internalStream = _core.RunAsync(
+            currentMessages,
+            chatOptions,
+            cancellationToken);
+
+        // Use EventStreamAdapter pattern for protocol conversion
+        var agentsAIStream = EventStreamAdapter.ToAgentsAI(internalStream, conversationThread.Id, _core.Name, cancellationToken);
+
+        // Stream events (cannot use try-catch with yield)
+        await foreach (var update in agentsAIStream.WithCancellation(cancellationToken))
         {
-            // Call core agent and adapt events to Microsoft protocol
-            var internalStream = _core.RunAsync(
-                currentMessages,
-                chatOptions,
-                cancellationToken);
+            yield return update;
+        }
 
-            // Use EventStreamAdapter pattern for protocol conversion
-            var agentsAIStream = EventStreamAdapter.ToAgentsAI(internalStream, conversationThread.Id, _core.Name, cancellationToken);
+        // Get turn messages after streaming completes (only NEW messages from this turn)
+        var allMessages = await conversationThread.GetMessagesAsync(cancellationToken);
+        turnMessages = allMessages.Skip(messageCountBeforeTurn).ToList();
 
-            await foreach (var update in agentsAIStream)
+        // Handle any exceptions that occurred during streaming
+        if (streamingException != null)
+        {
+            invokeException = streamingException;
+
+            // Call InvokedAsync with error
+            if (conversationThread.AIContextProvider != null)
             {
-                yield return update;
+                try
+                {
+                    await conversationThread.AIContextProvider.InvokedAsync(
+                        new AIContextProvider.InvokedContext(messages)
+                        {
+                            ResponseMessages = null,
+                            InvokeException = invokeException
+                        },
+                        cancellationToken);
+                }
+                catch
+                {
+                    // Ignore errors in error handler
+                }
             }
 
-            // Get final history (would need to track from events in real implementation)
-            finalHistory = new List<ChatMessage>();
-        }
-        finally
-        {
-            // Context is cleared automatically per function call in Agent.CurrentFunctionContext
+            throw streamingException;
         }
 
-        // Update thread with final messages
-        var refreshedMessages = await conversationThread.GetMessagesAsync(cancellationToken);
-        foreach (var msg in finalHistory)
+        // ══════════════════════════════════════════════════════════════════════════
+        // STEP 4: AIContextProvider Post-Invocation (Microsoft-specific learning)
+        // ══════════════════════════════════════════════════════════════════════════
+        if (conversationThread.AIContextProvider != null && invokeException == null)
         {
-            if (!refreshedMessages.Contains(msg))
+            try
             {
-                await conversationThread.AddMessageAsync(msg, cancellationToken);
+                // Get just the new response messages (assistant messages from this turn)
+                var responseMessages = turnMessages
+                    .Where(m => m.Role == ChatRole.Assistant)
+                    .ToList();
+
+                await conversationThread.AIContextProvider.InvokedAsync(
+                    new AIContextProvider.InvokedContext(messages)
+                    {
+                        ResponseMessages = responseMessages,
+                        InvokeException = null
+                    },
+                    cancellationToken);
+            }
+            catch
+            {
+                // Ignore errors in post-processing
             }
         }
     }
 
     /// <summary>
     /// Creates a new conversation thread for this agent.
+    /// If an AIContextProvider factory is configured, creates and attaches a provider instance.
     /// </summary>
     /// <returns>A new ConversationThread instance</returns>
     public override AgentThread GetNewThread()
     {
-        return _core.CreateThread();
+        var thread = _core.CreateThread();
+
+        // Apply AIContextProvider via factory (if configured)
+        if (_contextProviderFactory != null)
+        {
+            thread.AIContextProvider = _contextProviderFactory(new AIContextProviderFactoryContext
+            {
+                SerializedState = default,  // New thread, no state to restore
+                JsonSerializerOptions = null
+            });
+        }
+
+        return thread;
     }
 
     /// <summary>
     /// Creates a new conversation thread (convenience method delegated to core).
+    /// If an AIContextProvider factory is configured, creates and attaches a provider instance.
     /// </summary>
     /// <returns>A new ConversationThread instance</returns>
     public ConversationThread CreateThread()
     {
-        return _core.CreateThread();
+        var thread = _core.CreateThread();
+
+        // Apply AIContextProvider via factory (if configured)
+        if (_contextProviderFactory != null)
+        {
+            thread.AIContextProvider = _contextProviderFactory(new AIContextProviderFactoryContext
+            {
+                SerializedState = default,  // New thread, no state to restore
+                JsonSerializerOptions = null
+            });
+        }
+
+        return thread;
     }
 
     /// <summary>

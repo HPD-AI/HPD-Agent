@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Amazon;
 using Amazon.BedrockRuntime;
+using HPD.Agent;
 using HPD.Agent.Providers;
 using HPD.Agent.ErrorHandling;
 using Microsoft.Extensions.AI;

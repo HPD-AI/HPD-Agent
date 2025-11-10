@@ -4,6 +4,7 @@ using System.Linq;
 using Azure.AI.OpenAI;
 using Azure;
 using OpenAI.Chat;
+using HPD.Agent;
 using HPD.Agent.Providers;
 using HPD.Agent.ErrorHandling;
 using Microsoft.Extensions.AI;

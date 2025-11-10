@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using GenerativeAI;
 using GenerativeAI.Microsoft;
+using HPD.Agent;
 using HPD.Agent.Providers;
 using HPD.Agent.ErrorHandling;
 using Microsoft.Extensions.AI;

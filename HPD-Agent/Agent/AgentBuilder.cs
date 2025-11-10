@@ -10,8 +10,8 @@ using Microsoft.Extensions.Caching.Distributed;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Text.Json;
-
 using HPD_Agent.Memory.Agent.PlanMode;
+using Microsoft.Agents.AI;
 
 namespace HPD.Agent;
 
@@ -58,6 +58,9 @@ public class AgentBuilder
 
     // MCP runtime fields
     internal MCPClientManager? _mcpClientManager;
+
+    // AIContextProvider factory (Microsoft protocol only)
+    private Func<HPD.Agent.Microsoft.AIContextProviderFactoryContext, AIContextProvider>? _contextProviderFactory;
 
     /// <summary>
     /// Creates a new builder with default configuration.
@@ -263,6 +266,92 @@ public class AgentBuilder
             throw new ArgumentOutOfRangeException(nameof(extensionAmount), "Continuation extension amount must be greater than 0");
 
         _config.ContinuationExtensionAmount = extensionAmount;
+        return this;
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════════
+    // AIContextProvider CONFIGURATION (Microsoft Protocol Only)
+    // ══════════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Sets the AI context provider factory for Microsoft protocol agents.
+    /// Factory creates fresh provider instances per thread with optional state restoration.
+    /// </summary>
+    /// <param name="factory">Factory function that creates AIContextProvider instances</param>
+    /// <returns>This builder for fluent chaining</returns>
+    /// <remarks>
+    /// The factory is invoked for each new thread created via <see cref="HPD.Agent.Microsoft.Agent.GetNewThread"/>.
+    /// For state restoration (deserialization), check <see cref="HPD.Agent.Microsoft.AIContextProviderFactoryContext.SerializedState"/>.
+    /// <para><b>Example - Stateless Provider:</b></para>
+    /// <code>
+    /// var agent = new AgentBuilder()
+    ///     .WithContextProviderFactory(ctx => new MyMemoryProvider())
+    ///     .BuildMicrosoftAgent();
+    /// </code>
+    /// <para><b>Example - Stateful Provider with Restoration:</b></para>
+    /// <code>
+    /// var agent = new AgentBuilder()
+    ///     .WithContextProviderFactory(ctx =>
+    ///     {
+    ///         // Check if we're restoring from saved state
+    ///         if (ctx.SerializedState.ValueKind != JsonValueKind.Undefined &amp;&amp;
+    ///             ctx.SerializedState.ValueKind != JsonValueKind.Null)
+    ///         {
+    ///             return new MyMemoryProvider(ctx.SerializedState, ctx.JsonSerializerOptions);
+    ///         }
+    ///         return new MyMemoryProvider();
+    ///     })
+    ///     .BuildMicrosoftAgent();
+    /// </code>
+    /// </remarks>
+    public AgentBuilder WithContextProviderFactory(
+        Func<HPD.Agent.Microsoft.AIContextProviderFactoryContext, AIContextProvider> factory)
+    {
+        _contextProviderFactory = factory ?? throw new ArgumentNullException(nameof(factory));
+        return this;
+    }
+
+    /// <summary>
+    /// Convenience method for stateless AIContextProvider types.
+    /// Creates a new instance for each thread without state restoration.
+    /// </summary>
+    /// <typeparam name="T">AIContextProvider type with parameterless constructor</typeparam>
+    /// <returns>This builder for fluent chaining</returns>
+    /// <example>
+    /// <code>
+    /// var agent = new AgentBuilder()
+    ///     .WithContextProvider&lt;MyMemoryProvider&gt;()
+    ///     .BuildMicrosoftAgent();
+    /// </code>
+    /// </example>
+    public AgentBuilder WithContextProvider<T>() where T : AIContextProvider, new()
+    {
+        _contextProviderFactory = _ => new T();
+        return this;
+    }
+
+    /// <summary>
+    /// Convenience method for singleton AIContextProvider (shared across all threads).
+    /// </summary>
+    /// <param name="provider">Provider instance to share across all threads</param>
+    /// <returns>This builder for fluent chaining</returns>
+    /// <remarks>
+    /// <b>WARNING:</b> Use only for stateless providers or when sharing state is intentional.
+    /// All threads will share the same provider instance and its state.
+    /// <para>For per-thread isolation, use <see cref="WithContextProviderFactory"/> or <see cref="WithContextProvider{T}"/> instead.</para>
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// var sharedProvider = new MyStatelessProvider();
+    /// var agent = new AgentBuilder()
+    ///     .WithSharedContextProvider(sharedProvider)
+    ///     .BuildMicrosoftAgent();
+    /// </code>
+    /// </example>
+    public AgentBuilder WithSharedContextProvider(AIContextProvider provider)
+    {
+        ArgumentNullException.ThrowIfNull(provider);
+        _contextProviderFactory = _ => provider;
         return this;
     }
 
@@ -709,7 +798,7 @@ public class AgentBuilder
     public async Task<Microsoft.Agent> BuildAsync(CancellationToken cancellationToken = default)
     {
         var buildData = await BuildDependenciesAsync(cancellationToken).ConfigureAwait(false);
-        
+
         // Wrap in Microsoft protocol adapter
         return new Microsoft.Agent(
             _config!,
@@ -718,11 +807,12 @@ public class AgentBuilder
             _promptFilters,
             _scopedFilterManager!,
             buildData.ErrorHandler,
-            _providerRegistry!,
             buildData.SkillScopingManager,
             _permissionFilters,
             _globalFilters,
-            _messageTurnFilters);
+            _messageTurnFilters,
+            _serviceProvider,
+            _contextProviderFactory);
     }
 
     /// <summary>
@@ -743,11 +833,12 @@ public class AgentBuilder
             _promptFilters,
             _scopedFilterManager!,
             buildData.ErrorHandler,
-            _providerRegistry!,
             buildData.SkillScopingManager,
             _permissionFilters,
             _globalFilters,
-            _messageTurnFilters);
+            _messageTurnFilters,
+            _serviceProvider,
+            _contextProviderFactory);
     }
 
     /// <summary>
@@ -767,11 +858,11 @@ public class AgentBuilder
             _promptFilters,
             _scopedFilterManager!,
             buildData.ErrorHandler,
-            _providerRegistry!,
             buildData.SkillScopingManager,
             _permissionFilters,
             _globalFilters,
-            _messageTurnFilters);
+            _messageTurnFilters,
+            _serviceProvider);
     }
 
     /// <summary>
@@ -790,11 +881,11 @@ public class AgentBuilder
             _promptFilters,
             _scopedFilterManager!,
             buildData.ErrorHandler,
-            _providerRegistry!,
             buildData.SkillScopingManager,
             _permissionFilters,
             _globalFilters,
-            _messageTurnFilters);
+            _messageTurnFilters,
+            _serviceProvider);
     }
 
     /// <summary>
@@ -826,6 +917,22 @@ public class AgentBuilder
     /// </summary>
     private async Task<AgentBuildDependencies> BuildDependenciesAsync(CancellationToken cancellationToken)
     {
+        // === TESTING BYPASS: If BaseClient is already set, skip provider resolution ===
+        // This allows tests to inject fake clients without configuring a real provider
+        if (_baseClient != null)
+        {
+            // Use generic error handler for testing
+            var testErrorHandler = new HPD.Agent.ErrorHandling.GenericErrorHandler();
+            
+            // For testing, we don't need skill scoping (tests can't resolve functions yet)
+            // If tests need skill scoping, they should configure a proper provider
+            return new AgentBuildDependencies(
+                _baseClient,
+                _config.Provider?.DefaultChatOptions,
+                testErrorHandler,
+                null);  // skillScopingManager
+        }
+        
         // === START: VALIDATION LOGIC ===
         var agentConfigValidator = new AgentConfigValidator();
         agentConfigValidator.ValidateAndThrow(_config);

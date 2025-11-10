@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Azure;
 using Azure.AI.Inference;
+using HPD.Agent;
 using HPD.Agent.Providers;
 using HPD.Agent.ErrorHandling;
 using Microsoft.Extensions.AI;

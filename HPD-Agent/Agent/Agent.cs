@@ -617,7 +617,7 @@ internal sealed class Agent
                     effectiveOptions,
                     state);
 
-                _loggingService?.LogOrchestrationStart(_name, effectiveMessages, effectiveOptions);
+                // Note: Basic orchestration start logging removed - use Microsoft's LoggingChatClient instead
             }
             catch (Exception)
             {
@@ -1228,20 +1228,13 @@ internal sealed class Agent
             // ═══════════════════════════════════════════════════════
             try
             {
-                var duration = DateTime.UtcNow - orchestrationStartTime;
-                UsageDetails? usage = lastResponse?.Usage;
-                ChatFinishReason? finishReason = lastResponse?.FinishReason;
+                // Note: Token usage, duration, and finish reason are now tracked by Microsoft's OpenTelemetryChatClient
 
-                _loggingService?.LogCompletion(_name, state.Iteration, turnHistory);
+                _loggingService?.LogCompletion(_name, state.Iteration);
                 _telemetryService?.RecordCompletion(
                     telemetryActivity,
                     state,
-                    usage,
-                    finishReason,
-                    effectiveOptions?.ModelId ?? ModelId,
-                    ProviderKey,
-                    turnHistory,
-                    duration);
+                    effectiveOptions?.ModelId ?? ModelId);
 
                 telemetryActivity?.Dispose();
             }
@@ -5456,7 +5449,13 @@ public class FunctionInvocationContext
 
 /// <summary>
 /// Structured logging service with state awareness for agent execution.
-/// Provides detailed insights into agent orchestration flow.
+/// Provides HPD-Agent specific logging that Microsoft.Extensions.AI doesn't provide:
+/// - Agent decision logging
+/// - Circuit breaker warnings
+/// - State snapshots
+///
+/// Note: Basic invocation logging (requests/responses) should be handled by
+/// Microsoft's LoggingChatClient middleware when applied to the base client.
 /// </summary>
 internal sealed class AgentLoggingService
 {
@@ -5467,28 +5466,6 @@ internal sealed class AgentLoggingService
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _enableSensitiveData = config.EnableSensitiveData;
-    }
-
-    public void LogOrchestrationStart(
-        string agentName,
-        IEnumerable<ChatMessage> messages,
-        ChatOptions? options)
-    {
-        if (!_logger.IsEnabled(LogLevel.Debug)) return;
-
-        _logger.LogDebug(
-            "Agent '{AgentName}' starting agentic loop with {MessageCount} messages, Model: {Model}",
-            agentName,
-            messages.Count(),
-            options?.ModelId ?? "default");
-
-        if (_enableSensitiveData && _logger.IsEnabled(LogLevel.Trace))
-        {
-            _logger.LogTrace(
-                "Agent '{AgentName}' initial messages: {Messages}",
-                agentName,
-                System.Text.Json.JsonSerializer.Serialize(messages));
-        }
     }
 
     public void LogDecision(
@@ -5525,24 +5502,14 @@ internal sealed class AgentLoggingService
 
     public void LogCompletion(
         string agentName,
-        int iteration,
-        IEnumerable<ChatMessage> response)
+        int iteration)
     {
         if (!_logger.IsEnabled(LogLevel.Information)) return;
 
         _logger.LogInformation(
-            "Agent '{AgentName}' completed after {Iterations} iterations with {ResponseCount} messages",
+            "Agent '{AgentName}' completed after {Iterations} iterations",
             agentName,
-            iteration,
-            response.Count());
-
-        if (_enableSensitiveData && _logger.IsEnabled(LogLevel.Trace))
-        {
-            _logger.LogTrace(
-                "Agent '{AgentName}' final response: {Response}",
-                agentName,
-                System.Text.Json.JsonSerializer.Serialize(response));
-        }
+            iteration);
     }
 
     public void LogCircuitBreakerTriggered(
@@ -5557,26 +5524,17 @@ internal sealed class AgentLoggingService
             consecutiveCount);
     }
 
-    public void LogCancellation(string agentName)
-    {
-        _logger.LogInformation(
-            "Agent '{AgentName}' execution cancelled",
-            agentName);
-    }
-
-    public void LogError(string agentName, Exception ex)
-    {
-        _logger.LogError(
-            ex,
-            "Agent '{AgentName}' encountered error: {ErrorMessage}",
-            agentName,
-            ex.Message);
-    }
 }
 
 /// <summary>
 /// OpenTelemetry instrumentation service for agent orchestration.
-/// Implements Gen AI Semantic Conventions v1.38.
+/// Tracks HPD-Agent specific metrics that Microsoft.Extensions.AI doesn't provide:
+/// - Agent decision tracking (CallLLM, Complete, Terminate)
+/// - Circuit breaker triggers
+/// - Iteration counts per orchestration run
+///
+/// Note: Standard Gen AI metrics (token usage, duration) should be handled by
+/// Microsoft's OpenTelemetryChatClient middleware when applied to the base client.
 /// </summary>
 internal sealed class AgentTelemetryService : IDisposable
 {
@@ -5585,11 +5543,7 @@ internal sealed class AgentTelemetryService : IDisposable
     private readonly bool _enableSensitiveData;
     private readonly JsonSerializerOptions _jsonOptions;
 
-    // Standard Gen AI metrics (v1.38)
-    private readonly Histogram<int> _tokenUsageHistogram;
-    private readonly Histogram<double> _operationDurationHistogram;
-
-    // HPD-Agent specific metrics
+    // HPD-Agent specific metrics (not provided by Microsoft)
     private readonly Counter<int> _decisionCounter;
     private readonly Counter<int> _circuitBreakerCounter;
     private readonly Histogram<int> _iterationHistogram;
@@ -5606,17 +5560,6 @@ internal sealed class AgentTelemetryService : IDisposable
                                (envVar?.Equals("true", StringComparison.OrdinalIgnoreCase) ?? false);
 
         _jsonOptions = global::Microsoft.Extensions.AI.AIJsonUtilities.DefaultOptions;
-
-        // Standard Gen AI metrics
-        _tokenUsageHistogram = _meter.CreateHistogram<int>(
-            "gen_ai.client.token.usage",
-            "tokens",
-            "Measures number of input and output tokens used");
-
-        _operationDurationHistogram = _meter.CreateHistogram<double>(
-            "gen_ai.client.operation.duration",
-            "s",
-            "Generative AI operation duration");
 
         // Agent-specific metrics (unique to HPD-Agent)
         _decisionCounter = _meter.CreateCounter<int>(
@@ -5753,100 +5696,18 @@ internal sealed class AgentTelemetryService : IDisposable
     public void RecordCompletion(
         Activity? activity,
         AgentLoopState finalState,
-        UsageDetails? usage,
-        ChatFinishReason? finishReason,
-        string? modelId,
-        string? providerKey,
-        IEnumerable<ChatMessage> turnHistory,
-        TimeSpan duration)
+        string? modelId)
     {
         if (activity is { IsAllDataRequested: true })
         {
-            // Total iterations
+            // HPD-specific: Total iterations
             activity.AddTag("agent.total_iterations", finalState.Iteration);
-
-            // Finish reason
-            if (finishReason.HasValue)
-            {
-                activity.AddTag("gen_ai.response.finish_reasons", finishReason.Value.ToString());
-            }
-
-            // Token usage (if available)
-            if (usage != null)
-            {
-                if (usage.InputTokenCount.HasValue)
-                {
-                    activity.AddTag("gen_ai.usage.input_tokens", usage.InputTokenCount.Value);
-                }
-                if (usage.OutputTokenCount.HasValue)
-                {
-                    activity.AddTag("gen_ai.usage.output_tokens", usage.OutputTokenCount.Value);
-                }
-                if (usage.TotalTokenCount.HasValue)
-                {
-                    activity.AddTag("gen_ai.usage.total_tokens", usage.TotalTokenCount.Value);
-                }
-            }
-
-            // Sensitive data (opt-in)
-            if (_enableSensitiveData)
-            {
-                try
-                {
-                    var responseJson = JsonSerializer.Serialize(turnHistory, _jsonOptions);
-                    activity.AddTag("gen_ai.completion", responseJson);
-                }
-                catch (Exception)
-                {
-                    // Serialization errors shouldn't break execution
-                }
-            }
 
             // Set status
             activity.SetStatus(ActivityStatusCode.Ok);
         }
 
-        // Record metrics
-        if (usage != null)
-        {
-            var tags = new TagList
-            {
-                { "gen_ai.request.model", modelId },
-                { "gen_ai.system", providerKey },
-                { "agent.name", finalState.AgentName }
-            };
-
-            if (usage.InputTokenCount.HasValue)
-            {
-                var inputTags = new TagList
-                {
-                    { "gen_ai.request.model", modelId },
-                    { "gen_ai.system", providerKey },
-                    { "agent.name", finalState.AgentName },
-                    { "gen_ai.token.type", "input" }
-                };
-                _tokenUsageHistogram.Record((int)usage.InputTokenCount.Value, inputTags);
-            }
-            if (usage.OutputTokenCount.HasValue)
-            {
-                var outputTags = new TagList
-                {
-                    { "gen_ai.request.model", modelId },
-                    { "gen_ai.system", providerKey },
-                    { "agent.name", finalState.AgentName },
-                    { "gen_ai.token.type", "output" }
-                };
-                _tokenUsageHistogram.Record((int)usage.OutputTokenCount.Value, outputTags);
-            }
-        }
-
-        _operationDurationHistogram.Record(duration.TotalSeconds, new TagList
-        {
-            { "gen_ai.request.model", modelId },
-            { "gen_ai.system", providerKey },
-            { "agent.name", finalState.AgentName }
-        });
-
+        // HPD-specific: Iteration histogram
         _iterationHistogram.Record(finalState.Iteration, new TagList
         {
             { "agent.name", finalState.AgentName },

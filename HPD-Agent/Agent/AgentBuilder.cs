@@ -266,59 +266,239 @@ public class AgentBuilder
         return this;
     }
 
-    // ═══════════════════════════════════════════════════════
-    // AGENT-LEVEL OBSERVABILITY (Component Delegation Pattern)
-    // ═══════════════════════════════════════════════════════
-    // Following HPD-Agent's established pattern of specialized components,
-    // observability is handled by dedicated services integrated into Agent.cs:
-    // - AgentTelemetryService: OpenTelemetry tracing & metrics
-    // - AgentLoggingService: Structured logging with state awareness
+    // ══════════════════════════════════════════════════════════════════════════════
+    // DUAL-LAYER OBSERVABILITY ARCHITECTURE
+    // ══════════════════════════════════════════════════════════════════════════════
+    // HPD-Agent implements a dual-layer observability model that combines:
+    // 1. LLM-level instrumentation (Microsoft.Extensions.AI middleware)
+    // 2. Agent-level instrumentation (HPD's specialized services)
     //
-    // Why not middleware? See: Proposals/Urgent/OBSERVABILITY_SERVICE_INTEGRATION.md
-    // - Can't access agent-specific context (decisions, state, circuit breaker)
-    // - Only instruments LLM calls, not orchestration loop
-    // - Doesn't leverage AgentLoopState for rich context
-    // ═══════════════════════════════════════════════════════
+    // ┌────────────────────────────────────────────────────────────────────────┐
+    // │ LAYER 1: LLM-LEVEL OBSERVABILITY (Microsoft Middleware)               │
+    // ├────────────────────────────────────────────────────────────────────────┤
+    // │ • OpenTelemetryChatClient:                                             │
+    // │   - Token usage histograms (prompt/completion/total tokens)            │
+    // │   - Operation duration histograms (request latency)                    │
+    // │   - Distributed traces (LLM call spans)                                │
+    // │   - Gen AI Semantic Conventions v1.38 compliance                       │
+    // │                                                                         │
+    // │ • LoggingChatClient:                                                   │
+    // │   - LLM invocation logging (GetResponseAsync/GetStreamingResponseAsync)│
+    // │   - Request/response logging at Trace level (sensitive data)           │
+    // │   - Error and cancellation logging                                     │
+    // │                                                                         │
+    // │ • DistributedCachingChatClient:                                        │
+    // │   - Response caching with IDistributedCache (Redis, Memory, etc.)      │
+    // │   - Cache key generation from messages + options                       │
+    // │   - Streaming response coalescing                                      │
+    // │                                                                         │
+    // │ Applied: Automatically in AgentTurn.RunAsyncCore() on each LLM call    │
+    // │ Wrapping: Base → Caching → Logging → Telemetry (Russian doll pattern) │
+    // └────────────────────────────────────────────────────────────────────────┘
+    //
+    // ┌────────────────────────────────────────────────────────────────────────┐
+    // │ LAYER 2: AGENT-LEVEL OBSERVABILITY (HPD Services)                     │
+    // ├────────────────────────────────────────────────────────────────────────┤
+    // │ • AgentTelemetryService:                                               │
+    // │   - Agent decision tracking (CallLLM, Complete, Terminate)             │
+    // │   - Circuit breaker trigger counting                                   │
+    // │   - Iteration histograms per orchestration run                         │
+    // │   - State-aware distributed tracing (AgentLoopState context)           │
+    // │                                                                         │
+    // │ • AgentLoggingService:                                                 │
+    // │   - Agent decision logging with structured data                        │
+    // │   - Circuit breaker warnings                                           │
+    // │   - State snapshots at key orchestration points                        │
+    // │   - Completion logging with iteration counts                           │
+    // │                                                                         │
+    // │ Applied: Created in Agent constructor, invoked throughout orchestration│
+    // │ Scope: Agent orchestration loop, not individual LLM calls              │
+    // └────────────────────────────────────────────────────────────────────────┘
+    //
+    // WHY DUAL-LAYER?
+    // ────────────────────────────────────────────────────────────────────────────
+    // Microsoft middleware cannot access agent-specific context:
+    //   ✗ Agent decisions (CallLLM vs Complete vs Terminate)
+    //   ✗ Circuit breaker state
+    //   ✗ Iteration tracking across multiple LLM calls
+    //   ✗ AgentLoopState for rich contextual tracing
+    //
+    // HPD services cannot instrument LLM client internals:
+    //   ✗ Token usage (requires IChatClient instrumentation)
+    //   ✗ Provider-specific metadata (model, server address)
+    //   ✗ Cache hit/miss tracking
+    //
+    // Together, they provide complete observability:
+    //   ✓ "Why did the agent call the LLM?" (HPD)
+    //   ✓ "What did the LLM say and how much did it cost?" (Microsoft)
+    //   ✓ "Was the response cached?" (Microsoft)
+    //   ✓ "How many iterations did the agent take?" (HPD)
+    //
+    // DEVELOPER EXPERIENCE:
+    // ────────────────────────────────────────────────────────────────────────────
+    // .WithTelemetry()  → Automatic: Microsoft middleware + HPD service
+    // .WithLogging()    → Automatic: Microsoft middleware + HPD service
+    // .WithCaching()    → Automatic: Microsoft middleware only
+    //
+    // Result: Zero boilerplate, production-grade observability at both layers.
+    // ══════════════════════════════════════════════════════════════════════════════
 
     /// <summary>
-    /// Enables agent-level telemetry tracking (orchestration, decisions, state).
-    /// Implements Gen AI Semantic Conventions v1.38 for agent orchestration.
-    /// Requires: WithServiceProvider() with ILoggerFactory
+    /// Enables dual-layer telemetry tracking for complete observability:
+    /// <list type="bullet">
+    /// <item><description><b>LLM-level (Microsoft):</b> Token usage, duration, distributed traces for LLM calls</description></item>
+    /// <item><description><b>Agent-level (HPD):</b> Decision tracking, circuit breaker, iteration histograms</description></item>
+    /// </list>
     /// </summary>
     /// <param name="sourceName">ActivitySource/Meter name (default: "HPD.Agent")</param>
     /// <param name="enableSensitiveData">Include prompts/responses in traces (default: false)</param>
     /// <returns>The builder for chaining</returns>
+    /// <remarks>
+    /// <para>
+    /// This method automatically registers both layers of telemetry:
+    /// <list type="number">
+    /// <item><description>Microsoft's <c>OpenTelemetryChatClient</c> middleware for LLM instrumentation</description></item>
+    /// <item><description>HPD's <c>AgentTelemetryService</c> for agent orchestration instrumentation</description></item>
+    /// </list>
+    /// </para>
+    /// <para><b>Requirements:</b> Call <c>WithServiceProvider()</c> with an <c>ILoggerFactory</c> registered.</para>
+    /// <para><b>Metrics Emitted:</b></para>
+    /// <list type="bullet">
+    /// <item><description><c>gen_ai.client.token.usage</c> - Token consumption per LLM call (Microsoft)</description></item>
+    /// <item><description><c>gen_ai.client.operation.duration</c> - LLM call latency (Microsoft)</description></item>
+    /// <item><description><c>hpd.agent.decision.count</c> - Agent decisions (CallLLM/Complete/Terminate) (HPD)</description></item>
+    /// <item><description><c>hpd.agent.circuit_breaker.triggered</c> - Circuit breaker activations (HPD)</description></item>
+    /// <item><description><c>hpd.agent.iteration.count</c> - Iterations per orchestration run (HPD)</description></item>
+    /// </list>
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// var agent = new AgentBuilder()
+    ///     .WithServiceProvider(services)  // ILoggerFactory required
+    ///     .WithTelemetry(sourceName: "MyApp.Agent", enableSensitiveData: false)
+    ///     .WithOpenAI(apiKey, "gpt-4")
+    ///     .Build();
+    ///
+    /// // Automatically instruments:
+    /// // - LLM token usage, duration, traces (Microsoft)
+    /// // - Agent decisions, iterations, circuit breaker (HPD)
+    /// </code>
+    /// </example>
     public AgentBuilder WithTelemetry(string? sourceName = null, bool enableSensitiveData = false)
     {
+        var effectiveSourceName = sourceName ?? "HPD.Agent";
+
+        // Configure agent-level telemetry service for HPD-specific orchestration tracing
         _config.Telemetry = new TelemetryConfig
         {
             Enabled = true,
-            SourceName = sourceName ?? "HPD.Agent",
+            SourceName = effectiveSourceName,
             EnableSensitiveData = enableSensitiveData
         };
+
+        // Automatically register Microsoft's OpenTelemetryChatClient middleware
+        // This provides LLM-level tracing (token usage, duration, model calls)
+        this.UseChatClientMiddleware((client, services) =>
+        {
+            var loggerFactory = services?.GetService<ILoggerFactory>();
+            var telemetryClient = new OpenTelemetryChatClient(
+                client,
+                loggerFactory?.CreateLogger(typeof(OpenTelemetryChatClient)),
+                effectiveSourceName);
+
+            telemetryClient.EnableSensitiveData = enableSensitiveData;
+
+            return telemetryClient;
+        });
+
         return this;
     }
 
     /// <summary>
-    /// Enables agent-level structured logging (decisions, iterations, completions).
-    /// Provides state-aware insights into agent execution flow.
-    /// Requires: WithServiceProvider() with ILoggerFactory
+    /// Enables dual-layer structured logging for complete observability:
+    /// <list type="bullet">
+    /// <item><description><b>LLM-level (Microsoft):</b> LLM invocation logging (requests/responses/errors)</description></item>
+    /// <item><description><b>Agent-level (HPD):</b> Decision logging, state snapshots, circuit breaker warnings</description></item>
+    /// <item><description><b>Function-level (Optional):</b> Function invocation logging via filter</description></item>
+    /// </list>
     /// </summary>
     /// <param name="enableSensitiveData">Include prompts/responses at Trace level (default: false)</param>
     /// <param name="includeFunctionInvocations">Also log function invocations via LoggingAiFunctionFilter (default: true)</param>
     /// <param name="configureFunctionFilter">Optional callback to configure the function logging filter</param>
     /// <returns>The builder for chaining</returns>
+    /// <remarks>
+    /// <para>
+    /// This method automatically registers both layers of logging:
+    /// <list type="number">
+    /// <item><description>Microsoft's <c>LoggingChatClient</c> middleware for LLM invocation logging</description></item>
+    /// <item><description>HPD's <c>AgentLoggingService</c> for agent orchestration logging</description></item>
+    /// <item><description>(Optional) <c>LoggingAiFunctionFilter</c> for function call logging</description></item>
+    /// </list>
+    /// </para>
+    /// <para><b>Requirements:</b> Call <c>WithServiceProvider()</c> with an <c>ILoggerFactory</c> registered.</para>
+    /// <para><b>Log Levels:</b></para>
+    /// <list type="bullet">
+    /// <item><description><c>Debug</c> - LLM invocations, agent decisions, completions</description></item>
+    /// <item><description><c>Information</c> - Agent completion summaries</description></item>
+    /// <item><description><c>Warning</c> - Circuit breaker triggers, missing dependencies</description></item>
+    /// <item><description><c>Trace</c> - Full message/response content (sensitive data)</description></item>
+    /// <item><description><c>Error</c> - LLM errors, agent errors</description></item>
+    /// </list>
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// var agent = new AgentBuilder()
+    ///     .WithServiceProvider(services)  // ILoggerFactory required
+    ///     .WithLogging(
+    ///         enableSensitiveData: false,  // Don't log prompts/responses
+    ///         includeFunctionInvocations: true,
+    ///         configureFunctionFilter: filter => {
+    ///             filter.LogParameters = true;
+    ///             filter.LogResults = false;
+    ///         })
+    ///     .WithOpenAI(apiKey, "gpt-4")
+    ///     .Build();
+    ///
+    /// // Automatically logs:
+    /// // - LLM requests/responses (Microsoft)
+    /// // - Agent decisions, iterations (HPD)
+    /// // - Function calls with parameters (filter)
+    /// </code>
+    /// </example>
     public AgentBuilder WithLogging(
         bool enableSensitiveData = false,
         bool includeFunctionInvocations = true,
         Action<LoggingAiFunctionFilter>? configureFunctionFilter = null)
     {
-        // Configure agent-level logging service
+        // Configure agent-level logging service for HPD-specific orchestration logging
         _config.Logging = new LoggingConfig
         {
             Enabled = true,
             EnableSensitiveData = enableSensitiveData
         };
+
+        // Automatically register Microsoft's LoggingChatClient middleware
+        // This provides LLM-level invocation logging (requests/responses)
+        this.UseChatClientMiddleware((client, services) =>
+        {
+            var loggerFactory = services?.GetService<ILoggerFactory>();
+            if (loggerFactory == null || loggerFactory == NullLoggerFactory.Instance)
+            {
+                // Log warning but don't fail - logging is optional
+                _logger?.CreateLogger<AgentBuilder>().LogWarning(
+                    "Logging is enabled but ILoggerFactory is not registered in service provider. LLM-level logging will be skipped.");
+                return client;
+            }
+
+            var loggingClient = new LoggingChatClient(
+                client,
+                loggerFactory.CreateLogger(typeof(LoggingChatClient)));
+
+            // Configure JSON serialization options to match HPD settings
+            loggingClient.JsonSerializerOptions = AIJsonUtilities.DefaultOptions;
+
+            return loggingClient;
+        });
 
         // Optionally add function invocation logging filter
         if (includeFunctionInvocations)
@@ -334,11 +514,51 @@ public class AgentBuilder
     /// <summary>
     /// Enables distributed caching for LLM response caching.
     /// Dramatically reduces latency and cost for repeated queries.
-    /// Requires: WithServiceProvider() with IDistributedCache registered
+    /// Automatically applies Microsoft's <c>DistributedCachingChatClient</c> middleware.
     /// </summary>
     /// <param name="cacheExpiration">Cache TTL (default: 30 minutes)</param>
     /// <param name="cacheStatefulConversations">Allow caching with ConversationId (default: false)</param>
     /// <returns>The builder for chaining</returns>
+    /// <remarks>
+    /// <para>
+    /// This method automatically registers Microsoft's <c>DistributedCachingChatClient</c> middleware
+    /// which caches LLM responses in <c>IDistributedCache</c> (Redis, Memory, SQL, etc.).
+    /// </para>
+    /// <para><b>Requirements:</b> Call <c>WithServiceProvider()</c> with an <c>IDistributedCache</c> registered.</para>
+    /// <para><b>How It Works:</b></para>
+    /// <list type="number">
+    /// <item><description>Generates cache key from messages + options (uses JSON serialization)</description></item>
+    /// <item><description>Checks cache before making LLM call (cache hit = skip LLM entirely)</description></item>
+    /// <item><description>Stores LLM response in cache for future requests (coalesces streaming responses)</description></item>
+    /// <item><description>Respects <paramref name="cacheExpiration"/> TTL</description></item>
+    /// </list>
+    /// <para><b>Performance Impact:</b></para>
+    /// <list type="bullet">
+    /// <item><description>Cache hit: ~1-5ms (vs 500-5000ms LLM call)</description></item>
+    /// <item><description>Cost savings: 100% for cached responses (no LLM API call)</description></item>
+    /// <item><description>Best for: Repeated queries, testing, demo environments</description></item>
+    /// </list>
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// // Setup in your DI container:
+    /// services.AddDistributedMemoryCache();  // Or Redis, SQL, etc.
+    ///
+    /// var agent = new AgentBuilder()
+    ///     .WithServiceProvider(services)  // IDistributedCache required
+    ///     .WithCaching(
+    ///         cacheExpiration: TimeSpan.FromHours(1),
+    ///         cacheStatefulConversations: false)  // Don't cache with ConversationId
+    ///     .WithOpenAI(apiKey, "gpt-4")
+    ///     .Build();
+    ///
+    /// // First call: Cache miss → LLM call → Store in cache
+    /// await agent.RunAsync("What is 2+2?");
+    ///
+    /// // Second call: Cache hit → Return from cache (no LLM call!)
+    /// await agent.RunAsync("What is 2+2?");
+    /// </code>
+    /// </example>
     public AgentBuilder WithCaching(TimeSpan? cacheExpiration = null, bool cacheStatefulConversations = false)
     {
         _config.Caching = new CachingConfig
@@ -348,6 +568,23 @@ public class AgentBuilder
             CacheStatefulConversations = cacheStatefulConversations,
             CoalesceStreamingUpdates = true
         };
+
+        // Automatically register Microsoft's DistributedCachingChatClient middleware
+        // This provides LLM-level response caching
+        this.UseChatClientMiddleware((client, services) =>
+        {
+            var cache = services?.GetService<IDistributedCache>();
+            if (cache == null)
+            {
+                // Log warning but don't fail - caching is optional
+                _logger?.CreateLogger<AgentBuilder>().LogWarning(
+                    "Caching is enabled but IDistributedCache is not registered in service provider. Caching will be skipped.");
+                return client;
+            }
+
+            return new DistributedCachingChatClient(client, cache);
+        });
+
         return this;
     }
 

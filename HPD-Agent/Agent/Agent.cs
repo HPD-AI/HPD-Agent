@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.AI;
+using System.Threading;
 using System.Threading.Channels;
 using HPD.Agent.Internal.Filters;
 using System.Runtime.CompilerServices;
@@ -22,6 +23,29 @@ namespace HPD.Agent;
 /// Provides a pure, composable core for building AI agents without framework dependencies.
 /// Delegates to specialized components for clean separation of concerns.
 /// INTERNAL: Use HPD.Agent.Microsoft.Agent or HPD.Agent.AGUI.Agent for protocol-specific APIs.
+/// 
+/// <strong>Concurrency Model: Single-Turn</strong>
+/// This Agent instance is designed for single concurrent execution. Multiple calls to RunAsync()
+/// on the same instance will serialize - each call acquires a semaphore that only one caller can hold at a time.
+/// This prevents race conditions on shared state (_conversationId, _eventCoordinator, etc.).
+/// 
+/// For parallel agent execution, create multiple Agent instances or use an object pool pattern.
+/// Example:
+/// <code>
+/// // ❌ DON'T: Concurrent calls on same instance
+/// var results = await Task.WhenAll(
+///     agent.RunAsync(messages1).ToListAsync(),
+///     agent.RunAsync(messages2).ToListAsync()
+/// );
+/// 
+/// // ✅ DO: Create separate instances for parallelism
+/// var agent1 = new Agent(...);
+/// var agent2 = new Agent(...);
+/// var results = await Task.WhenAll(
+///     agent1.RunAsync(messages1).ToListAsync(),
+///     agent2.RunAsync(messages2).ToListAsync()
+/// );
+/// </code>
 /// </summary>
 internal sealed class Agent
 {
@@ -35,6 +59,11 @@ internal sealed class Agent
     private readonly ChatClientMetadata _metadata;
     private readonly ErrorHandlingPolicy _errorPolicy;
     private string? _conversationId;
+    
+    // Concurrency control: Enforces single-turn execution per Agent instance
+    // Multiple concurrent RunAsync calls on the same instance will serialize to prevent
+    // race conditions on _conversationId and shared state in _eventCoordinator
+    private readonly SemaphoreSlim _turnGate = new(1, 1);
 
     // OpenTelemetry Activity Source for telemetry
     private static readonly ActivitySource ActivitySource = new("HPD.Agent");
@@ -829,7 +858,7 @@ internal sealed class Agent
                             
                             foreach (var toolRequest in toolRequests)
                             {
-                                var signature = GetFunctionSignature(toolRequest);
+                                var signature = ComputeFunctionSignatureFromContent(toolRequest);
                                 var toolName = toolRequest.Name ?? "_unknown";
                                 
                                 // Calculate what the count WOULD BE if we execute this tool
@@ -998,7 +1027,7 @@ internal sealed class Agent
                         // ═══════════════════════════════════════════════════════
                         foreach (var toolRequest in toolRequests)
                         {
-                            var signature = GetFunctionSignature(toolRequest);
+                            var signature = ComputeFunctionSignatureFromContent(toolRequest);
                             state = state.RecordToolCall(toolRequest.Name ?? "_unknown", signature);
                         }
 
@@ -1180,10 +1209,15 @@ internal sealed class Agent
             Temperature = options.Temperature,
             MaxOutputTokens = options.MaxOutputTokens,
             TopP = options.TopP,
+            TopK = options.TopK,
             FrequencyPenalty = options.FrequencyPenalty,
             PresencePenalty = options.PresencePenalty,
             StopSequences = options.StopSequences,
             ResponseFormat = options.ResponseFormat,
+            Seed = options.Seed,
+            AllowMultipleToolCalls = options.AllowMultipleToolCalls,
+            Instructions = options.Instructions,
+            RawRepresentationFactory = options.RawRepresentationFactory,
             AdditionalProperties = options.AdditionalProperties,
             ConversationId = _conversationId
         };
@@ -1336,6 +1370,9 @@ internal sealed class Agent
     public void Dispose()
     {
         _baseClient?.Dispose();
+        _eventCoordinator?.Dispose();
+        _telemetryService?.Dispose();
+        _turnGate?.Dispose();
     }
 
     #endregion
@@ -1512,31 +1549,22 @@ Best practices:
 
     /// <summary>
     /// Generates a unique signature for a function call based on name and arguments.
-    /// Inspired by Gemini CLI's loop detection approach.
-    /// Uses SHA256 hash of "functionName:jsonArguments" to detect exact repetition.
+    /// Generates a human-readable function signature for circuit breaker tracking.
+    /// Wraps FunctionCallContent to use the standardized ComputeFunctionSignature method.
     /// </summary>
     /// <param name="toolCall">The function call to generate a signature for</param>
-    /// <returns>SHA256 hash string representing the function signature</returns>
-    private static string GetFunctionSignature(FunctionCallContent toolCall)
+    /// <returns>Human-readable signature in format: "FunctionName(arg1=value1,arg2=value2)"</returns>
+    private static string ComputeFunctionSignatureFromContent(FunctionCallContent toolCall)
     {
-        // Sort arguments by key for deterministic serialization
-        // This prevents semantically identical args with different key order from hashing differently
+        // Convert FunctionCallContent to AgentToolCallRequest
         var args = toolCall.Arguments ?? new Dictionary<string, object?>();
-        var ordered = args.OrderBy(kv => kv.Key, StringComparer.Ordinal)
-                          .ToDictionary(kv => kv.Key, kv => kv.Value);
+        var request = new AgentToolCallRequest(
+            toolCall.Name ?? string.Empty,
+            toolCall.CallId,
+            args.ToImmutableDictionary());
 
-        // Serialize sorted arguments to JSON (using source-generated context for AOT)
-        var argsJson = System.Text.Json.JsonSerializer.Serialize(
-            ordered,
-            AGUIJsonContext.Default.DictionaryStringObject);
-
-        // Combine function name and arguments
-        var combined = $"{toolCall.Name}:{argsJson}";
-
-        // Generate SHA256 hash for efficient comparison
-        using var sha256 = SHA256.Create();
-        var hashBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(combined));
-        return Convert.ToHexString(hashBytes);
+        // Use the standardized signature computation
+        return AgentDecisionEngine.ComputeFunctionSignature(request);
     }
 
     /// <summary>
@@ -1573,6 +1601,11 @@ Best practices:
     /// Runs the agentic loop and streams internal agent events (for testing and advanced scenarios).
     /// This exposes the raw internal event stream without protocol conversion.
     /// Use this for testing to verify event sequences and agent behavior.
+    /// 
+    /// <strong>Thread Safety:</strong> This method acquires a semaphore that ensures only one
+    /// RunAgenticLoopAsync call per Agent instance can execute concurrently. Subsequent calls will wait
+    /// for the current one to complete. This prevents race conditions on _conversationId and
+    /// shared event coordinator state.
     /// </summary>
     /// <param name="messages">The conversation messages</param>
     /// <param name="options">Chat options including tools</param>
@@ -1583,20 +1616,29 @@ Best practices:
         ChatOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var turnHistory = new List<ChatMessage>();
-        var historyCompletionSource = new TaskCompletionSource<IReadOnlyList<ChatMessage>>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var reductionCompletionSource = new TaskCompletionSource<ReductionMetadata?>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        await foreach (var evt in RunAgenticLoopInternal(
-            messages,
-            options,
-            documentPaths: null,
-            turnHistory,
-            historyCompletionSource,
-            reductionCompletionSource,
-            cancellationToken))
+        // Acquire exclusive turn gate to ensure single concurrent execution
+        await _turnGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            yield return evt;
+            var turnHistory = new List<ChatMessage>();
+            var historyCompletionSource = new TaskCompletionSource<IReadOnlyList<ChatMessage>>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var reductionCompletionSource = new TaskCompletionSource<ReductionMetadata?>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            await foreach (var evt in RunAgenticLoopInternal(
+                messages,
+                options,
+                documentPaths: null,
+                turnHistory,
+                historyCompletionSource,
+                reductionCompletionSource,
+                cancellationToken))
+            {
+                yield return evt;
+            }
+        }
+        finally
+        {
+            _turnGate.Release();
         }
     }
 
@@ -1617,6 +1659,11 @@ Best practices:
     /// <summary>
     /// Runs the agent with messages (streaming). Returns the internal event stream.
     /// This is the primary public API method for agent execution.
+    /// 
+    /// <strong>Thread Safety:</strong> This method acquires a semaphore that ensures only one
+    /// RunAsync call per Agent instance can execute concurrently. Subsequent calls will wait
+    /// for the current one to complete. This prevents race conditions on _conversationId and
+    /// shared event coordinator state.
     /// </summary>
     /// <param name="messages">Messages to process</param>
     /// <param name="options">Optional chat options</param>
@@ -1627,22 +1674,31 @@ Best practices:
         ChatOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var turnHistory = new List<ChatMessage>();
-        var historyCompletionSource = new TaskCompletionSource<IReadOnlyList<ChatMessage>>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var reductionCompletionSource = new TaskCompletionSource<ReductionMetadata?>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        var internalStream = RunAgenticLoopInternal(
-            messages.ToList(),
-            options,
-            documentPaths: null,
-            turnHistory,
-            historyCompletionSource,
-            reductionCompletionSource,
-            cancellationToken);
-
-        await foreach (var evt in internalStream.WithCancellation(cancellationToken))
+        // Acquire exclusive turn gate to ensure single concurrent execution
+        await _turnGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            yield return evt;
+            var turnHistory = new List<ChatMessage>();
+            var historyCompletionSource = new TaskCompletionSource<IReadOnlyList<ChatMessage>>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var reductionCompletionSource = new TaskCompletionSource<ReductionMetadata?>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            var internalStream = RunAgenticLoopInternal(
+                messages.ToList(),
+                options,
+                documentPaths: null,
+                turnHistory,
+                historyCompletionSource,
+                reductionCompletionSource,
+                cancellationToken);
+
+            await foreach (var evt in internalStream.WithCancellation(cancellationToken))
+            {
+                yield return evt;
+            }
+        }
+        finally
+        {
+            _turnGate.Release();
         }
     }
 
@@ -3545,6 +3601,79 @@ internal class ToolScheduler
     }
 
     /// <summary>
+    /// Determines if a function result indicates success.
+    /// Checks for exceptions and error-like result strings.
+    /// </summary>
+    private static bool IsFunctionResultSuccessful(FunctionResultContent result)
+    {
+        // Exception present = failure
+        if (result.Exception != null)
+            return false;
+
+        // Check if result looks like an error message
+        var resultStr = result.Result?.ToString();
+        return !IsLikelyErrorString(resultStr);
+    }
+
+    /// <summary>
+    /// Heuristic to detect error strings in function results.
+    /// Mirrors the error detection logic used in result filtering.
+    /// </summary>
+    private static bool IsLikelyErrorString(string? s) =>
+        !string.IsNullOrEmpty(s) &&
+        (s.StartsWith("Error:", StringComparison.OrdinalIgnoreCase) ||
+         s.StartsWith("Failed:", StringComparison.OrdinalIgnoreCase) ||
+         s.Contains("exception occurred", StringComparison.OrdinalIgnoreCase) ||
+         s.Contains("unhandled exception", StringComparison.OrdinalIgnoreCase) ||
+         s.Contains("exception was thrown", StringComparison.OrdinalIgnoreCase) ||
+         s.Contains("rate limit exceeded", StringComparison.OrdinalIgnoreCase) ||
+         s.Contains("rate limited", StringComparison.OrdinalIgnoreCase) ||
+         s.Contains("quota exceeded", StringComparison.OrdinalIgnoreCase) ||
+         s.Contains("quota reached", StringComparison.OrdinalIgnoreCase) ||
+         s.Contains("timeout", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Tries to get the tool name for a given call ID from the request list.
+    /// </summary>
+    private static bool TryGetToolName(IList<FunctionCallContent> requests, string callId, out string name)
+    {
+        for (int i = 0; i < requests.Count; i++)
+        {
+            if (requests[i].CallId == callId)
+            {
+                name = requests[i].Name ?? "_unknown";
+                return true;
+            }
+        }
+        name = "";
+        return false;
+    }
+
+    /// <summary>
+    /// Extracts successful function names from execution results.
+    /// Only includes functions that completed without errors.
+    /// </summary>
+    private static HashSet<string> ExtractSuccessfulFunctions(
+        IList<AIContent> resultContents,
+        IList<FunctionCallContent> toolRequests)
+    {
+        var successful = new HashSet<string>();
+
+        foreach (var content in resultContents)
+        {
+            if (content is FunctionResultContent frc && IsFunctionResultSuccessful(frc))
+            {
+                if (TryGetToolName(toolRequests, frc.CallId, out var toolName))
+                {
+                    successful.Add(toolName);
+                }
+            }
+        }
+
+        return successful;
+    }
+
+    /// <summary>
     /// Executes the requested tools in parallel and returns the tool response message
     /// </summary>
     /// <param name="currentHistory">The current conversation history</param>
@@ -3588,16 +3717,6 @@ internal class ToolScheduler
         // Track which tool requests are containers for expansion after invocation
         var pluginContainerExpansions = new Dictionary<string, string>(); // callId -> pluginName
         var skillContainerExpansions = new Dictionary<string, string>(); // callId -> skillName
-
-        // ✅ Track ALL attempted functions BEFORE execution
-        var successfulFunctions = new HashSet<string>();
-        foreach (var toolRequest in toolRequests)
-        {
-            if (!string.IsNullOrEmpty(toolRequest.Name))
-            {
-                successfulFunctions.Add(toolRequest.Name);
-            }
-        }
 
         foreach (var toolRequest in toolRequests)
         {
@@ -3659,6 +3778,9 @@ internal class ToolScheduler
             }
         }
 
+        // ✅ Extract successful functions from actual results (not before execution)
+        var successfulFunctions = ExtractSuccessfulFunctions(allContents, toolRequests);
+
         return (new ChatMessage(ChatRole.Tool, allContents), pluginExpansions, skillExpansions, successfulFunctions);
     }
 
@@ -3717,16 +3839,6 @@ internal class ToolScheduler
 
         var approvedTools = permissionResult.Approved;
         var deniedTools = permissionResult.Denied;
-
-        // ✅ Track ALL approved functions BEFORE execution
-        var successfulFunctions = new HashSet<string>();
-        foreach (var toolRequest in approvedTools)
-        {
-            if (!string.IsNullOrEmpty(toolRequest.Name))
-            {
-                successfulFunctions.Add(toolRequest.Name);
-            }
-        }
 
         // PHASE 2: Execute approved tools in parallel with optional throttling
         // SAFETY: Default to bounded parallelism (following Microsoft's conservative approach)
@@ -3815,6 +3927,9 @@ internal class ToolScheduler
             var errorMessage = $"Some tool executions failed: {string.Join("; ", errors.Select(e => e.Message))}";
             allContents.Add(new TextContent($"⚠️ Tool Execution Errors: {errorMessage}"));
         }
+
+        // ✅ Extract successful functions from actual results (not before execution)
+        var successfulFunctions = ExtractSuccessfulFunctions(allContents, approvedTools);
 
         return (new ChatMessage(ChatRole.Tool, allContents), pluginExpansions, skillExpansions, successfulFunctions);
     }
@@ -4267,9 +4382,14 @@ internal class BidirectionalEventCoordinator : IDisposable
     /// </summary>
     /// <param name="parent">The parent coordinator to bubble events to</param>
     /// <exception cref="ArgumentNullException">If parent is null</exception>
+    /// <exception cref="InvalidOperationException">If setting this parent would create a cycle</exception>
     /// <remarks>
     /// Use this when an agent is being used as a tool by another agent (via AsAIFunction).
     /// This enables events from nested agents to be visible to the orchestrator.
+    ///
+    /// <b>Cycle Detection:</b>
+    /// This method validates that setting the parent does not create a cycle in the parent chain.
+    /// A cycle would cause infinite recursion during Emit(), leading to stack overflow.
     ///
     /// Example:
     /// <code>
@@ -4282,7 +4402,33 @@ internal class BidirectionalEventCoordinator : IDisposable
     /// </remarks>
     public void SetParent(BidirectionalEventCoordinator parent)
     {
-        _parentCoordinator = parent ?? throw new ArgumentNullException(nameof(parent));
+        if (parent == null)
+            throw new ArgumentNullException(nameof(parent));
+
+        // Check for self-reference (simplest cycle)
+        if (parent == this)
+            throw new InvalidOperationException(
+                "Cannot set coordinator as its own parent. This would create an infinite loop during event emission.");
+
+        // Check for cycles in the parent chain
+        // Walk up the parent chain and ensure we don't encounter 'this' coordinator
+        var current = parent;
+        var visited = new HashSet<BidirectionalEventCoordinator> { this };
+
+        while (current != null)
+        {
+            if (!visited.Add(current))
+            {
+                // We've seen this coordinator before in the chain - cycle detected
+                throw new InvalidOperationException(
+                    "Cycle detected in parent coordinator chain. Setting this parent would create an infinite loop during event emission. " +
+                    "Ensure parent chains form a tree structure (child -> parent -> grandparent) without loops.");
+            }
+
+            current = current._parentCoordinator;
+        }
+
+        _parentCoordinator = parent;
     }
 
     /// <summary>

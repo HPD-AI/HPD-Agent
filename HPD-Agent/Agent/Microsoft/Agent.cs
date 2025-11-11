@@ -171,42 +171,18 @@ public sealed class Agent : AIAgent
         }
 
         // ══════════════════════════════════════════════════════════════════════════
-        // STEP 3: Add enriched messages to thread (Skip if resuming)
+        // STEP 3: Call core agent (pass only NEW messages, core handles adding to thread)
         // ══════════════════════════════════════════════════════════════════════════
-        var currentMessages = await conversationThread.GetMessagesAsync(cancellationToken);
-
-        if (!hasCheckpoint)
-        {
-            // Fresh run - add workflow messages to thread state (now includes provider messages if any)
-            foreach (var msg in messagesList)
-            {
-                if (!currentMessages.Contains(msg))
-                {
-                    await conversationThread.AddMessageAsync(msg, cancellationToken);
-                }
-            }
-
-            // Refresh messages after adding new ones
-            currentMessages = await conversationThread.GetMessagesAsync(cancellationToken);
-        }
-        else
-        {
-            // Resuming - validate consistency
-            if (conversationThread.ExecutionState != null)
-            {
-                conversationThread.ExecutionState.ValidateConsistency(currentMessages.Count);
-            }
-        }
-
-        // ══════════════════════════════════════════════════════════════════════════
-        // STEP 4: Call core agent (receives enriched messages - doesn't know they're special!)
-        // ══════════════════════════════════════════════════════════════════════════
+        // NOTE: We pass messagesList (NEW messages only), not ALL messages from thread.
+        // The core agent will internally call thread.MessagesReceivedAsync() to add them.
+        // This prevents duplication and respects the "push" API pattern.
         IReadOnlyList<ChatMessage> turnMessages;
         try
         {
             // Call core agent with thread support (enables checkpointing)
+            // Pass NEW messages only - core agent handles adding to thread
             var internalStream = _core.RunAsync(
-                currentMessages,
+                messagesList,  // NEW messages only (includes provider-enriched messages)
                 chatOptions,
                 conversationThread,
                 cancellationToken);
@@ -461,35 +437,25 @@ public sealed class Agent : AIAgent
         }
 
         // ══════════════════════════════════════════════════════════════════════════
-        // STEP 2: Add enriched messages to thread
+        // STEP 2: Call core agent and stream events (pass only NEW messages)
         // ══════════════════════════════════════════════════════════════════════════
-        var currentMessages = await conversationThread.GetMessagesAsync(cancellationToken);
-
-        // Add workflow messages to thread state (now includes provider messages if any)
-        foreach (var msg in messages)
-        {
-            if (!currentMessages.Contains(msg))
-            {
-                await conversationThread.AddMessageAsync(msg, cancellationToken);
-            }
-        }
-
-        // Refresh messages after adding new ones
-        currentMessages = await conversationThread.GetMessagesAsync(cancellationToken);
+        // NOTE: We pass messages (NEW messages only), not ALL messages from thread.
+        // The core agent will internally call thread.MessagesReceivedAsync() to add them.
+        // This prevents duplication and respects the "push" API pattern.
 
         // Track the message count BEFORE the turn so we can identify new messages
+        var currentMessages = await conversationThread.GetMessagesAsync(cancellationToken);
         var messageCountBeforeTurn = currentMessages.Count;
 
-        // ══════════════════════════════════════════════════════════════════════════
-        // STEP 3: Call core agent and stream events (receives enriched messages)
-        // ══════════════════════════════════════════════════════════════════════════
         IReadOnlyList<ChatMessage> turnMessages;
         Exception? streamingException = null;
 
         // Call core agent and adapt events to Microsoft protocol
+        // Pass NEW messages only - core agent handles adding to thread
         var internalStream = _core.RunAsync(
-            currentMessages,
+            messages,  // NEW messages only (includes provider-enriched messages)
             chatOptions,
+            conversationThread,
             cancellationToken);
 
         // Use EventStreamAdapter pattern for protocol conversion

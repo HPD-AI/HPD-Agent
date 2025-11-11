@@ -195,6 +195,31 @@ public class ConversationThread : AgentThread
     }
 
     /// <summary>
+    /// Conversation identifier for server-side history tracking optimization.
+    /// Used by LLM services that manage conversation state server-side (e.g., OpenAI Assistants).
+    /// When set, enables delta message sending - only new messages are sent to the LLM on subsequent turns.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This ID is captured from the LLM's response (ChatResponseUpdate.ConversationId) and reused
+    /// in subsequent calls to enable the service to track conversation history server-side.
+    /// This provides significant token savings for multi-turn conversations.
+    /// </para>
+    /// <para>
+    /// <b>Architecture Note:</b> This matches Microsoft.Agents.AI's ChatClientAgentThread pattern,
+    /// where ConversationId lives on the thread (conversation metadata), not on the agent (stateless executor).
+    /// </para>
+    /// <para>
+    /// <b>Lifecycle:</b>
+    /// - Initially null for new threads
+    /// - Set automatically by Agent when LLM returns ConversationId
+    /// - Persists across multiple agent runs on the same thread
+    /// - Included in thread serialization/deserialization
+    /// </para>
+    /// </remarks>
+    public string? ConversationId { get; set; }
+
+    /// <summary>
     /// Optional AI context provider for protocol-specific enrichment.
     /// Used by Microsoft.Agents.AI protocol for memory/RAG injection before LLM calls.
     /// Null for protocols that don't use this pattern or threads without context enrichment.
@@ -529,6 +554,7 @@ public class ConversationThread : AgentThread
             CreatedAt = CreatedAt,
             LastActivity = LastActivity,
             ServiceThreadId = ServiceThreadId,
+            ConversationId = ConversationId,
             AIContextProviderState = AIContextProvider?.Serialize(jsonSerializerOptions),
             ExecutionStateJson = ExecutionState?.Serialize()
         };
@@ -629,6 +655,7 @@ public class ConversationThread : AgentThread
             messageStore);
 
         thread._serviceThreadId = snapshot.ServiceThreadId;
+        thread.ConversationId = snapshot.ConversationId;
 
         foreach (var (key, value) in snapshot.Metadata)
         {
@@ -712,6 +739,13 @@ public record ConversationThreadSnapshot
     public required DateTime CreatedAt { get; init; }
     public required DateTime LastActivity { get; init; }
     public string? ServiceThreadId { get; init; }
+
+    /// <summary>
+    /// Conversation identifier for server-side history tracking.
+    /// Enables delta message sending for LLM services that manage conversation state.
+    /// Null if service doesn't support server-side history or hasn't returned an ID yet.
+    /// </summary>
+    public string? ConversationId { get; init; }
 
     /// <summary>
     /// Serialized state of the AIContextProvider (if any).

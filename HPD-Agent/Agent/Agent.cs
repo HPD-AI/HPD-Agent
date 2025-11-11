@@ -24,28 +24,32 @@ namespace HPD.Agent;
 /// Provides a pure, composable core for building AI agents without framework dependencies.
 /// Delegates to specialized components for clean separation of concerns.
 /// INTERNAL: Use HPD.Agent.Microsoft.Agent or HPD.Agent.AGUI.Agent for protocol-specific APIs.
-/// 
-/// <strong>Concurrency Model: Single-Turn</strong>
-/// This Agent instance is designed for single concurrent execution. Multiple calls to RunAsync()
-/// on the same instance will serialize - each call acquires a semaphore that only one caller can hold at a time.
-/// This prevents race conditions on shared state (_conversationId, _eventCoordinator, etc.).
-/// 
-/// For parallel agent execution, create multiple Agent instances or use an object pool pattern.
+///
+/// <strong>Concurrency Model: Stateless (Fully Concurrent)</strong>
+/// This Agent instance is now fully stateless and thread-safe. Multiple concurrent RunAsync() calls
+/// on the same instance are supported - each call operates on its own ConversationThread.
+///
+/// Architecture:
+/// - Agent is stateless (no mutable conversation state)
+/// - ConversationThread owns conversation-specific state (messages, ConversationId, etc.)
+/// - BidirectionalEventCoordinator is thread-safe (uses Channel and ConcurrentDictionary)
+/// - One agent instance can serve unlimited concurrent threads
+///
+/// For parallel agent execution across multiple threads, reuse the same Agent instance:
 /// Example:
 /// <code>
-/// // ❌ DON'T: Concurrent calls on same instance
+/// // ✅ NOW SUPPORTED: Concurrent calls on same agent instance with different threads
+/// var agent = new Agent(...);
+/// var thread1 = agent.CreateThread();
+/// var thread2 = agent.CreateThread();
+///
 /// var results = await Task.WhenAll(
-///     agent.RunAsync(messages1).ToListAsync(),
-///     agent.RunAsync(messages2).ToListAsync()
+///     agent.RunAsync(messages1, thread: thread1).ToListAsync(),
+///     agent.RunAsync(messages2, thread: thread2).ToListAsync()
 /// );
-/// 
-/// // ✅ DO: Create separate instances for parallelism
-/// var agent1 = new Agent(...);
-/// var agent2 = new Agent(...);
-/// var results = await Task.WhenAll(
-///     agent1.RunAsync(messages1).ToListAsync(),
-///     agent2.RunAsync(messages2).ToListAsync()
-/// );
+///
+/// // Each thread maintains its own conversation state, ConversationId, and message history
+/// // The agent is stateless and can serve both threads concurrently
 /// </code>
 /// </summary>
 internal sealed class Agent
@@ -59,12 +63,6 @@ internal sealed class Agent
     // Microsoft.Extensions.AI compliance fields
     private readonly ChatClientMetadata _metadata;
     private readonly ErrorHandlingPolicy _errorPolicy;
-    private string? _conversationId;
-    
-    // Concurrency control: Enforces single-turn execution per Agent instance
-    // Multiple concurrent RunAsync calls on the same instance will serialize to prevent
-    // race conditions on _conversationId and shared state in _eventCoordinator
-    private readonly SemaphoreSlim _turnGate = new(1, 1);
 
     // OpenTelemetry Activity Source for telemetry
     private static readonly ActivitySource ActivitySource = new("HPD.Agent");
@@ -195,11 +193,6 @@ internal sealed class Agent
     /// </summary>
     public string? ModelId => Config?.Provider?.ModelName;
 
-
-    /// <summary>
-    /// Current conversation ID for tracking
-    /// </summary>
-    public string? ConversationId => _conversationId;
 
     /// <summary>
     /// Error handling policy for normalizing provider errors
@@ -466,18 +459,26 @@ internal sealed class Agent
         // Generate IDs for this message turn
         var messageTurnId = Guid.NewGuid().ToString();
 
-        // Extract conversation ID from options or generate new one
+        // Extract conversation ID from options, thread, or generate new one
         string conversationId;
         if (options?.AdditionalProperties?.TryGetValue("ConversationId", out var convIdObj) == true && convIdObj is string convId)
         {
             conversationId = convId;
+        }
+        else if (!string.IsNullOrWhiteSpace(thread?.ConversationId))
+        {
+            conversationId = thread.ConversationId;
         }
         else
         {
             conversationId = Guid.NewGuid().ToString();
         }
 
-        _conversationId = conversationId;
+        // Store on thread for future runs (stateless agent pattern)
+        if (thread != null)
+        {
+            thread.ConversationId = conversationId;
+        }
 
         try
         {
@@ -724,7 +725,7 @@ internal sealed class Agent
                     {
                         scopedOptions = ApplyPluginScoping(effectiveOptions, state.ExpandedPlugins, state.ExpandedSkills);
                     }
-                    else if (state.InnerClientTracksHistory && scopedOptions != null && scopedOptions.ConversationId != _conversationId)
+                    else if (state.InnerClientTracksHistory && scopedOptions != null && scopedOptions.ConversationId != thread?.ConversationId)
                     {
                         scopedOptions = new ChatOptions
                         {
@@ -739,7 +740,7 @@ internal sealed class Agent
                             StopSequences = scopedOptions.StopSequences,
                             ResponseFormat = scopedOptions.ResponseFormat,
                             AdditionalProperties = scopedOptions.AdditionalProperties,
-                            ConversationId = _conversationId
+                            ConversationId = thread?.ConversationId
                         };
                     }
 
@@ -850,10 +851,13 @@ internal sealed class Agent
                         }
                     }
 
-                    // Capture ConversationId from the agent turn response
+                    // Capture ConversationId from the agent turn response and update thread
                     if (_agentTurn.LastResponseConversationId != null)
                     {
-                        _conversationId = _agentTurn.LastResponseConversationId;
+                        if (thread != null)
+                        {
+                            thread.ConversationId = _agentTurn.LastResponseConversationId;
+                        }
                     }
                     else if (state.InnerClientTracksHistory)
                     {
@@ -1405,7 +1409,7 @@ internal sealed class Agent
             Instructions = options.Instructions,
             RawRepresentationFactory = options.RawRepresentationFactory,
             AdditionalProperties = options.AdditionalProperties,
-            ConversationId = _conversationId
+            ConversationId = options.ConversationId  // Preserve from input options
         };
     }
 
@@ -1645,7 +1649,6 @@ internal sealed class Agent
         _baseClient?.Dispose();
         _eventCoordinator?.Dispose();
         _telemetryService?.Dispose();
-        _turnGate?.Dispose();
     }
 
     #endregion
@@ -1792,8 +1795,11 @@ Best practices:
             metadata = new Dictionary<string, object>(options.AdditionalProperties!);
         }
 
+        // Extract conversationId from options or generate new one
+        var conversationId = options?.ConversationId ?? Guid.NewGuid().ToString();
+
         var context = new MessageTurnFilterContext(
-            _conversationId ?? Guid.NewGuid().ToString(),
+            conversationId,
             userMessage,
             response,
             agentFunctionCalls,
@@ -1874,11 +1880,10 @@ Best practices:
     /// Runs the agentic loop and streams internal agent events (for testing and advanced scenarios).
     /// This exposes the raw internal event stream without protocol conversion.
     /// Use this for testing to verify event sequences and agent behavior.
-    /// 
-    /// <strong>Thread Safety:</strong> This method acquires a semaphore that ensures only one
-    /// RunAgenticLoopAsync call per Agent instance can execute concurrently. Subsequent calls will wait
-    /// for the current one to complete. This prevents race conditions on _conversationId and
-    /// shared event coordinator state.
+    ///
+    /// <strong>Thread Safety:</strong> This method is fully thread-safe and supports concurrent execution.
+    /// Multiple calls on the same agent instance can execute concurrently without interference.
+    /// The agent is stateless; all conversation state is managed externally or in thread parameters.
     /// </summary>
     /// <param name="messages">The conversation messages</param>
     /// <param name="options">Chat options including tools</param>
@@ -1889,30 +1894,21 @@ Best practices:
         ChatOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        // Acquire exclusive turn gate to ensure single concurrent execution
-        await _turnGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            var turnHistory = new List<ChatMessage>();
-            var historyCompletionSource = new TaskCompletionSource<IReadOnlyList<ChatMessage>>(TaskCreationOptions.RunContinuationsAsynchronously);
-            var reductionCompletionSource = new TaskCompletionSource<ReductionMetadata?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var turnHistory = new List<ChatMessage>();
+        var historyCompletionSource = new TaskCompletionSource<IReadOnlyList<ChatMessage>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reductionCompletionSource = new TaskCompletionSource<ReductionMetadata?>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            await foreach (var evt in RunAgenticLoopInternal(
-                messages,
-                options,
-                documentPaths: null,
-                turnHistory,
-                historyCompletionSource,
-                reductionCompletionSource,
-                thread: null,
-                cancellationToken))
-            {
-                yield return evt;
-            }
-        }
-        finally
+        await foreach (var evt in RunAgenticLoopInternal(
+            messages,
+            options,
+            documentPaths: null,
+            turnHistory,
+            historyCompletionSource,
+            reductionCompletionSource,
+            thread: null,
+            cancellationToken))
         {
-            _turnGate.Release();
+            yield return evt;
         }
     }
 
@@ -1933,11 +1929,10 @@ Best practices:
     /// <summary>
     /// Runs the agent with messages (streaming). Returns the internal event stream.
     /// This is the primary public API method for agent execution.
-    /// 
-    /// <strong>Thread Safety:</strong> This method acquires a semaphore that ensures only one
-    /// RunAsync call per Agent instance can execute concurrently. Subsequent calls will wait
-    /// for the current one to complete. This prevents race conditions on _conversationId and
-    /// shared event coordinator state.
+    ///
+    /// <strong>Thread Safety:</strong> This method is fully thread-safe and supports concurrent execution.
+    /// Multiple calls on the same agent instance can execute concurrently without interference.
+    /// For multi-turn conversations, pass a ConversationThread to maintain state across runs.
     /// </summary>
     /// <param name="messages">Messages to process</param>
     /// <param name="options">Optional chat options</param>
@@ -1948,32 +1943,23 @@ Best practices:
         ChatOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        // Acquire exclusive turn gate to ensure single concurrent execution
-        await _turnGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            var turnHistory = new List<ChatMessage>();
-            var historyCompletionSource = new TaskCompletionSource<IReadOnlyList<ChatMessage>>(TaskCreationOptions.RunContinuationsAsynchronously);
-            var reductionCompletionSource = new TaskCompletionSource<ReductionMetadata?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var turnHistory = new List<ChatMessage>();
+        var historyCompletionSource = new TaskCompletionSource<IReadOnlyList<ChatMessage>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reductionCompletionSource = new TaskCompletionSource<ReductionMetadata?>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            var internalStream = RunAgenticLoopInternal(
-                messages.ToList(),
-                options,
-                documentPaths: null,
-                turnHistory,
-                historyCompletionSource,
-                reductionCompletionSource,
-                thread: null,
-                cancellationToken);
+        var internalStream = RunAgenticLoopInternal(
+            messages.ToList(),
+            options,
+            documentPaths: null,
+            turnHistory,
+            historyCompletionSource,
+            reductionCompletionSource,
+            thread: null,
+            cancellationToken);
 
-            await foreach (var evt in internalStream.WithCancellation(cancellationToken))
-            {
-                yield return evt;
-            }
-        }
-        finally
+        await foreach (var evt in internalStream.WithCancellation(cancellationToken))
         {
-            _turnGate.Release();
+            yield return evt;
         }
     }
 
@@ -2024,32 +2010,23 @@ Best practices:
             thread.ExecutionState?.ValidateConsistency(currentMessageCount);
         }
 
-        // Acquire exclusive turn gate to ensure single concurrent execution
-        await _turnGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            var turnHistory = new List<ChatMessage>();
-            var historyCompletionSource = new TaskCompletionSource<IReadOnlyList<ChatMessage>>(TaskCreationOptions.RunContinuationsAsynchronously);
-            var reductionCompletionSource = new TaskCompletionSource<ReductionMetadata?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var turnHistory = new List<ChatMessage>();
+        var historyCompletionSource = new TaskCompletionSource<IReadOnlyList<ChatMessage>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reductionCompletionSource = new TaskCompletionSource<ReductionMetadata?>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            var internalStream = RunAgenticLoopInternal(
-                messages.ToList(),
-                options,
-                documentPaths: null,
-                turnHistory,
-                historyCompletionSource,
-                reductionCompletionSource,
-                thread,
-                cancellationToken);
+        var internalStream = RunAgenticLoopInternal(
+            (messages ?? Array.Empty<ChatMessage>()).ToList(),
+            options,
+            documentPaths: null,
+            turnHistory,
+            historyCompletionSource,
+            reductionCompletionSource,
+            thread,
+            cancellationToken);
 
-            await foreach (var evt in internalStream.WithCancellation(cancellationToken))
-            {
-                yield return evt;
-            }
-        }
-        finally
+        await foreach (var evt in internalStream.WithCancellation(cancellationToken))
         {
-            _turnGate.Release();
+            yield return evt;
         }
     }
 

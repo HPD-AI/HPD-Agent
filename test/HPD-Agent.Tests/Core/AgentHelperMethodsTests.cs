@@ -1,5 +1,6 @@
 using Microsoft.Extensions.AI;
 using System.Reflection;
+using System.Diagnostics.CodeAnalysis;
 using Xunit;
 using HPD.Agent;
 namespace HPD_Agent.Tests.Core;
@@ -17,8 +18,10 @@ public class AgentHelperMethodsTests
         ChatOptions? options)
     {
         var agentType = typeof(Agent);
+#pragma warning disable IL2065
         var method = agentType.GetMethod("FilterContainerResults", 
             BindingFlags.NonPublic | BindingFlags.Static);
+#pragma warning restore IL2065
         
         if (method == null)
             throw new InvalidOperationException("FilterContainerResults method not found");

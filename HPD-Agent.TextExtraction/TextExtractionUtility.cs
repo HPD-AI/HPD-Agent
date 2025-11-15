@@ -149,7 +149,8 @@ namespace HPD_Agent.TextExtraction
 
             var startTime = DateTime.UtcNow;
             bool isUrl = IsUrl(urlOrFilePath);
-            string fileName, mimeType;
+            string fileName;
+            string? mimeType;
             long fileSize = 0;
 
             if (isUrl)
@@ -215,7 +216,7 @@ namespace HPD_Agent.TextExtraction
                     extractedText.Length, fileName, processingTime.TotalMilliseconds);
 
                 return TextExtractionResult.Success(extractedText, fileName, urlOrFilePath,
-                    processingTime, fileSize, mimeType, fileContent);
+                    processingTime, fileSize, mimeType ?? Models.MimeTypes.PlainText, fileContent);
             }
             catch (Exception ex)
             {
@@ -247,7 +248,7 @@ namespace HPD_Agent.TextExtraction
         /// <summary>
         /// Legacy method: Create a decoder adapter for backward compatibility
         /// </summary>
-        public ITextDecoder CreateLegacyDecoder(string mimeType)
+        public ITextDecoder? CreateLegacyDecoder(string mimeType)
         {
             var decoder = _decoderFactory.GetDecoder(mimeType);
             return decoder != null ? new ContentDecoderAdapter(decoder) : null;
@@ -275,7 +276,7 @@ namespace HPD_Agent.TextExtraction
                     sb.AppendLineNix();
                 }
             }
-            return sb.ToString().Trim();
+            return sb.ToString().Trim() ?? string.Empty;
         }
 
         public static bool IsUrl(string input)

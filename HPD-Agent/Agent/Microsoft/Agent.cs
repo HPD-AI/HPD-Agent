@@ -151,7 +151,12 @@ public sealed class Agent : AIAgent
 
             if (loadedThread?.ExecutionState != null)
             {
-                conversationThread = loadedThread;
+                // Mutate existing thread instead of replacing it (preserves caller's reference)
+                conversationThread.ExecutionState = loadedThread.ExecutionState;
+
+                // Copy other checkpoint state if needed
+                if (loadedThread.ConversationId != null)
+                    conversationThread.ConversationId = loadedThread.ConversationId;
             }
         }
 
@@ -455,47 +460,11 @@ public sealed class Agent : AIAgent
         // Use EventStreamAdapter pattern for protocol conversion
         var agentsAIStream = EventStreamAdapter.ToAgentsAI(internalStream, conversationThread.Id, _core.Name, cancellationToken);
 
-        // Track assistant messages to add to thread after streaming
-        var assistantMessagesToAdd = new List<ChatMessage>();
-        var assistantContents = new List<AIContent>();
-
-        // Stream events (cannot use try-catch with yield)
+        // Stream events directly (core agent handles all message persistence)
         await foreach (var update in agentsAIStream.WithCancellation(cancellationToken))
         {
-            // Collect content from updates to rebuild assistant messages for thread persistence
-            foreach (var content in update.Contents ?? [])
-            {
-                if (content is TextContent || content is TextReasoningContent || content is FunctionCallContent)
-                {
-                    assistantContents.Add(content);
-                }
-            }
-
-            // When we get a message boundary end event, finalize the message
-            if (update.IsMessageBoundary && update.MessageBoundary?.Type == MessageBoundaryType.TextMessageEnd)
-            {
-                if (assistantContents.Count > 0)
-                {
-                    // Create assistant message from collected content
-                    ChatMessage assistantMsg;
-                    if (assistantContents.Count == 1 && assistantContents[0] is TextContent tc)
-                    {
-                        assistantMsg = new ChatMessage(ChatRole.Assistant, tc.Text);
-                    }
-                    else
-                    {
-                        assistantMsg = new ChatMessage(ChatRole.Assistant, assistantContents.ToList());
-                    }
-                    assistantMessagesToAdd.Add(assistantMsg);
-                    assistantContents.Clear();
-                }
-            }
-
             yield return update;
         }
-
-        // Note: Core agent now handles ALL message persistence (including assistant messages)
-        // We don't need to add messages here anymore
 
         // Get turn messages after streaming completes (only NEW messages from this turn)
         var allMessages = await conversationThread.GetMessagesAsync(cancellationToken);

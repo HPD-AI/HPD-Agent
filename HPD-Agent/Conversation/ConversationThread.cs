@@ -275,11 +275,11 @@ public class ConversationThread : AgentThread
     /// </code>
     /// </para>
     /// <para>
-    /// The state is automatically set by the agent during execution when a checkpointer is configured.
-    /// After completion (or explicit termination), you can clear it: <c>thread.ExecutionState = null;</c>
+    /// The state is automatically set by the agent framework during execution when a checkpointer is configured.
+    /// Only the agent framework and protocol adapters should modify this property.
     /// </para>
     /// </remarks>
-    public AgentLoopState? ExecutionState { get; set; }
+    public AgentLoopState? ExecutionState { get; internal set; }
 
     /// <summary>
     /// Last successful history reduction state for cache-aware reduction.

@@ -1,6 +1,5 @@
 using System;
 using System.ComponentModel;
-using HPD_Agent.Skills;
 /// <summary>
 /// Simple math plugin for testing plugin registration and invocation.
 /// </summary>
@@ -36,7 +35,7 @@ public class MathPluginMetadataContext : IPluginMetadataContext
     public IEnumerable<string> GetPropertyNames() => _properties.Keys;
 }
 
-[Scope("Math Operations")]
+[Scope("Has Math Operations")]
 public class MathPlugin
 {
     [AIFunction<MathPluginMetadataContext>]

@@ -1,3 +1,4 @@
+
 namespace HPD_Agent.Skills.DocumentStore;
 
 /// <summary>

@@ -343,21 +343,23 @@ namespace HPD_Agent.Diagnostics {{
         sb.AppendLine("using System.Text;");
         sb.AppendLine("using Json.Schema;");
         sb.AppendLine("using Json.Schema.Generation;");
-        
+        sb.AppendLine("using HPD_Agent.Skills.DocumentStore;");
+
+        // Add using directive for the plugin's namespace if it's not empty
         if (!string.IsNullOrEmpty(plugin.Namespace))
         {
-            sb.AppendLine();
-            sb.AppendLine($"namespace {plugin.Namespace}");
-            sb.AppendLine("{");
+            sb.AppendLine($"using {plugin.Namespace};");
         }
+
+        sb.AppendLine();
 
         sb.AppendLine(GenerateArgumentsDtoAndContext(plugin));
 
-        sb.AppendLine("    /// <summary>");
-        sb.AppendLine($"    /// Generated registration code for {plugin.Name} plugin.");
-        sb.AppendLine("    /// </summary>");
-        sb.AppendLine($"    [System.CodeDom.Compiler.GeneratedCodeAttribute(\"HPDPluginSourceGenerator\", \"1.0.0.0\")]");
-        sb.AppendLine($"    public static partial class {plugin.Name}Registration");
+        sb.AppendLine("/// <summary>");
+        sb.AppendLine($"/// Generated registration code for {plugin.Name} plugin.");
+        sb.AppendLine("/// </summary>");
+        sb.AppendLine($"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"HPDPluginSourceGenerator\", \"1.0.0.0\")]");
+        sb.AppendLine($"public static partial class {plugin.Name}Registration");
         sb.AppendLine("    {");
 
         // Generate GetReferencedPlugins() and GetReferencedFunctions() if there are skills
@@ -422,11 +424,6 @@ namespace HPD_Agent.Diagnostics {{
         }
 
         sb.AppendLine("    }");
-
-        if (!string.IsNullOrEmpty(plugin.Namespace))
-        {
-            sb.AppendLine("}");
-        }
 
         return sb.ToString();
     }

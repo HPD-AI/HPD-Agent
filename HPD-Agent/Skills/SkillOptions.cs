@@ -1,5 +1,3 @@
-namespace HPD_Agent.Skills;
-
 /// <summary>
 /// Configuration options for skills.
 /// Skills are ALWAYS scoped - functions are hidden until the skill is activated.

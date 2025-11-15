@@ -491,45 +491,39 @@ internal sealed class Agent
             // Emit MESSAGE TURN started event
             yield return new InternalMessageTurnStartedEvent(messageTurnId, conversationId);
 
-            // Prepare messages using MessageProcessor
+            // ═══════════════════════════════════════════════════════════════════════════
+            // MESSAGE PREPARATION: Split logic between Fresh Run vs Resume
+            //
+            // FRESH RUN: Process documents → PrepareMessages → Create initial state
+            // RESUME:    Use state.CurrentMessages as-is (already prepared)
+            // ═══════════════════════════════════════════════════════════════════════════
+
+            AgentLoopState state;
             ReductionMetadata? reductionMetadata = null;
             IEnumerable<ChatMessage> effectiveMessages;
             ChatOptions? effectiveOptions;
 
-            try
-            {
-                var prep = await _messageProcessor.PrepareMessagesAsync(
-                    messages, options, _name, effectiveCancellationToken).ConfigureAwait(false);
-                (effectiveMessages, effectiveOptions, reductionMetadata) = prep;
-            }
-            catch (Exception ex)
-            {
-                reductionCompletionSource.TrySetException(ex);
-                historyCompletionSource.TrySetException(ex);
-                throw;
-            }
-
-            // Set reduction metadata immediately
-            reductionCompletionSource.TrySetResult(reductionMetadata);
-
-            // ═══════════════════════════════════════════════════════
-            // CREATE OR RESTORE IMMUTABLE STATE & DECISION ENGINE
-            // ═══════════════════════════════════════════════════════
-
-            // Build configuration first (needed for resume logging)
-            var config = BuildDecisionConfiguration(effectiveOptions);
-            var decisionEngine = new AgentDecisionEngine();
-
-            AgentLoopState state;
-
             if (thread?.ExecutionState is { } executionState)
             {
-                // ✅ RESUME: Restore from checkpoint
+                // ═══════════════════════════════════════════════════════════════════════
+                // RESUME PATH: Skip preparation (state already has prepared messages)
+                // ═══════════════════════════════════════════════════════════════════════
+
                 state = executionState;
 
-                // ═══════════════════════════════════════════════════════
+                // Use messages from restored state (already prepared - includes system instructions)
+                effectiveMessages = state.CurrentMessages;
+
+                // Use provided options as-is (no merging needed on resume)
+                effectiveOptions = options;
+
+                // No reduction on resume (messages were already reduced in original run)
+                reductionMetadata = null;
+                reductionCompletionSource.TrySetResult(null);
+
+                // ═══════════════════════════════════════════════════════════════════════
                 // RESTORE PENDING WRITES (partial failure recovery)
-                // ═══════════════════════════════════════════════════════
+                // ═══════════════════════════════════════════════════════════════════════
                 if (Config?.EnablePendingWrites == true &&
                     Config?.Checkpointer != null &&
                     state.ETag != null)
@@ -557,7 +551,54 @@ internal sealed class Agent
                     }
                 }
 
-                // Log resume (use specific logging method if available)
+                // Log resume (logging deferred until after config is built below)
+                // Observability will happen after the common configuration section
+            }
+            else
+            {
+                // ═══════════════════════════════════════════════════════════════════════
+                // FRESH RUN PATH: Full preparation pipeline
+                // ═══════════════════════════════════════════════════════════════════════
+
+                // Process documents if provided
+                if (documentPaths?.Length > 0)
+                {
+                    messages = await AgentDocumentProcessor.ProcessDocumentsAsync(
+                        messages, documentPaths, Config, cancellationToken).ConfigureAwait(false);
+                }
+
+                // Prepare messages using MessageProcessor
+                // This adds system instructions, merges options, and runs history reduction
+                try
+                {
+                    var prep = await _messageProcessor.PrepareMessagesAsync(
+                        messages, options, _name, effectiveCancellationToken).ConfigureAwait(false);
+                    (effectiveMessages, effectiveOptions, reductionMetadata) = prep;
+                }
+                catch (Exception ex)
+                {
+                    reductionCompletionSource.TrySetException(ex);
+                    historyCompletionSource.TrySetException(ex);
+                    throw;
+                }
+
+                // Set reduction metadata immediately
+                reductionCompletionSource.TrySetResult(reductionMetadata);
+
+                // Initialize new state with prepared messages
+                state = AgentLoopState.Initial(effectiveMessages.ToList(), messageTurnId, conversationId, this.Name);
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════════
+            // BUILD CONFIGURATION & DECISION ENGINE (common to both paths)
+            // ═══════════════════════════════════════════════════════════════════════════
+
+            var config = BuildDecisionConfiguration(effectiveOptions);
+            var decisionEngine = new AgentDecisionEngine();
+
+            // Log iteration start (for resume path, this happens here)
+            if (thread?.ExecutionState != null)
+            {
                 try
                 {
                     _loggingService?.LogIterationStart(_name, state.Iteration, config.MaxIterations);
@@ -566,37 +607,24 @@ internal sealed class Agent
                 {
                     // Observability errors shouldn't break agent execution
                 }
-
-                // Emit state snapshot for observability
-                yield return new InternalStateSnapshotEvent(
-                    CurrentIteration: state.Iteration,
-                    MaxIterations: config.MaxIterations,
-                    IsTerminated: state.IsTerminated,
-                    TerminationReason: state.TerminationReason,
-                    ConsecutiveErrorCount: state.ConsecutiveFailures,
-                    CompletedFunctions: new List<string>(state.CompletedFunctions));
-            }
-            else
-            {
-                // ✅ FRESH RUN: Initialize new state
-                state = AgentLoopState.Initial(effectiveMessages.ToList(), messageTurnId, conversationId, this.Name);
             }
 
+            // Emit state snapshot for observability
+            yield return new InternalStateSnapshotEvent(
+                CurrentIteration: state.Iteration,
+                MaxIterations: config.MaxIterations,
+                IsTerminated: state.IsTerminated,
+                TerminationReason: state.TerminationReason,
+                ConsecutiveErrorCount: state.ConsecutiveFailures,
+                CompletedFunctions: new List<string>(state.CompletedFunctions));
+
             // ═══════════════════════════════════════════════════════
-            // PERSISTENCE: Add input messages to thread for history tracking
+            // INITIALIZE TURN HISTORY: Add input messages first
+            // All messages from this turn will be saved to thread at the end
             // ═══════════════════════════════════════════════════════
-            if (thread != null && messages.Any())
+            foreach (var msg in messages)
             {
-                try
-                {
-                    // Add user input messages to thread so they appear in history
-                    // This ensures thread history includes all messages (user + assistant)
-                    await thread.AddMessagesAsync(messages, effectiveCancellationToken).ConfigureAwait(false);
-                }
-                catch (Exception)
-                {
-                    // Ignore errors - message persistence is not critical to execution
-                }
+                turnHistory.Add(msg);
             }
 
             ChatResponse? lastResponse = null;
@@ -899,16 +927,21 @@ internal sealed class Agent
                     {
                         // Create assistant message with tool calls
                         var assistantMessage = new ChatMessage(ChatRole.Assistant, assistantContents);
+
+                        // ✅ BUG #4 FIX: Track count BEFORE adding assistant message
+                        var messageCountBeforeAssistant = state.CurrentMessages.Count;
+
                         var currentMessages = state.CurrentMessages.ToList();
                         currentMessages.Add(assistantMessage);
 
                         // ✅ FIXED: Update state immediately after modifying messages
                         state = state.WithMessages(currentMessages);
 
-                        // ✅ FIXED: Update history tracking with count AFTER adding assistant message
+                        // ✅ BUG #4 FIX: Use count from BEFORE adding assistant message
+                        // This ensures delta sending doesn't skip the assistant message we just added
                         if (_agentTurn.LastResponseConversationId != null)
                         {
-                            state = state.EnableHistoryTracking(currentMessages.Count);
+                            state = state.EnableHistoryTracking(messageCountBeforeAssistant);
                         }
 
                         // Create assistant message for history WITHOUT reasoning
@@ -1096,21 +1129,25 @@ internal sealed class Agent
 
                         // ═══════════════════════════════════════════════════════
                         // FILTER CONTAINER EXPANSIONS
+                        // Container expansion results are temporary (turn-scoped only)
+                        // They should NOT be saved to persistent history or thread storage
                         // ═══════════════════════════════════════════════════════
                         var nonContainerResults = FilterContainerResults(
                             toolResultMessage.Contents,
                             toolRequests,
                             effectiveOptionsForTools);
 
-                        // Add filtered results to persistent history
+                        // Add filtered results to BOTH persistent history AND turn history
+                        // This ensures container expansions don't pollute thread storage
                         if (nonContainerResults.Count > 0)
                         {
                             var filteredMessage = new ChatMessage(ChatRole.Tool, nonContainerResults);
                             currentMessages.Add(filteredMessage);
+                            turnHistory.Add(filteredMessage); // ✅ FIX: Use filtered message
                         }
 
-                        // Add ALL results (including container expansions) to turn history
-                        turnHistory.Add(toolResultMessage);
+                        // ✅ REMOVED: turnHistory.Add(toolResultMessage);
+                        // Container expansion messages are NOT added to turnHistory
 
                         // ═══════════════════════════════════════════════════════
                         // EMIT TOOL RESULT EVENTS
@@ -1284,6 +1321,13 @@ internal sealed class Agent
 
                     if (finalAssistantMessage.Contents.Count > 0)
                     {
+                        // ✅ FIX: Add final message to BOTH state and turnHistory
+                        // This ensures state consistency for checkpointing
+                        var currentMessages = state.CurrentMessages.ToList();
+                        currentMessages.Add(finalAssistantMessage);
+                        state = state.WithMessages(currentMessages);
+
+                        // Also add to turnHistory for thread persistence
                         turnHistory.Add(finalAssistantMessage);
                     }
                 }
@@ -1374,21 +1418,15 @@ internal sealed class Agent
             }
 
             // ═══════════════════════════════════════════════════════
-            // PERSISTENCE: Add turn messages to thread for history tracking
+            // PERSISTENCE: Save complete turn history to thread
             // ═══════════════════════════════════════════════════════
             if (thread != null && turnHistory.Count > 0)
             {
                 try
                 {
-                    // Filter out user messages (already added at line 594)
-                    var messagesToAdd = turnHistory
-                        .Where(m => m.Role != ChatRole.User)
-                        .ToList();
-                    
-                    if (messagesToAdd.Count > 0)
-                    {
-                        await thread.AddMessagesAsync(messagesToAdd, effectiveCancellationToken).ConfigureAwait(false);
-                    }
+                    // Save ALL messages from this turn (user + assistant + tool)
+                    // Input messages were added to turnHistory at the start of execution
+                    await thread.AddMessagesAsync(turnHistory, effectiveCancellationToken).ConfigureAwait(false);
                 }
                 catch (Exception)
                 {

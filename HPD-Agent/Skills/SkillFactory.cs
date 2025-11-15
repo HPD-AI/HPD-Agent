@@ -1,6 +1,4 @@
-namespace HPD_Agent.Skills;
-
-/// <summary>
+// <summary>
 /// Factory for creating Skill objects with type-safe function references
 /// Mirrors AIFunctionFactory.Create() pattern from Microsoft.Extensions.AI
 /// </summary>

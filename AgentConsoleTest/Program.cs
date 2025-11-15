@@ -3,7 +3,6 @@ using Microsoft.Extensions.Configuration;
 using HPD.Agent.Plugins.FileSystem;
 using HPD.Agent;
 using HPD.Agent.Microsoft;
-using AgentConsoleTest.Skills;
 Console.WriteLine("🚀 HPD-Agent Console Test");
 
 // ✨ ONE-LINER: Create complete AI assistant
@@ -49,16 +48,6 @@ static Task<(Project, ConversationThread, Agent)> CreateAIAssistant()
         {
             ProviderKey = "openrouter",
             ModelName = "google/gemini-2.5-pro", // 🧠 Reasoning model - FREE on OpenRouter!
-            // Alternative reasoning models:
-            // "deepseek/deepseek-r1-distill-qwen-32b" - smaller/faster
-            // "openai/o1" - OpenAI's reasoning model (expensive)
-
-            // ✨ NO API KEY NEEDED HERE!
-            // AgentBuilder automatically resolves from (in priority order):
-            // 1. ConnectionStrings:Agent (appsettings.json) - NEW Microsoft pattern
-            // 2. OpenRouter:ApiKey (appsettings.json) - Legacy pattern
-            // 3. OPENROUTER_API_KEY (environment variable)
-            // 4. User secrets (dotnet user-secrets)
         },
         DynamicMemory = new DynamicMemoryConfig
         {
@@ -74,10 +63,9 @@ static Task<(Project, ConversationThread, Agent)> CreateAIAssistant()
         // 🎯 Plugin Scoping: OFF by default (set Enabled = true to enable)
         // When enabled, plugin functions are hidden behind container functions to reduce token usage by up to 87.5%
         // The agent must first call the container (e.g., MathPlugin) before individual functions (Add, Multiply) become visible
-        PluginScoping = new PluginScopingConfig
+        Scoping = new ScopingConfig
         {
-            Enabled = true,              // Scope C# plugins (MathPlugin, etc.)
-            ScopeMCPTools = false,        // Scope MCP tools by server (MCP_filesystem, MCP_github, etc.)
+            Enabled = true,              // Scope C# plugins (MathPlugin, etc.)      // Scope MCP tools by server (MCP_filesystem, MCP_github, etc.)
             ScopeFrontendTools = false,   // Scope Frontend/AGUI tools (FrontendTools container)
             MaxFunctionNamesInDescription = 10  // Max function names shown in container descriptions
         }
@@ -87,7 +75,8 @@ static Task<(Project, ConversationThread, Agent)> CreateAIAssistant()
     // Auto-loads from appsettings.json, environment variables, and user secrets
     var agent = new AgentBuilder(agentConfig)
         .WithLogging()
-        .WithPlugin<FinancialAnalysisSkills>()  // ✨ Financial analysis plugin (explicitly registered)  // ✨ Financial analysis skills (that reference the plugin)
+        .WithPlugin<MathPlugin>()  // ✨ Financial analysis plugin (explicitly registered)  // ✨ Financial analysis skills (that reference the plugin)
+        .WithPlugin<FinancialAnalysisPlugin>()
         .WithPermissions() // ✨ NEW: Unified permission filter - events handled in streaming loop
         .Build();
 

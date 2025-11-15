@@ -113,8 +113,9 @@ public class PluginRegistration
         var instance = GetOrCreateInstance();
 
         // Use reflection to find and call the generated registration method
+        // Generated registration classes are in the global namespace
         var registrationTypeName = $"{PluginType.Name}Registration";
-        var registrationType = PluginType.Assembly.GetType($"{PluginType.Namespace}.{registrationTypeName}");
+        var registrationType = PluginType.Assembly.GetType(registrationTypeName);
 
         if (registrationType == null)
         {

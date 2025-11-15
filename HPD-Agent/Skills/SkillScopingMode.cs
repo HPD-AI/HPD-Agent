@@ -1,5 +1,3 @@
-namespace HPD_Agent.Skills;
-
 /// <summary>
 /// Defines how a skill handles function visibility.
 /// </summary>

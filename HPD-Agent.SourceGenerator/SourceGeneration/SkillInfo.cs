@@ -53,11 +53,6 @@ internal class SkillInfo
     public ClassDeclarationSyntax ContainingClass { get; set; } = null!;
 
     /// <summary>
-    /// Namespace of the containing class
-    /// </summary>
-    public string Namespace { get; set; } = string.Empty;
-
-    /// <summary>
     /// Full name: "ClassName.MethodName"
     /// </summary>
     public string FullName => $"{ContainingClass?.Identifier.ValueText ?? "Unknown"}.{MethodName}";
@@ -156,11 +151,6 @@ internal class ReferenceInfo
     /// Plugin type name (e.g., "FileSystemPlugin")
     /// </summary>
     public string PluginType { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Namespace of the plugin
-    /// </summary>
-    public string PluginNamespace { get; set; } = string.Empty;
 
     /// <summary>
     /// Method name (e.g., "ReadFile" or "FileDebugging")

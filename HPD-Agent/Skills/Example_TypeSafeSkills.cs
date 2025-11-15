@@ -1,4 +1,3 @@
-namespace HPD_Agent.Skills;
 
 /// <summary>
 /// Example skill definitions using the new type-safe skill architecture.

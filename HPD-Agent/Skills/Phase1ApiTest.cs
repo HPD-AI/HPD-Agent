@@ -1,4 +1,3 @@
-namespace HPD_Agent.Skills;
 
 /// <summary>
 /// Phase 1 API Test - Validates the new type-safe skills API

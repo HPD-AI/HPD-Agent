@@ -1,6 +1,5 @@
-namespace HPD_Agent.Skills;
 
-/// <summary>
+// <summary>
 /// Represents a type-safe skill - a semantic grouping of functions with instructions.
 /// Created via SkillFactory.Create() and processed by source generator.
 /// </summary>

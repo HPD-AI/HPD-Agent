@@ -1,5 +1,3 @@
-namespace HPD_Agent.Skills;
-
 /// <summary>
 /// Marks a method as a skill for source generator detection.
 /// Required for explicit intent and preventing false positives with helper methods.

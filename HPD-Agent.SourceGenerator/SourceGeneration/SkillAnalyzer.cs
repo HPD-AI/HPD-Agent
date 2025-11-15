@@ -44,11 +44,9 @@ internal static class SkillAnalyzer
                 continue;
 
             // Check both simple name and fully qualified name
+            // SkillAttribute is now in global namespace (no namespace)
             if (attrSymbol.Name == "SkillAttribute" ||
-                attrSymbol.Name == "Skill" ||
-                attrSymbol.ToDisplayString() == "HPD_Agent.Skills.SkillAttribute" ||
-                (attrSymbol.Name == "SkillAttribute" &&
-                 attrSymbol.ContainingNamespace?.ToDisplayString() == "HPD_Agent.Skills"))
+                attrSymbol.Name == "Skill")
             {
                 hasSkillAttribute = true;
                 System.Diagnostics.Debug.WriteLine($"[IsSkillMethod]   ✅ Found [Skill] attribute");
@@ -81,10 +79,9 @@ internal static class SkillAnalyzer
             return false;
         }
 
-        // Check if return type is HPD_Agent.Skills.Skill
+        // Check if return type is Skill (now in global namespace)
         var isSkillType = returnTypeSymbol.Name == "Skill" &&
-                          (returnTypeSymbol.ContainingNamespace?.ToDisplayString() == "HPD_Agent.Skills" ||
-                           returnTypeSymbol.ToString() == "HPD_Agent.Skills.Skill");
+                          returnTypeSymbol.ContainingNamespace?.IsGlobalNamespace == true;
 
         if (!isSkillType)
         {
@@ -230,8 +227,7 @@ internal static class SkillAnalyzer
             Priority = priority,
             Options = options ?? new SkillOptionsInfo(),
             References = references,
-            ContainingClass = containingClass!,
-            Namespace = namespaceName
+            ContainingClass = containingClass!
         };
     }
 
@@ -291,9 +287,7 @@ internal static class SkillAnalyzer
             PluginType = pluginName,
             MethodName = methodName,
             FullName = reference,
-            Location = expression.GetLocation(),
-            // Namespace cannot be determined from string - will be resolved at runtime
-            PluginNamespace = string.Empty
+            Location = expression.GetLocation()
         };
     }
 

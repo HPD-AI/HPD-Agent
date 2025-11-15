@@ -1,9 +1,14 @@
 using Microsoft.Extensions.Caching.Memory;
+
 using Microsoft.Extensions.Logging;
+
 using System.Security.Cryptography;
+
 using System.Text;
 
 namespace HPD_Agent.Skills.DocumentStore;
+
+
 
 /// <summary>
 /// Abstract base class for instruction document stores.

@@ -297,10 +297,10 @@ public class AgentHelperMethodsTests
     #region Skill Container Filtering Tests
 
     [Fact]
-    public void FilterContainerResults_SkillContainers_NotFiltered()
+    public void FilterContainerResults_SkillContainers_AreFiltered()
     {
-        // Arrange - Skill containers should NOT be filtered
-        // They need to be returned to the LLM so it knows which functions are available
+        // Arrange - ALL containers (including skill containers) are now filtered
+        // Container activation messages are only relevant within the current turn
         var contents = new List<AIContent>
         {
             new FunctionResultContent("call1", "Skill expanded. Available functions: Func1, Func2"), // Skill container
@@ -338,9 +338,9 @@ public class AgentHelperMethodsTests
         // Act
         var filtered = FilterContainerResults(contents, toolRequests, options);
 
-        // Assert - Skill container result should NOT be filtered
-        Assert.Equal(2, filtered.Count);
-        Assert.Contains(filtered, c => c is FunctionResultContent frc && frc.CallId == "call1");
+        // Assert - Skill container result SHOULD be filtered (new behavior)
+        Assert.Single(filtered);
+        Assert.DoesNotContain(filtered, c => c is FunctionResultContent frc && frc.CallId == "call1");
         Assert.Contains(filtered, c => c is FunctionResultContent frc && frc.CallId == "call2");
     }
 
@@ -398,7 +398,7 @@ public class AgentHelperMethodsTests
         var contents = new List<AIContent>
         {
             new FunctionResultContent("call1", "Plugin expanded"),  // Scoped plugin container (should be filtered)
-            new FunctionResultContent("call2", "Skill expanded"),   // Skill container (should NOT be filtered)
+            new FunctionResultContent("call2", "Skill expanded"),   // Skill container (should ALSO be filtered - new behavior)
             new FunctionResultContent("call3", "Result")            // Regular function
         };
 
@@ -447,12 +447,12 @@ public class AgentHelperMethodsTests
         // Act
         var filtered = FilterContainerResults(contents, toolRequests, options);
 
-        // Assert
-        Assert.Equal(2, filtered.Count);
+        // Assert - Both containers filtered, only regular function remains
+        Assert.Single(filtered);
         // Plugin container should be filtered
         Assert.DoesNotContain(filtered, c => c is FunctionResultContent frc && frc.CallId == "call1");
-        // Skill container should NOT be filtered
-        Assert.Contains(filtered, c => c is FunctionResultContent frc && frc.CallId == "call2");
+        // Skill container should ALSO be filtered (new behavior)
+        Assert.DoesNotContain(filtered, c => c is FunctionResultContent frc && frc.CallId == "call2");
         // Regular function should remain
         Assert.Contains(filtered, c => c is FunctionResultContent frc && frc.CallId == "call3");
     }
@@ -505,9 +505,9 @@ public class AgentHelperMethodsTests
     }
 
     [Fact]
-    public void FilterContainerResults_MultipleSkillContainers_NoneFiltered()
+    public void FilterContainerResults_MultipleSkillContainers_AllFiltered()
     {
-        // Arrange - Multiple skill containers should all be preserved
+        // Arrange - Multiple skill containers should all be filtered (new behavior)
         var contents = new List<AIContent>
         {
             new FunctionResultContent("call1", "Skill A expanded"),
@@ -569,11 +569,8 @@ public class AgentHelperMethodsTests
         // Act
         var filtered = FilterContainerResults(contents, toolRequests, options);
 
-        // Assert - All skill container results should be preserved
-        Assert.Equal(3, filtered.Count);
-        Assert.Contains(filtered, c => c is FunctionResultContent frc && frc.CallId == "call1");
-        Assert.Contains(filtered, c => c is FunctionResultContent frc && frc.CallId == "call2");
-        Assert.Contains(filtered, c => c is FunctionResultContent frc && frc.CallId == "call3");
+        // Assert - All skill container results should be filtered (new behavior)
+        Assert.Empty(filtered);
     }
 
     #endregion

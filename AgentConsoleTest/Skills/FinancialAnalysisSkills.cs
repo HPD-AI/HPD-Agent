@@ -1,8 +1,5 @@
-using HPD_Agent.Skills;
 using System;
 using System.Collections.Generic;
-
-namespace AgentConsoleTest.Skills;
 
 /// <summary>
 /// Financial Analysis Skills - Orchestrates FinancialAnalysisPlugin functions into semantic workflows

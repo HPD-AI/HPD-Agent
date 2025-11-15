@@ -1,7 +1,10 @@
 using Microsoft.Extensions.Configuration;
+
 using Microsoft.Extensions.Logging;
 
 namespace HPD_Agent.Skills.DocumentStore;
+
+
 
 /// <summary>
 /// Factory for creating instruction document stores from configuration.

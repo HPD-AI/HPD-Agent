@@ -34,6 +34,7 @@ public sealed class Agent : AIAgent
         IReadOnlyList<IAiFunctionFilter>? aiFunctionFilters = null,
         IReadOnlyList<IMessageTurnFilter>? messageTurnFilters = null,
         IServiceProvider? serviceProvider = null,
+        IEnumerable<IAgentEventObserver>? observers = null,
         Func<AIContextProviderFactoryContext, AIContextProvider>? contextProviderFactory = null)
     {
         _core = new CoreAgent(
@@ -46,7 +47,8 @@ public sealed class Agent : AIAgent
             permissionFilters,
             aiFunctionFilters,
             messageTurnFilters,
-            serviceProvider);
+            serviceProvider,
+            observers);
 
         _contextProviderFactory = contextProviderFactory;
     }

@@ -106,23 +106,17 @@ public class AgentConfig
     public ImmutableHashSet<string> ExplicitlyRegisteredPlugins { get; set; } = ImmutableHashSet<string>.Empty;
 
     /// <summary>
-    /// Configuration for OpenTelemetry distributed tracing and metrics.
-    /// Enables enterprise-grade observability following Gen AI Semantic Conventions v1.38.
-    /// </summary>
-    public TelemetryConfig? Telemetry { get; set; }
-
-    /// <summary>
-    /// Configuration for structured logging with state awareness.
-    /// Provides detailed insights into agent execution flow.
-    /// </summary>
-    public LoggingConfig? Logging { get; set; }
-
-    /// <summary>
     /// Configuration for distributed caching of LLM responses.
     /// Dramatically reduces latency and cost for repeated queries.
     /// Requires IDistributedCache to be registered via AgentBuilder.WithServiceProvider().
     /// </summary>
     public CachingConfig? Caching { get; set; }
+
+    /// <summary>
+    /// Configuration for event observer sampling and performance optimization.
+    /// Controls circuit breaker thresholds and event sampling rates for high-volume events.
+    /// </summary>
+    public ObservabilityConfig? Observability { get; set; }
 
     /// <summary>
     /// Optional thread checkpointer for durable execution and crash recovery.
@@ -1017,67 +1011,6 @@ public class AgentMessagesConfig
     {
         return MaxConsecutiveErrors.Replace("{maxErrors}", maxErrors.ToString());
     }
-}
-
-/// <summary>
-/// OpenTelemetry configuration for distributed tracing and metrics.
-/// Implements Gen AI Semantic Conventions v1.38.
-/// </summary>
-public class TelemetryConfig
-{
-    /// <summary>
-    /// Enable OpenTelemetry instrumentation.
-    /// Default: true (opt-out for production-grade observability)
-    /// </summary>
-    public bool Enabled { get; set; } = true;
-
-    /// <summary>
-    /// Include sensitive data (prompts, responses) in traces.
-    /// Respects OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT env var.
-    /// Default: false (security best practice)
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// <b>Security Warning:</b> Setting this to <c>true</c> may expose sensitive information:
-    /// - User prompts and messages
-    /// - LLM responses
-    /// - Function arguments and results
-    /// </para>
-    /// <para>
-    /// Only enable in trusted environments or for debugging.
-    /// Respects the OpenTelemetry standard environment variable:
-    /// OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true/false
-    /// </para>
-    /// </remarks>
-    public bool EnableSensitiveData { get; set; } = false;
-
-    /// <summary>
-    /// ActivitySource and Meter name for OpenTelemetry.
-    /// Default: "HPD.Agent"
-    /// </summary>
-    public string SourceName { get; set; } = "HPD.Agent";
-}
-
-/// <summary>
-/// Structured logging configuration.
-/// </summary>
-public class LoggingConfig
-{
-    /// <summary>
-    /// Enable structured logging.
-    /// Default: true (opt-out)
-    /// </summary>
-    public bool Enabled { get; set; } = true;
-
-    /// <summary>
-    /// Include sensitive data at Trace level.
-    /// Default: false (security best practice)
-    /// </summary>
-    /// <remarks>
-    /// When true, prompts and responses are logged at Trace level.
-    /// Only enable in development or trusted environments.
-    /// </remarks>
-    public bool EnableSensitiveData { get; set; } = false;
 }
 
 /// <summary>

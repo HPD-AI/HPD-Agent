@@ -55,6 +55,9 @@ public class AgentBuilder
     internal readonly List<IPermissionFilter> _permissionFilters = new(); // Permission filters
     internal readonly List<IMessageTurnFilter> _messageTurnFilters = new(); // Message turn filters
 
+    // Internal observers for agent-level observability (developer-only, hidden from users)
+    private readonly List<IAgentEventObserver> _observers = new();
+
     internal readonly Dictionary<Type, object> _providerConfigs = new();
     internal IServiceProvider? _serviceProvider;
     internal ILoggerFactory? _logger;
@@ -441,15 +444,7 @@ public class AgentBuilder
     {
         var effectiveSourceName = sourceName ?? "HPD.Agent";
 
-        // Configure agent-level telemetry service for HPD-specific orchestration tracing
-        _config.Telemetry = new TelemetryConfig
-        {
-            Enabled = true,
-            SourceName = effectiveSourceName,
-            EnableSensitiveData = enableSensitiveData
-        };
-
-        // Automatically register Microsoft's OpenTelemetryChatClient middleware
+        // 1. Register Microsoft's OpenTelemetryChatClient middleware (user-facing LLM observability)
         // This provides LLM-level tracing (token usage, duration, model calls)
         this.UseChatClientMiddleware((client, services) =>
         {
@@ -463,6 +458,11 @@ public class AgentBuilder
 
             return telemetryClient;
         });
+
+        // 2. Internally create TelemetryEventObserver for agent-level observability (developer-only)
+        // This tracks agent decisions, iterations, circuit breakers, etc.
+        var telemetryObserver = new TelemetryEventObserver(effectiveSourceName);
+        _observers.Add(telemetryObserver);
 
         return this;
     }
@@ -522,14 +522,7 @@ public class AgentBuilder
         bool enableSensitiveData = false,
         bool includeFunctionInvocations = true)
     {
-        // Configure agent-level logging service for HPD-specific orchestration logging
-        _config.Logging = new LoggingConfig
-        {
-            Enabled = true,
-            EnableSensitiveData = enableSensitiveData
-        };
-
-        // Automatically register Microsoft's LoggingChatClient middleware
+        // 1. Register Microsoft's LoggingChatClient middleware (user-facing LLM observability)
         // This provides LLM-level invocation logging (requests/responses)
         this.UseChatClientMiddleware((client, services) =>
         {
@@ -552,7 +545,17 @@ public class AgentBuilder
             return loggingClient;
         });
 
-        // Optionally add function invocation logging filter
+        // 2. Internally create LoggingEventObserver for agent-level observability (developer-only)
+        // This tracks agent decisions, state, circuit breakers, etc.
+        if (_logger != null)
+        {
+            var loggingObserver = new LoggingEventObserver(
+                _logger.CreateLogger<LoggingEventObserver>(),
+                enableSensitiveData);
+            _observers.Add(loggingObserver);
+        }
+
+        // 3. Optionally add function invocation logging filter
         if (includeFunctionInvocations)
         {
             var functionFilter = new LoggingAiFunctionFilter(_logger);
@@ -639,25 +642,6 @@ public class AgentBuilder
         return this;
     }
 
-    /// <summary>
-    /// Disables agent-level telemetry (opt-out).
-    /// By default, telemetry is enabled when WithServiceProvider() is called with ILoggerFactory.
-    /// </summary>
-    public AgentBuilder WithoutTelemetry()
-    {
-        _config.Telemetry = new TelemetryConfig { Enabled = false };
-        return this;
-    }
-
-    /// <summary>
-    /// Disables agent-level logging (opt-out).
-    /// By default, logging is enabled when WithServiceProvider() is called with ILoggerFactory.
-    /// </summary>
-    public AgentBuilder WithoutLogging()
-    {
-        _config.Logging = new LoggingConfig { Enabled = false };
-        return this;
-    }
 
     /// <summary>
     /// Configures a callback to transform ChatOptions before each LLM call.
@@ -773,6 +757,7 @@ public class AgentBuilder
             _globalFilters,
             _messageTurnFilters,
             _serviceProvider,
+            _observers,
             _contextProviderFactory);
     }
 
@@ -802,6 +787,7 @@ public class AgentBuilder
             _globalFilters,
             _messageTurnFilters,
             _serviceProvider,
+            _observers,
             _contextProviderFactory);
     }
 
@@ -829,7 +815,8 @@ public class AgentBuilder
             _permissionFilters,
             _globalFilters,
             _messageTurnFilters,
-            _serviceProvider);
+            _serviceProvider,
+            _observers);
     }
 
     /// <summary>
@@ -844,7 +831,7 @@ public class AgentBuilder
         _config.ExplicitlyRegisteredPlugins = _explicitlyRegisteredPlugins
             .ToImmutableHashSet(StringComparer.OrdinalIgnoreCase);
 
-        // Wrap in AGUI protocol adapter  
+        // Wrap in AGUI protocol adapter
         return new AGUI.Agent(
             _config!,
             buildData.ClientToUse,
@@ -855,7 +842,8 @@ public class AgentBuilder
             _permissionFilters,
             _globalFilters,
             _messageTurnFilters,
-            _serviceProvider);
+            _serviceProvider,
+            _observers);
     }
 
     /// <summary>

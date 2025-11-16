@@ -179,12 +179,8 @@ public class AgentConfigValidator : AbstractValidator<AgentConfig>
         });
 
         // Observability configuration validation
-        When(config => config.Telemetry != null, () =>
-        {
-            RuleFor(config => config.Telemetry!.SourceName)
-                .NotEmpty()
-                .WithMessage("TelemetryConfig.SourceName cannot be empty when telemetry is configured.");
-        });
+        // Note: Telemetry and Logging observers are created internally by AgentBuilder
+        // No validation needed for removed TelemetryConfig/LoggingConfig classes
 
         When(config => config.Caching?.Enabled == true, () =>
         {

@@ -29,7 +29,8 @@ public sealed class Agent
         IReadOnlyList<IPermissionFilter>? permissionFilters = null,
         IReadOnlyList<IAiFunctionFilter>? aiFunctionFilters = null,
         IReadOnlyList<IMessageTurnFilter>? messageTurnFilters = null,
-        IServiceProvider? serviceProvider = null)
+        IServiceProvider? serviceProvider = null,
+        IEnumerable<IAgentEventObserver>? observers = null)
     {
         _core = new CoreAgent(
             config,
@@ -41,7 +42,8 @@ public sealed class Agent
             permissionFilters,
             aiFunctionFilters,
             messageTurnFilters,
-            serviceProvider);
+            serviceProvider,
+            observers);
 
         _converter = new AGUIEventConverter();
     }

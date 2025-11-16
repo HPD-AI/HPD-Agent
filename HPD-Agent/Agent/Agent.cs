@@ -93,9 +93,11 @@ internal sealed class Agent
     private readonly IReadOnlyList<IMessageTurnFilter> _messageTurnFilters;
     private readonly ErrorHandling.IProviderErrorHandler _providerErrorHandler;
 
-    // Observability components (following component delegation pattern)
-    private readonly AgentTelemetryService? _telemetryService;
-    private readonly AgentLoggingService? _loggingService;
+    // Observer pattern for event-driven observability
+    private readonly IReadOnlyList<IAgentEventObserver> _observers;
+    private readonly ObserverHealthTracker? _observerHealthTracker;
+    private readonly ILogger? _observerErrorLogger;
+    private readonly Counter<long>? _observerErrorCounter;
 
     // Caching infrastructure (inline pattern - wraps stream lifecycle)
     private readonly IDistributedCache? _cache;
@@ -259,11 +261,12 @@ internal sealed class Agent
         ChatOptions? mergedOptions,
         List<IPromptFilter> promptFilters,
         ScopedFilterManager scopedFilterManager,
-        HPD.Agent.ErrorHandling.IProviderErrorHandler providerErrorHandler,
+        ErrorHandling.IProviderErrorHandler providerErrorHandler,
         IReadOnlyList<IPermissionFilter>? permissionFilters = null,
         IReadOnlyList<IAiFunctionFilter>? aiFunctionFilters = null,
         IReadOnlyList<IMessageTurnFilter>? messageTurnFilters = null,
-        IServiceProvider? serviceProvider = null)
+        IServiceProvider? serviceProvider = null,
+        IEnumerable<IAgentEventObserver>? observers = null)
     {
         Config = config ?? throw new ArgumentNullException(nameof(config));
         _baseClient = baseClient ?? throw new ArgumentNullException(nameof(baseClient));
@@ -317,9 +320,7 @@ internal sealed class Agent
             mergedOptions ?? config.Provider?.DefaultChatOptions,
             promptFilters,
             chatReducer,
-            config.HistoryReduction,
-            _loggingService,
-            _telemetryService);
+            config.HistoryReduction);
         _functionCallProcessor = new FunctionCallProcessor(
             this, // NEW: Pass agent reference for filter event coordination
             scopedFilterManager,
@@ -328,9 +329,7 @@ internal sealed class Agent
             config.MaxAgenticIterations,
             config.ErrorHandling,
             config.ServerConfiguredTools,
-            config.AgenticLoop,  // NEW: Pass agentic loop config for TerminateOnUnknownCalls
-            _loggingService,
-            _telemetryService);
+            config.AgenticLoop);  // NEW: Pass agentic loop config for TerminateOnUnknownCalls
         _agentTurn = new AgentTurn(
             _baseClient,
             config.ConfigureOptions,
@@ -362,17 +361,29 @@ internal sealed class Agent
         _jsonOptions = global::Microsoft.Extensions.AI.AIJsonUtilities.DefaultOptions;
         _cachingConfig = config.Caching;
 
-        // Create telemetry service if enabled
-        if (config.Telemetry?.Enabled ?? true)
-        {
-            _telemetryService = new AgentTelemetryService(config.Telemetry ?? new TelemetryConfig());
-        }
+        // Initialize event observers
+        _observers = observers?.ToList() ?? new List<IAgentEventObserver>();
 
-        // Create logging service if enabled and logger available
-        if (loggerFactory != null && (config.Logging?.Enabled ?? true))
+        // Initialize observer health tracker if observers are configured
+        if (_observers.Count > 0 && loggerFactory != null)
         {
-            var logger = loggerFactory.CreateLogger<Agent>();
-            _loggingService = new AgentLoggingService(logger, config.Logging ?? new LoggingConfig());
+            _observerErrorLogger = loggerFactory.CreateLogger<Agent>();
+
+            var meterFactory = serviceProvider?.GetService(typeof(IMeterFactory)) as IMeterFactory;
+            if (meterFactory != null)
+            {
+                var observerMeter = meterFactory.Create("HPD.Agent.Observers");
+                _observerErrorCounter = observerMeter.CreateCounter<long>(
+                    "agent.observer.errors",
+                    description: "Number of observer processing failures");
+            }
+
+            var observabilityConfig = config.Observability ?? new ObservabilityConfig();
+            _observerHealthTracker = new ObserverHealthTracker(
+                _observerErrorLogger,
+                _observerErrorCounter,
+                observabilityConfig.MaxConsecutiveFailures,
+                observabilityConfig.SuccessesToResetCircuitBreaker);
         }
     }
 
@@ -425,6 +436,54 @@ internal sealed class Agent
     /// - Real-time streaming (no buffering overhead)
     /// - Cache-aware history reduction (90% cost savings)
     /// </summary>
+
+    /// <summary>
+    /// Notifies all registered observers about an event using fire-and-forget pattern.
+    /// Observer failures are logged but don't impact agent execution.
+    /// Circuit breaker pattern automatically disables failing observers.
+    /// </summary>
+    private void NotifyObservers(InternalAgentEvent evt)
+    {
+        if (_observers.Count == 0) return;
+
+        foreach (var observer in _observers)
+        {
+            // Skip observers with open circuit breakers
+            if (_observerHealthTracker != null && !_observerHealthTracker.ShouldProcess(observer))
+            {
+                continue;
+            }
+
+            // Check observer-specific filter
+            if (!observer.ShouldProcess(evt))
+            {
+                continue;
+            }
+
+            // Fire-and-forget: run observer asynchronously without waiting
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await observer.OnEventAsync(evt).ConfigureAwait(false);
+
+                    // Record success (may close circuit if it was open)
+                    _observerHealthTracker?.RecordSuccess(observer);
+                }
+                catch (Exception ex)
+                {
+                    // Structured logging - failures are visible
+                    _observerErrorLogger?.LogError(ex,
+                        "Observer {ObserverType} failed processing {EventType}",
+                        observer.GetType().Name, evt.GetType().Name);
+
+                    // Record failure (may open circuit)
+                    _observerHealthTracker?.RecordFailure(observer, ex);
+                }
+            });
+        }
+    }
+
     private async IAsyncEnumerable<InternalAgentEvent> RunAgenticLoopInternal(
         PreparedTurn turn,
         ChatOptions? options,
@@ -527,6 +586,9 @@ internal sealed class Agent
                 // RESUME PATH: Skip preparation (state already has prepared messages)
                 // ═══════════════════════════════════════════════════════════════════════
 
+                var checkpointRestoreStart = DateTimeOffset.UtcNow;
+                var restoreStopwatch = Stopwatch.StartNew();
+
                 state = executionState;
 
                 // Use messages from restored state (already prepared - includes system instructions)
@@ -539,6 +601,16 @@ internal sealed class Agent
                 reductionMetadata = null;
                 reductionCompletionSource.TrySetResult(null);
 
+                restoreStopwatch.Stop();
+
+                // Emit checkpoint restored event
+                yield return new InternalCheckpointRestoredEvent(
+                    thread.Id,
+                    state.Iteration,
+                    state.CurrentMessages.Count,
+                    restoreStopwatch.Elapsed,
+                    DateTimeOffset.UtcNow);
+
                 // ═══════════════════════════════════════════════════════════════════════
                 // RESTORE PENDING WRITES (partial failure recovery)
                 // ═══════════════════════════════════════════════════════════════════════
@@ -546,6 +618,9 @@ internal sealed class Agent
                     Config?.Checkpointer != null &&
                     state.ETag != null)
                 {
+                    int pendingWritesCount = 0;
+                    bool pendingWritesLoaded = false;
+
                     try
                     {
                         var pendingWrites = await Config.Checkpointer.LoadPendingWritesAsync(
@@ -553,8 +628,8 @@ internal sealed class Agent
                             state.ETag,
                             effectiveCancellationToken).ConfigureAwait(false);
 
-                        // Record telemetry
-                        _telemetryService?.RecordPendingWritesLoad(pendingWrites.Count, thread.Id);
+                        pendingWritesCount = pendingWrites.Count;
+                        pendingWritesLoaded = true;
 
                         if (pendingWrites.Count > 0)
                         {
@@ -566,6 +641,15 @@ internal sealed class Agent
                     {
                         // Swallow errors - pending writes are an optimization
                         // If loading fails, the system will just re-execute the functions
+                    }
+
+                    // Emit observability event outside try-catch
+                    if (pendingWritesLoaded)
+                    {
+                        yield return new InternalPendingWritesLoadedEvent(
+                            thread.Id,
+                            pendingWritesCount,
+                            DateTimeOffset.UtcNow);
                     }
                 }
 
@@ -609,12 +693,15 @@ internal sealed class Agent
                     state = state.WithReduction(reductionToUse);
                     usedCachedReduction = true;
 
-                    // Log cache hit
-                    _loggingService?.LogHistoryReductionCacheHit(
+                    // Emit cache hit event
+                    yield return new InternalHistoryReductionCacheEvent(
                         _name,
+                        IsHit: true,
                         reductionToUse.CreatedAt,
                         reductionToUse.SummarizedUpToIndex,
-                        messages.ToList().Count);
+                        messages.ToList().Count,
+                        TokenSavings: null, // Token savings would need to be calculated
+                        DateTimeOffset.UtcNow);
 
                     // TODO: Future optimization - Apply cached reduction here to bypass PrepareMessagesAsync
                     // This would save the LLM call for summarization on cache hit
@@ -659,16 +746,6 @@ internal sealed class Agent
                                     thread.LastReduction = reductionToUse;
                                 }
 
-                                // Log cache miss
-                                var summaryPreview = summaryMsg.Text.Length > 50
-                                    ? summaryMsg.Text.Substring(0, 50) + "..."
-                                    : summaryMsg.Text;
-
-                                _loggingService?.LogHistoryReductionCacheMiss(
-                                    _name,
-                                    summarizedUpToIndex,
-                                    messagesList.Count,
-                                    summaryPreview);
                             }
                         }
                     }
@@ -683,6 +760,19 @@ internal sealed class Agent
                 // Set reduction metadata immediately
                 reductionCompletionSource.TrySetResult(reductionMetadata);
 
+                // Emit cache miss event if reduction was performed
+                if (reductionMetadata?.SummaryMessage != null && !usedCachedReduction && reductionToUse != null)
+                {
+                    yield return new InternalHistoryReductionCacheEvent(
+                        _name,
+                        IsHit: false,
+                        reductionToUse.CreatedAt,
+                        reductionToUse.SummarizedUpToIndex,
+                        messages.ToList().Count,
+                        TokenSavings: null, // Token savings would need to be calculated
+                        DateTimeOffset.UtcNow);
+                }
+
                 // ✅ NOTE: state.CurrentMessages now contains FULL history (unreduced)
                 // ✅ NOTE: state.ActiveReduction contains reduction metadata (if reduced)
                 // ✅ NOTE: effectiveMessages contains REDUCED history (for LLM calls only)
@@ -695,19 +785,6 @@ internal sealed class Agent
 
             var config = BuildDecisionConfiguration(effectiveOptions);
             var decisionEngine = new AgentDecisionEngine();
-
-            // Log iteration start (for resume path, this happens here)
-            if (thread?.ExecutionState != null)
-            {
-                try
-                {
-                    _loggingService?.LogIterationStart(_name, state.Iteration, config.MaxIterations);
-                }
-                catch (Exception)
-                {
-                    // Observability errors shouldn't break agent execution
-                }
-            }
 
             // ✅ REMOVED: Duplicate state snapshot emission
             // State snapshots are emitted at the start of each iteration inside the main loop (line 753)
@@ -735,32 +812,22 @@ internal sealed class Agent
             // ═══════════════════════════════════════════════════════
             // OBSERVABILITY: Start telemetry and logging
             // ═══════════════════════════════════════════════════════
+            var turnStopwatch = System.Diagnostics.Stopwatch.StartNew();
             Activity? telemetryActivity = null;
             try
             {
-                telemetryActivity = _telemetryService?.StartOrchestration(
-                    _name,
-                    effectiveOptions?.ModelId ?? ModelId,
-                    ProviderKey,
-                    config.MaxIterations,
-                    effectiveMessages,
-                    effectiveOptions,
-                    state);
-
-                // ✅ NEW: Log message turn start with full conversation visibility
-                _loggingService?.LogMessageTurnStart(
-                    _name,
-                    messageTurnId,
-                    conversationId,
-                    state.CurrentMessages.Count,
-                    state.CurrentMessages);
-
                 // Note: Basic orchestration start logging removed - use Microsoft's LoggingChatClient instead
             }
             catch (Exception)
             {
                 // Observability errors shouldn't break agent execution
             }
+
+            // Emit message turn start event
+            yield return new InternalMessageTurnStartObservabilityEvent(
+                _name,
+                messageTurnId,
+                DateTimeOffset.UtcNow);
 
             // ═══════════════════════════════════════════════════════
             // MAIN AGENTIC LOOP (Hybrid: Pure Decisions + Inline Execution)
@@ -794,38 +861,52 @@ internal sealed class Agent
                 var decision = decisionEngine.DecideNextAction(state, lastResponse, config);
 
                 // ═══════════════════════════════════════════════════
-                // OBSERVABILITY: Log and record decision
+                // OBSERVABILITY: Emit iteration and decision events
                 // ═══════════════════════════════════════════════════
-                try
-                {
-                    _loggingService?.LogIterationStart(_name, state.Iteration, config.MaxIterations);
-                    _loggingService?.LogDecision(_name, decision, state);
-                    _telemetryService?.RecordDecision(telemetryActivity, decision, state, _name, config);
 
-                    // If circuit breaker triggered, log and record it specifically
-                    if (decision is AgentDecision.Terminate terminate &&
-                        terminate.Reason.Contains("Circuit breaker", StringComparison.OrdinalIgnoreCase))
-                    {
-                        // Extract function name from termination reason (format: "Circuit breaker triggered: function 'X' called...")
-                        var match = System.Text.RegularExpressions.Regex.Match(
-                            terminate.Reason,
-                            @"function '([^']+)' called (\d+)");
-                        if (match.Success)
-                        {
-                            var functionName = match.Groups[1].Value;
-                            var count = int.Parse(match.Groups[2].Value);
-                            _loggingService?.LogCircuitBreakerTriggered(_name, functionName, count);
-                            _telemetryService?.RecordCircuitBreakerTrigger(
-                                _name,
-                                functionName,
-                                count,
-                                config.MaxConsecutiveFunctionCalls ?? int.MaxValue);
-                        }
-                    }
-                }
-                catch (Exception)
+                // Emit iteration start event
+                yield return new InternalIterationStartEvent(
+                    AgentName: _name,
+                    Iteration: state.Iteration,
+                    MaxIterations: config.MaxIterations,
+                    CurrentMessageCount: state.CurrentMessages.Count,
+                    HistoryMessageCount: 0, // History is part of CurrentMessages
+                    TurnHistoryMessageCount: state.TurnHistory.Count,
+                    ExpandedPluginsCount: state.expandedScopedPluginContainers.Count,
+                    ExpandedSkillsCount: state.ExpandedSkillContainers.Count,
+                    CompletedFunctionsCount: state.CompletedFunctions.Count,
+                    Timestamp: DateTimeOffset.UtcNow);
+
+                // Emit decision event
+                yield return new InternalAgentDecisionEvent(
+                    AgentName: _name,
+                    DecisionType: decision.GetType().Name,
+                    Iteration: state.Iteration,
+                    ConsecutiveFailures: state.ConsecutiveFailures,
+                    ExpandedPluginsCount: state.expandedScopedPluginContainers.Count,
+                    CompletedFunctionsCount: state.CompletedFunctions.Count,
+                    Timestamp: DateTimeOffset.UtcNow);
+
+                // If circuit breaker triggered, emit circuit breaker event
+                if (decision is AgentDecision.Terminate terminate &&
+                    terminate.Reason.Contains("Circuit breaker", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Observability errors shouldn't break execution
+                    // Extract function name from termination reason (format: "Circuit breaker triggered: function 'X' called...")
+                    var match = System.Text.RegularExpressions.Regex.Match(
+                        terminate.Reason,
+                        @"function '([^']+)' called (\d+)");
+                    if (match.Success)
+                    {
+                        var functionName = match.Groups[1].Value;
+                        var count = int.Parse(match.Groups[2].Value);
+
+                        yield return new InternalCircuitBreakerTriggeredEvent(
+                            AgentName: _name,
+                            FunctionName: functionName,
+                            ConsecutiveCount: count,
+                            Iteration: state.Iteration,
+                            Timestamp: DateTimeOffset.UtcNow);
+                    }
                 }
 
                 // Drain filter events after decision-making, before execution
@@ -911,17 +992,18 @@ internal sealed class Agent
                     {
                         scopedOptions = ApplyPluginScoping(effectiveOptions, state.expandedScopedPluginContainers, state.ExpandedSkillContainers);
 
-                        // ✅ TRACE: Log which tools are being sent to LLM after scoping
+                        // Emit scoped tools visible event
                         if (scopedOptions?.Tools != null)
                         {
-                            try
-                            {
-                                _loggingService?.LogScopedTools(_name, state.Iteration, scopedOptions.Tools);
-                            }
-                            catch (Exception)
-                            {
-                                // Observability errors shouldn't break agent execution
-                            }
+                            var visibleToolNames = scopedOptions.Tools.Select(t => t.Name).ToList();
+                            yield return new InternalScopedToolsVisibleEvent(
+                                _name,
+                                state.Iteration,
+                                visibleToolNames,
+                                state.expandedScopedPluginContainers,
+                                state.ExpandedSkillContainers,
+                                visibleToolNames.Count,
+                                DateTimeOffset.UtcNow);
                         }
                     }
                     else if (state.InnerClientTracksHistory && scopedOptions != null && scopedOptions.ConversationId != thread?.ConversationId)
@@ -950,21 +1032,12 @@ internal sealed class Agent
                     bool reasoningStarted = false;
                     bool reasoningMessageStarted = false;
 
-                    // ═══════════════════════════════════════════════════════
-                    // ✅ NEW: Log iteration messages BEFORE sending to LLM
-                    // ═══════════════════════════════════════════════════════
-                    try
-                    {
-                        _loggingService?.LogIterationMessages(
-                            _name,
-                            state.Iteration,
-                            messageCountToSend,
-                            messagesToSend);
-                    }
-                    catch (Exception)
-                    {
-                        // Observability errors shouldn't break agent execution
-                    }
+                    // Emit iteration messages event
+                    yield return new InternalIterationMessagesEvent(
+                        _name,
+                        state.Iteration,
+                        messagesToSend.Count(),
+                        DateTimeOffset.UtcNow);
 
                     // Stream LLM response with IMMEDIATE event yielding
                     await foreach (var update in _agentTurn.RunAsync(messagesToSend, scopedOptions, effectiveCancellationToken))
@@ -1389,9 +1462,9 @@ internal sealed class Agent
                     lastResponse = complete.FinalResponse;
                     state = state.Terminate("Completed successfully");
                 }
-                else if (decision is AgentDecision.Terminate terminate)
+                else if (decision is AgentDecision.Terminate terminateDecision)
                 {
-                    state = state.Terminate(terminate.Reason);
+                    state = state.Terminate(terminateDecision.Reason);
                 }
                 else
                 {
@@ -1436,7 +1509,6 @@ internal sealed class Agent
                             {
                                 var iteration = checkpointState.Iteration;
                                 var threadId = thread.Id;
-                                var telemetry = _telemetryService;
 
                                 _ = Task.Run(async () =>
                                 {
@@ -1447,8 +1519,10 @@ internal sealed class Agent
                                             checkpointState.ETag,
                                             CancellationToken.None);
 
-                                        // Record telemetry
-                                        telemetry?.RecordPendingWritesDelete(threadId, iteration);
+                                        // Emit pending writes deleted event
+                                        NotifyObservers(new InternalPendingWritesDeletedEvent(
+                                            threadId,
+                                            DateTimeOffset.UtcNow));
                                     }
                                     catch
                                     {
@@ -1458,14 +1532,33 @@ internal sealed class Agent
                             }
 
                             stopwatch.Stop();
-                            _telemetryService?.RecordCheckpointSuccess(stopwatch.Elapsed, thread.Id, state.Iteration);
+
+                            // Emit checkpoint success event
+                            NotifyObservers(new InternalCheckpointSavedEvent(
+                                thread.Id,
+                                checkpointState.Iteration,
+                                stopwatch.Elapsed,
+                                Success: true,
+                                ErrorMessage: null,
+                                SizeBytes: null,
+                                DateTimeOffset.UtcNow));
                         }
                         catch (Exception ex)
                         {
+                            stopwatch.Stop();
+
+                            // Emit checkpoint failure event
+                            NotifyObservers(new InternalCheckpointSavedEvent(
+                                thread.Id,
+                                checkpointState.Iteration,
+                                stopwatch.Elapsed,
+                                Success: false,
+                                ex.Message,
+                                SizeBytes: null,
+                                DateTimeOffset.UtcNow));
+
                             // Checkpoint failures are non-fatal (fire-and-forget)
                             // Agent execution continues even if checkpoint fails
-                            _loggingService?.LogCheckpointFailure(ex, thread.Id, state.Iteration);
-                            _telemetryService?.RecordCheckpointFailure(ex, thread.Id, state.Iteration);
                         }
                     }, CancellationToken.None);
                 }
@@ -1542,18 +1635,19 @@ internal sealed class Agent
             {
                 // Note: Token usage, duration, and finish reason are now tracked by Microsoft's OpenTelemetryChatClient
 
-                _loggingService?.LogCompletion(_name, state.Iteration);
-                _telemetryService?.RecordCompletion(
-                    telemetryActivity,
-                    state,
-                    effectiveOptions?.ModelId ?? ModelId);
-
                 telemetryActivity?.Dispose();
             }
             catch (Exception)
             {
                 // Observability errors shouldn't break execution
             }
+
+            // Emit agent completion event
+            yield return new InternalAgentCompletionEvent(
+                _name,
+                state.Iteration,
+                turnStopwatch.Elapsed,
+                DateTimeOffset.UtcNow);
 
             // ═══════════════════════════════════════════════════════
             // ✅ NEW: FINAL CHECKPOINT (if configured)
@@ -1570,34 +1664,69 @@ internal sealed class Agent
                     }
                 };
 
-                thread.ExecutionState = finalState;
-                await Config.Checkpointer.SaveThreadAsync(thread, cancellationToken);
-
-                // Cleanup pending writes after successful final checkpoint (fire-and-forget)
-                if (Config.EnablePendingWrites && finalState.ETag != null)
+                // Use Task.Run to avoid try-catch in iterator method
+                var checkpointTask = Task.Run(async () =>
                 {
-                    var iteration = finalState.Iteration;
-                    var threadId = thread.Id;
-                    var telemetry = _telemetryService;
+                    var stopwatch = Stopwatch.StartNew();
+                    bool success = false;
+                    string? errorMessage = null;
 
-                    _ = Task.Run(async () =>
+                    try
                     {
-                        try
-                        {
-                            await Config.Checkpointer.DeletePendingWritesAsync(
-                                threadId,
-                                finalState.ETag,
-                                CancellationToken.None);
+                        thread.ExecutionState = finalState;
+                        await Config.Checkpointer.SaveThreadAsync(thread, CancellationToken.None);
+                        success = true;
 
-                            // Record telemetry
-                            telemetry?.RecordPendingWritesDelete(threadId, iteration);
-                        }
-                        catch
+                        // Cleanup pending writes after successful final checkpoint (fire-and-forget)
+                        if (Config.EnablePendingWrites && finalState.ETag != null)
                         {
-                            // Swallow errors - cleanup is best-effort
+                            var iteration = finalState.Iteration;
+                            var threadId = thread.Id;
+
+                            _ = Task.Run(async () =>
+                            {
+                                try
+                                {
+                                    await Config.Checkpointer.DeletePendingWritesAsync(
+                                        threadId,
+                                        finalState.ETag,
+                                        CancellationToken.None);
+
+                                    // Emit pending writes deleted event
+                                    NotifyObservers(new InternalPendingWritesDeletedEvent(
+                                        threadId,
+                                        DateTimeOffset.UtcNow));
+                                }
+                                catch
+                                {
+                                    // Swallow errors - cleanup is best-effort
+                                }
+                            });
                         }
-                    });
-                }
+                    }
+                    catch (Exception ex)
+                    {
+                        errorMessage = ex.Message;
+                        // Checkpoint failures are non-fatal - continue execution
+                    }
+                    finally
+                    {
+                        stopwatch.Stop();
+
+                        // Emit checkpoint event
+                        NotifyObservers(new InternalCheckpointSavedEvent(
+                            thread.Id,
+                            finalState.Iteration,
+                            stopwatch.Elapsed,
+                            success,
+                            errorMessage,
+                            SizeBytes: null,
+                            DateTimeOffset.UtcNow));
+                    }
+                });
+
+                // Wait for checkpoint to complete
+                await checkpointTask;
             }
 
             // ═══════════════════════════════════════════════════════
@@ -1617,22 +1746,13 @@ internal sealed class Agent
                 }
             }
 
-            // ═══════════════════════════════════════════════════════
-            // ✅ NEW: Log message turn end with final history
-            // ═══════════════════════════════════════════════════════
-            try
-            {
-                _loggingService?.LogMessageTurnEnd(
-                    _name,
-                    messageTurnId,
-                    state.Iteration,
-                    turnHistory.Count,
-                    turnHistory);
-            }
-            catch (Exception)
-            {
-                // Observability errors shouldn't break agent execution
-            }
+            // Emit message turn end event
+            turnStopwatch.Stop();
+            yield return new InternalMessageTurnEndObservabilityEvent(
+                _name,
+                messageTurnId,
+                turnStopwatch.Elapsed,
+                DateTimeOffset.UtcNow);
 
             historyCompletionSource.TrySetResult(turnHistory);
         }
@@ -1839,9 +1959,6 @@ internal sealed class Agent
             pendingWrites.Add(pendingWrite);
         }
 
-        // Record telemetry
-        _telemetryService?.RecordPendingWritesSave(pendingWrites.Count, threadId, state.Iteration);
-
         // Save in background (fire-and-forget)
         _ = Task.Run(async () =>
         {
@@ -1852,6 +1969,12 @@ internal sealed class Agent
                     state.ETag!,
                     pendingWrites,
                     CancellationToken.None).ConfigureAwait(false);
+
+                // Emit pending writes saved event
+                NotifyObservers(new InternalPendingWritesSavedEvent(
+                    threadId,
+                    pendingWrites.Count,
+                    DateTimeOffset.UtcNow));
             }
             catch
             {
@@ -1952,7 +2075,6 @@ internal sealed class Agent
     {
         _baseClient?.Dispose();
         _eventCoordinator?.Dispose();
-        _telemetryService?.Dispose();
     }
 
     #endregion
@@ -2281,7 +2403,11 @@ Best practices:
 
         await foreach (var evt in internalStream.WithCancellation(cancellationToken))
         {
+            // Yield event first (real-time protocol stream - zero delay)
             yield return evt;
+
+            // Then notify observers (fire-and-forget, non-blocking)
+            NotifyObservers(evt);
         }
     }
 
@@ -2368,7 +2494,11 @@ Best practices:
 
         await foreach (var evt in internalStream.WithCancellation(cancellationToken))
         {
+            // Yield event first (real-time protocol stream - zero delay)
             yield return evt;
+
+            // Then notify observers (fire-and-forget, non-blocking)
+            NotifyObservers(evt);
         }
     }
 
@@ -3686,8 +3816,6 @@ internal class FunctionCallProcessor
     private readonly ErrorHandlingConfig? _errorHandlingConfig;
     private readonly IList<AITool>? _serverConfiguredTools;
     private readonly AgenticLoopConfig? _agenticLoopConfig;
-    private readonly AgentLoggingService? _loggingService;
-    private readonly AgentTelemetryService? _telemetryService;
 
     public FunctionCallProcessor(
         Agent agent, // NEW: Added parameter
@@ -3697,9 +3825,7 @@ internal class FunctionCallProcessor
         int maxFunctionCalls,
         ErrorHandlingConfig? errorHandlingConfig = null,
         IList<AITool>? serverConfiguredTools = null,
-        AgenticLoopConfig? agenticLoopConfig = null,
-        AgentLoggingService? loggingService = null,
-        AgentTelemetryService? telemetryService = null)
+        AgenticLoopConfig? agenticLoopConfig = null)
     {
         _agent = agent ?? throw new ArgumentNullException(nameof(agent));
         _scopedFilterManager = scopedFilterManager;
@@ -3709,8 +3835,6 @@ internal class FunctionCallProcessor
         _errorHandlingConfig = errorHandlingConfig;
         _serverConfiguredTools = serverConfiguredTools;
         _agenticLoopConfig = agenticLoopConfig;
-        _loggingService = loggingService;
-        _telemetryService = telemetryService;
     }
 
 
@@ -3833,44 +3957,11 @@ internal class FunctionCallProcessor
             {
                 await pipeline(context).ConfigureAwait(false);
 
-                // ✅ PHASE 2: Log successful filter pipeline execution
                 filterStopwatch.Stop();
-                try
-                {
-                    _loggingService?.LogFilterPipelineExecution(
-                        agentLoopState.AgentName,
-                        "AIFunction",
-                        filterCount,
-                        filterStopwatch.Elapsed);
-
-                    _telemetryService?.RecordFilterPipelineExecution(
-                        agentLoopState.AgentName,
-                        "AIFunction",
-                        filterCount,
-                        filterStopwatch.Elapsed);
-                }
-                catch
-                {
-                    // Observability errors shouldn't break agent execution
-                }
             }
             catch (Exception ex)
             {
                 filterStopwatch.Stop();
-
-                // ✅ PHASE 2: Log filter exception
-                try
-                {
-                    _loggingService?.LogFilterPipelineExecution(
-                        agentLoopState.AgentName,
-                        "AIFunction",
-                        filterCount,
-                        filterStopwatch.Elapsed);
-                }
-                catch
-                {
-                    // Observability errors shouldn't break agent execution
-                }
 
                 // Emit error event before handling
                 context.OutboundEvents?.TryWrite(new InternalFilterErrorEvent(
@@ -4122,25 +4213,19 @@ internal class MessageProcessor
     private readonly ChatOptions? _defaultOptions;
     private readonly IChatReducer? _chatReducer;
     private readonly HistoryReductionConfig? _reductionConfig;
-    private readonly AgentLoggingService? _loggingService;
-    private readonly AgentTelemetryService? _telemetryService;
 
     public MessageProcessor(
         string? systemInstructions,
         ChatOptions? defaultOptions,
         IReadOnlyList<IPromptFilter> promptFilters,
         IChatReducer? chatReducer,
-        HistoryReductionConfig? reductionConfig,
-        AgentLoggingService? loggingService = null,
-        AgentTelemetryService? telemetryService = null)
+        HistoryReductionConfig? reductionConfig)
     {
         _systemInstructions = systemInstructions;
         _defaultOptions = defaultOptions;
         _promptFilters = promptFilters ?? new List<IPromptFilter>();
         _chatReducer = chatReducer;
         _reductionConfig = reductionConfig;
-        _loggingService = loggingService;
-        _telemetryService = telemetryService;
     }
 
     /// <summary>
@@ -4485,26 +4570,7 @@ internal class MessageProcessor
         var pipeline = FilterChain.BuildPromptPipeline(_promptFilters, finalAction);
         var result = await pipeline(context).ConfigureAwait(false);
 
-        // ✅ PHASE 2: Log filter pipeline execution
         stopwatch.Stop();
-        try
-        {
-            _loggingService?.LogFilterPipelineExecution(
-                agentName,
-                "Prompt",
-                _promptFilters.Count,
-                stopwatch.Elapsed);
-
-            _telemetryService?.RecordFilterPipelineExecution(
-                agentName,
-                "Prompt",
-                _promptFilters.Count,
-                stopwatch.Elapsed);
-        }
-        catch (Exception)
-        {
-            // Observability errors shouldn't break agent execution
-        }
 
         return result;
     }
@@ -6494,6 +6560,330 @@ public record InternalFilterErrorEvent(
 
 #endregion
 
+#region Observability Events (Internal diagnostics)
+
+/// <summary>
+/// Marker interface to distinguish observability events from protocol events.
+/// Observability events are designed for logging, metrics, and monitoring.
+/// They are processed by IAgentEventObserver implementations.
+/// </summary>
+public interface IObservabilityEvent { }
+
+/// <summary>
+/// Emitted when scoped tools visibility is determined for an iteration.
+/// Contains full snapshot of what tools the LLM can see.
+/// </summary>
+public record InternalScopedToolsVisibleEvent(
+    string AgentName,
+    int Iteration,
+    IReadOnlyList<string> VisibleToolNames,
+    ImmutableHashSet<string> ExpandedPlugins,
+    ImmutableHashSet<string> ExpandedSkills,
+    int TotalToolCount,
+    DateTimeOffset Timestamp
+) : InternalAgentEvent, IObservabilityEvent;
+
+/// <summary>
+/// Emitted when a plugin or skill container is expanded.
+/// </summary>
+public record InternalContainerExpandedEvent(
+    string ContainerName,
+    ContainerType Type,
+    IReadOnlyList<string> UnlockedFunctions,
+    int Iteration,
+    DateTimeOffset Timestamp
+) : InternalAgentEvent, IObservabilityEvent;
+
+public enum ContainerType { Plugin, Skill }
+
+/// <summary>
+/// Emitted when filter pipeline execution starts.
+/// </summary>
+public record InternalFilterPipelineStartEvent(
+    string FunctionName,
+    int FilterCount,
+    DateTimeOffset Timestamp
+) : InternalAgentEvent, IObservabilityEvent;
+
+/// <summary>
+/// Emitted when filter pipeline execution completes.
+/// </summary>
+public record InternalFilterPipelineEndEvent(
+    string FunctionName,
+    TimeSpan Duration,
+    bool Success,
+    string? ErrorMessage,
+    DateTimeOffset Timestamp
+) : InternalAgentEvent, IObservabilityEvent;
+
+/// <summary>
+/// Emitted when a permission check occurs.
+/// </summary>
+public record InternalPermissionCheckEvent(
+    string FunctionName,
+    bool IsApproved,
+    string? DenialReason,
+    string AgentName,
+    int Iteration,
+    TimeSpan Duration,
+    DateTimeOffset Timestamp
+) : InternalAgentEvent, IObservabilityEvent;
+
+/// <summary>
+/// Emitted when an iteration starts with full state snapshot.
+/// </summary>
+public record InternalIterationStartEvent(
+    string AgentName,
+    int Iteration,
+    int MaxIterations,
+    int CurrentMessageCount,
+    int HistoryMessageCount,
+    int TurnHistoryMessageCount,
+    int ExpandedPluginsCount,
+    int ExpandedSkillsCount,
+    int CompletedFunctionsCount,
+    DateTimeOffset Timestamp
+) : InternalAgentEvent, IObservabilityEvent;
+
+/// <summary>
+/// Emitted when circuit breaker is triggered.
+/// </summary>
+public record InternalCircuitBreakerTriggeredEvent(
+    string AgentName,
+    string FunctionName,
+    int ConsecutiveCount,
+    int Iteration,
+    DateTimeOffset Timestamp
+) : InternalAgentEvent, IObservabilityEvent;
+
+/// <summary>
+/// Emitted when history reduction cache is checked.
+/// </summary>
+public record InternalHistoryReductionCacheEvent(
+    string AgentName,
+    bool IsHit,
+    DateTime? ReductionCreatedAt,
+    int? SummarizedUpToIndex,
+    int CurrentMessageCount,
+    int? TokenSavings,
+    DateTimeOffset Timestamp
+) : InternalAgentEvent, IObservabilityEvent;
+
+/// <summary>
+/// Emitted when a checkpoint is saved.
+/// </summary>
+public record InternalCheckpointSavedEvent(
+    string ThreadId,
+    int Iteration,
+    TimeSpan Duration,
+    bool Success,
+    string? ErrorMessage,
+    int? SizeBytes,
+    DateTimeOffset Timestamp
+) : InternalAgentEvent, IObservabilityEvent;
+
+/// <summary>
+/// Emitted when a checkpoint is restored.
+/// </summary>
+public record InternalCheckpointRestoredEvent(
+    string ThreadId,
+    int FromIteration,
+    int MessageCount,
+    TimeSpan Duration,
+    DateTimeOffset Timestamp
+) : InternalAgentEvent, IObservabilityEvent;
+
+/// <summary>
+/// Emitted when parallel tool execution starts.
+/// </summary>
+public record InternalParallelToolExecutionEvent(
+    string AgentName,
+    int Iteration,
+    int ToolCount,
+    int ParallelBatchSize,
+    int ApprovedCount,
+    int DeniedCount,
+    TimeSpan Duration,
+    TimeSpan? SemaphoreWaitDuration,
+    bool IsParallel,
+    DateTimeOffset Timestamp
+) : InternalAgentEvent, IObservabilityEvent;
+
+/// <summary>
+/// Emitted when a retry attempt occurs.
+/// </summary>
+public record InternalRetryAttemptEvent(
+    string AgentName,
+    string FunctionName,
+    int AttemptNumber,
+    int MaxRetries,
+    string? ErrorMessage,
+    TimeSpan? RetryDelay,
+    DateTimeOffset Timestamp
+) : InternalAgentEvent, IObservabilityEvent;
+
+/// <summary>
+/// Emitted when retry attempts are exhausted.
+/// </summary>
+public record InternalRetryExhaustedEvent(
+    string AgentName,
+    string FunctionName,
+    int TotalAttempts,
+    string? LastErrorMessage,
+    DateTimeOffset Timestamp
+) : InternalAgentEvent, IObservabilityEvent;
+
+/// <summary>
+/// Emitted when delta sending is activated.
+/// </summary>
+public record InternalDeltaSendingActivatedEvent(
+    string AgentName,
+    int MessageCountSent,
+    DateTimeOffset Timestamp
+) : InternalAgentEvent, IObservabilityEvent;
+
+/// <summary>
+/// Emitted when plan mode is activated.
+/// </summary>
+public record InternalPlanModeActivatedEvent(
+    string AgentName,
+    DateTimeOffset Timestamp
+) : InternalAgentEvent, IObservabilityEvent;
+
+/// <summary>
+/// Emitted when a nested agent is invoked.
+/// </summary>
+public record InternalNestedAgentInvokedEvent(
+    string OrchestratorName,
+    string ChildAgentName,
+    int NestingDepth,
+    DateTimeOffset Timestamp
+) : InternalAgentEvent, IObservabilityEvent;
+
+/// <summary>
+/// Emitted when document processing occurs.
+/// </summary>
+public record InternalDocumentProcessedEvent(
+    string AgentName,
+    string DocumentPath,
+    long SizeBytes,
+    TimeSpan Duration,
+    DateTimeOffset Timestamp
+) : InternalAgentEvent, IObservabilityEvent;
+
+/// <summary>
+/// Emitted when message preparation completes.
+/// </summary>
+public record InternalMessagePreparedEvent(
+    string AgentName,
+    int Iteration,
+    int FinalMessageCount,
+    DateTimeOffset Timestamp
+) : InternalAgentEvent, IObservabilityEvent;
+
+/// <summary>
+/// Emitted when a bidirectional event is processed.
+/// </summary>
+public record InternalBidirectionalEventProcessedEvent(
+    string AgentName,
+    string EventType,
+    bool RequiresResponse,
+    DateTimeOffset Timestamp
+) : InternalAgentEvent, IObservabilityEvent;
+
+/// <summary>
+/// Emitted when agent makes a decision.
+/// </summary>
+public record InternalAgentDecisionEvent(
+    string AgentName,
+    string DecisionType,
+    int Iteration,
+    int ConsecutiveFailures,
+    int ExpandedPluginsCount,
+    int CompletedFunctionsCount,
+    DateTimeOffset Timestamp
+) : InternalAgentEvent, IObservabilityEvent;
+
+/// <summary>
+/// Emitted when agent completes successfully.
+/// </summary>
+public record InternalAgentCompletionEvent(
+    string AgentName,
+    int TotalIterations,
+    TimeSpan Duration,
+    DateTimeOffset Timestamp
+) : InternalAgentEvent, IObservabilityEvent;
+
+/// <summary>
+/// Emitted when iteration messages are logged.
+/// </summary>
+public record InternalIterationMessagesEvent(
+    string AgentName,
+    int Iteration,
+    int MessageCount,
+    DateTimeOffset Timestamp
+) : InternalAgentEvent, IObservabilityEvent;
+
+/// <summary>
+/// Emitted when message turn starts.
+/// </summary>
+public record InternalMessageTurnStartObservabilityEvent(
+    string AgentName,
+    string TurnId,
+    DateTimeOffset Timestamp
+) : InternalAgentEvent, IObservabilityEvent;
+
+/// <summary>
+/// Emitted when message turn ends.
+/// </summary>
+public record InternalMessageTurnEndObservabilityEvent(
+    string AgentName,
+    string TurnId,
+    TimeSpan Duration,
+    DateTimeOffset Timestamp
+) : InternalAgentEvent, IObservabilityEvent;
+
+/// <summary>
+/// Emitted when state snapshot is captured.
+/// </summary>
+public record InternalStateSnapshotObservabilityEvent(
+    string AgentName,
+    int Iteration,
+    bool IsTerminated,
+    string? TerminationReason,
+    int ConsecutiveErrorCount,
+    int CompletedFunctionsCount,
+    DateTimeOffset Timestamp
+) : InternalAgentEvent, IObservabilityEvent;
+
+/// <summary>
+/// Emitted when pending writes are saved.
+/// </summary>
+public record InternalPendingWritesSavedEvent(
+    string ThreadId,
+    int WriteCount,
+    DateTimeOffset Timestamp
+) : InternalAgentEvent, IObservabilityEvent;
+
+/// <summary>
+/// Emitted when pending writes are loaded.
+/// </summary>
+public record InternalPendingWritesLoadedEvent(
+    string ThreadId,
+    int WriteCount,
+    DateTimeOffset Timestamp
+) : InternalAgentEvent, IObservabilityEvent;
+
+/// <summary>
+/// Emitted when pending writes are deleted.
+/// </summary>
+public record InternalPendingWritesDeletedEvent(
+    string ThreadId,
+    DateTimeOffset Timestamp
+) : InternalAgentEvent, IObservabilityEvent;
+
+#endregion
+
 #endregion
 
 #region Function Invocation Context
@@ -6703,1892 +7093,6 @@ internal class FunctionInvocationContext
         $"Function: {FunctionName}, CallId: {CallId}, Agent: {AgentName ?? "Unknown"}, Iteration: {Iteration}";
 }
 # endregion
-
-/// <summary>
-/// Structured logging service with state awareness for agent execution.
-/// Provides HPD-Agent specific logging that Microsoft.Extensions.AI doesn't provide:
-/// - Agent decision logging
-/// - Circuit breaker warnings
-/// - State snapshots
-///
-/// Note: Basic invocation logging (requests/responses) should be handled by
-/// Microsoft's LoggingChatClient middleware when applied to the base client.
-/// </summary>
-internal sealed class AgentLoggingService
-{
-    private readonly ILogger _logger;
-    private readonly bool _enableSensitiveData;
-
-    public AgentLoggingService(ILogger logger, LoggingConfig config)
-    {
-        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        _enableSensitiveData = config.EnableSensitiveData;
-    }
-
-    public void LogDecision(
-        string agentName,
-        AgentDecision decision,
-        AgentLoopState state)
-    {
-        if (!_logger.IsEnabled(LogLevel.Debug)) return;
-
-        _logger.LogDebug(
-            "Agent '{AgentName}' iteration {Iteration}: Decision={Decision}, " +
-            "State(Failures={Failures}, Plugins={Plugins}, Functions={Functions})",
-            agentName,
-            state.Iteration,
-            decision.GetType().Name,
-            state.ConsecutiveFailures,
-            state.expandedScopedPluginContainers.Count,
-            state.CompletedFunctions.Count);
-    }
-
-    public void LogIterationStart(
-        string agentName,
-        int iteration,
-        int maxIterations)
-    {
-        if (!_logger.IsEnabled(LogLevel.Debug)) return;
-
-        _logger.LogDebug(
-            "Agent '{AgentName}' iteration {Iteration}/{MaxIterations} started",
-            agentName,
-            iteration,
-            maxIterations);
-    }
-
-    public void LogCompletion(
-        string agentName,
-        int iteration)
-    {
-        if (!_logger.IsEnabled(LogLevel.Information)) return;
-
-        _logger.LogInformation(
-            "Agent '{AgentName}' completed after {Iterations} iterations",
-            agentName,
-            iteration);
-    }
-
-    public void LogCircuitBreakerTriggered(
-        string agentName,
-        string functionName,
-        int consecutiveCount)
-    {
-        _logger.LogWarning(
-            "Agent '{AgentName}' circuit breaker triggered: '{FunctionName}' called {Count} times consecutively",
-            agentName,
-            functionName,
-            consecutiveCount);
-    }
-
-    public void LogCheckpointFailure(
-        Exception exception,
-        string threadId,
-        int iteration)
-    {
-        _logger.LogWarning(
-            exception,
-            "Failed to checkpoint at iteration {Iteration} for thread {ThreadId}",
-            iteration,
-            threadId);
-    }
-
-    /// <summary>
-    /// Logs when history reduction cache is hit (reusing existing reduction).
-    /// </summary>
-    public void LogHistoryReductionCacheHit(
-        string agentName,
-        DateTime reductionCreatedAt,
-        int summarizedUpToIndex,
-        int currentMessageCount)
-    {
-        if (!_logger.IsEnabled(LogLevel.Debug)) return;
-
-        _logger.LogDebug(
-            "Agent '{AgentName}' history reduction cache HIT: Reusing reduction from {CreatedAt}, " +
-            "summarized {SummarizedCount} messages, current count: {CurrentCount}",
-            agentName,
-            reductionCreatedAt,
-            summarizedUpToIndex,
-            currentMessageCount);
-    }
-
-    /// <summary>
-    /// Logs when history reduction cache is missed (creating new reduction).
-    /// </summary>
-    public void LogHistoryReductionCacheMiss(
-        string agentName,
-        int summarizedUpToIndex,
-        int totalMessageCount,
-        string summaryPreview)
-    {
-        if (!_logger.IsEnabled(LogLevel.Debug)) return;
-
-        _logger.LogDebug(
-            "Agent '{AgentName}' history reduction cache MISS: Created new reduction, " +
-            "summarized {SummarizedCount}/{TotalCount} messages → '{SummaryPreview}'",
-            agentName,
-            summarizedUpToIndex,
-            totalMessageCount,
-            summaryPreview);
-    }
-
-    // ══════════════════════════════════════════════════════════════
-    // PRIORITY 1: CRITICAL STATE & EXECUTION GAPS (7 methods)
-    // ══════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Logs state snapshot at critical mutation points WITH FULL MESSAGE CONTENT.
-    /// Enables detection of state.CurrentMessages vs turnHistory divergence.
-    /// ✅ UPDATED: Now accepts full messages when EnableSensitiveData=true
-    /// </summary>
-    /// <param name="agentName">Agent name for correlation</param>
-    /// <param name="iteration">Current iteration number</param>
-    /// <param name="source">Execution phase (BeforeLLM, AfterLLM, AfterTools, BeforeFinalization)</param>
-    /// <param name="stateMessageCount">Message count in state.CurrentMessages</param>
-    /// <param name="turnHistoryCount">Message count in turnHistory</param>
-    /// <param name="messages">Full message list (logged at Trace level when EnableSensitiveData=true)</param>
-    /// <remarks>
-    /// Call sites:
-    /// - Line 850 (Before LLM call) - Pass messagesToSend
-    /// - Line 1077 (After adding assistant message) - Pass state.CurrentMessages
-    /// - Line 1267 (After tool execution) - Pass state.CurrentMessages
-    /// - Line 1454 (Before finalization) - Pass state.CurrentMessages
-    ///
-    /// Debugging use case:
-    /// Detects state corruption bugs where messages are lost/duplicated between
-    /// state.CurrentMessages and turnHistory, causing hallucinations or incomplete responses.
-    ///
-    /// Privacy:
-    /// Full messages only logged when EnableSensitiveData=true at Trace level.
-    /// Production environments should keep EnableSensitiveData=false.
-    /// </remarks>
-    public void LogStateSnapshot(
-        string agentName,
-        int iteration,
-        string source,
-        int stateMessageCount,
-        int turnHistoryCount,
-        IEnumerable<ChatMessage>? messages = null)
-    {
-        if (!_logger.IsEnabled(LogLevel.Debug)) return;
-
-        // Detect divergence (warning level if counts don't match expected relationship)
-        bool potentialDivergence = false;
-        if (source == "AfterLLM" && stateMessageCount != turnHistoryCount + 1)
-            potentialDivergence = true;
-        if (source == "AfterTools" && stateMessageCount <= turnHistoryCount)
-            potentialDivergence = true;
-
-        var level = potentialDivergence ? LogLevel.Warning : LogLevel.Debug;
-
-        // Log count summary at Debug/Warning level
-        var lastMessagePreview = messages?.LastOrDefault()?.Contents.FirstOrDefault()?.GetType().Name ?? "null";
-        _logger.Log(
-            level,
-            "Agent '{AgentName}' iteration {Iteration} [{Source}] " +
-            "State={StateCount}, Turn={TurnCount}, Last={Preview}" +
-            (potentialDivergence ? " ⚠️ DIVERGENCE DETECTED" : ""),
-            agentName, iteration, source, stateMessageCount, turnHistoryCount,
-            lastMessagePreview);
-
-        // ✅ NEW: Log full messages at Trace level when sensitive data enabled
-        if (_enableSensitiveData && messages != null && _logger.IsEnabled(LogLevel.Trace))
-        {
-            var messagesJson = JsonSerializer.Serialize(messages, global::Microsoft.Extensions.AI.AIJsonUtilities.DefaultOptions);
-            _logger.LogTrace(
-                "Agent '{AgentName}' iteration {Iteration} [{Source}] Full Messages: {Messages}",
-                agentName, iteration, source, messagesJson);
-        }
-    }
-
-    /// <summary>
-    /// ✅ NEW: Logs message turn start with full conversation history.
-    /// Provides visibility into what messages the agent receives at turn start.
-    /// </summary>
-    /// <param name="agentName">Agent name</param>
-    /// <param name="messageTurnId">Unique identifier for this message turn</param>
-    /// <param name="conversationId">Conversation identifier</param>
-    /// <param name="totalMessages">Total message count (including thread history + new input)</param>
-    /// <param name="messages">Full message list (logged at Trace level when EnableSensitiveData=true)</param>
-    /// <remarks>
-    /// Call site: RunAgenticLoopInternal (after PreparedTurn is ready, before main loop)
-    ///
-    /// Debugging use case:
-    /// Verify that PrepareMessagesAsync correctly loaded thread history and merged new input.
-    /// Detect if history reduction was applied (message count vs thread.Messages.Count).
-    ///
-    /// Example log output:
-    /// Information: Agent 'MyAgent' message turn msg_123 started: conversation=conv_456, messages=25
-    /// Trace: Agent 'MyAgent' message turn msg_123 input messages: [{"role":"user","content":"..."}]
-    /// </remarks>
-    public void LogMessageTurnStart(
-        string agentName,
-        string messageTurnId,
-        string conversationId,
-        int totalMessages,
-        IEnumerable<ChatMessage>? messages = null)
-    {
-        if (!_logger.IsEnabled(LogLevel.Information)) return;
-
-        _logger.LogInformation(
-            "Agent '{AgentName}' message turn {MessageTurnId} started: " +
-            "conversation={ConversationId}, messages={MessageCount}",
-            agentName, messageTurnId, conversationId, totalMessages);
-
-        // ✅ Log full messages at Trace level when sensitive data enabled
-        if (_enableSensitiveData && messages != null && _logger.IsEnabled(LogLevel.Trace))
-        {
-            var messagesJson = JsonSerializer.Serialize(messages, global::Microsoft.Extensions.AI.AIJsonUtilities.DefaultOptions);
-            _logger.LogTrace(
-                "Agent '{AgentName}' message turn {MessageTurnId} input messages: {Messages}",
-                agentName, messageTurnId, messagesJson);
-        }
-    }
-
-    /// <summary>
-    /// ✅ NEW: Logs messages sent to LLM at each iteration.
-    /// CRITICAL for debugging reduction/delta sending - shows exactly what the LLM sees.
-    /// </summary>
-    /// <param name="agentName">Agent name</param>
-    /// <param name="iteration">Current iteration number</param>
-    /// <param name="messageCount">Number of messages being sent</param>
-    /// <param name="messages">Messages being sent to LLM (logged at Trace level when EnableSensitiveData=true)</param>
-    /// <remarks>
-    /// Call site: RunAgenticLoopInternal (before each LLM call in the main loop)
-    ///
-    /// Debugging use case:
-    /// CRITICAL for debugging history reduction and delta sending:
-    /// - Verify reduction applied correctly (reduced count vs full history)
-    /// - Verify delta sending works (only new messages sent after first iteration)
-    /// - Compare with Microsoft's LoggingChatClient to detect message transformation bugs
-    ///
-    /// Example scenarios:
-    /// 1. Iteration 0: messageCount=10 (reduced from 100) → Reduction working
-    /// 2. Iteration 1 (delta mode): messageCount=2 (only new messages) → Delta working
-    /// 3. Iteration 1 (no delta): messageCount=12 (full history + new) → No delta optimization
-    /// </remarks>
-    public void LogIterationMessages(
-        string agentName,
-        int iteration,
-        int messageCount,
-        IEnumerable<ChatMessage>? messages = null)
-    {
-        if (!_logger.IsEnabled(LogLevel.Debug)) return;
-
-        _logger.LogDebug(
-            "Agent '{AgentName}' iteration {Iteration}: Sending {MessageCount} messages to LLM",
-            agentName, iteration, messageCount);
-
-        // ✅ Log full messages at Trace level when sensitive data enabled
-        if (_enableSensitiveData && messages != null && _logger.IsEnabled(LogLevel.Trace))
-        {
-            var messagesJson = JsonSerializer.Serialize(messages, global::Microsoft.Extensions.AI.AIJsonUtilities.DefaultOptions);
-            _logger.LogTrace(
-                "Agent '{AgentName}' iteration {Iteration} LLM messages: {Messages}",
-                agentName, iteration, messagesJson);
-        }
-    }
-
-    /// <summary>
-    /// ✅ NEW: Logs message turn completion with final history.
-    /// Provides visibility into what messages were accumulated during the turn.
-    /// </summary>
-    /// <param name="agentName">Agent name</param>
-    /// <param name="messageTurnId">Unique identifier for this message turn</param>
-    /// <param name="totalIterations">Number of iterations executed</param>
-    /// <param name="finalMessageCount">Final message count in turn history</param>
-    /// <param name="turnHistory">Messages accumulated during this turn (logged at Trace level when EnableSensitiveData=true)</param>
-    /// <remarks>
-    /// Call site: RunAgenticLoopInternal (after main loop completes, before returning)
-    ///
-    /// Debugging use case:
-    /// Verify that all new messages (user + assistant + tool) were captured in turnHistory.
-    /// Detect message loss bugs (finalMessageCount should match expected based on iterations).
-    ///
-    /// Example log output:
-    /// Information: Agent 'MyAgent' message turn msg_123 completed: iterations=3, final_messages=7
-    /// Trace: Agent 'MyAgent' message turn msg_123 final history: [{"role":"user",...},{"role":"assistant",...}]
-    /// </remarks>
-    public void LogMessageTurnEnd(
-        string agentName,
-        string messageTurnId,
-        int totalIterations,
-        int finalMessageCount,
-        IEnumerable<ChatMessage>? turnHistory = null)
-    {
-        if (!_logger.IsEnabled(LogLevel.Information)) return;
-
-        _logger.LogInformation(
-            "Agent '{AgentName}' message turn {MessageTurnId} completed: " +
-            "iterations={Iterations}, turn_messages={TurnMessageCount}",
-            agentName, messageTurnId, totalIterations, finalMessageCount);
-
-        // ✅ Log full turn history at Trace level when sensitive data enabled
-        if (_enableSensitiveData && turnHistory != null && _logger.IsEnabled(LogLevel.Trace))
-        {
-            var historyJson = JsonSerializer.Serialize(turnHistory, global::Microsoft.Extensions.AI.AIJsonUtilities.DefaultOptions);
-            _logger.LogTrace(
-                "Agent '{AgentName}' message turn {MessageTurnId} final history: {History}",
-                agentName, messageTurnId, historyJson);
-        }
-    }
-
-    /// <summary>
-    /// Logs which tools are being sent to the LLM after scoping is applied.
-    /// Helps debug plugin scoping issues.
-    /// </summary>
-    public void LogScopedTools(
-        string agentName,
-        int iteration,
-        IList<AITool> tools)
-    {
-        if (!_logger.IsEnabled(LogLevel.Trace)) return;
-
-        var toolsList = new List<string>();
-        foreach (var tool in tools)
-        {
-            if (tool is AIFunction func)
-            {
-                var isContainer = func.AdditionalProperties?.TryGetValue("IsContainer", out var ic) == true && ic is bool b && b;
-                var pluginName = func.AdditionalProperties?.TryGetValue("PluginName", out var pn) == true ? pn?.ToString() : null;
-                var marker = isContainer ? " [CONTAINER]" : "";
-                var plugin = pluginName != null ? $" (plugin:{pluginName})" : "";
-                toolsList.Add($"{func.Name}{marker}{plugin}");
-            }
-        }
-
-        _logger.LogTrace(
-            "Agent '{AgentName}' iteration {Iteration}: Scoped tools sent to LLM (count={Count}): [{Tools}]",
-            agentName, iteration, tools.Count, string.Join(", ", toolsList));
-    }
-
-    /// <summary>
-    /// Logs delta sending activation (server-side history tracking optimization).
-    /// Enables tracking of when/why delta mode is used, and message count savings.
-    /// </summary>
-    /// <param name="agentName">Agent name</param>
-    /// <param name="conversationId">Conversation ID from LLM response</param>
-    /// <param name="messageCountSent">Number of messages sent (reduced via delta)</param>
-    /// <remarks>
-    /// Call site: Line 887 (when ConversationId captured from LLM response)
-    ///
-    /// Debugging use case:
-    /// Tracks optimization effectiveness - how many messages saved by server-side history.
-    /// Detects when delta mode unexpectedly deactivates (ConversationId lost).
-    /// </remarks>
-    public void LogDeltaSendingActivated(
-        string agentName,
-        string conversationId,
-        int messageCountSent)
-    {
-        if (!_logger.IsEnabled(LogLevel.Information)) return;
-
-        _logger.LogInformation(
-            "Agent '{AgentName}' enabled delta sending for conversation {ConversationId}, " +
-            "sent {MessageCount} messages (subsequent calls will send delta only)",
-            agentName, conversationId, messageCountSent);
-    }
-
-    /// <summary>
-    /// Logs permission check result for tool execution.
-    /// Enables tracking of approval/denial patterns, filter decisions, and performance.
-    /// </summary>
-    /// <param name="agentName">Agent name</param>
-    /// <param name="functionName">Function being permission-checked</param>
-    /// <param name="approved">Whether permission was granted</param>
-    /// <param name="reason">Approval/denial reason</param>
-    /// <param name="duration">Time spent in permission check</param>
-    /// <remarks>
-    /// Call site: PermissionManager.CheckPermissionAsync (after filter pipeline)
-    ///
-    /// Debugging use case:
-    /// Identifies permission bottlenecks (slow filters), denial patterns (over-restrictive policies),
-    /// and filter decision logic (which filter approved/denied).
-    /// </remarks>
-    public void LogPermissionCheck(
-        string agentName,
-        string functionName,
-        bool approved,
-        string? reason,
-        TimeSpan duration)
-    {
-        var level = approved ? LogLevel.Debug : LogLevel.Warning;
-        if (!_logger.IsEnabled(level)) return;
-
-        _logger.Log(
-            level,
-            "Agent '{AgentName}' permission check for '{Function}': {Result} " +
-            "({Reason}) [{Duration}ms]",
-            agentName, functionName, approved ? "✅ Approved" : "❌ Denied",
-            reason ?? "No reason provided", duration.TotalMilliseconds);
-    }
-
-    /// <summary>
-    /// Logs parallel tool execution decision and results.
-    /// Enables tracking of parallelization effectiveness and approval/denial rates.
-    /// </summary>
-    /// <param name="agentName">Agent name</param>
-    /// <param name="iteration">Current iteration</param>
-    /// <param name="totalTools">Total tools requested by LLM</param>
-    /// <param name="parallelBatchSize">Number of tools executed in parallel</param>
-    /// <param name="approvedCount">Tools approved by permissions</param>
-    /// <param name="deniedCount">Tools denied by permissions</param>
-    /// <param name="duration">Total execution time</param>
-    /// <remarks>
-    /// Call site: ToolScheduler.ExecuteToolsAsync (after parallel execution)
-    ///
-    /// Debugging use case:
-    /// Measures parallel execution effectiveness (time saved vs sequential),
-    /// identifies permission bottlenecks (high denial rate), tracks semaphore contention.
-    /// </remarks>
-    public void LogParallelToolExecution(
-        string agentName,
-        int iteration,
-        int totalTools,
-        int parallelBatchSize,
-        int approvedCount,
-        int deniedCount,
-        TimeSpan duration)
-    {
-        if (!_logger.IsEnabled(LogLevel.Debug)) return;
-
-        _logger.LogDebug(
-            "Agent '{AgentName}' iteration {Iteration}: Executed {Total} tools " +
-            "(batch={Batch}, approved={Approved}, denied={Denied}) [{Duration}ms]",
-            agentName, iteration, totalTools, parallelBatchSize,
-            approvedCount, deniedCount, duration.TotalMilliseconds);
-    }
-
-    // ══════════════════════════════════════════════════════════════
-    // PRIORITY 2: HIGH - FILTER & PIPELINE VISIBILITY (3 methods)
-    // ══════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Logs filter pipeline execution for all filter types.
-    /// Enables tracking of filter chain performance and mutation patterns.
-    /// </summary>
-    /// <param name="agentName">Agent name</param>
-    /// <param name="filterType">Filter type (Prompt, AIFunction, Permission, MessageTurn)</param>
-    /// <param name="filterCount">Number of filters in pipeline</param>
-    /// <param name="duration">Total pipeline execution time</param>
-    /// <remarks>
-    /// Call sites:
-    /// - MessageProcessor.ApplyPromptFiltersAsync (Prompt filters)
-    /// - FunctionCallProcessor.ProcessFunctionCallsAsync (AIFunction filters)
-    /// - PermissionManager.CheckPermissionAsync (Permission filters)
-    /// - Agent.ApplyMessageTurnFilters (MessageTurn filters)
-    ///
-    /// Debugging use case:
-    /// Identifies slow filter chains, tracks filter execution order issues,
-    /// measures overhead of filter architecture.
-    /// </remarks>
-    public void LogFilterPipelineExecution(
-        string agentName,
-        string filterType,
-        int filterCount,
-        TimeSpan duration)
-    {
-        if (!_logger.IsEnabled(LogLevel.Debug)) return;
-
-        _logger.LogDebug(
-            "Agent '{AgentName}' executed {FilterType} pipeline: {Count} filters [{Duration}ms]",
-            agentName, filterType, filterCount, duration.TotalMilliseconds);
-    }
-
-    /// <summary>
-    /// Logs container expansion event (plugin or skill scoping).
-    /// Enables tracking of when containers expand, how many members, and usage patterns.
-    /// </summary>
-    /// <param name="agentName">Agent name</param>
-    /// <param name="iteration">Current iteration</param>
-    /// <param name="containerType">Container type (Plugin or Skill)</param>
-    /// <param name="containerName">Container name</param>
-    /// <param name="memberCount">Number of member functions exposed</param>
-    /// <remarks>
-    /// Call site: ToolScheduler.ExecuteToolsAsync (after container invocation)
-    ///
-    /// Debugging use case:
-    /// Tracks container expansion patterns, measures scoping overhead,
-    /// identifies unused containers (expanded but members never called).
-    /// </remarks>
-    public void LogContainerExpansion(
-        string agentName,
-        int iteration,
-        string containerType,
-        string containerName,
-        int memberCount)
-    {
-        if (!_logger.IsEnabled(LogLevel.Debug)) return;
-
-        _logger.LogDebug(
-            "Agent '{AgentName}' iteration {Iteration}: Expanded {Type} container '{Name}' " +
-            "({Members} members now available)",
-            agentName, iteration, containerType, containerName, memberCount);
-    }
-
-    /// <summary>
-    /// Logs message preparation phase completion.
-    /// Enables tracking of preparation overhead, reduction effectiveness, and filter impact.
-    /// </summary>
-    /// <param name="agentName">Agent name</param>
-    /// <param name="originalMessageCount">Message count before preparation</param>
-    /// <param name="preparedMessageCount">Message count after preparation (may be reduced)</param>
-    /// <param name="reductionApplied">Whether history reduction was applied</param>
-    /// <param name="duration">Time spent in preparation</param>
-    /// <remarks>
-    /// Call site: MessageProcessor.PrepareTurnAsync (end of method)
-    ///
-    /// Debugging use case:
-    /// Measures preparation overhead, tracks reduction effectiveness (message count delta),
-    /// identifies preparation bottlenecks (slow filters, expensive reduction).
-    /// </remarks>
-    public void LogMessagePreparation(
-        string agentName,
-        int originalMessageCount,
-        int preparedMessageCount,
-        bool reductionApplied,
-        TimeSpan duration)
-    {
-        if (!_logger.IsEnabled(LogLevel.Debug)) return;
-
-        _logger.LogDebug(
-            "Agent '{AgentName}' prepared messages: {Original} → {Prepared} " +
-            "(reduction={Reduced}) [{Duration}ms]",
-            agentName, originalMessageCount, preparedMessageCount,
-            reductionApplied, duration.TotalMilliseconds);
-    }
-
-    // ══════════════════════════════════════════════════════════════
-    // PRIORITY 3: OPTIMIZATION & ADVANCED FEATURES LOGGING
-    // ══════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Logs retry attempt for function execution.
-    /// Enables tracking of retry patterns, error categories, and backoff effectiveness.
-    /// </summary>
-    /// <param name="agentName">Agent name</param>
-    /// <param name="functionName">Function being retried</param>
-    /// <param name="attemptNumber">Current attempt number (1-based)</param>
-    /// <param name="maxAttempts">Maximum retry attempts configured</param>
-    /// <param name="errorCategory">Error category (RateLimit, Timeout, Network, etc.)</param>
-    /// <param name="retryDelay">Delay before next retry</param>
-    /// <remarks>
-    /// Call site: FunctionRetryExecutor.ExecuteWithRetryAsync (on retry)
-    ///
-    /// Debugging use case:
-    /// Tracks retry effectiveness, identifies provider-specific error patterns,
-    /// measures backoff strategy effectiveness.
-    /// </remarks>
-    public void LogRetryAttempt(
-        string agentName,
-        string functionName,
-        int attemptNumber,
-        int maxAttempts,
-        string errorCategory,
-        TimeSpan retryDelay)
-    {
-        if (!_logger.IsEnabled(LogLevel.Warning)) return;
-
-        _logger.LogWarning(
-            "Agent '{AgentName}' retrying '{Function}' (attempt {Attempt}/{Max}) " +
-            "due to {Category}, delay={Delay}ms",
-            agentName, functionName, attemptNumber, maxAttempts,
-            errorCategory, retryDelay.TotalMilliseconds);
-    }
-
-    /// <summary>
-    /// Logs document processing event.
-    /// Enables tracking of document injection frequency, size impact, and performance.
-    /// </summary>
-    /// <param name="agentName">Agent name</param>
-    /// <param name="documentCount">Number of documents processed</param>
-    /// <param name="duration">Processing time</param>
-    /// <remarks>
-    /// Call site: AgentDocumentProcessor.ProcessDocumentsAsync (end of method)
-    ///
-    /// Debugging use case:
-    /// Tracks document processing overhead, identifies performance bottlenecks in text extraction.
-    /// </remarks>
-    public void LogDocumentProcessing(
-        string agentName,
-        int documentCount,
-        TimeSpan duration)
-    {
-        if (!_logger.IsEnabled(LogLevel.Information)) return;
-
-        _logger.LogInformation(
-            "Agent '{AgentName}' processed {Count} documents [{Duration}ms]",
-            agentName, documentCount, duration.TotalMilliseconds);
-    }
-
-    /// <summary>
-    /// Logs nested agent invocation.
-    /// Enables tracking of agent hierarchy, event bubbling, and nesting overhead.
-    /// </summary>
-    /// <param name="orchestratorName">Orchestrator agent name</param>
-    /// <param name="nestedAgentName">Nested agent name</param>
-    /// <param name="nestingDepth">Current nesting depth (1 = direct child)</param>
-    /// <remarks>
-    /// Call site: When agent is invoked via AsAIFunction (context setup)
-    ///
-    /// Debugging use case:
-    /// Tracks nested agent patterns, measures nesting overhead, identifies deep nesting issues.
-    /// </remarks>
-    public void LogNestedAgentCall(
-        string orchestratorName,
-        string nestedAgentName,
-        int nestingDepth)
-    {
-        if (!_logger.IsEnabled(LogLevel.Debug)) return;
-
-        _logger.LogDebug(
-            "Agent '{Orchestrator}' invoked nested agent '{Nested}' at depth {Depth}",
-            orchestratorName, nestedAgentName, nestingDepth);
-    }
-
-    /// <summary>
-    /// Logs checkpoint or resume operation.
-    /// Enables tracking of checkpoint frequency, resume success rate, and performance.
-    /// </summary>
-    /// <param name="threadId">Thread identifier</param>
-    /// <param name="iteration">Iteration number being checkpointed/resumed</param>
-    /// <param name="isResume">True if resume, false if checkpoint</param>
-    /// <param name="duration">Operation duration</param>
-    /// <remarks>
-    /// Call sites:
-    /// - Agent.RunAgenticLoopInternal (checkpoint after iteration)
-    /// - Agent.RunAsync (resume on thread with ExecutionState)
-    ///
-    /// Debugging use case:
-    /// Tracks checkpoint reliability, measures checkpoint overhead, identifies resume failures.
-    /// </remarks>
-    public void LogCheckpointResume(
-        string threadId,
-        int iteration,
-        bool isResume,
-        TimeSpan duration)
-    {
-        if (!_logger.IsEnabled(LogLevel.Information)) return;
-
-        _logger.LogInformation(
-            "Thread '{ThreadId}' {Operation} at iteration {Iteration} [{Duration}ms]",
-            threadId, isResume ? "Resumed" : "Checkpointed",
-            iteration, duration.TotalMilliseconds);
-    }
-
-    /// <summary>
-    /// Logs plan mode activation and operations.
-    /// Enables tracking of plan lifecycle, usage patterns, and effectiveness.
-    /// </summary>
-    /// <param name="agentName">Agent name</param>
-    /// <param name="operation">Plan operation (PlanCreated, StepUpdated, PlanCompleted)</param>
-    /// <param name="planId">Plan identifier (if available)</param>
-    /// <remarks>
-    /// Call site: AgentPlanFilter (on plan operations)
-    ///
-    /// Debugging use case:
-    /// Tracks plan mode usage, measures plan effectiveness (does it reduce iterations?).
-    /// </remarks>
-    public void LogPlanModeActivation(
-        string agentName,
-        string operation,
-        string? planId)
-    {
-        if (!_logger.IsEnabled(LogLevel.Information)) return;
-
-        _logger.LogInformation(
-            "Agent '{AgentName}' plan mode: {Operation} (plan={PlanId})",
-            agentName, operation, planId ?? "N/A");
-    }
-
-    /// <summary>
-    /// Logs bidirectional event flow (permission requests, clarifications, etc.).
-    /// Enables tracking of event patterns, response times, and completion rates.
-    /// </summary>
-    /// <param name="agentName">Agent name</param>
-    /// <param name="eventType">Event type (PermissionRequest, ClarificationRequest, etc.)</param>
-    /// <param name="requestId">Unique request identifier</param>
-    /// <param name="isRequest">True if request sent, false if response received</param>
-    /// <param name="waitDuration">Time waited for response (only for responses)</param>
-    /// <remarks>
-    /// Call sites:
-    /// - BidirectionalEventCoordinator.Emit (request sent)
-    /// - BidirectionalEventCoordinator.WaitForResponseAsync (response received)
-    ///
-    /// Debugging use case:
-    /// Tracks event flow patterns, measures response times, identifies abandoned requests.
-    /// </remarks>
-    public void LogBidirectionalEvent(
-        string agentName,
-        string eventType,
-        string requestId,
-        bool isRequest,
-        TimeSpan? waitDuration = null)
-    {
-        if (!_logger.IsEnabled(LogLevel.Debug)) return;
-
-        if (isRequest)
-        {
-            _logger.LogDebug(
-                "Agent '{AgentName}' emitted {EventType} request {RequestId}",
-                agentName, eventType, requestId);
-        }
-        else
-        {
-            _logger.LogDebug(
-                "Agent '{AgentName}' received {EventType} response {RequestId} " +
-                "(waited {Duration}ms)",
-                agentName, eventType, requestId, waitDuration?.TotalMilliseconds ?? 0);
-        }
-    }
-
-}
-
-/// <summary>
-/// OpenTelemetry instrumentation service for agent orchestration.
-/// Tracks HPD-Agent specific metrics that Microsoft.Extensions.AI doesn't provide:
-/// - Agent decision tracking (CallLLM, Complete, Terminate)
-/// - Circuit breaker triggers
-/// - Iteration counts per orchestration run
-///
-/// Note: Standard Gen AI metrics (token usage, duration) should be handled by
-/// Microsoft's OpenTelemetryChatClient middleware when applied to the base client.
-/// </summary>
-internal sealed class AgentTelemetryService : IDisposable
-{
-    private readonly ActivitySource _activitySource;
-    private readonly Meter _meter;
-    private readonly bool _enableSensitiveData;
-    private readonly JsonSerializerOptions _jsonOptions;
-
-    // HPD-Agent specific metrics (not provided by Microsoft)
-    private readonly Counter<int> _decisionCounter;
-    private readonly Counter<int> _circuitBreakerCounter;
-    private readonly Histogram<int> _iterationHistogram;
-    private readonly Counter<long> _checkpointErrorCounter;
-    private readonly Histogram<double> _checkpointDuration;
-    private readonly Counter<long> _pendingWritesSaveCounter;
-    private readonly Counter<long> _pendingWritesLoadCounter;
-    private readonly Counter<long> _pendingWritesDeleteCounter;
-    private readonly Histogram<int> _pendingWritesCountHistogram;
-
-    // ══════════════════════════════════════════════════════════════
-    // PRIORITY 1: STATE MANAGEMENT METRICS
-    // ══════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Tracks message count in state.CurrentMessages over time.
-    /// Histogram allows detection of state bloat and unusual growth patterns.
-    /// </summary>
-    private readonly Histogram<int> _stateMessageCountHistogram;
-
-    /// <summary>
-    /// Tracks message count in turnHistory over time.
-    /// Compared with _stateMessageCountHistogram to detect divergence.
-    /// </summary>
-    private readonly Histogram<int> _turnHistoryCountHistogram;
-
-    /// <summary>
-    /// Counts state divergence warnings (state count != expected turn count).
-    /// Incremented when LogStateSnapshot detects potential divergence.
-    /// </summary>
-    private readonly Counter<long> _stateDivergenceCounter;
-
-    // ══════════════════════════════════════════════════════════════
-    // PRIORITY 1: DELTA SENDING OPTIMIZATION METRICS
-    // ══════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Counts delta sending activations (when ConversationId captured).
-    /// Tracks how often server-side history optimization is enabled.
-    /// </summary>
-    private readonly Counter<long> _deltaSendingActivationCounter;
-
-    /// <summary>
-    /// Tracks number of messages sent in delta mode (reduced vs full history).
-    /// Histogram shows distribution of message count savings.
-    /// </summary>
-    private readonly Histogram<int> _deltaMessageCountHistogram;
-
-    // ══════════════════════════════════════════════════════════════
-    // PRIORITY 1: PERMISSION SYSTEM METRICS
-    // ══════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Counts permission checks (total, approved, denied).
-    /// Tagged by agent.name, function.name, result=(approved|denied).
-    /// </summary>
-    private readonly Counter<long> _permissionCheckCounter;
-
-    /// <summary>
-    /// Measures time spent in permission check pipeline.
-    /// Histogram shows distribution of check durations.
-    /// </summary>
-    private readonly Histogram<double> _permissionCheckDuration;
-
-    /// <summary>
-    /// Counts permission denials separately for alerting.
-    /// Tagged by agent.name, function.name, denial_reason.
-    /// </summary>
-    private readonly Counter<long> _permissionDenialCounter;
-
-    // ══════════════════════════════════════════════════════════════
-    // PRIORITY 1: TOOL EXECUTION METRICS
-    // ══════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Counts parallel tool execution batches.
-    /// Tagged by agent.name, tool_count, parallel_count.
-    /// </summary>
-    private readonly Counter<long> _parallelToolExecutionCounter;
-
-    /// <summary>
-    /// Tracks parallel batch sizes (how many tools executed concurrently).
-    /// Histogram shows distribution of parallelism levels.
-    /// </summary>
-    private readonly Histogram<int> _parallelBatchSizeHistogram;
-
-    /// <summary>
-    /// Measures time tools wait for semaphore slots (contention metric).
-    /// High values indicate semaphore throttling is a bottleneck.
-    /// </summary>
-    private readonly Histogram<double> _semaphoreWaitDuration;
-
-    // ══════════════════════════════════════════════════════════════
-    // PRIORITY 2: FILTER PIPELINE METRICS
-    // ══════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Counts filter pipeline executions.
-    /// Tagged by agent.name, filter_type=(Prompt|AIFunction|Permission|MessageTurn).
-    /// </summary>
-    private readonly Counter<long> _filterPipelineExecutionCounter;
-
-    /// <summary>
-    /// Measures filter pipeline execution time.
-    /// Histogram shows distribution of pipeline overhead.
-    /// </summary>
-    private readonly Histogram<double> _filterPipelineDuration;
-
-    /// <summary>
-    /// Counts exceptions thrown during filter execution.
-    /// Tagged by agent.name, filter_type, exception_type.
-    /// </summary>
-    private readonly Counter<long> _filterExceptionCounter;
-
-    // ══════════════════════════════════════════════════════════════
-    // PRIORITY 2: CONTAINER EXPANSION METRICS
-    // ══════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Counts container expansions (plugin/skill scoping).
-    /// Tagged by agent.name, container_type=(Plugin|Skill), container_name.
-    /// </summary>
-    private readonly Counter<long> _containerExpansionCounter;
-
-    /// <summary>
-    /// Tracks number of member functions exposed per expansion.
-    /// Histogram shows distribution of container sizes.
-    /// </summary>
-    private readonly Histogram<int> _containerMemberCountHistogram;
-
-    // ══════════════════════════════════════════════════════════════
-    // PRIORITY 3: RETRY SYSTEM METRICS
-    // ══════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Counts retry attempts.
-    /// Tagged by agent.name, function.name, error_category, attempt_number.
-    /// </summary>
-    private readonly Counter<long> _retryAttemptCounter;
-
-    /// <summary>
-    /// Measures retry delay durations (backoff effectiveness).
-    /// Histogram shows distribution of wait times between retries.
-    /// </summary>
-    private readonly Histogram<double> _retryDelayHistogram;
-
-    /// <summary>
-    /// Counts retry exhaustion events (all retries failed).
-    /// Tagged by agent.name, function.name, final_error_category.
-    /// </summary>
-    private readonly Counter<long> _retryExhaustionCounter;
-
-    // ══════════════════════════════════════════════════════════════
-    // PRIORITY 3: HISTORY REDUCTION METRICS
-    // ══════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Counts reduction cache hits (reused existing reduction).
-    /// Tagged by agent.name, cache_hit=true.
-    /// </summary>
-    private readonly Counter<long> _reductionCacheHitCounter;
-
-    /// <summary>
-    /// Counts reduction cache misses (new reduction created).
-    /// Tagged by agent.name, cache_hit=false.
-    /// </summary>
-    private readonly Counter<long> _reductionCacheMissCounter;
-
-    /// <summary>
-    /// Tracks token savings from reduction (original - reduced token counts).
-    /// Histogram shows distribution of savings effectiveness.
-    /// </summary>
-    private readonly Histogram<int> _reductionTokenSavingsHistogram;
-
-    // ══════════════════════════════════════════════════════════════
-    // PRIORITY 3: ADVANCED FEATURE METRICS
-    // ══════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Counts document processing operations.
-    /// Tagged by agent.name, document_count.
-    /// </summary>
-    private readonly Counter<long> _documentProcessingCounter;
-
-    /// <summary>
-    /// Measures document processing duration.
-    /// Histogram shows distribution of processing times.
-    /// </summary>
-    private readonly Histogram<double> _documentProcessingDuration;
-
-    /// <summary>
-    /// Counts nested agent invocations.
-    /// Tagged by orchestrator_agent, nested_agent, nesting_depth.
-    /// </summary>
-    private readonly Counter<long> _nestedAgentInvocationCounter;
-
-    /// <summary>
-    /// Tracks nesting depth distribution (how deep agent hierarchies go).
-    /// Histogram shows typical and maximum nesting depths.
-    /// </summary>
-    private readonly Histogram<int> _nestingDepthHistogram;
-
-    /// <summary>
-    /// Measures time spent in message preparation phase.
-    /// Histogram shows distribution of preparation overhead.
-    /// </summary>
-    private readonly Histogram<double> _messagePreparationDuration;
-
-    /// <summary>
-    /// Counts checkpoint and resume operations.
-    /// Tagged by thread_id, operation=(checkpoint|resume), success=(true|false).
-    /// </summary>
-    private readonly Counter<long> _checkpointResumeCounter;
-
-    /// <summary>
-    /// Tracks checkpoint size (serialized state bytes).
-    /// Histogram shows distribution of checkpoint sizes.
-    /// </summary>
-    private readonly Histogram<int> _checkpointSizeHistogram;
-
-    /// <summary>
-    /// Counts plan mode activations and operations.
-    /// Tagged by agent.name, operation=(created|updated|completed).
-    /// </summary>
-    private readonly Counter<long> _planModeActivationCounter;
-
-    /// <summary>
-    /// Counts plan operations (create, update step, complete).
-    /// Tagged by agent.name, plan_id, operation_type.
-    /// </summary>
-    private readonly Counter<long> _planOperationCounter;
-
-    /// <summary>
-    /// Counts bidirectional events (permissions, clarifications).
-    /// Tagged by agent.name, event_type, direction=(request|response).
-    /// </summary>
-    private readonly Counter<long> _bidirectionalEventCounter;
-
-    /// <summary>
-    /// Measures time waiting for event responses.
-    /// Histogram shows distribution of user response times.
-    /// </summary>
-    private readonly Histogram<double> _eventResponseDuration;
-
-    public AgentTelemetryService(TelemetryConfig config)
-    {
-        var sourceName = config.SourceName ?? "HPD.Agent";
-        _activitySource = new ActivitySource(sourceName);
-        _meter = new Meter(sourceName);
-
-        // Check environment variable for sensitive data override
-        var envVar = Environment.GetEnvironmentVariable("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT");
-        _enableSensitiveData = config.EnableSensitiveData ||
-                               (envVar?.Equals("true", StringComparison.OrdinalIgnoreCase) ?? false);
-
-        _jsonOptions = global::Microsoft.Extensions.AI.AIJsonUtilities.DefaultOptions;
-
-        // Agent-specific metrics (unique to HPD-Agent)
-        _decisionCounter = _meter.CreateCounter<int>(
-            "hpd.agent.decision.count",
-            "decisions",
-            "Agent decision engine execution count");
-
-        _circuitBreakerCounter = _meter.CreateCounter<int>(
-            "hpd.agent.circuit_breaker.triggered",
-            "triggers",
-            "Circuit breaker activation count");
-
-        _iterationHistogram = _meter.CreateHistogram<int>(
-            "hpd.agent.iteration.count",
-            "iterations",
-            "Distribution of iteration counts per agent run");
-
-        _checkpointErrorCounter = _meter.CreateCounter<long>(
-            "hpd.agent.checkpoint.errors",
-            "errors",
-            "Number of checkpoint save failures");
-
-        _checkpointDuration = _meter.CreateHistogram<double>(
-            "hpd.agent.checkpoint.duration",
-            "ms",
-            "Time taken to save checkpoint");
-
-        _pendingWritesSaveCounter = _meter.CreateCounter<long>(
-            "hpd.agent.pending_writes.saves",
-            "writes",
-            "Number of pending writes saved");
-
-        _pendingWritesLoadCounter = _meter.CreateCounter<long>(
-            "hpd.agent.pending_writes.loads",
-            "loads",
-            "Number of pending writes load operations");
-
-        _pendingWritesDeleteCounter = _meter.CreateCounter<long>(
-            "hpd.agent.pending_writes.deletes",
-            "deletes",
-            "Number of pending writes delete operations");
-
-        _pendingWritesCountHistogram = _meter.CreateHistogram<int>(
-            "hpd.agent.pending_writes.count",
-            "writes",
-            "Distribution of pending write counts per operation");
-
-        // ══════════════════════════════════════════════════════════════
-        // PRIORITY 1: STATE MANAGEMENT METRICS
-        // ══════════════════════════════════════════════════════════════
-
-        _stateMessageCountHistogram = _meter.CreateHistogram<int>(
-            "hpd.agent.state.message_count",
-            "messages",
-            "Distribution of message counts in AgentLoopState");
-
-        _turnHistoryCountHistogram = _meter.CreateHistogram<int>(
-            "hpd.agent.turn_history.message_count",
-            "messages",
-            "Distribution of message counts in turn history");
-
-        _stateDivergenceCounter = _meter.CreateCounter<long>(
-            "hpd.agent.state.divergence",
-            "warnings",
-            "State divergence warnings (state count != expected turn count)");
-
-        // ══════════════════════════════════════════════════════════════
-        // PRIORITY 1: DELTA SENDING OPTIMIZATION METRICS
-        // ══════════════════════════════════════════════════════════════
-
-        _deltaSendingActivationCounter = _meter.CreateCounter<long>(
-            "hpd.agent.delta_sending.activations",
-            "activations",
-            "Number of times delta sending was activated");
-
-        _deltaMessageCountHistogram = _meter.CreateHistogram<int>(
-            "hpd.agent.delta_sending.message_count",
-            "messages",
-            "Distribution of message counts sent in delta mode");
-
-        // ══════════════════════════════════════════════════════════════
-        // PRIORITY 1: PERMISSION SYSTEM METRICS
-        // ══════════════════════════════════════════════════════════════
-
-        _permissionCheckCounter = _meter.CreateCounter<long>(
-            "hpd.agent.permission.checks",
-            "checks",
-            "Number of permission checks performed");
-
-        _permissionCheckDuration = _meter.CreateHistogram<double>(
-            "hpd.agent.permission.duration",
-            "ms",
-            "Permission check duration in milliseconds");
-
-        _permissionDenialCounter = _meter.CreateCounter<long>(
-            "hpd.agent.permission.denials",
-            "denials",
-            "Number of permission denials");
-
-        // ══════════════════════════════════════════════════════════════
-        // PRIORITY 1: TOOL EXECUTION METRICS
-        // ══════════════════════════════════════════════════════════════
-
-        _parallelToolExecutionCounter = _meter.CreateCounter<long>(
-            "hpd.agent.tools.parallel_executions",
-            "executions",
-            "Number of parallel tool execution batches");
-
-        _parallelBatchSizeHistogram = _meter.CreateHistogram<int>(
-            "hpd.agent.tools.parallel_batch_size",
-            "tools",
-            "Distribution of parallel tool batch sizes");
-
-        _semaphoreWaitDuration = _meter.CreateHistogram<double>(
-            "hpd.agent.tools.semaphore_wait",
-            "ms",
-            "Time tools wait for semaphore slots (contention)");
-
-        // ══════════════════════════════════════════════════════════════
-        // PRIORITY 2: FILTER PIPELINE METRICS
-        // ══════════════════════════════════════════════════════════════
-
-        _filterPipelineExecutionCounter = _meter.CreateCounter<long>(
-            "hpd.agent.filters.pipeline_executions",
-            "executions",
-            "Number of filter pipeline executions");
-
-        _filterPipelineDuration = _meter.CreateHistogram<double>(
-            "hpd.agent.filters.pipeline_duration",
-            "ms",
-            "Filter pipeline execution duration");
-
-        _filterExceptionCounter = _meter.CreateCounter<long>(
-            "hpd.agent.filters.exceptions",
-            "exceptions",
-            "Number of filter execution exceptions");
-
-        // ══════════════════════════════════════════════════════════════
-        // PRIORITY 2: CONTAINER EXPANSION METRICS
-        // ══════════════════════════════════════════════════════════════
-
-        _containerExpansionCounter = _meter.CreateCounter<long>(
-            "hpd.agent.containers.expansions",
-            "expansions",
-            "Number of container expansions");
-
-        _containerMemberCountHistogram = _meter.CreateHistogram<int>(
-            "hpd.agent.containers.member_count",
-            "members",
-            "Distribution of container member counts");
-
-        // ══════════════════════════════════════════════════════════════
-        // PRIORITY 3: RETRY SYSTEM METRICS
-        // ══════════════════════════════════════════════════════════════
-
-        _retryAttemptCounter = _meter.CreateCounter<long>(
-            "hpd.agent.retry.attempts",
-            "attempts",
-            "Number of retry attempts");
-
-        _retryDelayHistogram = _meter.CreateHistogram<double>(
-            "hpd.agent.retry.delay",
-            "ms",
-            "Retry delay durations");
-
-        _retryExhaustionCounter = _meter.CreateCounter<long>(
-            "hpd.agent.retry.exhaustion",
-            "exhaustions",
-            "Number of retry exhaustion events");
-
-        // ══════════════════════════════════════════════════════════════
-        // PRIORITY 3: HISTORY REDUCTION METRICS
-        // ══════════════════════════════════════════════════════════════
-
-        _reductionCacheHitCounter = _meter.CreateCounter<long>(
-            "hpd.agent.reduction.cache_hits",
-            "hits",
-            "Number of reduction cache hits");
-
-        _reductionCacheMissCounter = _meter.CreateCounter<long>(
-            "hpd.agent.reduction.cache_misses",
-            "misses",
-            "Number of reduction cache misses");
-
-        _reductionTokenSavingsHistogram = _meter.CreateHistogram<int>(
-            "hpd.agent.reduction.token_savings",
-            "tokens",
-            "Distribution of token savings from reduction");
-
-        // ══════════════════════════════════════════════════════════════
-        // PRIORITY 3: ADVANCED FEATURE METRICS
-        // ══════════════════════════════════════════════════════════════
-
-        _documentProcessingCounter = _meter.CreateCounter<long>(
-            "hpd.agent.documents.processing",
-            "operations",
-            "Number of document processing operations");
-
-        _documentProcessingDuration = _meter.CreateHistogram<double>(
-            "hpd.agent.documents.duration",
-            "ms",
-            "Document processing duration");
-
-        _nestedAgentInvocationCounter = _meter.CreateCounter<long>(
-            "hpd.agent.nested.invocations",
-            "invocations",
-            "Number of nested agent invocations");
-
-        _nestingDepthHistogram = _meter.CreateHistogram<int>(
-            "hpd.agent.nested.depth",
-            "levels",
-            "Distribution of nesting depths");
-
-        _messagePreparationDuration = _meter.CreateHistogram<double>(
-            "hpd.agent.preparation.duration",
-            "ms",
-            "Message preparation phase duration");
-
-        _checkpointResumeCounter = _meter.CreateCounter<long>(
-            "hpd.agent.checkpoint.operations",
-            "operations",
-            "Number of checkpoint and resume operations");
-
-        _checkpointSizeHistogram = _meter.CreateHistogram<int>(
-            "hpd.agent.checkpoint.size",
-            "bytes",
-            "Distribution of checkpoint sizes");
-
-        _planModeActivationCounter = _meter.CreateCounter<long>(
-            "hpd.agent.plan_mode.activations",
-            "activations",
-            "Number of plan mode activations");
-
-        _planOperationCounter = _meter.CreateCounter<long>(
-            "hpd.agent.plan_mode.operations",
-            "operations",
-            "Number of plan operations");
-
-        _bidirectionalEventCounter = _meter.CreateCounter<long>(
-            "hpd.agent.events.bidirectional",
-            "events",
-            "Number of bidirectional events");
-
-        _eventResponseDuration = _meter.CreateHistogram<double>(
-            "hpd.agent.events.response_duration",
-            "ms",
-            "Time waiting for event responses");
-    }
-
-    public Activity? StartOrchestration(
-        string agentName,
-        string? modelId,
-        string? providerKey,
-        int maxIterations,
-        IEnumerable<ChatMessage> messages,
-        ChatOptions? options,
-        AgentLoopState initialState)
-    {
-        var activity = _activitySource.StartActivity(
-            string.IsNullOrWhiteSpace(options?.ModelId) ? "chat" : $"chat {options.ModelId}",
-            ActivityKind.Client);
-
-        if (activity is { IsAllDataRequested: true })
-        {
-            // Standard Gen AI tags
-            activity
-                .AddTag("gen_ai.operation.name", "chat")
-                .AddTag("gen_ai.request.model", options?.ModelId ?? modelId)
-                .AddTag("gen_ai.system", providerKey);
-
-            // Agent-specific tags (state-aware)
-            activity
-                .AddTag("agent.name", agentName)
-                .AddTag("agent.max_iterations", maxIterations)
-                .AddTag("agent.run_id", initialState.RunId)
-                .AddTag("agent.conversation_id", initialState.ConversationId)
-                .AddTag("agent.initial_message_count", initialState.CurrentMessages.Count);
-
-            // Sensitive data (opt-in)
-            if (_enableSensitiveData)
-            {
-                try
-                {
-                    var messagesJson = JsonSerializer.Serialize(messages, _jsonOptions);
-                    activity.AddTag("gen_ai.prompt", messagesJson);
-                }
-                catch (Exception)
-                {
-                    // Serialization errors shouldn't break execution
-                }
-            }
-        }
-
-        return activity;
-    }
-
-    public void RecordDecision(
-        Activity? activity,
-        AgentDecision decision,
-        AgentLoopState state,
-        string agentName,
-        AgentConfiguration config)
-    {
-        if (activity is { IsAllDataRequested: true })
-        {
-            // Decision type tag
-            var decisionType = decision switch
-            {
-                AgentDecision.CallLLM => "call_llm",
-                AgentDecision.Complete => "complete",
-                AgentDecision.Terminate => "terminate",
-                _ => "unknown"
-            };
-
-            activity.AddTag($"agent.iteration.{state.Iteration}.decision", decisionType);
-
-            // State snapshot at decision point
-            activity
-                .AddTag($"agent.iteration.{state.Iteration}.consecutive_failures", state.ConsecutiveFailures)
-                .AddTag($"agent.iteration.{state.Iteration}.expanded_plugins", state.expandedScopedPluginContainers.Count)
-                .AddTag($"agent.iteration.{state.Iteration}.completed_functions", state.CompletedFunctions.Count);
-
-            // Circuit breaker proximity warning
-            if (state.ConsecutiveCountPerTool.Any())
-            {
-                var maxConsecutive = state.ConsecutiveCountPerTool.Values.Max();
-                var threshold = config.MaxConsecutiveFunctionCalls ?? int.MaxValue;
-                if (maxConsecutive >= threshold - 1)
-                {
-                    activity.AddTag("agent.circuit_breaker.near_threshold", true);
-                }
-            }
-        }
-
-        // Record metric
-        _decisionCounter.Add(1, new TagList
-        {
-            { "agent.name", agentName },
-            { "decision.type", decision switch
-                {
-                    AgentDecision.CallLLM => "call_llm",
-                    AgentDecision.Complete => "complete",
-                    AgentDecision.Terminate => "terminate",
-                    _ => "unknown"
-                }
-            },
-            { "iteration", state.Iteration.ToString() }
-        });
-    }
-
-    public void RecordCircuitBreakerTrigger(
-        string agentName,
-        string functionName,
-        int consecutiveCount,
-        int threshold)
-    {
-        _circuitBreakerCounter.Add(1, new TagList
-        {
-            { "agent.name", agentName },
-            { "function.name", functionName },
-            { "consecutive_count", consecutiveCount.ToString() }
-        });
-    }
-
-    public void RecordCompletion(
-        Activity? activity,
-        AgentLoopState finalState,
-        string? modelId)
-    {
-        if (activity is { IsAllDataRequested: true })
-        {
-            // HPD-specific: Total iterations
-            activity.AddTag("agent.total_iterations", finalState.Iteration);
-
-            // Set status
-            activity.SetStatus(ActivityStatusCode.Ok);
-        }
-
-        // HPD-specific: Iteration histogram
-        _iterationHistogram.Record(finalState.Iteration, new TagList
-        {
-            { "agent.name", finalState.AgentName },
-            { "gen_ai.request.model", modelId }
-        });
-    }
-
-    /// <summary>
-    /// Records a successful checkpoint save operation.
-    /// </summary>
-    public void RecordCheckpointSuccess(TimeSpan duration, string threadId, int iteration)
-    {
-        _checkpointDuration.Record(duration.TotalMilliseconds, new TagList
-        {
-            { "thread.id", threadId },
-            { "iteration", iteration.ToString() },
-            { "success", "true" }
-        });
-    }
-
-    /// <summary>
-    /// Records a failed checkpoint save operation.
-    /// </summary>
-    public void RecordCheckpointFailure(Exception ex, string threadId, int iteration)
-    {
-        _checkpointErrorCounter.Add(1, new TagList
-        {
-            { "thread.id", threadId },
-            { "iteration", iteration.ToString() },
-            { "error.type", ex.GetType().Name }
-        });
-    }
-
-    /// <summary>
-    /// Records a pending writes save operation.
-    /// </summary>
-    public void RecordPendingWritesSave(int count, string threadId, int iteration)
-    {
-        _pendingWritesSaveCounter.Add(count, new TagList
-        {
-            { "thread.id", threadId },
-            { "iteration", iteration.ToString() }
-        });
-
-        _pendingWritesCountHistogram.Record(count, new TagList
-        {
-            { "operation", "save" },
-            { "thread.id", threadId }
-        });
-    }
-
-    /// <summary>
-    /// Records a pending writes load operation.
-    /// </summary>
-    public void RecordPendingWritesLoad(int count, string threadId)
-    {
-        _pendingWritesLoadCounter.Add(1, new TagList
-        {
-            { "thread.id", threadId },
-            { "loaded_count", count.ToString() }
-        });
-
-        if (count > 0)
-        {
-            _pendingWritesCountHistogram.Record(count, new TagList
-            {
-                { "operation", "load" },
-                { "thread.id", threadId }
-            });
-        }
-    }
-
-    /// <summary>
-    /// Records a pending writes delete operation.
-    /// </summary>
-    public void RecordPendingWritesDelete(string threadId, int iteration)
-    {
-        _pendingWritesDeleteCounter.Add(1, new TagList
-        {
-            { "thread.id", threadId },
-            { "iteration", iteration.ToString() }
-        });
-    }
-
-    // ══════════════════════════════════════════════════════════════
-    // PRIORITY 1: RECORDING METHODS (Public API Extensions)
-    // ══════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Records state snapshot metrics.
-    /// Called from Agent.RunAgenticLoopInternal at critical mutation points.
-    /// </summary>
-    public void RecordStateSnapshot(
-        string agentName,
-        int iteration,
-        string source,
-        int stateMessageCount,
-        int turnHistoryCount)
-    {
-        _stateMessageCountHistogram.Record(stateMessageCount, new TagList
-        {
-            { "agent.name", agentName },
-            { "iteration", iteration.ToString() },
-            { "source", source }
-        });
-
-        _turnHistoryCountHistogram.Record(turnHistoryCount, new TagList
-        {
-            { "agent.name", agentName },
-            { "iteration", iteration.ToString() },
-            { "source", source }
-        });
-
-        // Detect divergence based on source
-        bool divergence = false;
-        if (source == "AfterLLM" && stateMessageCount != turnHistoryCount + 1)
-            divergence = true;
-        if (source == "AfterTools" && stateMessageCount <= turnHistoryCount)
-            divergence = true;
-
-        if (divergence)
-        {
-            _stateDivergenceCounter.Add(1, new TagList
-            {
-                { "agent.name", agentName },
-                { "iteration", iteration.ToString() },
-                { "source", source }
-            });
-        }
-    }
-
-    /// <summary>
-    /// Records delta sending activation.
-    /// Called when ConversationId is captured from LLM response.
-    /// </summary>
-    public void RecordDeltaSendingActivation(
-        string agentName,
-        string conversationId,
-        int messageCount)
-    {
-        _deltaSendingActivationCounter.Add(1, new TagList
-        {
-            { "agent.name", agentName },
-            { "conversation.id", conversationId }
-        });
-
-        _deltaMessageCountHistogram.Record(messageCount, new TagList
-        {
-            { "agent.name", agentName }
-        });
-    }
-
-    /// <summary>
-    /// Records permission check result.
-    /// Called after PermissionManager.CheckPermissionAsync.
-    /// </summary>
-    public void RecordPermissionCheck(
-        string agentName,
-        string functionName,
-        bool approved,
-        string? reason,
-        TimeSpan duration)
-    {
-        _permissionCheckCounter.Add(1, new TagList
-        {
-            { "agent.name", agentName },
-            { "function.name", functionName },
-            { "result", approved ? "approved" : "denied" }
-        });
-
-        _permissionCheckDuration.Record(duration.TotalMilliseconds, new TagList
-        {
-            { "agent.name", agentName },
-            { "function.name", functionName }
-        });
-
-        if (!approved)
-        {
-            _permissionDenialCounter.Add(1, new TagList
-            {
-                { "agent.name", agentName },
-                { "function.name", functionName },
-                { "denial_reason", reason ?? "unknown" }
-            });
-        }
-    }
-
-    /// <summary>
-    /// Records parallel tool execution metrics.
-    /// Called after ToolScheduler.ExecuteToolsAsync.
-    /// </summary>
-    public void RecordParallelToolExecution(
-        string agentName,
-        int iteration,
-        int totalTools,
-        int parallelBatchSize,
-        int approvedCount,
-        int deniedCount,
-        TimeSpan duration)
-    {
-        _parallelToolExecutionCounter.Add(1, new TagList
-        {
-            { "agent.name", agentName },
-            { "iteration", iteration.ToString() },
-            { "tool_count", totalTools.ToString() }
-        });
-
-        _parallelBatchSizeHistogram.Record(parallelBatchSize, new TagList
-        {
-            { "agent.name", agentName }
-        });
-    }
-
-    // ══════════════════════════════════════════════════════════════
-    // PRIORITY 2: RECORDING METHODS
-    // ══════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Records filter pipeline execution.
-    /// Called after each filter type's pipeline execution.
-    /// </summary>
-    public void RecordFilterPipelineExecution(
-        string agentName,
-        string filterType,
-        int filterCount,
-        TimeSpan duration)
-    {
-        _filterPipelineExecutionCounter.Add(1, new TagList
-        {
-            { "agent.name", agentName },
-            { "filter_type", filterType }
-        });
-
-        _filterPipelineDuration.Record(duration.TotalMilliseconds, new TagList
-        {
-            { "agent.name", agentName },
-            { "filter_type", filterType },
-            { "filter_count", filterCount.ToString() }
-        });
-    }
-
-    /// <summary>
-    /// Records container expansion event.
-    /// Called when plugin or skill container is invoked.
-    /// </summary>
-    public void RecordContainerExpansion(
-        string agentName,
-        int iteration,
-        string containerType,
-        string containerName,
-        int memberCount)
-    {
-        _containerExpansionCounter.Add(1, new TagList
-        {
-            { "agent.name", agentName },
-            { "container_type", containerType },
-            { "container_name", containerName }
-        });
-
-        _containerMemberCountHistogram.Record(memberCount, new TagList
-        {
-            { "agent.name", agentName },
-            { "container_type", containerType }
-        });
-    }
-
-    // ══════════════════════════════════════════════════════════════
-    // PRIORITY 3: RECORDING METHODS (Public API Extensions)
-    // ══════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Records retry attempt.
-    /// Called during FunctionRetryExecutor.ExecuteWithRetryAsync.
-    /// </summary>
-    public void RecordRetryAttempt(
-        string agentName,
-        string functionName,
-        int attemptNumber,
-        string errorCategory,
-        TimeSpan retryDelay)
-    {
-        _retryAttemptCounter.Add(1, new TagList
-        {
-            { "agent.name", agentName },
-            { "function.name", functionName },
-            { "error_category", errorCategory },
-            { "attempt_number", attemptNumber.ToString() }
-        });
-
-        _retryDelayHistogram.Record(retryDelay.TotalMilliseconds, new TagList
-        {
-            { "agent.name", agentName },
-            { "error_category", errorCategory }
-        });
-    }
-
-    /// <summary>
-    /// Records retry exhaustion (all retries failed).
-    /// Called when ExecuteWithRetryAsync exhausts all attempts.
-    /// </summary>
-    public void RecordRetryExhaustion(
-        string agentName,
-        string functionName,
-        string errorCategory)
-    {
-        _retryExhaustionCounter.Add(1, new TagList
-        {
-            { "agent.name", agentName },
-            { "function.name", functionName },
-            { "final_error_category", errorCategory }
-        });
-    }
-
-    /// <summary>
-    /// Records history reduction cache result.
-    /// Called during MessageProcessor.PrepareTurnAsync.
-    /// </summary>
-    public void RecordReductionCache(
-        string agentName,
-        bool cacheHit,
-        int tokenSavings)
-    {
-        if (cacheHit)
-        {
-            _reductionCacheHitCounter.Add(1, new TagList
-            {
-                { "agent.name", agentName }
-            });
-        }
-        else
-        {
-            _reductionCacheMissCounter.Add(1, new TagList
-            {
-                { "agent.name", agentName }
-            });
-        }
-
-        if (tokenSavings > 0)
-        {
-            _reductionTokenSavingsHistogram.Record(tokenSavings, new TagList
-            {
-                { "agent.name", agentName },
-                { "cache_hit", cacheHit.ToString().ToLowerInvariant() }
-            });
-        }
-    }
-
-    /// <summary>
-    /// Records document processing operation.
-    /// Called after AgentDocumentProcessor.ProcessDocumentsAsync.
-    /// </summary>
-    public void RecordDocumentProcessing(
-        string agentName,
-        int documentCount,
-        TimeSpan duration)
-    {
-        _documentProcessingCounter.Add(1, new TagList
-        {
-            { "agent.name", agentName },
-            { "document_count", documentCount.ToString() }
-        });
-
-        _documentProcessingDuration.Record(duration.TotalMilliseconds, new TagList
-        {
-            { "agent.name", agentName }
-        });
-    }
-
-    /// <summary>
-    /// Records nested agent invocation.
-    /// Called when agent is invoked via AsAIFunction.
-    /// </summary>
-    public void RecordNestedAgentInvocation(
-        string orchestratorName,
-        string nestedAgentName,
-        int nestingDepth)
-    {
-        _nestedAgentInvocationCounter.Add(1, new TagList
-        {
-            { "orchestrator_agent", orchestratorName },
-            { "nested_agent", nestedAgentName }
-        });
-
-        _nestingDepthHistogram.Record(nestingDepth, new TagList
-        {
-            { "orchestrator_agent", orchestratorName }
-        });
-    }
-
-    /// <summary>
-    /// Records message preparation duration.
-    /// Called at end of MessageProcessor.PrepareTurnAsync.
-    /// </summary>
-    public void RecordMessagePreparation(
-        string agentName,
-        TimeSpan duration,
-        bool reductionApplied)
-    {
-        _messagePreparationDuration.Record(duration.TotalMilliseconds, new TagList
-        {
-            { "agent.name", agentName },
-            { "reduction_applied", reductionApplied.ToString().ToLowerInvariant() }
-        });
-    }
-
-    /// <summary>
-    /// Records checkpoint or resume operation.
-    /// Called during checkpoint save or thread resume.
-    /// </summary>
-    public void RecordCheckpointResume(
-        string threadId,
-        int iteration,
-        bool isResume,
-        bool success,
-        int? checkpointSize = null)
-    {
-        _checkpointResumeCounter.Add(1, new TagList
-        {
-            { "thread.id", threadId },
-            { "operation", isResume ? "resume" : "checkpoint" },
-            { "success", success.ToString().ToLowerInvariant() }
-        });
-
-        if (checkpointSize.HasValue)
-        {
-            _checkpointSizeHistogram.Record(checkpointSize.Value, new TagList
-            {
-                { "thread.id", threadId }
-            });
-        }
-    }
-
-    /// <summary>
-    /// Records plan mode activation.
-    /// Called when plan mode is enabled for an agent.
-    /// </summary>
-    public void RecordPlanModeActivation(
-        string agentName,
-        string operation,
-        string? planId)
-    {
-        _planModeActivationCounter.Add(1, new TagList
-        {
-            { "agent.name", agentName },
-            { "operation", operation }
-        });
-
-        if (planId != null)
-        {
-            _planOperationCounter.Add(1, new TagList
-            {
-                { "agent.name", agentName },
-                { "plan_id", planId },
-                { "operation_type", operation }
-            });
-        }
-    }
-
-    /// <summary>
-    /// Records bidirectional event.
-    /// Called during event emission or response reception.
-    /// </summary>
-    public void RecordBidirectionalEvent(
-        string agentName,
-        string eventType,
-        bool isRequest,
-        TimeSpan? responseDuration = null)
-    {
-        _bidirectionalEventCounter.Add(1, new TagList
-        {
-            { "agent.name", agentName },
-            { "event_type", eventType },
-            { "direction", isRequest ? "request" : "response" }
-        });
-
-        if (responseDuration.HasValue)
-        {
-            _eventResponseDuration.Record(responseDuration.Value.TotalMilliseconds, new TagList
-            {
-                { "agent.name", agentName },
-                { "event_type", eventType }
-            });
-        }
-    }
-
-    public void Dispose()
-    {
-        _activitySource.Dispose();
-        _meter.Dispose();
-    }
-}
 
 #region history reduction
 /// <summary>

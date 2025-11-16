@@ -96,6 +96,9 @@ static Task<(Project, ConversationThread, Agent)> CreateAIAssistant(ILoggerFacto
     // ✨ BUILD AGENT - NO .WithAPIConfiguration() NEEDED!
     // Auto-loads from appsettings.json, environment variables, and user secrets
     var agent = new AgentBuilder(agentConfig)
+        .WithServiceProvider(serviceProvider)  // ✅ Pass logger factory via service provider (MUST be before WithLogging)
+        .WithLogging(enableSensitiveData: true)  // ✅ Enable logging with full message content (for debugging)
+        .WithTelemetry()  // ✅ Enable telemetry (metrics)
         .WithPlugin<MathPlugin>()  // ✨ Financial analysis plugin (explicitly registered)  // ✨ Financial analysis skills (that reference the plugin)
         .WithPlugin<FinancialAnalysisPlugin>()
         .WithPermissions() // ✨ NEW: Unified permission filter - events handled in streaming loop

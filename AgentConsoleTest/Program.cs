@@ -1,13 +1,30 @@
 ﻿using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
 using HPD.Agent.Plugins.FileSystem;
 using HPD.Agent;
 using HPD.Agent.Microsoft;
+
+// ═══════════════════════════════════════════════════════════════
+// LOGGING SETUP (Required for Console Apps)
+// ═══════════════════════════════════════════════════════════════
+using var loggerFactory = LoggerFactory.Create(builder =>
+{
+    var configuration = new ConfigurationBuilder()
+        .AddJsonFile("appsettings.json", optional: false)
+        .Build();
+
+    builder
+        .AddConsole()
+        .AddConfiguration(configuration.GetSection("Logging"));
+});
+
 Console.WriteLine("🚀 HPD-Agent Console Test");
 
 // ✨ ONE-LINER: Create complete AI assistant
 // No need to manually create config - agent auto-loads from appsettings.json, env vars, and user secrets!
-var (project, thread, agent) = await CreateAIAssistant();
+var (project, thread, agent) = await CreateAIAssistant(loggerFactory);
 
 Console.WriteLine($"✅ AI Assistant ready: {agent.Name}");
 Console.WriteLine($"📁 Project: {project.Name}");
@@ -36,8 +53,13 @@ Console.WriteLine();
 await RunInteractiveChat(agent, thread);
 
 // ✨ CONFIG-FIRST APPROACH: Using AgentConfig pattern with AUTO-CONFIGURATION
-static Task<(Project, ConversationThread, Agent)> CreateAIAssistant()
+static Task<(Project, ConversationThread, Agent)> CreateAIAssistant(ILoggerFactory loggerFactory)
 {
+    // ✨ CREATE SERVICE PROVIDER WITH LOGGER FACTORY
+    var services = new ServiceCollection();
+    services.AddSingleton(loggerFactory);
+    var serviceProvider = services.BuildServiceProvider();
+
     // ✨ CREATE AGENT CONFIG OBJECT FIRST
     var agentConfig = new AgentConfig
     {
@@ -47,7 +69,7 @@ static Task<(Project, ConversationThread, Agent)> CreateAIAssistant()
         Provider = new ProviderConfig
         {
             ProviderKey = "openrouter",
-            ModelName = "google/gemini-2.5-pro", // 🧠 Reasoning model - FREE on OpenRouter!
+            ModelName = "z-ai/glm-4.6", // 🧠 Reasoning model - FREE on OpenRouter!
         },
         DynamicMemory = new DynamicMemoryConfig
         {
@@ -77,6 +99,7 @@ static Task<(Project, ConversationThread, Agent)> CreateAIAssistant()
         .WithLogging()
         .WithPlugin<MathPlugin>()  // ✨ Financial analysis plugin (explicitly registered)  // ✨ Financial analysis skills (that reference the plugin)
         .WithPlugin<FinancialAnalysisPlugin>()
+        .WithPlanMode() // ✨ Plan model support
         .WithPermissions() // ✨ NEW: Unified permission filter - events handled in streaming loop
         .Build();
 

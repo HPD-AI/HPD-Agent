@@ -1563,7 +1563,7 @@ private static string GenerateContextResolutionMethods(PluginInfo plugin)
         var description = !string.IsNullOrEmpty(plugin.ScopeDescription)
             ? plugin.ScopeDescription
             : plugin.Description;
-        var fullDescription = $"{description}. Contains {totalCount} functions: {capabilitiesList}";
+        var fullDescription = $"Call this function with no parameters to unlock {totalCount} math operations: {capabilitiesList}. After calling this, you can use those functions. {description}";
 
         // Build the return message with optional post-expansion instructions
         var returnMessage = $"{plugin.Name} expanded. Available functions: {capabilitiesList}";

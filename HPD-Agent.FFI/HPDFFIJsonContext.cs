@@ -85,9 +85,9 @@ namespace HPD_Agent.FFI;
 [JsonSerializable(typeof(IList<ChatMessage>))]
 [JsonSerializable(typeof(IEnumerable<ChatMessage>))]
 
-// --- FFI-specific Rust plugin types ---
-[JsonSerializable(typeof(RustFunctionInfo))]
-[JsonSerializable(typeof(List<RustFunctionInfo>))]
+// --- FFI-specific native plugin types (language-agnostic) ---
+[JsonSerializable(typeof(NativeFunctionInfo))]
+[JsonSerializable(typeof(List<NativeFunctionInfo>))]
 [JsonSerializable(typeof(PluginRegistry))]
 [JsonSerializable(typeof(PluginInfo))]
 [JsonSerializable(typeof(FunctionInfo))]
@@ -127,6 +127,16 @@ namespace HPD_Agent.FFI;
 
 // --- Agent State Types ---
 [JsonSerializable(typeof(AgentLoopState))]
+
+// --- Checkpointing / Resume Types ---
+[JsonSerializable(typeof(ConversationThreadSnapshot))]
+[JsonSerializable(typeof(HistoryReductionState))]
+
+// --- Permission Types ---
+[JsonSerializable(typeof(PermissionChoice))]
+[JsonSerializable(typeof(PermissionScope))]
+[JsonSerializable(typeof(PermissionDecision))]
+[JsonSerializable(typeof(PermissionStorage))]
 
 public partial class HPDFFIJsonContext : JsonSerializerContext
 {

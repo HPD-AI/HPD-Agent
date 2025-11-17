@@ -19,9 +19,10 @@ namespace HPD_Agent.FFI;
 public delegate void StreamCallback(IntPtr context, IntPtr eventJsonPtr);
 
 /// <summary>
-/// Matches the Rust RustFunctionInfo structure
+/// Represents a native function exported from any C-compatible language (Rust, C++, Zig, Go, Swift, etc.).
+/// Language-agnostic structure that describes function metadata for FFI interop.
 /// </summary>
-public class RustFunctionInfo
+public class NativeFunctionInfo
 {
     [JsonPropertyName("name")]
     public string Name { get; set; } = string.Empty;
@@ -117,51 +118,51 @@ public static partial class NativeExports
             if (agentConfig == null) return IntPtr.Zero;
 
             var builder = new AgentBuilder(agentConfig);
-            
-            // Parse and add Rust plugins
+
+            // Parse and add native plugins (Rust, C++, Zig, Go, etc.)
             string? pluginsJson = Marshal.PtrToStringUTF8(pluginsJsonPtr);
             Console.WriteLine($"[FFI] Received plugins JSON: {pluginsJson}");
-            
+
             if (!string.IsNullOrEmpty(pluginsJson))
             {
                 try
                 {
-                    var rustFunctions = JsonSerializer.Deserialize(pluginsJson, HPDFFIJsonContext.Default.ListRustFunctionInfo);
-                    Console.WriteLine($"[FFI] Deserialized {rustFunctions?.Count ?? 0} Rust functions");
-                    
-                    if (rustFunctions != null && rustFunctions.Count > 0)
+                    var nativeFunctions = JsonSerializer.Deserialize(pluginsJson, HPDFFIJsonContext.Default.ListNativeFunctionInfo);
+                    Console.WriteLine($"[FFI] Deserialized {nativeFunctions?.Count ?? 0} native functions");
+
+                    if (nativeFunctions != null && nativeFunctions.Count > 0)
                     {
                         // Track unique plugin names
                         var pluginNames = new HashSet<string>();
-                        
-                        foreach (var rustFunc in rustFunctions)
+
+                        foreach (var nativeFunc in nativeFunctions)
                         {
-                            Console.WriteLine($"[FFI] Adding Rust function: {rustFunc.Name} - {rustFunc.Description}");
-                            var aiFunction = CreateRustFunctionWrapper(rustFunc);
+                            Console.WriteLine($"[FFI] Adding native function: {nativeFunc.Name} - {nativeFunc.Description}");
+                            var aiFunction = CreateNativeFunctionWrapper(nativeFunc);
                             builder.AddRustFunction(aiFunction);
-                            
+
                             // Track plugin name for registration
-                            if (!string.IsNullOrEmpty(rustFunc.PluginName))
+                            if (!string.IsNullOrEmpty(nativeFunc.PluginName))
                             {
-                                pluginNames.Add(rustFunc.PluginName);
+                                pluginNames.Add(nativeFunc.PluginName);
                             }
                         }
-                        
-                        // Register plugin executors on Rust side
+
+                        // Register plugin executors in native runtime
                         foreach (var pluginName in pluginNames)
                         {
                             Console.WriteLine($"[FFI] Registering executors for plugin: {pluginName}");
-                            bool success = RustPluginFFI.RegisterPluginExecutors(pluginName);
+                            bool success = NativePluginFFI.RegisterPluginExecutors(pluginName);
                             Console.WriteLine($"[FFI] Registration result for {pluginName}: {success}");
                         }
-                        
-                        Console.WriteLine($"[FFI] Successfully added {rustFunctions.Count} Rust functions to agent");
+
+                        Console.WriteLine($"[FFI] Successfully added {nativeFunctions.Count} native functions to agent");
                     }
                 }
                 catch (Exception ex)
                 {
-                    // Log but don't fail - agent can still work without Rust functions
-                    Console.WriteLine($"Failed to parse Rust plugins: {ex.Message}");
+                    // Log but don't fail - agent can still work without native plugins
+                    Console.WriteLine($"Failed to parse native plugins: {ex.Message}");
                     Console.WriteLine($"Stack trace: {ex.StackTrace}");
                 }
             }
@@ -178,9 +179,10 @@ public static partial class NativeExports
 
 
     /// <summary>
-    /// Creates an AIFunction wrapper that calls back to Rust via FFI
+    /// Creates an AIFunction wrapper that calls back to native code via FFI.
+    /// Supports plugins written in Rust, C++, Zig, Go, Swift, or any C-compatible language.
     /// </summary>
-    private static AIFunction CreateRustFunctionWrapper(RustFunctionInfo rustFunc)
+    private static AIFunction CreateNativeFunctionWrapper(NativeFunctionInfo nativeFunc)
     {
         return HPDAIFunctionFactory.Create(
             (arguments, cancellationToken) =>
@@ -194,9 +196,9 @@ public static partial class NativeExports
                         argsDict[kvp.Key] = kvp.Value;
                     }
                 }
-                
-                // Execute the Rust function via FFI
-                var result = RustPluginFFI.ExecuteFunction(rustFunc.Name, argsDict);
+
+                // Execute the native function via FFI
+                var result = NativePluginFFI.ExecuteFunction(nativeFunc.Name, argsDict);
                 
                 if (!result.Success)
                 {
@@ -244,15 +246,15 @@ public static partial class NativeExports
             },
             new HPDAIFunctionFactoryOptions
             {
-                Name = rustFunc.Name,
-                Description = rustFunc.Description,
-                RequiresPermission = rustFunc.RequiresPermission,
-                SchemaProvider = () => 
+                Name = nativeFunc.Name,
+                Description = nativeFunc.Description,
+                RequiresPermission = nativeFunc.RequiresPermission,
+                SchemaProvider = () =>
                 {
                     try
                     {
-                        // Parse the schema JSON from Rust
-                        var schemaDoc = JsonDocument.Parse(rustFunc.Schema);
+                        // Parse the schema JSON from native code
+                        var schemaDoc = JsonDocument.Parse(nativeFunc.Schema);
                         var rootSchema = schemaDoc.RootElement;
                         
                         // Check if this is an OpenAPI function calling format
@@ -271,7 +273,7 @@ public static partial class NativeExports
                     catch (Exception ex)
                     {
                         // Log error and fallback to empty object schema
-                        Console.WriteLine($"Warning: Failed to parse schema for {rustFunc.Name}: {ex.Message}");
+                        Console.WriteLine($"Warning: Failed to parse schema for {nativeFunc.Name}: {ex.Message}");
                         return JsonDocument.Parse("{}").RootElement;
                     }
                 }
@@ -290,9 +292,477 @@ public static partial class NativeExports
     }
 
     // ════════════════════════════════════════════════════════════════════════════
+    // CONVERSATION THREAD MANAGEMENT
+    // ════════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Creates a new conversation thread for managing conversation state.
+    /// </summary>
+    /// <returns>Handle to the created ConversationThread, or IntPtr.Zero on failure</returns>
+    [UnmanagedCallersOnly(EntryPoint = "create_conversation_thread")]
+    public static IntPtr CreateConversationThread()
+    {
+        try
+        {
+            var thread = new ConversationThread();
+            return ObjectManager.Add(thread);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to create conversation thread: {ex.Message}");
+            return IntPtr.Zero;
+        }
+    }
+
+    /// <summary>
+    /// Destroys a conversation thread and releases its resources.
+    /// </summary>
+    /// <param name="threadHandle">Handle to the thread to destroy</param>
+    [UnmanagedCallersOnly(EntryPoint = "destroy_conversation_thread")]
+    public static void DestroyConversationThread(IntPtr threadHandle)
+    {
+        ObjectManager.Remove(threadHandle);
+    }
+
+    /// <summary>
+    /// Gets the conversation thread ID.
+    /// </summary>
+    /// <param name="threadHandle">Handle to the conversation thread</param>
+    /// <returns>Pointer to UTF-8 encoded thread ID string, or IntPtr.Zero on failure</returns>
+    [UnmanagedCallersOnly(EntryPoint = "get_thread_id")]
+    public static IntPtr GetThreadId(IntPtr threadHandle)
+    {
+        try
+        {
+            var thread = ObjectManager.Get<ConversationThread>(threadHandle);
+            if (thread == null) return IntPtr.Zero;
+
+            return MarshalString(thread.Id);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to get thread ID: {ex.Message}");
+            return IntPtr.Zero;
+        }
+    }
+
+    /// <summary>
+    /// Gets the number of messages in the conversation thread.
+    /// </summary>
+    /// <param name="threadHandle">Handle to the conversation thread</param>
+    /// <returns>Number of messages, or -1 on failure</returns>
+    [UnmanagedCallersOnly(EntryPoint = "get_message_count")]
+    public static int GetMessageCount(IntPtr threadHandle)
+    {
+        try
+        {
+            var thread = ObjectManager.Get<ConversationThread>(threadHandle);
+            if (thread == null) return -1;
+
+            // Use sync access for InMemoryConversationMessageStore
+            if (thread.MessageStore is InMemoryConversationMessageStore inMemoryStore)
+            {
+                return inMemoryStore.Count;
+            }
+
+            // Fallback to async for other store types
+            return thread.MessageStore.GetMessagesAsync().GetAwaiter().GetResult().Count();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to get message count: {ex.Message}");
+            return -1;
+        }
+    }
+
+    /// <summary>
+    /// Gets all messages from the conversation thread as JSON.
+    /// </summary>
+    /// <param name="threadHandle">Handle to the conversation thread</param>
+    /// <returns>Pointer to UTF-8 encoded JSON array of messages, or IntPtr.Zero on failure</returns>
+    [UnmanagedCallersOnly(EntryPoint = "get_thread_messages")]
+    public static IntPtr GetThreadMessages(IntPtr threadHandle)
+    {
+        try
+        {
+            var thread = ObjectManager.Get<ConversationThread>(threadHandle);
+            if (thread == null) return IntPtr.Zero;
+
+            // Use sync access for InMemoryConversationMessageStore
+            IEnumerable<ChatMessage> messages;
+            if (thread.MessageStore is InMemoryConversationMessageStore inMemoryStore)
+            {
+                messages = inMemoryStore.Messages;
+            }
+            else
+            {
+                // Fallback to async for other store types
+                messages = thread.MessageStore.GetMessagesAsync().GetAwaiter().GetResult();
+            }
+
+            var json = JsonSerializer.Serialize(messages, HPDFFIJsonContext.Default.IEnumerableChatMessage);
+            return MarshalString(json);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to get thread messages: {ex.Message}");
+            return IntPtr.Zero;
+        }
+    }
+
+    /// <summary>
+    /// Adds a message to the conversation thread.
+    /// </summary>
+    /// <param name="threadHandle">Handle to the conversation thread</param>
+    /// <param name="messageJsonPtr">Pointer to UTF-8 encoded JSON of the ChatMessage</param>
+    /// <returns>1 on success, 0 on failure</returns>
+    [UnmanagedCallersOnly(EntryPoint = "add_thread_message")]
+    public static int AddThreadMessage(IntPtr threadHandle, IntPtr messageJsonPtr)
+    {
+        try
+        {
+            var thread = ObjectManager.Get<ConversationThread>(threadHandle);
+            if (thread == null) return 0;
+
+            string? messageJson = Marshal.PtrToStringUTF8(messageJsonPtr);
+            if (string.IsNullOrEmpty(messageJson)) return 0;
+
+            var message = JsonSerializer.Deserialize(messageJson, HPDFFIJsonContext.Default.ChatMessage);
+            if (message == null) return 0;
+
+            // Use async method (required by interface)
+            thread.MessageStore.AddMessagesAsync(new[] { message }).GetAwaiter().GetResult();
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to add message to thread: {ex.Message}");
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// Clears all messages from the conversation thread.
+    /// </summary>
+    /// <param name="threadHandle">Handle to the conversation thread</param>
+    /// <returns>1 on success, 0 on failure</returns>
+    [UnmanagedCallersOnly(EntryPoint = "clear_thread")]
+    public static int ClearThread(IntPtr threadHandle)
+    {
+        try
+        {
+            var thread = ObjectManager.Get<ConversationThread>(threadHandle);
+            if (thread == null) return 0;
+
+            // Use async method (required by interface)
+            thread.MessageStore.ClearAsync().GetAwaiter().GetResult();
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to clear thread: {ex.Message}");
+            return 0;
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // AGENT EXECUTION APIs
+    // ════════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Runs the agent synchronously with the given input and returns the final response.
+    /// This is a simple, blocking API for non-streaming use cases.
+    /// </summary>
+    /// <param name="agentHandle">Handle to the agent</param>
+    /// <param name="inputPtr">Pointer to UTF-8 encoded user input string</param>
+    /// <param name="threadHandle">Handle to the conversation thread (optional, can be IntPtr.Zero for stateless)</param>
+    /// <returns>Pointer to UTF-8 encoded response string, or IntPtr.Zero on failure</returns>
+    [UnmanagedCallersOnly(EntryPoint = "run_agent")]
+    public static IntPtr RunAgent(IntPtr agentHandle, IntPtr inputPtr, IntPtr threadHandle)
+    {
+        try
+        {
+            var agent = ObjectManager.Get<Agent>(agentHandle);
+            if (agent == null) return IntPtr.Zero;
+
+            string? input = Marshal.PtrToStringUTF8(inputPtr);
+            if (string.IsNullOrEmpty(input)) return IntPtr.Zero;
+
+            // Create user message
+            var userMessage = new ChatMessage(ChatRole.User, input);
+            var messages = new[] { userMessage };
+
+            // Get thread if provided
+            ConversationThread? thread = null;
+            if (threadHandle != IntPtr.Zero)
+            {
+                thread = ObjectManager.Get<ConversationThread>(threadHandle);
+            }
+
+            // Run agent and collect all events
+            var responseText = new StringBuilder();
+            IAsyncEnumerable<InternalAgentEvent> eventStream;
+
+            if (thread != null)
+            {
+                eventStream = agent.RunAsync(messages, options: null, thread: thread);
+            }
+            else
+            {
+                eventStream = agent.RunAsync(messages, options: null);
+            }
+
+            // Block and collect response
+            var task = Task.Run(async () =>
+            {
+                await foreach (var evt in eventStream)
+                {
+                    // Collect text deltas
+                    if (evt is InternalTextDeltaEvent textDelta)
+                    {
+                        responseText.Append(textDelta.Text);
+                    }
+                }
+            });
+
+            task.Wait();
+
+            return MarshalString(responseText.ToString());
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to run agent: {ex.Message}");
+            Console.WriteLine($"Stack trace: {ex.StackTrace}");
+            return MarshalString($"Error: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Runs the agent with streaming callbacks.
+    /// Calls the provided callback function for each event emitted by the agent.
+    /// </summary>
+    /// <param name="agentHandle">Handle to the agent</param>
+    /// <param name="inputPtr">Pointer to UTF-8 encoded user input string</param>
+    /// <param name="threadHandle">Handle to the conversation thread (optional, can be IntPtr.Zero for stateless)</param>
+    /// <param name="callback">Callback function to invoke for each event</param>
+    /// <param name="context">User context pointer passed back to callback</param>
+    /// <returns>1 on success, 0 on failure</returns>
+    [UnmanagedCallersOnly(EntryPoint = "run_agent_streaming")]
+    public static int RunAgentStreaming(IntPtr agentHandle, IntPtr inputPtr, IntPtr threadHandle,
+        IntPtr callbackPtr, IntPtr context)
+    {
+        try
+        {
+            var agent = ObjectManager.Get<Agent>(agentHandle);
+            if (agent == null) return 0;
+
+            string? input = Marshal.PtrToStringUTF8(inputPtr);
+            if (string.IsNullOrEmpty(input)) return 0;
+
+            if (callbackPtr == IntPtr.Zero) return 0;
+
+            // Marshal the callback
+            var callback = Marshal.GetDelegateForFunctionPointer<StreamCallback>(callbackPtr);
+
+            // Create user message
+            var userMessage = new ChatMessage(ChatRole.User, input);
+            var messages = new[] { userMessage };
+
+            // Get thread if provided
+            ConversationThread? thread = null;
+            if (threadHandle != IntPtr.Zero)
+            {
+                thread = ObjectManager.Get<ConversationThread>(threadHandle);
+            }
+
+            // Run agent and stream events
+            IAsyncEnumerable<InternalAgentEvent> eventStream;
+
+            if (thread != null)
+            {
+                eventStream = agent.RunAsync(messages, options: null, thread: thread);
+            }
+            else
+            {
+                eventStream = agent.RunAsync(messages, options: null);
+            }
+
+            // Stream events to callback
+            var task = Task.Run(async () =>
+            {
+                await foreach (var evt in eventStream)
+                {
+                    // Serialize event to JSON
+                    var eventJson = JsonSerializer.Serialize(evt, HPDFFIJsonContext.Default.InternalAgentEvent);
+                    var eventPtr = MarshalString(eventJson);
+
+                    try
+                    {
+                        // Invoke callback
+                        callback(context, eventPtr);
+                    }
+                    finally
+                    {
+                        // Free the event string
+                        Marshal.FreeHGlobal(eventPtr);
+                    }
+                }
+
+                // Signal end of stream with null pointer
+                callback(context, IntPtr.Zero);
+            });
+
+            task.Wait();
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to run agent streaming: {ex.Message}");
+            Console.WriteLine($"Stack trace: {ex.StackTrace}");
+            return 0;
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // CHECKPOINTING & RESUME APIs (Durable Execution)
+    // ════════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Serializes a conversation thread to JSON for persistence (checkpointing).
+    /// Enables crash recovery and durable execution.
+    /// </summary>
+    /// <param name="threadHandle">Handle to the conversation thread</param>
+    /// <returns>Pointer to UTF-8 encoded JSON snapshot, or IntPtr.Zero on failure</returns>
+    [UnmanagedCallersOnly(EntryPoint = "serialize_thread")]
+    public static IntPtr SerializeThread(IntPtr threadHandle)
+    {
+        try
+        {
+            var thread = ObjectManager.Get<ConversationThread>(threadHandle);
+            if (thread == null) return IntPtr.Zero;
+
+            // Serialize thread to snapshot
+            var snapshot = thread.Serialize();
+
+            // Convert snapshot to JSON
+            var json = JsonSerializer.Serialize(snapshot, HPDFFIJsonContext.Default.ConversationThreadSnapshot);
+            return MarshalString(json);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to serialize thread: {ex.Message}");
+            return IntPtr.Zero;
+        }
+    }
+
+    /// <summary>
+    /// Deserializes a conversation thread from JSON (resume from checkpoint).
+    /// Enables crash recovery and cross-session continuation.
+    /// </summary>
+    /// <param name="snapshotJsonPtr">Pointer to UTF-8 encoded JSON snapshot</param>
+    /// <returns>Handle to the restored ConversationThread, or IntPtr.Zero on failure</returns>
+    [UnmanagedCallersOnly(EntryPoint = "deserialize_thread")]
+    public static IntPtr DeserializeThread(IntPtr snapshotJsonPtr)
+    {
+        try
+        {
+            string? snapshotJson = Marshal.PtrToStringUTF8(snapshotJsonPtr);
+            if (string.IsNullOrEmpty(snapshotJson)) return IntPtr.Zero;
+
+            // Deserialize snapshot from JSON
+            var snapshot = JsonSerializer.Deserialize(snapshotJson, HPDFFIJsonContext.Default.ConversationThreadSnapshot);
+            if (snapshot == null) return IntPtr.Zero;
+
+            // Restore thread from snapshot
+            var thread = ConversationThread.Deserialize(snapshot);
+            return ObjectManager.Add(thread);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to deserialize thread: {ex.Message}");
+            Console.WriteLine($"Stack trace: {ex.StackTrace}");
+            return IntPtr.Zero;
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // PERMISSION SYSTEM APIs (Human-in-the-Loop)
+    // ════════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Responds to a permission request from the agent.
+    /// Call this after receiving InternalPermissionRequestEvent via streaming callback.
+    /// </summary>
+    /// <param name="agentHandle">Handle to the agent</param>
+    /// <param name="permissionIdPtr">Pointer to UTF-8 encoded permission ID</param>
+    /// <param name="approved">1 if approved, 0 if denied</param>
+    /// <param name="permissionChoice">0 = Ask, 1 = AlwaysAllow, 2 = AlwaysDeny</param>
+    /// <returns>1 on success, 0 on failure</returns>
+    [UnmanagedCallersOnly(EntryPoint = "respond_to_permission")]
+    public static int RespondToPermission(
+        IntPtr agentHandle,
+        IntPtr permissionIdPtr,
+        int approved,
+        int permissionChoice)
+    {
+        try
+        {
+            var agent = ObjectManager.Get<Agent>(agentHandle);
+            if (agent == null) return 0;
+
+            string? permissionId = Marshal.PtrToStringUTF8(permissionIdPtr);
+            if (string.IsNullOrEmpty(permissionId)) return 0;
+
+            // Map integer to PermissionChoice enum
+            PermissionChoice choice = permissionChoice switch
+            {
+                1 => PermissionChoice.AlwaysAllow,
+                2 => PermissionChoice.AlwaysDeny,
+                _ => PermissionChoice.Ask
+            };
+
+            // Send response back to the agent
+            agent.SendFilterResponse(
+                permissionId,
+                new InternalPermissionResponseEvent(
+                    permissionId,
+                    "FFI",  // Source name
+                    approved == 1,
+                    approved == 1 ? null : "User denied permission via FFI",
+                    choice
+                )
+            );
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to respond to permission: {ex.Message}");
+            return 0;
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // HELPER METHODS
+    // ════════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Helper method to marshal a C# string to unmanaged UTF-8 memory.
+    /// </summary>
+    private static IntPtr MarshalString(string str)
+    {
+        if (string.IsNullOrEmpty(str)) return IntPtr.Zero;
+
+        byte[] bytes = Encoding.UTF8.GetBytes(str + '\0'); // null-terminated
+        IntPtr ptr = Marshal.AllocHGlobal(bytes.Length);
+        Marshal.Copy(bytes, 0, ptr, bytes.Length);
+        return ptr;
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
     // Future APIs:
-    // - Direct Agent streaming API (using ConversationThread for state)
     // - Protocol adapter exports (Microsoft.Agents.AI, AGUI)
-    // - Checkpoint/resume support via ConversationThread serialization
+    // - Advanced memory management APIs (optional user-facing CRUD)
+    // - Provider discovery and management
     // ════════════════════════════════════════════════════════════════════════════
 }

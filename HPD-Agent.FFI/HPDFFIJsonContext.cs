@@ -1,6 +1,9 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
+using HPD.Agent;
+using HPD.Agent.Conversation;
+using HPD_Agent.FFI;
 
 namespace HPD_Agent.FFI;
 
@@ -50,10 +53,14 @@ namespace HPD_Agent.FFI;
 // --- Agent configuration types ---
 [JsonSerializable(typeof(AgentConfig))]
 [JsonSerializable(typeof(ProviderConfig))]
-[JsonSerializable(typeof(ChatProvider))]
 [JsonSerializable(typeof(DynamicMemoryConfig))]
 [JsonSerializable(typeof(McpConfig))]
 [JsonSerializable(typeof(WebSearchConfig))]
+[JsonSerializable(typeof(ValidationConfig))]
+[JsonSerializable(typeof(ErrorHandlingConfig))]
+[JsonSerializable(typeof(DocumentHandlingConfig))]
+[JsonSerializable(typeof(HistoryReductionConfig))]
+[JsonSerializable(typeof(StaticMemoryConfig))]
 
 // --- Conversation and messaging types ---
 [JsonSerializable(typeof(ChatMessage))]
@@ -63,23 +70,20 @@ namespace HPD_Agent.FFI;
 [JsonSerializable(typeof(ChatOptions))]
 
 // --- Extensions.AI types for conversation support ---
-[JsonSerializable(typeof(Microsoft.Extensions.AI.ChatMessage))]
-[JsonSerializable(typeof(Microsoft.Extensions.AI.ChatRole))]
-[JsonSerializable(typeof(Microsoft.Extensions.AI.ChatOptions))]
-[JsonSerializable(typeof(Microsoft.Extensions.AI.UsageDetails))]
-[JsonSerializable(typeof(Microsoft.Extensions.AI.AdditionalPropertiesDictionary))]
-[JsonSerializable(typeof(Microsoft.Extensions.AI.ChatFinishReason))]
-[JsonSerializable(typeof(Microsoft.Extensions.AI.ChatResponseUpdate))]
-[JsonSerializable(typeof(Microsoft.Extensions.AI.FunctionCallContent))]
-[JsonSerializable(typeof(Microsoft.Extensions.AI.FunctionResultContent))]
-[JsonSerializable(typeof(Microsoft.Extensions.AI.AIContent))]
-[JsonSerializable(typeof(List<Microsoft.Extensions.AI.ChatMessage>))]
-[JsonSerializable(typeof(List<Microsoft.Extensions.AI.AIContent>))]
-[JsonSerializable(typeof(IList<Microsoft.Extensions.AI.ChatMessage>))]
-[JsonSerializable(typeof(IEnumerable<Microsoft.Extensions.AI.ChatMessage>))]
-
-// --- Project types ---
-[JsonSerializable(typeof(ProjectInfo))]
+[JsonSerializable(typeof(ChatMessage))]
+[JsonSerializable(typeof(ChatRole))]
+[JsonSerializable(typeof(ChatOptions))]
+[JsonSerializable(typeof(UsageDetails))]
+[JsonSerializable(typeof(AdditionalPropertiesDictionary))]
+[JsonSerializable(typeof(ChatFinishReason))]
+[JsonSerializable(typeof(ChatResponseUpdate))]
+[JsonSerializable(typeof(FunctionCallContent))]
+[JsonSerializable(typeof(FunctionResultContent))]
+[JsonSerializable(typeof(AIContent))]
+[JsonSerializable(typeof(List<ChatMessage>))]
+[JsonSerializable(typeof(List<AIContent>))]
+[JsonSerializable(typeof(IList<ChatMessage>))]
+[JsonSerializable(typeof(IEnumerable<ChatMessage>))]
 
 // --- FFI-specific Rust plugin types ---
 [JsonSerializable(typeof(RustFunctionInfo))]
@@ -90,6 +94,39 @@ namespace HPD_Agent.FFI;
 [JsonSerializable(typeof(PluginStats))]
 [JsonSerializable(typeof(PluginSummary))]
 [JsonSerializable(typeof(PluginExecutionResult))]
+
+// --- Internal Agent Event Types (for protocol adapters) ---
+[JsonSerializable(typeof(InternalAgentEvent))]
+[JsonSerializable(typeof(InternalMessageTurnStartedEvent))]
+[JsonSerializable(typeof(InternalMessageTurnFinishedEvent))]
+[JsonSerializable(typeof(InternalMessageTurnErrorEvent))]
+[JsonSerializable(typeof(InternalAgentTurnStartedEvent))]
+[JsonSerializable(typeof(InternalAgentTurnFinishedEvent))]
+[JsonSerializable(typeof(InternalTextMessageStartEvent))]
+[JsonSerializable(typeof(InternalTextDeltaEvent))]
+[JsonSerializable(typeof(InternalTextMessageEndEvent))]
+[JsonSerializable(typeof(InternalReasoningStartEvent))]
+[JsonSerializable(typeof(InternalReasoningMessageStartEvent))]
+[JsonSerializable(typeof(InternalReasoningDeltaEvent))]
+[JsonSerializable(typeof(InternalReasoningMessageEndEvent))]
+[JsonSerializable(typeof(InternalReasoningEndEvent))]
+[JsonSerializable(typeof(InternalToolCallStartEvent))]
+[JsonSerializable(typeof(InternalToolCallArgsEvent))]
+[JsonSerializable(typeof(InternalToolCallEndEvent))]
+[JsonSerializable(typeof(InternalToolCallResultEvent))]
+[JsonSerializable(typeof(InternalPermissionRequestEvent))]
+[JsonSerializable(typeof(InternalPermissionResponseEvent))]
+[JsonSerializable(typeof(InternalPermissionApprovedEvent))]
+[JsonSerializable(typeof(InternalPermissionDeniedEvent))]
+[JsonSerializable(typeof(InternalContinuationRequestEvent))]
+[JsonSerializable(typeof(InternalContinuationResponseEvent))]
+[JsonSerializable(typeof(InternalClarificationRequestEvent))]
+[JsonSerializable(typeof(InternalClarificationResponseEvent))]
+[JsonSerializable(typeof(InternalFilterProgressEvent))]
+[JsonSerializable(typeof(InternalFilterErrorEvent))]
+
+// --- Agent State Types ---
+[JsonSerializable(typeof(AgentLoopState))]
 
 public partial class HPDFFIJsonContext : JsonSerializerContext
 {

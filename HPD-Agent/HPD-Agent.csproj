@@ -14,6 +14,9 @@
   <ItemGroup>
     <InternalsVisibleTo Include="HPD-Agent.FFI" />
     <InternalsVisibleTo Include="HPD-Agent.Tests" />
+    <InternalsVisibleTo Include="AgentConsoleTest" />
+    <InternalsVisibleTo Include="AgentAPI" />
+    <InternalsVisibleTo Include="HPD-Agent.Microsoft" />
   </ItemGroup>
 
   <ItemGroup>

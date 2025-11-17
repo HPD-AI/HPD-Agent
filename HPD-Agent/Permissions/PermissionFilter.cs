@@ -59,10 +59,11 @@ internal class PermissionFilter : IPermissionFilter
 
         // Extract project ID from run context metadata if available
         string? projectId = null;
-        if (context.Metadata.TryGetValue("Project", out var projectObj))
-        {
-            projectId = (projectObj as Project)?.Id;
-        }
+        // Note: Project feature has been removed. This can be re-enabled if needed.
+        // if (context.Metadata.TryGetValue("Project", out var projectObj))
+        // {
+        //     projectId = (projectObj as Project)?.Id;
+        // }
 
         // Check storage if available
         if (_storage != null && !string.IsNullOrEmpty(conversationId))

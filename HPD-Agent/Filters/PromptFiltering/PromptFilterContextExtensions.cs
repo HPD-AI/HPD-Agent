@@ -1,12 +1,12 @@
 using System.Collections.Generic;
-
-
+using HPD.Agent;
 
 /// <summary>
 /// Extension methods for strongly-typed access to PromptFilterContext properties.
 /// Provides discoverable, IntelliSense-friendly access to context information.
+/// INTERNAL: Framework-level extensions for filter context.
 /// </summary>
-public static class PromptFilterContextExtensions
+internal static class PromptFilterContextExtensions
 {
 
     /// <summary>

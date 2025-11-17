@@ -1,10 +1,14 @@
 using A2A;
 using Microsoft.Extensions.AI;
-using Microsoft.Agents.AI;
 using System;
 using System.Linq;
 
+namespace HPD.Agent.A2A;
 
+/// <summary>
+/// Mapper for converting between A2A protocol types and HPD-Agent types.
+/// Refactored to work with core agent (no Microsoft adapter dependency).
+/// </summary>
 public static class A2AMapper
 {
     /// <summary>
@@ -21,16 +25,15 @@ public static class A2AMapper
     }
 
     /// <summary>
-    /// Converts the text content from an HPD-Agent ChatResponse into an A2A Artifact.
+    /// Converts response text from HPD-Agent into an A2A Artifact.
+    /// Updated to accept string directly instead of AgentRunResponse.
     /// </summary>
-    public static Artifact ToA2AArtifact(AgentRunResponse hpdResponse)
+    public static Artifact ToA2AArtifact(string responseText)
     {
-        var responseText = hpdResponse.Messages.LastOrDefault()?.Text ?? "No response.";
-
         return new Artifact
         {
             ArtifactId = Guid.NewGuid().ToString(),
-            Parts = [new TextPart { Text = responseText }]
+            Parts = [new TextPart { Text = responseText ?? "No response." }]
         };
     }
 }

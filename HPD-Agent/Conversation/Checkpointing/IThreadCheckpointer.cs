@@ -27,8 +27,9 @@ public enum CheckpointRetentionMode
 /// <summary>
 /// Interface for persisting and loading ConversationThread checkpoints.
 /// Implementations can use databases, file systems, cloud storage, etc.
+/// INTERNAL: Framework-level interface for checkpointing support.
 /// </summary>
-public interface IThreadCheckpointer
+internal interface IThreadCheckpointer
 {
     /// <summary>
     /// Gets the checkpoint retention mode for this checkpointer.

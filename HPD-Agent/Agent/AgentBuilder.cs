@@ -65,8 +65,8 @@ public class AgentBuilder
     // MCP runtime fields
     internal MCPClientManager? _mcpClientManager;
 
-    // AIContextProvider factory (Microsoft protocol only)
-    private Func<HPD.Agent.Microsoft.AIContextProviderFactoryContext, AIContextProvider>? _contextProviderFactory;
+    // AIContextProvider factory (protocol-specific, stored as object for extensibility)
+    internal object? _contextProviderFactory;
 
     /// <summary>
     /// Creates a new builder with default configuration.
@@ -237,90 +237,25 @@ public class AgentBuilder
     }
 
     // ══════════════════════════════════════════════════════════════════════════════
-    // AIContextProvider CONFIGURATION (Microsoft Protocol Only)
+    // PROTOCOL-SPECIFIC CONFIGURATION
     // ══════════════════════════════════════════════════════════════════════════════
+    // Protocol-specific configuration methods (WithContextProviderFactory, etc.) are now
+    // provided via extension methods in protocol adapter projects (HPD-Agent.Microsoft, etc.)
 
     /// <summary>
-    /// Sets the AI context provider factory for Microsoft protocol agents.
-    /// Factory creates fresh provider instances per thread with optional state restoration.
+    /// Internal method to set protocol-specific context provider factory.
+    /// Used by protocol adapter extension methods (e.g., HPD.Agent.Microsoft.AgentBuilderExtensions).
     /// </summary>
-    /// <param name="factory">Factory function that creates AIContextProvider instances</param>
-    /// <returns>This builder for fluent chaining</returns>
-    /// <remarks>
-    /// The factory is invoked for each new thread created via <see cref="HPD.Agent.Microsoft.Agent.GetNewThread"/>.
-    /// For state restoration (deserialization), check <see cref="HPD.Agent.Microsoft.AIContextProviderFactoryContext.SerializedState"/>.
-    /// <para><b>Example - Stateless Provider:</b></para>
-    /// <code>
-    /// var agent = new AgentBuilder()
-    ///     .WithContextProviderFactory(ctx => new MyMemoryProvider())
-    ///     .BuildMicrosoftAgent();
-    /// </code>
-    /// <para><b>Example - Stateful Provider with Restoration:</b></para>
-    /// <code>
-    /// var agent = new AgentBuilder()
-    ///     .WithContextProviderFactory(ctx =>
-    ///     {
-    ///         // Check if we're restoring from saved state
-    ///         if (ctx.SerializedState.ValueKind != JsonValueKind.Undefined &amp;&amp;
-    ///             ctx.SerializedState.ValueKind != JsonValueKind.Null)
-    ///         {
-    ///             return new MyMemoryProvider(ctx.SerializedState, ctx.JsonSerializerOptions);
-    ///         }
-    ///         return new MyMemoryProvider();
-    ///     })
-    ///     .BuildMicrosoftAgent();
-    /// </code>
-    /// </remarks>
-    public AgentBuilder WithContextProviderFactory(
-        Func<HPD.Agent.Microsoft.AIContextProviderFactoryContext, AIContextProvider> factory)
+    internal void SetContextProviderFactory(object factory)
     {
         _contextProviderFactory = factory ?? throw new ArgumentNullException(nameof(factory));
-        return this;
     }
 
     /// <summary>
-    /// Convenience method for stateless AIContextProvider types.
-    /// Creates a new instance for each thread without state restoration.
+    /// Internal method to get protocol-specific context provider factory.
+    /// Used by protocol adapter extension methods to retrieve the stored factory.
     /// </summary>
-    /// <typeparam name="T">AIContextProvider type with parameterless constructor</typeparam>
-    /// <returns>This builder for fluent chaining</returns>
-    /// <example>
-    /// <code>
-    /// var agent = new AgentBuilder()
-    ///     .WithContextProvider&lt;MyMemoryProvider&gt;()
-    ///     .BuildMicrosoftAgent();
-    /// </code>
-    /// </example>
-    public AgentBuilder WithContextProvider<T>() where T : AIContextProvider, new()
-    {
-        _contextProviderFactory = _ => new T();
-        return this;
-    }
-
-    /// <summary>
-    /// Convenience method for singleton AIContextProvider (shared across all threads).
-    /// </summary>
-    /// <param name="provider">Provider instance to share across all threads</param>
-    /// <returns>This builder for fluent chaining</returns>
-    /// <remarks>
-    /// <b>WARNING:</b> Use only for stateless providers or when sharing state is intentional.
-    /// All threads will share the same provider instance and its state.
-    /// <para>For per-thread isolation, use <see cref="WithContextProviderFactory"/> or <see cref="WithContextProvider{T}"/> instead.</para>
-    /// </remarks>
-    /// <example>
-    /// <code>
-    /// var sharedProvider = new MyStatelessProvider();
-    /// var agent = new AgentBuilder()
-    ///     .WithSharedContextProvider(sharedProvider)
-    ///     .BuildMicrosoftAgent();
-    /// </code>
-    /// </example>
-    public AgentBuilder WithSharedContextProvider(AIContextProvider provider)
-    {
-        ArgumentNullException.ThrowIfNull(provider);
-        _contextProviderFactory = _ => provider;
-        return this;
-    }
+    internal object? GetContextProviderFactory() => _contextProviderFactory;
 
     // ══════════════════════════════════════════════════════════════════════════════
     // DUAL-LAYER OBSERVABILITY ARCHITECTURE
@@ -735,18 +670,18 @@ public class AgentBuilder
 
 
     /// <summary>
-    /// Builds the dual interface agent asynchronously.
+    /// Builds the protocol-agnostic core agent asynchronously.
+    /// Internal method - use protocol-specific Build methods (e.g., BuildMicrosoftAgent()).
     /// Validation behavior is controlled by the ValidationConfig (see WithValidation()).
-    /// Returns HPD.Agent.Microsoft.Agent for Microsoft protocol compatibility.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token for async operations</param>
     [RequiresUnreferencedCode("Agent building may use plugin registration methods that require reflection.")]
-    public async Task<Microsoft.Agent> BuildAsync(CancellationToken cancellationToken = default)
+    internal async Task<Agent> BuildCoreAgentAsync(CancellationToken cancellationToken = default)
     {
         var buildData = await BuildDependenciesAsync(cancellationToken).ConfigureAwait(false);
 
-        // Wrap in Microsoft protocol adapter
-        return new Microsoft.Agent(
+        // Create protocol-agnostic core agent
+        return new Agent(
             _config!,
             buildData.ClientToUse,
             buildData.MergedOptions,
@@ -757,17 +692,16 @@ public class AgentBuilder
             _globalFilters,
             _messageTurnFilters,
             _serviceProvider,
-            _observers,
-            _contextProviderFactory);
+            _observers);
     }
 
     /// <summary>
-    /// Builds the dual interface agent synchronously (blocks thread until complete).
+    /// Builds the protocol-agnostic core agent synchronously (blocks thread until complete).
+    /// Internal method - use protocol-specific Build methods (e.g., BuildMicrosoftAgent()).
     /// Always uses sync validation for performance.
-    /// Returns HPD.Agent.Microsoft.Agent by default for backwards compatibility.
     /// </summary>
     [RequiresUnreferencedCode("Agent building may use plugin registration methods that require reflection.")]
-    public Microsoft.Agent Build()
+    internal Agent BuildCoreAgent()
     {
         var buildData = BuildDependenciesAsync(CancellationToken.None).GetAwaiter().GetResult();
 
@@ -775,8 +709,8 @@ public class AgentBuilder
         _config.ExplicitlyRegisteredPlugins = _explicitlyRegisteredPlugins
             .ToImmutableHashSet(StringComparer.OrdinalIgnoreCase);
 
-        // Wrap in Microsoft protocol adapter
-        return new Microsoft.Agent(
+        // Create protocol-agnostic core agent
+        return new Agent(
             _config!,
             buildData.ClientToUse,
             buildData.MergedOptions,
@@ -787,8 +721,7 @@ public class AgentBuilder
             _globalFilters,
             _messageTurnFilters,
             _serviceProvider,
-            _observers,
-            _contextProviderFactory);
+            _observers);
     }
 
     /// <summary>

@@ -12,12 +12,13 @@ namespace HPD.Agent.Conversation.Checkpointing;
 /// In-memory thread checkpointer for development and testing.
 /// Data is lost on process restart.
 /// Supports both LatestOnly (default) and FullHistory modes.
+/// INTERNAL: Framework-level implementation for checkpointing support.
 /// </summary>
 /// <remarks>
 /// Thread-safe for concurrent access using ConcurrentDictionary.
 /// In production, use a database-backed checkpointer (e.g., PostgresThreadCheckpointer).
 /// </remarks>
-public class InMemoryThreadCheckpointer : IThreadCheckpointer
+internal class InMemoryThreadCheckpointer : IThreadCheckpointer
 {
     // LatestOnly mode: single checkpoint per thread (stored as JSON element)
     private readonly ConcurrentDictionary<string, JsonElement> _checkpoints = new();
@@ -79,7 +80,8 @@ public class InMemoryThreadCheckpointer : IThreadCheckpointer
         if (RetentionMode == CheckpointRetentionMode.LatestOnly)
         {
             // LatestOnly: UPSERT (overwrite) - store as JsonElement
-            var snapshotJson = thread.Serialize(null);
+            var snapshot = thread.Serialize(null);
+            var snapshotJson = System.Text.Json.JsonSerializer.SerializeToElement(snapshot);
             _checkpoints[thread.Id] = snapshotJson;
         }
         else

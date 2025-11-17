@@ -79,9 +79,6 @@ using HPD.Agent;
 [JsonSerializable(typeof(IList<Microsoft.Extensions.AI.ChatMessage>))]
 [JsonSerializable(typeof(IEnumerable<Microsoft.Extensions.AI.ChatMessage>))]
 
-// --- Project types ---
-[JsonSerializable(typeof(ProjectInfo))]
-
 public partial class HPDJsonContext : JsonSerializerContext
 {
 }

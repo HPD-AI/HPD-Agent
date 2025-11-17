@@ -1,7 +1,7 @@
 using Microsoft.Extensions.AI;
 using System.Text.Json;
-using Microsoft.Agents.AI;
-using HPD.Agent;
+
+namespace HPD.Agent;
 
 /// <summary>
 /// Factory interface for creating ConversationMessageStore instances from serialized state.
@@ -31,15 +31,15 @@ public interface IConversationMessageStoreFactory
 }
 
 /// <summary>
-/// Manages conversation state (message history, metadata, timestamps).
-/// Inherits from Microsoft's AgentThread for compatibility with Agent Framework.
-/// This allows one agent to serve multiple threads (conversations) concurrently.
+/// PROTOCOL-AGNOSTIC conversation thread for managing conversation state.
+/// This is the core implementation that can be wrapped by protocol-specific adapters.
+/// INTERNAL: Use HPD.Agent.Microsoft.ConversationThread for protocol-specific APIs.
 ///
 /// <para><b>Architecture:</b></para>
 /// <para>
-/// - Uses ConversationMessageStore (which inherits from Microsoft's ChatMessageStore)
-/// - Message store handles: storage, cache-aware reduction, token counting
-/// - Thread handles: metadata, timestamps, display names, service integration
+/// - Uses ConversationMessageStore for message storage, cache-aware reduction, token counting
+/// - Handles: metadata, timestamps, display names, execution state, history reduction state
+/// - Protocol-agnostic: No dependencies on Microsoft.Agents.AI or other protocols
 /// </para>
 ///
 /// <para><b>Thread Safety:</b></para>
@@ -69,47 +69,8 @@ public interface IConversationMessageStoreFactory
 /// ConversationThread.RegisterStoreFactory(new InMemoryConversationMessageStoreFactory());
 /// </code>
 /// </para>
-///
-/// <para><b>Common Usage Patterns:</b></para>
-/// <para>
-/// ✅ <b>Create and run a conversation:</b>
-/// <code>
-/// var agent = new Agent(...);
-/// var thread = new ConversationThread();
-/// thread.DisplayName = "Weather Chat";
-/// 
-/// // Add user message
-/// await thread.AddMessageAsync(new ChatMessage(ChatRole.User, "What's the weather?"));
-/// 
-/// // Run agent (messages added automatically via MessagesReceivedAsync)
-/// var response = await agent.RunAsync("What's the weather?", thread);
-/// 
-/// // Access response messages
-/// foreach (var msg in response.Messages)
-///     Console.WriteLine(msg.Text);
-/// </code>
-/// </para>
-/// <para>
-/// ✅ <b>Check message count for UI:</b>
-/// <code>
-/// var count = await thread.GetMessageCountAsync();
-/// Console.WriteLine($"Thread has {count} messages");
-/// </code>
-/// </para>
-/// <para>
-/// ❌ <b>DON'T try to iterate messages directly:</b>
-/// <code>
-/// // ❌ This won't compile - GetMessagesAsync() is internal
-/// var messages = await thread.GetMessagesAsync(); // Compile error!
-/// 
-/// // ✅ Instead, use agent response:
-/// var response = await agent.RunAsync("Hello", thread);
-/// foreach (var msg in response.Messages)
-///     Console.WriteLine(msg.Text);
-/// </code>
-/// </para>
 /// </summary>
-public class ConversationThread : AgentThread
+internal sealed class ConversationThread
 {
     // Metadata key constants
     private const string METADATA_KEY_DISPLAY_NAME = "DisplayName";
@@ -206,10 +167,6 @@ public class ConversationThread : AgentThread
     /// This provides significant token savings for multi-turn conversations.
     /// </para>
     /// <para>
-    /// <b>Architecture Note:</b> This matches Microsoft.Agents.AI's ChatClientAgentThread pattern,
-    /// where ConversationId lives on the thread (conversation metadata), not on the agent (stateless executor).
-    /// </para>
-    /// <para>
     /// <b>Lifecycle:</b>
     /// - Initially null for new threads
     /// - Set automatically by Agent when LLM returns ConversationId
@@ -218,39 +175,6 @@ public class ConversationThread : AgentThread
     /// </para>
     /// </remarks>
     public string? ConversationId { get; set; }
-
-    /// <summary>
-    /// Optional AI context provider for protocol-specific enrichment.
-    /// Used by Microsoft.Agents.AI protocol for memory/RAG injection before LLM calls.
-    /// Null for protocols that don't use this pattern or threads without context enrichment.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// This is automatically set via factory pattern when using Microsoft protocol:
-    /// <code>
-    /// var agent = new AgentBuilder()
-    ///     .WithContextProviderFactory(ctx => new MyMemoryProvider())
-    ///     .BuildMicrosoftAgent();
-    ///
-    /// var thread = agent.CreateThread();  // Provider created automatically
-    /// </code>
-    /// </para>
-    /// <para>
-    /// The provider's <see cref="AIContextProvider.InvokingAsync"/> method is called before each LLM
-    /// invocation to inject additional context (memories, RAG documents, dynamic tools, etc.).
-    /// The provider's <see cref="AIContextProvider.InvokedAsync"/> method is called after the LLM
-    /// responds to enable learning and state updates.
-    /// </para>
-    /// <para>
-    /// <b>Per-Thread Override:</b> You can override the factory-provided provider on specific threads:
-    /// <code>
-    /// var thread = agent.CreateThread();
-    /// thread.AIContextProvider = new VectorDBProvider();  // Override for this thread only
-    /// </code>
-    /// </para>
-    /// </remarks>
-    [System.Text.Json.Serialization.JsonIgnore]  // Don't serialize the instance, only its state
-    public AIContextProvider? AIContextProvider { get; set; }
 
     /// <summary>
     /// Current agent execution state for checkpointing and resumption.
@@ -279,7 +203,7 @@ public class ConversationThread : AgentThread
     /// Only the agent framework and protocol adapters should modify this property.
     /// </para>
     /// </remarks>
-    public AgentLoopState? ExecutionState { get; internal set; }
+    public AgentLoopState? ExecutionState { get; set; }
 
     /// <summary>
     /// Last successful history reduction state for cache-aware reduction.
@@ -298,25 +222,6 @@ public class ConversationThread : AgentThread
     /// <item>If invalid: Run new reduction, update LastReduction</item>
     /// <item>Serialized with thread state for cross-session caching</item>
     /// </list>
-    /// </para>
-    /// <para>
-    /// <b>Example:</b>
-    /// <code>
-    /// // Turn 1: Create reduction (100 messages → summary + 10 recent)
-    /// var reduction = HistoryReductionState.Create(...);
-    /// thread.LastReduction = reduction;  // Cache for next run
-    ///
-    /// // Turn 2: Check cache (110 messages now)
-    /// if (thread.LastReduction?.IsValidFor(110) == true)
-    /// {
-    ///     // ✅ Cache hit! Reuse reduction (no LLM call)
-    ///     var reduced = thread.LastReduction.ApplyToMessages(messages);
-    /// }
-    /// </code>
-    /// </para>
-    /// <para>
-    /// <b>Storage:</b> This property persists separately from ExecutionState (which is ephemeral).
-    /// LastReduction survives across agent runs, while ExecutionState is cleared after completion.
     /// </para>
     /// </remarks>
     public HistoryReductionState? LastReduction { get; set; }
@@ -376,7 +281,7 @@ public class ConversationThread : AgentThread
     public static void RegisterStoreFactory(IConversationMessageStoreFactory factory)
     {
         ArgumentNullException.ThrowIfNull(factory);
-        
+
         lock (_factoryLock)
         {
             _storeFactories[factory.StoreTypeName] = factory;
@@ -392,36 +297,6 @@ public class ConversationThread : AgentThread
     /// </summary>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Read-only list of messages (snapshot, not live)</returns>
-    /// <remarks>
-    /// <para>
-    /// This method is internal to support efficient snapshot-based operations within the agent framework.
-    /// External code should use <see cref="AddMessagesAsync"/> to push messages to the thread.
-    /// </para>
-    /// <para>
-    /// <b>Why is this internal?</b>
-    /// </para>
-    /// <para>
-    /// <b>Problem:</b> If users call GetMessagesAsync(), they receive a snapshot. If the agent later 
-    /// adds messages via RunAsync(), the user's copy becomes stale without them realizing it.
-    /// </para>
-    /// <para>
-    /// Example of the bug this prevents:
-    /// <code>
-    /// // User gets snapshot
-    /// var messages = await thread.GetMessagesAsync(); // 5 messages
-    /// 
-    /// // Agent adds more messages internally
-    /// await agent.RunAsync("Hello", thread); // Adds 2 messages (now 7 total)
-    /// 
-    /// // User's 'messages' variable is now stale (still shows 5)
-    /// Console.WriteLine(messages.Count); // ❌ Prints 5, but actual count is 7!
-    /// </code>
-    /// </para>
-    /// <para>
-    /// <b>Solution:</b> Public API is push-only (AddMessagesAsync). Framework internals use 
-    /// GetMessagesAsync() for efficient snapshots and handle refresh logic explicitly.
-    /// </para>
-    /// </remarks>
     internal async Task<IReadOnlyList<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken = default)
     {
         var messages = await _messageStore.GetMessagesAsync(cancellationToken);
@@ -443,20 +318,6 @@ public class ConversationThread : AgentThread
     /// </summary>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Total message count</returns>
-    /// <remarks>
-    /// <para>
-    /// This is useful for UI purposes (pagination, progress indicators, "X messages in thread").
-    /// </para>
-    /// <para>
-    /// Performance: Fast for in-memory stores (no I/O). For database stores, may involve I/O.
-    /// </para>
-    /// <para>
-    /// Unlike GetMessagesAsync() (internal), message count is safe to expose publicly because:
-    /// - It's a scalar value (no stale reference issues)
-    /// - Common UI need (pagination, progress bars)
-    /// - Doesn't expose message content that could become stale
-    /// </para>
-    /// </remarks>
     public async Task<int> GetMessageCountAsync(CancellationToken cancellationToken = default)
     {
         var messages = await _messageStore.GetMessagesAsync(cancellationToken);
@@ -537,19 +398,6 @@ public class ConversationThread : AgentThread
     #endregion
 
     /// <summary>
-    /// Service discovery - provides AgentThreadMetadata (Microsoft pattern)
-    /// </summary>
-    public override object? GetService(Type serviceType, object? serviceKey = null)
-    {
-        if (serviceKey == null && serviceType == typeof(AgentThreadMetadata))
-        {
-            return new AgentThreadMetadata(Id);
-        }
-
-        return base.GetService(serviceType, serviceKey);
-    }
-
-    /// <summary>
     /// Get a display name for this thread based on first user message.
     /// Useful for UI display in conversation lists.
     /// </summary>
@@ -580,12 +428,12 @@ public class ConversationThread : AgentThread
     #region Serialization
 
     /// <summary>
-    /// Serialize this thread to a JSON element (AgentThread override).
+    /// Serialize this thread to a snapshot object.
     /// Delegates message storage serialization to the message store.
     /// </summary>
-    public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+    public ConversationThreadSnapshot Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
-        var snapshot = new ConversationThreadSnapshot
+        return new ConversationThreadSnapshot
         {
             Id = Id,
             MessageStoreState = _messageStore.Serialize(jsonSerializerOptions),
@@ -595,13 +443,9 @@ public class ConversationThread : AgentThread
             LastActivity = LastActivity,
             ServiceThreadId = ServiceThreadId,
             ConversationId = ConversationId,
-            AIContextProviderState = AIContextProvider?.Serialize(jsonSerializerOptions),
             ExecutionStateJson = ExecutionState?.Serialize(),
             LastReductionState = LastReduction
         };
-
-        // Use source-generated JSON context for AOT compatibility
-        return JsonSerializer.SerializeToElement(snapshot, ConversationJsonContext.Default.ConversationThreadSnapshot);
     }
 
     /// <summary>
@@ -611,30 +455,18 @@ public class ConversationThread : AgentThread
     /// </summary>
     /// <param name="snapshot">Serialized thread snapshot</param>
     /// <param name="options">Optional JSON serializer options</param>
-    /// <param name="contextProviderFactory">Optional factory for restoring AIContextProvider from serialized state</param>
     /// <returns>Deserialized conversation thread</returns>
     /// <remarks>
-    /// <para>
     /// For Native AOT support, register factories before deserializing:
     /// <code>
     /// ConversationThread.RegisterStoreFactory(new InMemoryConversationMessageStoreFactory());
     /// var thread = ConversationThread.Deserialize(snapshot);
     /// </code>
     /// Falls back to reflection if no factory is registered (non-AOT scenarios).
-    /// </para>
-    /// <para>
-    /// To restore AIContextProvider state, provide a factory:
-    /// <code>
-    /// var thread = ConversationThread.Deserialize(
-    ///     snapshot,
-    ///     contextProviderFactory: (state, opts) => new MyMemoryProvider(state, opts));
-    /// </code>
-    /// </para>
     /// </remarks>
     public static ConversationThread Deserialize(
         ConversationThreadSnapshot snapshot,
-        JsonSerializerOptions? options = null,
-        Func<JsonElement, JsonSerializerOptions?, AIContextProvider>? contextProviderFactory = null)
+        JsonSerializerOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
 
@@ -703,17 +535,6 @@ public class ConversationThread : AgentThread
             thread._metadata[key] = value;
         }
 
-        // Restore AIContextProvider state if factory provided and state exists
-        if (snapshot.AIContextProviderState.HasValue &&
-            snapshot.AIContextProviderState.Value.ValueKind != System.Text.Json.JsonValueKind.Undefined &&
-            snapshot.AIContextProviderState.Value.ValueKind != System.Text.Json.JsonValueKind.Null &&
-            contextProviderFactory != null)
-        {
-            thread.AIContextProvider = contextProviderFactory(
-                snapshot.AIContextProviderState.Value,
-                options);
-        }
-
         // Restore ExecutionState if present
         if (!string.IsNullOrEmpty(snapshot.ExecutionStateJson))
         {
@@ -727,39 +548,12 @@ public class ConversationThread : AgentThread
     }
 
     #endregion
-
-    #region AgentThread Overrides
-
-    /// <summary>
-    /// Called when new messages are received (AgentThread override).
-    /// Updates this thread's message list.
-    /// </summary>
-    protected override async Task MessagesReceivedAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default)
-    {
-        var existingMessages = await _messageStore.GetMessagesAsync(cancellationToken);
-        var messagesToAdd = newMessages.Where(m => !existingMessages.Contains(m)).ToList();
-
-        if (messagesToAdd.Any())
-        {
-            await AddMessagesAsync(messagesToAdd, cancellationToken);
-        }
-    }
-
-    #endregion
-}
-
-/// <summary>
-/// JSON source generation context for ConversationThread serialization.
-/// </summary>
-[System.Text.Json.Serialization.JsonSourceGenerationOptions(WriteIndented = false)]
-[System.Text.Json.Serialization.JsonSerializable(typeof(ConversationThreadSnapshot))]
-internal partial class ConversationJsonContext : System.Text.Json.Serialization.JsonSerializerContext
-{
 }
 
 /// <summary>
 /// Serializable snapshot of a ConversationThread for persistence.
 /// Delegates message storage to the message store's own serialization.
+/// PROTOCOL-AGNOSTIC: Contains no protocol-specific state.
 /// </summary>
 public record ConversationThreadSnapshot
 {
@@ -790,13 +584,6 @@ public record ConversationThreadSnapshot
     /// Null if service doesn't support server-side history or hasn't returned an ID yet.
     /// </summary>
     public string? ConversationId { get; init; }
-
-    /// <summary>
-    /// Serialized state of the AIContextProvider (if any).
-    /// Used by Microsoft protocol to restore provider state across sessions.
-    /// Null if thread doesn't use an AIContextProvider.
-    /// </summary>
-    public JsonElement? AIContextProviderState { get; init; }
 
     /// <summary>
     /// Serialized AgentLoopState JSON (if mid-execution).

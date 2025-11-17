@@ -147,7 +147,7 @@ public class AgentConfig
     /// </para>
     /// </remarks>
     [JsonIgnore]
-    public IThreadCheckpointer? Checkpointer { get; set; }
+    internal IThreadCheckpointer? Checkpointer { get; set; }
 
     /// <summary>
     /// Checkpoint frequency (per turn, per iteration, or manual).

@@ -1,5 +1,6 @@
 using Microsoft.Extensions.AI;
 using System.Text.Json;
+using HPD.Agent;
 
 /// <summary>
 /// In-memory implementation of ConversationMessageStore.

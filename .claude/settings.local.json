@@ -15,7 +15,8 @@
       "Bash(dotnet nuget:*)",
       "Bash(dotnet list:*)",
       "Bash(awk:*)",
-      "Bash(git -C /Users/einsteinessibu/Documents/HPD-Agent show HEAD~1:HPD-Agent/Agent/Agent.cs)"
+      "Bash(git -C /Users/einsteinessibu/Documents/HPD-Agent show HEAD~1:HPD-Agent/Agent/Agent.cs)",
+      "Bash(dotnet new:*)"
     ],
     "deny": [],
     "ask": []

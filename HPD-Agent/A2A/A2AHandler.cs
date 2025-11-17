@@ -7,18 +7,23 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using MicrosoftAgent = HPD.Agent.Microsoft.Agent;
 
+namespace HPD.Agent.A2A;
 
-public class A2AHandler
+/// <summary>
+/// A2A protocol handler that works directly with the CORE agent (no Microsoft adapter needed).
+/// Uses InternalAgentEvent streaming to collect responses for A2A protocol.
+/// Internal since it uses internal Agent type.
+/// </summary>
+internal class A2AHandler
 {
-    private readonly MicrosoftAgent _agent;
+    private readonly Agent _agent;
     private readonly ITaskManager _taskManager;
 
     // This dictionary will map an A2A taskId to an HPD-Agent Thread (agent is stateless and reusable)
     private readonly ConcurrentDictionary<string, ConversationThread> _activeThreads = new();
 
-    public A2AHandler(MicrosoftAgent agent, ITaskManager taskManager)
+    public A2AHandler(Agent agent, ITaskManager taskManager)
     {
         _agent = agent;
         _taskManager = taskManager;
@@ -34,6 +39,7 @@ public class A2AHandler
         var skills = new List<AgentSkill>();
 
         // Inspect the agent's tools to generate skills
+        // Access DefaultOptions (public property)
         if (_agent.DefaultOptions?.Tools != null)
         {
             foreach (var tool in _agent.DefaultOptions.Tools.OfType<AIFunction>())
@@ -43,16 +49,16 @@ public class A2AHandler
                     Id = tool.Name,
                     Name = tool.Name,
                     Description = tool.Description,
-                    // You can add tags or examples here if you extend your plugin system
-                    Tags = new List<string> { "plugin-function" } 
+                    Tags = new List<string> { "plugin-function" }
                 });
             }
         }
 
+        // Access Config (public property)
         var agentCard = new AgentCard
         {
-            Name = _agent.Name,
-            Description = _agent.SystemInstructions ?? "An HPD-Agent.",
+            Name = _agent.Config?.Name ?? "HPD-Agent",
+            Description = _agent.Config?.SystemInstructions ?? "An HPD-Agent.",
             Url = agentUrl, // The URL provided by the A2A framework
             Version = "1.0.0",
             ProtocolVersion = "0.2.6", // Match the spec version
@@ -76,19 +82,33 @@ public class A2AHandler
             // 1. Update task status to "working"
             await _taskManager.UpdateStatusAsync(task.Id, TaskState.Working, cancellationToken: cancellationToken);
 
-            // 2. Convert A2A message to HPD-Agent message using your mapper
+            // 2. Convert A2A message to HPD-Agent message using the mapper
             var hpdMessage = A2AMapper.ToHpdChatMessage(a2aMessage);
 
             // 3. Add the new message to the thread history before calling the agent
             await thread.AddMessageAsync(hpdMessage, cancellationToken);
 
-            // 4. Use agent RunAsync directly with thread and get the response
-            var response = await _agent.RunAsync([hpdMessage], thread, cancellationToken: cancellationToken);
+            // 4. ✨ Use CORE agent RunAsync and collect response text from InternalAgentEvent stream
+            string responseText = "";
+            await foreach (var evt in _agent.RunAsync(
+                new[] { hpdMessage },
+                options: null,
+                thread: thread,
+                cancellationToken: cancellationToken))
+            {
+                // Collect text content from InternalTextDeltaEvent
+                if (evt is InternalTextDeltaEvent textDelta)
+                {
+                    responseText += textDelta.Text;
+                }
+                // Optionally handle other events (reasoning, tool calls, etc.)
+                // For A2A, we primarily care about the final text response
+            }
 
             // 5. Agent automatically updates thread with response messages
 
-            // 6. Create an A2A artifact from the response using your mapper
-            var artifact = A2AMapper.ToA2AArtifact(response);
+            // 6. Create an A2A artifact from the collected response text
+            var artifact = A2AMapper.ToA2AArtifact(responseText);
             await _taskManager.ReturnArtifactAsync(task.Id, artifact, cancellationToken);
 
             // 7. Update task to "completed"
@@ -135,9 +155,9 @@ public class A2AHandler
             // Handle the case where the task is updated but we don't have a thread for it.
             // This might happen if the server restarts. We can recreate the thread from history.
             var newThread = _agent.CreateThread();
-            if(task.History != null)
+            if (task.History != null)
             {
-                foreach(var msg in task.History)
+                foreach (var msg in task.History)
                 {
                     await newThread.AddMessageAsync(A2AMapper.ToHpdChatMessage(msg), cancellationToken);
                 }

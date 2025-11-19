@@ -47,7 +47,7 @@ public static class ClarificationFunction
             CancellationToken cancellationToken)
         {
             // Get the current function execution context
-            var context = Agent.CurrentFunctionContext;
+            var context = AgentCore.CurrentFunctionContext;
 
             if (context == null)
             {

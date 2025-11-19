@@ -290,7 +290,99 @@ internal sealed class ConversationThread
 
     #endregion
 
-    #region Message Operations (All Async)
+    #region Synchronous Message API
+
+    /// <summary>
+    /// Gets a snapshot of all messages in this conversation thread.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>⚠️ Important:</b> This returns a snapshot at the time of access.
+    /// If you access this property multiple times, you may get different results
+    /// as messages are added to the thread.
+    /// </para>
+    /// <para>
+    /// <b>Performance:</b> For in-memory stores (default), this is a fast synchronous
+    /// operation with no I/O. For database stores, this will block on async I/O.
+    /// Check <see cref="RequiresAsyncAccess"/> to determine operation characteristics.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyList<ChatMessage> Messages
+    {
+        get
+        {
+            if (_messageStore is InMemoryConversationMessageStore inMemStore)
+            {
+                // Fast path: direct access to in-memory list
+                return inMemStore.Messages;
+            }
+
+            // Slow path: blocks on async I/O for database stores
+            return _messageStore.GetMessagesAsync()
+                .GetAwaiter()
+                .GetResult()
+                .ToList()
+                .AsReadOnly();
+        }
+    }
+
+    /// <summary>
+    /// Gets the number of messages in this conversation thread.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Performance:</b> For in-memory stores (default), this is a fast synchronous
+    /// operation. For database stores, this will block on async I/O.
+    /// Check <see cref="RequiresAsyncAccess"/> to determine operation characteristics.
+    /// </para>
+    /// </remarks>
+    public int MessageCount => _messageStore is InMemoryConversationMessageStore inMem
+        ? inMem.Count
+        : GetMessageCountSync();
+
+    /// <summary>
+    /// Adds a message to the conversation thread.
+    /// </summary>
+    /// <param name="message">The message to add</param>
+    /// <remarks>
+    /// <para>
+    /// <b>Performance:</b> For in-memory stores (default), this is a fast synchronous
+    /// operation with no I/O. For database stores, this will block on async I/O.
+    /// Check <see cref="RequiresAsyncAccess"/> to determine operation characteristics.
+    /// </para>
+    /// </remarks>
+    public void AddMessage(ChatMessage message)
+    {
+        _messageStore.AddMessagesAsync([message])
+            .GetAwaiter()
+            .GetResult();
+
+        LastActivity = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Adds multiple messages to the conversation thread.
+    /// </summary>
+    /// <param name="messages">The messages to add</param>
+    /// <remarks>
+    /// <para>
+    /// <b>Performance:</b> For in-memory stores (default), this is a fast synchronous
+    /// operation with no I/O. For database stores, this will block on async I/O.
+    /// Check <see cref="RequiresAsyncAccess"/> to determine operation characteristics.
+    /// </para>
+    /// </remarks>
+    public void AddMessages(IEnumerable<ChatMessage> messages)
+    {
+        _messageStore.AddMessagesAsync(messages)
+            .GetAwaiter()
+            .GetResult();
+
+        LastActivity = DateTime.UtcNow;
+    }
+
+    #endregion
+
+    #region Asynchronous Message API
 
     /// <summary>
     /// INTERNAL: Get messages from this thread. For internal agent framework use only.
@@ -352,20 +444,6 @@ internal sealed class ConversationThread
     public async Task AddMessagesAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken = default)
     {
         await _messageStore.AddMessagesAsync(messages, cancellationToken);
-        LastActivity = DateTime.UtcNow;
-    }
-
-    /// <summary>
-    /// Apply history reduction to the thread's message storage.
-    /// Removes old messages and inserts a summary message.
-    /// Delegates to ConversationMessageStore for the actual reduction logic.
-    /// </summary>
-    /// <param name="summaryMessage">Summary message to insert (contains __summary__ marker)</param>
-    /// <param name="removedCount">Number of messages to remove</param>
-    /// <param name="cancellationToken">Cancellation token</param>
-    public async Task ApplyReductionAsync(ChatMessage summaryMessage, int removedCount, CancellationToken cancellationToken = default)
-    {
-        await _messageStore.ApplyReductionAsync(summaryMessage, removedCount, cancellationToken);
         LastActivity = DateTime.UtcNow;
     }
 

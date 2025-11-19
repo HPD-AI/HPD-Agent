@@ -3,20 +3,17 @@ using Microsoft.Agents.AI;
 using System.Text.Json;
 
 /// <summary>
-/// Abstract base class for conversation message storage with cache-aware history reduction
-/// and token tracking capabilities.
+/// Abstract base class for conversation message storage with token tracking capabilities.
 ///
 /// Key Features:
-/// - Cache-aware reduction: Checks for existing summary markers to avoid redundant work
 /// - Token counting: Tracks both provider-accurate and estimated token counts
 /// - Template Method pattern: Derived classes implement storage backend (in-memory, database, etc.)
-/// - System message preservation: Always keeps system messages at the beginning
+/// - Full history storage: Always stores complete message history (reduction is applied at runtime)
 ///
 /// Architecture:
 /// This inherits from Microsoft.Agents.AI.ChatMessageStore and provides:
-/// 1. Cache-aware reduction logic (checks __summary__ markers) - SHARED across all implementations
-/// 2. Token counting methods - SHARED across all implementations
-/// 3. Abstract storage methods - IMPLEMENTED by derived classes
+/// 1. Token counting methods - SHARED across all implementations
+/// 2. Abstract storage methods - IMPLEMENTED by derived classes
 ///
 /// Derived classes must implement:
 /// - LoadMessagesAsync(): Load all messages from storage
@@ -24,18 +21,11 @@ using System.Text.Json;
 /// - AppendMessageAsync(): Add a single message to storage
 /// - ClearAsync(): Remove all messages from storage
 ///
-/// We DON'T use Microsoft's ChatReducerTriggerEvent because it's too simplistic
-/// for the cache-aware architecture where reduction is applied by Conversation
-/// based on metadata from Agent.
+/// Cache-aware history reduction is handled by HistoryReductionState in ConversationThread,
+/// not by mutating the message store. Messages are reduced at runtime for LLM calls only.
 /// </summary>
 public abstract class ConversationMessageStore : ChatMessageStore
 {
-    /// <summary>
-    /// Metadata key for identifying summary messages.
-    /// Matches HistoryReductionConfig.SummaryMetadataKey constant.
-    /// </summary>
-    protected const string SummaryMetadataKey = "__summary__";
-
     #region Abstract Storage Methods - Derived Classes Must Implement
 
     /// <summary>
@@ -113,132 +103,6 @@ public abstract class ConversationMessageStore : ChatMessageStore
 
     #endregion
 
-    #region Cache-Aware History Reduction (Shared Logic - Works for ALL Storage Backends)
-
-    /// <summary>
-    /// Apply history reduction by removing old messages and inserting a summary.
-    /// This method implements the cache-aware reduction algorithm and works
-    /// with ANY storage backend (in-memory, database, Redis, etc.).
-    ///
-    /// Algorithm:
-    /// 1. Load messages from storage (in-memory, database, wherever)
-    /// 2. Preserve system messages at the beginning
-    /// 3. Remove 'removedCount' messages after system messages
-    /// 4. Insert summary message right after system messages
-    /// 5. Save back to storage
-    ///
-    /// Example:
-    /// Before: [System] [M1] [M2] ... [M30] [M31] ... [M50]
-    /// After reduction (removedCount=30, summary="..."):
-    ///   After: [System] [Summary] [M31] ... [M50]
-    /// </summary>
-    /// <param name="summaryMessage">Summary message to insert (must have __summary__ marker)</param>
-    /// <param name="removedCount">Number of messages that were removed by the reducer</param>
-    /// <param name="cancellationToken">Cancellation token</param>
-    public virtual async Task ApplyReductionAsync(
-        ChatMessage summaryMessage,
-        int removedCount,
-        CancellationToken cancellationToken = default)
-    {
-        // Validation
-        if (summaryMessage == null)
-            throw new ArgumentNullException(nameof(summaryMessage));
-
-        if (removedCount <= 0)
-            throw new ArgumentOutOfRangeException(nameof(removedCount), "Must be greater than zero");
-
-        // Verify summary message has the marker
-        if (summaryMessage.AdditionalProperties?.ContainsKey(SummaryMetadataKey) != true)
-        {
-            throw new InvalidOperationException(
-                $"Summary message must have '{SummaryMetadataKey}' marker in AdditionalProperties");
-        }
-
-        // Load messages from storage (in-memory, database, wherever)
-        var messages = await LoadMessagesAsync(cancellationToken);
-
-        // Preserve system messages at the beginning
-        int systemMsgCount = messages.Count(m => m.Role == ChatRole.System);
-
-        // Validate we have enough messages to remove
-        int availableToRemove = messages.Count - systemMsgCount;
-        if (removedCount > availableToRemove)
-        {
-            throw new InvalidOperationException(
-                $"Cannot remove {removedCount} messages. Only {availableToRemove} non-system messages available.");
-        }
-
-        // Apply reduction: remove old messages, insert summary
-        messages.RemoveRange(systemMsgCount, removedCount);
-        messages.Insert(systemMsgCount, summaryMessage);
-
-        // Save back to storage (in-memory, database, wherever)
-        await SaveMessagesAsync(messages, cancellationToken);
-    }
-
-    /// <summary>
-    /// Checks if the message store contains a summary message.
-    /// Used for cache-aware reduction detection.
-    /// </summary>
-    public virtual async Task<bool> HasSummaryAsync(CancellationToken cancellationToken = default)
-    {
-        var messages = await LoadMessagesAsync(cancellationToken);
-        return messages.Any(m => m.AdditionalProperties?.ContainsKey(SummaryMetadataKey) == true);
-    }
-
-    /// <summary>
-    /// Gets the index of the last summary message in the store.
-    /// Returns -1 if no summary exists.
-    /// Used by cache-aware reduction to determine if re-summarization is needed.
-    /// </summary>
-    public virtual async Task<int> GetLastSummaryIndexAsync(CancellationToken cancellationToken = default)
-    {
-        var messages = await LoadMessagesAsync(cancellationToken);
-        return messages.FindLastIndex(m => m.AdditionalProperties?.ContainsKey(SummaryMetadataKey) == true);
-    }
-
-    /// <summary>
-    /// Gets messages that appear after the last summary.
-    /// If no summary exists, returns all non-system messages.
-    /// Used for cache-aware reduction threshold checks.
-    /// </summary>
-    public virtual async Task<IReadOnlyList<ChatMessage>> GetMessagesAfterLastSummaryAsync(CancellationToken cancellationToken = default)
-    {
-        var messages = await LoadMessagesAsync(cancellationToken);
-        var lastSummaryIndex = messages.FindLastIndex(m => m.AdditionalProperties?.ContainsKey(SummaryMetadataKey) == true);
-
-        if (lastSummaryIndex >= 0)
-        {
-            // Return messages after the summary
-            return messages.Skip(lastSummaryIndex + 1).ToList().AsReadOnly();
-        }
-
-        // No summary - return all non-system messages
-        var systemMsgCount = messages.Count(m => m.Role == ChatRole.System);
-        return messages.Skip(systemMsgCount).ToList().AsReadOnly();
-    }
-
-    /// <summary>
-    /// Counts how many messages exist after the last summary.
-    /// Used by cache-aware reduction to decide if re-reduction is needed.
-    /// </summary>
-    public virtual async Task<int> CountMessagesAfterLastSummaryAsync(CancellationToken cancellationToken = default)
-    {
-        var messages = await LoadMessagesAsync(cancellationToken);
-        var lastSummaryIndex = messages.FindLastIndex(m => m.AdditionalProperties?.ContainsKey(SummaryMetadataKey) == true);
-
-        if (lastSummaryIndex >= 0)
-        {
-            // Count messages after summary (excluding the summary itself)
-            return messages.Count - lastSummaryIndex - 1;
-        }
-
-        // No summary - count all messages
-        return messages.Count;
-    }
-
-    #endregion
-
     #region Token Counting (Shared Logic - Works for ALL Storage Backends)
 
     /// <summary>
@@ -253,16 +117,6 @@ public abstract class ConversationMessageStore : ChatMessageStore
     }
 
     /// <summary>
-    /// Calculates token count for messages after the last summary.
-    /// Only includes provider-reported tokens - no estimation.
-    /// </summary>
-    public virtual async Task<int> GetTokenCountAfterLastSummaryAsync(CancellationToken cancellationToken = default)
-    {
-        var messagesAfterSummary = await GetMessagesAfterLastSummaryAsync(cancellationToken);
-        return messagesAfterSummary.CalculateTotalTokens();
-    }
-
-    /// <summary>
     /// Gets detailed token statistics for the message store.
     /// Useful for debugging and monitoring context window usage.
     /// </summary>
@@ -270,18 +124,13 @@ public abstract class ConversationMessageStore : ChatMessageStore
     {
         var messages = await LoadMessagesAsync(cancellationToken);
         var systemMessages = messages.Where(m => m.Role == ChatRole.System).ToList();
-        var lastSummaryIndex = messages.FindLastIndex(m => m.AdditionalProperties?.ContainsKey(SummaryMetadataKey) == true);
-        var messagesAfterSummary = await GetMessagesAfterLastSummaryAsync(cancellationToken);
 
         return new TokenStatistics
         {
             TotalMessages = messages.Count,
             TotalTokens = messages.CalculateTotalTokens(),
             SystemMessageCount = systemMessages.Count,
-            SystemMessageTokens = systemMessages.CalculateTotalTokens(),
-            HasSummary = lastSummaryIndex >= 0,
-            MessagesAfterSummary = messagesAfterSummary.Count,
-            TokensAfterSummary = messagesAfterSummary.CalculateTotalTokens()
+            SystemMessageTokens = systemMessages.CalculateTotalTokens()
         };
     }
 
@@ -298,7 +147,4 @@ public record TokenStatistics
     public int TotalTokens { get; init; }
     public int SystemMessageCount { get; init; }
     public int SystemMessageTokens { get; init; }
-    public bool HasSummary { get; init; }
-    public int MessagesAfterSummary { get; init; }
-    public int TokensAfterSummary { get; init; }
 }

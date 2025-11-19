@@ -2,7 +2,7 @@ using Microsoft.Extensions.AI;
 using HPD.Agent.Internal.Filters;
 using System.Threading.Channels;
 using System.Runtime.CompilerServices;
-using CoreAgent = HPD.Agent.Agent;
+using CoreAgent = HPD.Agent.AgentCore;
 
 namespace HPD.Agent.AGUI;
 
@@ -25,12 +25,13 @@ public sealed class Agent
         ChatOptions? mergedOptions,
         List<IPromptFilter> promptFilters,
         ScopedFilterManager scopedFilterManager,
-        HPD.Agent.ErrorHandling.IProviderErrorHandler providerErrorHandler,
+        ErrorHandling.IProviderErrorHandler providerErrorHandler,
         IReadOnlyList<IPermissionFilter>? permissionFilters = null,
         IReadOnlyList<IAiFunctionFilter>? aiFunctionFilters = null,
         IReadOnlyList<IMessageTurnFilter>? messageTurnFilters = null,
         IServiceProvider? serviceProvider = null,
-        IEnumerable<IAgentEventObserver>? observers = null)
+        IEnumerable<IAgentEventObserver>? observers = null,
+        IChatClient? summarizerClient = null)
     {
         _core = new CoreAgent(
             config,
@@ -43,7 +44,8 @@ public sealed class Agent
             aiFunctionFilters,
             messageTurnFilters,
             serviceProvider,
-            observers);
+            observers,
+            summarizerClient);
 
         _converter = new AGUIEventConverter();
     }

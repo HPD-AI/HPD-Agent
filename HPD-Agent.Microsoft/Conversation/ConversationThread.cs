@@ -183,20 +183,40 @@ public sealed class ConversationThread : AgentThread
     }
 
     /// <summary>
-    /// Apply history reduction to the thread's message storage.
-    /// </summary>
-    public Task ApplyReductionAsync(ChatMessage summaryMessage, int removedCount, CancellationToken cancellationToken = default)
-    {
-        return _core.ApplyReductionAsync(summaryMessage, removedCount, cancellationToken);
-    }
-
-    /// <summary>
     /// Clear all messages from this thread.
     /// </summary>
     public Task ClearAsync(CancellationToken cancellationToken = default)
     {
         return _core.ClearAsync(cancellationToken);
     }
+
+    #endregion
+
+    #region Synchronous Message API (Delegated to Core)
+
+    /// <summary>
+    /// Gets a snapshot of all messages (delegated to core).
+    /// See core documentation for performance characteristics.
+    /// </summary>
+    public IReadOnlyList<ChatMessage> Messages => _core.Messages;
+
+    /// <summary>
+    /// Gets the number of messages (delegated to core).
+    /// See core documentation for performance characteristics.
+    /// </summary>
+    public int MessageCount => _core.MessageCount;
+
+    /// <summary>
+    /// Adds a message to the thread (delegated to core).
+    /// See core documentation for performance characteristics.
+    /// </summary>
+    public void AddMessage(ChatMessage message) => _core.AddMessage(message);
+
+    /// <summary>
+    /// Adds multiple messages to the thread (delegated to core).
+    /// See core documentation for performance characteristics.
+    /// </summary>
+    public void AddMessages(IEnumerable<ChatMessage> messages) => _core.AddMessages(messages);
 
     #endregion
 

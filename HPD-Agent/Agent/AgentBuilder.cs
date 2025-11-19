@@ -25,7 +25,8 @@ namespace HPD.Agent;
 internal record AgentBuildDependencies(
     IChatClient ClientToUse,
     ChatOptions? MergedOptions,
-    HPD.Agent.ErrorHandling.IProviderErrorHandler ErrorHandler);
+    HPD.Agent.ErrorHandling.IProviderErrorHandler ErrorHandler,
+    IChatClient? SummarizerClient = null);
 
 /// <summary>
 /// Builder for creating dual interface agents with sophisticated capabilities
@@ -676,12 +677,12 @@ public class AgentBuilder
     /// </summary>
     /// <param name="cancellationToken">Cancellation token for async operations</param>
     [RequiresUnreferencedCode("Agent building may use plugin registration methods that require reflection.")]
-    internal async Task<Agent> BuildCoreAgentAsync(CancellationToken cancellationToken = default)
+    internal async Task<AgentCore> BuildCoreAgentAsync(CancellationToken cancellationToken = default)
     {
         var buildData = await BuildDependenciesAsync(cancellationToken).ConfigureAwait(false);
 
         // Create protocol-agnostic core agent
-        return new Agent(
+        return new AgentCore(
             _config!,
             buildData.ClientToUse,
             buildData.MergedOptions,
@@ -692,7 +693,8 @@ public class AgentBuilder
             _globalFilters,
             _messageTurnFilters,
             _serviceProvider,
-            _observers);
+            _observers,
+            buildData.SummarizerClient);
     }
 
     /// <summary>
@@ -701,7 +703,7 @@ public class AgentBuilder
     /// Always uses sync validation for performance.
     /// </summary>
     [RequiresUnreferencedCode("Agent building may use plugin registration methods that require reflection.")]
-    internal Agent BuildCoreAgent()
+    internal AgentCore BuildCoreAgent()
     {
         var buildData = BuildDependenciesAsync(CancellationToken.None).GetAwaiter().GetResult();
 
@@ -710,7 +712,7 @@ public class AgentBuilder
             .ToImmutableHashSet(StringComparer.OrdinalIgnoreCase);
 
         // Create protocol-agnostic core agent
-        return new Agent(
+        return new AgentCore(
             _config!,
             buildData.ClientToUse,
             buildData.MergedOptions,
@@ -721,7 +723,8 @@ public class AgentBuilder
             _globalFilters,
             _messageTurnFilters,
             _serviceProvider,
-            _observers);
+            _observers,
+            buildData.SummarizerClient);
     }
 
     /// <summary>
@@ -732,11 +735,11 @@ public class AgentBuilder
     public async Task<AGUI.Agent> BuildAGUIAsync(CancellationToken cancellationToken = default)
     {
         var buildData = await BuildDependenciesAsync(cancellationToken).ConfigureAwait(false);
-        
+
         // Set explicitly registered plugins in config for scoping manager
         _config.ExplicitlyRegisteredPlugins = _explicitlyRegisteredPlugins
             .ToImmutableHashSet(StringComparer.OrdinalIgnoreCase);
-        
+
         // Wrap in AGUI protocol adapter
         return new AGUI.Agent(
             _config!,
@@ -749,7 +752,8 @@ public class AgentBuilder
             _globalFilters,
             _messageTurnFilters,
             _serviceProvider,
-            _observers);
+            _observers,
+            buildData.SummarizerClient);
     }
 
     /// <summary>
@@ -776,22 +780,23 @@ public class AgentBuilder
             _globalFilters,
             _messageTurnFilters,
             _serviceProvider,
-            _observers);
+            _observers,
+            buildData.SummarizerClient);
     }
 
     /// <summary>
     /// Core build logic shared between sync and async paths
     /// </summary>
-    internal async Task<Agent> BuildCoreAsync(CancellationToken cancellationToken)
+    internal async Task<AgentCore> BuildCoreAsync(CancellationToken cancellationToken)
     {
         var buildData = await BuildDependenciesAsync(cancellationToken).ConfigureAwait(false);
-        
+
         // Set explicitly registered plugins in config for scoping manager
         _config.ExplicitlyRegisteredPlugins = _explicitlyRegisteredPlugins
             .ToImmutableHashSet(StringComparer.OrdinalIgnoreCase);
-        
+
         // Create agent using the new, cleaner constructor with AgentConfig
-        var agent = new Agent(
+        var agent = new AgentCore(
             _config,
             buildData.ClientToUse,
             buildData.MergedOptions,
@@ -801,7 +806,9 @@ public class AgentBuilder
             _permissionFilters,
             _globalFilters,
             _messageTurnFilters,
-            _serviceProvider);
+            _serviceProvider,
+            null,
+            buildData.SummarizerClient);
 
         return agent;
     }
@@ -1103,11 +1110,32 @@ public class AgentBuilder
 
         var mergedOptions = MergePluginFunctions(_config.Provider?.DefaultChatOptions, pluginFunctions);
 
+        // Create custom summarizer client if configured
+        IChatClient? summarizerClient = null;
+        if (_config.HistoryReduction?.SummarizerProvider != null)
+        {
+            var summarizerProviderKey = _config.HistoryReduction.SummarizerProvider.ProviderKey;
+            var summarizerProviderFeatures = _providerRegistry.GetProvider(summarizerProviderKey);
+
+            if (summarizerProviderFeatures == null)
+            {
+                var availableProviders = string.Join(", ", _providerRegistry.GetRegisteredProviders());
+                throw new InvalidOperationException(
+                    $"Unknown provider for summarization: '{summarizerProviderKey}'. " +
+                    $"Available providers: [{availableProviders}]");
+            }
+
+            summarizerClient = summarizerProviderFeatures.CreateChatClient(
+                _config.HistoryReduction.SummarizerProvider,
+                _serviceProvider);
+        }
+
         // Return dependencies instead of creating agent
         return new AgentBuildDependencies(
             clientToUse,
             mergedOptions,
-            errorHandler);
+            errorHandler,
+            summarizerClient);
     }
 
     /// <summary>

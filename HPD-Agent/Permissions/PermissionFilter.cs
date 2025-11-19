@@ -177,7 +177,7 @@ internal class PermissionFilter : IPermissionFilter
     /// Determines if we should check for continuation permission.
     /// Only triggers when we've actually exceeded the limit.
     /// </summary>
-    private static bool ShouldCheckContinuation(AgentLoopState state, Agent agent)
+    private static bool ShouldCheckContinuation(AgentLoopState state, AgentCore agent)
     {
         return state.Iteration >= agent.MaxFunctionCalls;
     }

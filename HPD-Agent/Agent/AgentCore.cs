@@ -52,9 +52,10 @@ namespace HPD.Agent;
 /// // The agent is stateless and can serve both threads concurrently
 /// </code>
 /// </summary>
-internal sealed class Agent
+internal sealed class AgentCore
 {
     private readonly IChatClient _baseClient;
+    private readonly IChatClient? _summarizerClient;
     private readonly string _name;
     private readonly ScopedFilterManager? _scopedFilterManager;
     private readonly int _maxFunctionCalls;
@@ -75,7 +76,7 @@ internal sealed class Agent
     // Used for event bubbling from nested agents to their orchestrator
     // When an agent calls another agent (via AsAIFunction), this tracks the top-level orchestrator
     // Flows automatically through AsyncLocal propagation across nested async calls
-    private static readonly AsyncLocal<Agent?> _rootAgent = new();
+    private static readonly AsyncLocal<AgentCore?> _rootAgent = new();
 
     // AsyncLocal storage for current conversation thread (flows across async calls)
     // Provides access to thread context (project, documents, etc.) throughout the agent execution
@@ -160,7 +161,7 @@ internal sealed class Agent
     /// This is set automatically by RunAgenticLoopInternal when starting execution
     /// and is used by BidirectionalEventCoordinator for event bubbling.
     /// </remarks>
-    public static Agent? RootAgent
+    public static AgentCore? RootAgent
     {
         get => _rootAgent.Value;
         internal set => _rootAgent.Value = value;
@@ -255,7 +256,7 @@ internal sealed class Agent
     /// <summary>
     /// Initializes a new Agent instance from an AgentConfig object
     /// </summary>
-    public Agent(
+    public AgentCore(
         AgentConfig config,
         IChatClient baseClient,
         ChatOptions? mergedOptions,
@@ -266,10 +267,12 @@ internal sealed class Agent
         IReadOnlyList<IAiFunctionFilter>? aiFunctionFilters = null,
         IReadOnlyList<IMessageTurnFilter>? messageTurnFilters = null,
         IServiceProvider? serviceProvider = null,
-        IEnumerable<IAgentEventObserver>? observers = null)
+        IEnumerable<IAgentEventObserver>? observers = null,
+        IChatClient? summarizerClient = null)
     {
         Config = config ?? throw new ArgumentNullException(nameof(config));
         _baseClient = baseClient ?? throw new ArgumentNullException(nameof(baseClient));
+        _summarizerClient = summarizerClient;
         _name = config.Name ?? "Agent"; // Default to "Agent" to prevent null dictionary key exceptions
         _scopedFilterManager = scopedFilterManager ?? throw new ArgumentNullException(nameof(scopedFilterManager));
         _maxFunctionCalls = config.MaxAgenticIterations;
@@ -367,7 +370,7 @@ internal sealed class Agent
         // Initialize observer health tracker if observers are configured
         if (_observers.Count > 0 && loggerFactory != null)
         {
-            _observerErrorLogger = loggerFactory.CreateLogger<Agent>();
+            _observerErrorLogger = loggerFactory.CreateLogger<AgentCore>();
 
             var meterFactory = serviceProvider?.GetService(typeof(IMeterFactory)) as IMeterFactory;
             if (meterFactory != null)
@@ -718,7 +721,7 @@ internal sealed class Agent
                     (effectiveMessages, effectiveOptions, reductionMetadata) = prep;
 
                     // If PrepareMessagesAsync performed a NEW reduction (cache miss), capture it
-                    if (reductionMetadata?.SummaryMessage != null && !usedCachedReduction)
+                    if (!string.IsNullOrEmpty(reductionMetadata?.SummaryText) && !usedCachedReduction)
                     {
                         // ❌ CACHE MISS: New reduction was created by PrepareMessagesAsync
                         // Extract reduction state from results and cache it
@@ -727,25 +730,20 @@ internal sealed class Agent
                         {
                             var messagesList = messages.ToList();
                             var summarizedUpToIndex = reductionMetadata.MessagesRemovedCount;
-                            var summaryMsg = reductionMetadata.SummaryMessage;
 
-                            if (!string.IsNullOrEmpty(summaryMsg.Text))
+                            reductionToUse = HistoryReductionState.Create(
+                                messagesList,
+                                reductionMetadata.SummaryText,
+                                summarizedUpToIndex,
+                                historyConfig.TargetMessageCount,
+                                historyConfig.SummarizationThreshold ?? 5);
+
+                            state = state.WithReduction(reductionToUse);
+
+                            // Cache for next run
+                            if (thread != null)
                             {
-                                reductionToUse = HistoryReductionState.Create(
-                                    messagesList,
-                                    summaryMsg.Text,
-                                    summarizedUpToIndex,
-                                    historyConfig.TargetMessageCount,
-                                    historyConfig.SummarizationThreshold ?? 5);
-
-                                state = state.WithReduction(reductionToUse);
-
-                                // Cache for next run
-                                if (thread != null)
-                                {
-                                    thread.LastReduction = reductionToUse;
-                                }
-
+                                thread.LastReduction = reductionToUse;
                             }
                         }
                     }
@@ -761,7 +759,7 @@ internal sealed class Agent
                 reductionCompletionSource.TrySetResult(reductionMetadata);
 
                 // Emit cache miss event if reduction was performed
-                if (reductionMetadata?.SummaryMessage != null && !usedCachedReduction && reductionToUse != null)
+                if (!string.IsNullOrEmpty(reductionMetadata?.SummaryText) && !usedCachedReduction && reductionToUse != null)
                 {
                     yield return new InternalHistoryReductionCacheEvent(
                         _name,
@@ -2146,13 +2144,15 @@ Best practices:
     }
 
     /// <summary>
-    /// Creates a SummarizingChatReducer with custom configuration
+    /// Creates a SummarizingChatReducer with custom configuration.
+    /// Supports using a separate, cheaper model for summarization (cost optimization).
     /// </summary>
     private SummarizingChatReducer CreateSummarizingReducer(IChatClient baseClient, HistoryReductionConfig historyConfig, AgentConfig agentConfig)
     {
-        // Use the base client for summarization
-        // Note: Custom summarizer provider configuration has been removed
-        IChatClient summarizerClient = baseClient;
+        // Determine which chat client to use for summarization
+        // If a custom summarizer client was provided (via AgentBuilder), use it
+        // Otherwise, fall back to the base client
+        var summarizerClient = _summarizerClient ?? baseClient;
 
         var reducer = new SummarizingChatReducer(
             summarizerClient,
@@ -3808,7 +3808,7 @@ internal static class ContentExtractor
 /// </summary>
 internal class FunctionCallProcessor
 {
-    private readonly Agent _agent; // NEW: Reference to agent for filter event coordination
+    private readonly AgentCore _agent; // NEW: Reference to agent for filter event coordination
     private readonly ScopedFilterManager? _scopedFilterManager;
     private readonly PermissionManager _permissionManager;
     private readonly IReadOnlyList<IAiFunctionFilter> _aiFunctionFilters;
@@ -3818,7 +3818,7 @@ internal class FunctionCallProcessor
     private readonly AgenticLoopConfig? _agenticLoopConfig;
 
     public FunctionCallProcessor(
-        Agent agent, // NEW: Added parameter
+        AgentCore agent, // NEW: Added parameter
         ScopedFilterManager? scopedFilterManager,
         PermissionManager permissionManager,
         IReadOnlyList<IAiFunctionFilter>? aiFunctionFilters,
@@ -3998,7 +3998,7 @@ internal class FunctionCallProcessor
 
         // Set AsyncLocal function invocation context for ambient access
         // Store the full context so plugins can access ALL capabilities (Emit, WaitForResponseAsync, etc.)
-        Agent.CurrentFunctionContext = context;
+        AgentCore.CurrentFunctionContext = context;
 
         var retryExecutor = new FunctionRetryExecutor(_errorHandlingConfig);
 
@@ -4023,7 +4023,7 @@ internal class FunctionCallProcessor
         finally
         {
             // Always clear the context after function completes
-            Agent.CurrentFunctionContext = null;
+            AgentCore.CurrentFunctionContext = null;
         }
     }
 
@@ -4323,13 +4323,12 @@ internal class MessageProcessor
 
             // Create HistoryReductionState from metadata
             var summarizedUpToIndex = reductionMetadata.MessagesRemovedCount;
-            var summaryMsg = reductionMetadata.SummaryMessage;
 
-            if (summaryMsg?.Text != null && !string.IsNullOrEmpty(summaryMsg.Text))
+            if (!string.IsNullOrEmpty(reductionMetadata.SummaryText))
             {
                 activeReduction = HistoryReductionState.Create(
                     messagesForLLM,
-                    summaryMsg.Text,
+                    reductionMetadata.SummaryText,
                     summarizedUpToIndex,
                     _reductionConfig?.TargetMessageCount ?? 20,
                     _reductionConfig?.SummarizationThreshold ?? 5);
@@ -4376,11 +4375,7 @@ internal class MessageProcessor
         {
             var messagesList = effectiveMessages.ToList();
 
-            // Check for existing summary marker (cache optimization)
-            var lastSummaryIndex = messagesList.FindLastIndex(m =>
-                m.AdditionalProperties?.ContainsKey(HistoryReductionConfig.SummaryMetadataKey) == true);
-
-            bool shouldReduce = ShouldTriggerReduction(messagesList, lastSummaryIndex);
+            bool shouldReduce = ShouldTriggerReduction(messagesList);
 
             ReductionMetadata? reductionMetadata = null;
 
@@ -4392,9 +4387,12 @@ internal class MessageProcessor
                 {
                     var reducedList = reduced.ToList();
 
-                    // Extract summary message
-                    var summaryMsg = reducedList.FirstOrDefault(m =>
-                        m.AdditionalProperties?.ContainsKey(HistoryReductionConfig.SummaryMetadataKey) == true);
+                    // Extract summary message by position (not marker - Microsoft's reducer doesn't add markers to output)
+                    // Microsoft.Extensions.AI.SummarizingChatReducer returns: [System?] [Summary?] [Unsummarized messages...]
+                    // The summary is always the first Assistant message after any System messages
+                    var summaryMsg = reducedList
+                        .SkipWhile(m => m.Role == ChatRole.System)
+                        .FirstOrDefault(m => m.Role == ChatRole.Assistant);
 
                     if (summaryMsg != null)
                     {
@@ -4404,7 +4402,7 @@ internal class MessageProcessor
                         // Return metadata directly for thread-safety
                         reductionMetadata = new ReductionMetadata
                         {
-                            SummaryMessage = summaryMsg,
+                            SummaryText = summaryMsg.Text,
                             MessagesRemovedCount = removedCount
                         };
                     }
@@ -4426,25 +4424,26 @@ internal class MessageProcessor
     /// <summary>
     /// Determines if history reduction should be triggered based on configured thresholds.
     /// Implements priority system: Percentage > Absolute Tokens > Message Count.
+    /// Cache awareness is handled upstream by HistoryReductionState.IsValidFor().
     /// </summary>
-    private bool ShouldTriggerReduction(List<ChatMessage> messagesList, int lastSummaryIndex)
+    private bool ShouldTriggerReduction(List<ChatMessage> messagesList)
     {
         if (_reductionConfig == null) return false;
 
         // PRIORITY 1: Percentage-based (when configured)
         if (_reductionConfig.TokenBudgetTriggerPercentage.HasValue && _reductionConfig.ContextWindowSize.HasValue)
         {
-            return ShouldReduceByPercentage(messagesList, lastSummaryIndex);
+            return ShouldReduceByPercentage(messagesList);
         }
 
         // PRIORITY 2: Absolute token budget (when configured)
         if (_reductionConfig.MaxTokenBudget.HasValue)
         {
-            return ShouldReduceByTokens(messagesList, lastSummaryIndex);
+            return ShouldReduceByTokens(messagesList);
         }
 
-        // PRIORITY 3: Message-based (default, existing logic)
-        return ShouldReduceByMessages(messagesList, lastSummaryIndex);
+        // PRIORITY 3: Message-based (default)
+        return ShouldReduceByMessages(messagesList);
     }
 
     /// <summary>
@@ -4453,7 +4452,7 @@ internal class MessageProcessor
     /// See docs/NEED_FOR_TOKEN_FLOW_ARCHITECTURE_MAP.md for details.
     /// Falls back to message-count reduction (Priority 3).
     /// </summary>
-    private bool ShouldReduceByPercentage(List<ChatMessage> messagesList, int lastSummaryIndex)
+    private bool ShouldReduceByPercentage(List<ChatMessage> messagesList)
     {
         // TODO: Token tracking not implemented - requires architecture map
         // This would track ephemeral context (system prompts, RAG docs, memory)
@@ -4467,7 +4466,7 @@ internal class MessageProcessor
     /// See docs/NEED_FOR_TOKEN_FLOW_ARCHITECTURE_MAP.md for details.
     /// Falls back to message-count reduction (Priority 3).
     /// </summary>
-    private bool ShouldReduceByTokens(List<ChatMessage> messagesList, int lastSummaryIndex)
+    private bool ShouldReduceByTokens(List<ChatMessage> messagesList)
     {
         // TODO: Token tracking not implemented - requires architecture map
         // This would track ephemeral context (system prompts, RAG docs, memory)
@@ -4477,24 +4476,15 @@ internal class MessageProcessor
 
     /// <summary>
     /// Checks if reduction should be triggered based on message count.
-    /// Preserves existing behavior for backward compatibility.
+    /// Simple total count check - cache awareness is handled upstream by HistoryReductionState.IsValidFor().
     /// </summary>
-    private bool ShouldReduceByMessages(List<ChatMessage> messagesList, int lastSummaryIndex)
+    private bool ShouldReduceByMessages(List<ChatMessage> messagesList)
     {
         var targetCount = _reductionConfig!.TargetMessageCount;
         var threshold = _reductionConfig.SummarizationThreshold ?? 5;
 
-        if (lastSummaryIndex >= 0)
-        {
-            // Summary found - only count messages AFTER the summary
-            var messagesAfterSummary = messagesList.Count - lastSummaryIndex - 1;
-            return messagesAfterSummary > (targetCount + threshold);
-        }
-        else
-        {
-            // No summary found - check total message count
-            return messagesList.Count > (targetCount + threshold);
-        }
+        // Simple total count check (cache awareness handled by IsValidFor upstream)
+        return messagesList.Count > (targetCount + threshold);
     }
 
     // ✅ REMOVED: PrependSystemInstructions method
@@ -4808,14 +4798,14 @@ internal class AgentTurn
 internal record ReductionMetadata
 {
     /// <summary>
-    /// The summary message that should be inserted into conversation history.
-    /// Contains the __summary__ marker in AdditionalProperties.
+    /// The summary text content generated by the reducer.
+    /// This is extracted from the summary message returned by the reducer.
     /// </summary>
-    public ChatMessage? SummaryMessage { get; init; }
+    public string? SummaryText { get; init; }
 
     /// <summary>
     /// Number of messages that were removed during reduction.
-    /// Conversation uses this to know how many messages to remove from storage.
+    /// Used to calculate the reduction state for caching.
     /// </summary>
     public int MessagesRemovedCount { get; init; }
 }
@@ -4869,7 +4859,7 @@ internal class StreamingTurnResult
 /// </summary>
 internal class ToolScheduler
 {
-    private readonly Agent _agent;
+    private readonly AgentCore _agent;
     private readonly FunctionCallProcessor _functionCallProcessor;
     private readonly PermissionManager _permissionManager;
     private readonly AgentConfig? _config;
@@ -4884,7 +4874,7 @@ internal class ToolScheduler
     /// <param name="config">Agent configuration for execution settings</param>
     /// <param name="scopingManager">Unified scoping manager for plugin and skill container detection</param>
     public ToolScheduler(
-        Agent agent,
+        AgentCore agent,
         FunctionCallProcessor functionCallProcessor,
         PermissionManager permissionManager,
         AgentConfig? config,
@@ -5403,7 +5393,7 @@ internal class PermissionManager
         FunctionCallContent functionCall,
         AIFunction? function,
         AgentLoopState state,
-        Agent agent,
+        AgentCore agent,
         CancellationToken cancellationToken)
     {
         // Null checks
@@ -5469,7 +5459,7 @@ internal class PermissionManager
         IEnumerable<FunctionCallContent> toolRequests,
         ChatOptions? options,
         AgentLoopState state,
-        Agent agent,
+        AgentCore agent,
         CancellationToken cancellationToken)
     {
         var approved = new List<FunctionCallContent>();
@@ -7004,7 +6994,7 @@ internal class FunctionInvocationContext
     /// Reference to the agent for response coordination.
     /// Lifetime: Set by ProcessFunctionCallsAsync, valid for entire filter execution.
     /// </summary>
-    internal Agent? Agent { get; set; }
+    internal AgentCore? Agent { get; set; }
 
     /// <summary>
     /// Emits an event that will be yielded by RunAgenticLoopInternal.
@@ -7033,7 +7023,7 @@ internal class FunctionInvocationContext
 
         // If we're a nested agent (RootAgent is set and different from us), bubble to root
         // RootAgent is a static property on the Agent class
-        var rootAgent = HPD.Agent.Agent.RootAgent;
+        var rootAgent = HPD.Agent.AgentCore.RootAgent;
         if (rootAgent != null && rootAgent != Agent)
         {
             rootAgent.EventCoordinator.Emit(evt);

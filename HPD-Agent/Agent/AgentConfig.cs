@@ -767,12 +767,6 @@ public class HistoryReductionConfig
     public ProviderConfig? SummarizerProvider { get; set; }
 
     /// <summary>
-    /// Metadata key used to mark summary messages in chat history.
-    /// Summary messages are identified by this key in their Metadata dictionary.
-    /// </summary>
-    public const string SummaryMetadataKey = "__summary__";
-
-    /// <summary>
     /// Whether to use a single comprehensive summary (re-summarize everything including old summary)
     /// or maintain layered summaries (incremental summarization).
     /// Default is true (single summary for better quality, following Semantic Kernel pattern).

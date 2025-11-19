@@ -11,13 +11,14 @@ $REPOS = @(
     "https://github.com/langchain-ai/langgraph.git",
     "https://github.com/pydantic/pydantic-ai.git",
     "https://github.com/strands-agents/sdk-python.git",
-    "https://github.com/ag-ui-protocol/ag-ui.git",
     "https://github.com/google-gemini/gemini-cli.git",
     "https://github.com/openai/codex.git",
     "https://github.com/langchain-ai/langchain.git",
     "https://github.com/microsoft/vscode-copilot-chat.git",
     "https://github.com/Aider-AI/aider.git",
-    "https://github.com/microsoft/kernel-memory.git"
+    "https://github.com/microsoft/kernel-memory.git",
+    "https://github.com/CopilotKit/CopilotKit.git",
+    "https://github.com/ckpearson/ag-ui.git"
 
     # Add more repo URLs as needed
 )

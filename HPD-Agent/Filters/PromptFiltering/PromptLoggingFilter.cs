@@ -1,0 +1,119 @@
+using System.Collections.Immutable;
+using System.Text;
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
+
+namespace HPD.Agent.Internal.Filters;
+
+/// <summary>
+/// Logs the final instructions after all filters have executed.
+/// MUST run LAST in the filter chain to capture the complete final state.
+/// Logs only: final instructions and active filters that modified them.
+/// </summary>
+internal class PromptLoggingFilter : IPromptFilter
+{
+    private readonly ILogger? _logger;
+    private static int _callCounter = 0;
+
+    public PromptLoggingFilter(ILogger? logger = null)
+    {
+        _logger = logger;
+    }
+
+    public async Task<IEnumerable<ChatMessage>> InvokeAsync(
+        PromptFilterContext context,
+        Func<PromptFilterContext, Task<IEnumerable<ChatMessage>>> next)
+    {
+        // Capture full stack trace to understand the call chain
+        var stackTrace = new System.Diagnostics.StackTrace(true);
+        var relevantFrames = new System.Collections.Generic.List<string>();
+
+        // Find frames that are part of our codebase (not async infrastructure)
+        for (int i = 0; i < Math.Min(stackTrace.FrameCount, 15); i++)
+        {
+            var frame = stackTrace.GetFrame(i);
+            var method = frame?.GetMethod();
+            if (method != null)
+            {
+                var declaringType = method.DeclaringType?.FullName ?? "Unknown";
+                // Skip async infrastructure and filter our own types
+                if (!declaringType.Contains("AsyncMethodBuilder") &&
+                    !declaringType.Contains("TaskAwaiter") &&
+                    (declaringType.Contains("HPD.Agent") || declaringType.Contains("MessageProcessor")))
+                {
+                    relevantFrames.Add($"{method.DeclaringType?.Name}.{method.Name}");
+                }
+            }
+        }
+
+        var callChain = relevantFrames.Count > 0
+            ? string.Join(" → ", relevantFrames.Take(3))
+            : "Unknown";
+
+        // Call next filters first (this runs last, so next() completes the pipeline)
+        var messages = await next(context);
+
+        // Now log the final instructions after all filters have run
+        LogInstructions(context, callChain);
+
+        return messages;
+    }
+
+    private void LogInstructions(PromptFilterContext context, string callChain)
+    {
+        var callNumber = System.Threading.Interlocked.Increment(ref _callCounter);
+
+        // Track ChatOptions object identity to see if same instance is reused
+        var optionsHashCode = context.Options?.GetHashCode().ToString("X8") ?? "null";
+
+        var sb = new StringBuilder();
+        sb.AppendLine("═══════════════════════════════════════════════════════");
+        sb.AppendLine($"📋 FINAL INSTRUCTIONS (After All Filters) - Call #{callNumber}");
+        sb.AppendLine($"🔍 Call chain: {callChain}");
+        sb.AppendLine($"📨 Message count: {context.Messages.Count()}");
+        sb.AppendLine($"🆔 ChatOptions hash: {optionsHashCode}");
+        sb.AppendLine("═══════════════════════════════════════════════════════");
+
+        // Log active skills if present (indicates SkillInstructionPromptFilter ran)
+        var expandedSkills = context.GetExpandedSkills();
+        if (expandedSkills != null && expandedSkills.Count > 0)
+        {
+            sb.AppendLine($"🎯 Active Skills: {string.Join(", ", expandedSkills.OrderBy(s => s))}");
+        }
+
+        sb.AppendLine();
+
+        // Log instructions
+        if (!string.IsNullOrEmpty(context.Options?.Instructions))
+        {
+            sb.AppendLine(context.Options.Instructions);
+        }
+        else
+        {
+            sb.AppendLine("(no instructions)");
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("═══════════════════════════════════════════════════════");
+
+        LogMessage(sb.ToString());
+    }
+
+    private void LogMessage(string message)
+    {
+        if (_logger != null)
+        {
+            _logger.LogInformation(message);
+        }
+        else
+        {
+            Console.WriteLine(message);
+        }
+    }
+
+    public Task PostInvokeAsync(PostInvokeContext context, CancellationToken cancellationToken)
+    {
+        // No post-processing needed
+        return Task.CompletedTask;
+    }
+}

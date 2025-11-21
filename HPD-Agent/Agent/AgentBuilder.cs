@@ -710,6 +710,21 @@ public class AgentBuilder
         _config.ExplicitlyRegisteredPlugins = _explicitlyRegisteredPlugins
             .ToImmutableHashSet(StringComparer.OrdinalIgnoreCase);
 
+        // Set global config for source-generated code to access
+        AgentConfig.GlobalConfig = _config;
+
+        // Register SkillInstructionPromptFilter FIRST (highest priority)
+        // Filter always runs - it injects skill instructions to system prompt
+        if (_pluginManager.GetPluginRegistrations().Any())
+        {
+            _promptFilters.Insert(0, new HPD.Agent.Internal.Filters.SkillInstructionPromptFilter());
+        }
+
+        // Register PromptLoggingFilter LAST to capture final instructions after all filters
+        // Always register - falls back to Console.WriteLine if no logger available
+        var logger = _logger?.CreateLogger<HPD.Agent.Internal.Filters.PromptLoggingFilter>();
+        _promptFilters.Add(new HPD.Agent.Internal.Filters.PromptLoggingFilter(logger));
+
         // Create protocol-agnostic core agent
         return new AgentCore(
             _config!,
@@ -1469,6 +1484,30 @@ public class AgentBuilder
                 foreach (var function in functions)
                 {
                     _scopedFilterManager.RegisterFunctionPlugin(function.Name, pluginName);
+
+                    // Register skill mappings
+                    var isSkill = function.AdditionalProperties?.TryGetValue("IsSkill", out var isSkillValue) == true
+                                  && isSkillValue is bool s && s;
+
+                    if (isSkill)
+                    {
+                        // Extract referenced functions and map them to this skill
+                        if (function.AdditionalProperties?.TryGetValue("ReferencedFunctions", out var refFuncsValue) == true
+                            && refFuncsValue is string[] referencedFunctions)
+                        {
+                            foreach (var refFunc in referencedFunctions)
+                            {
+                                // Format: "PluginName.FunctionName"
+                                var parts = refFunc.Split('.');
+                                if (parts.Length == 2)
+                                {
+                                    var functionName = parts[1];
+                                    // Map the referenced function to this skill
+                                    _scopedFilterManager.RegisterFunctionSkill(functionName, function.Name);
+                                }
+                            }
+                        }
+                    }
                 }
             }
             catch (Exception)

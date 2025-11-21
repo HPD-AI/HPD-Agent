@@ -79,10 +79,10 @@ static Task<(ConversationThread, AgentCore)> CreateAIAssistant(ILoggerFactory lo
     // ✨ BUILD CORE AGENT - Direct access to internal Agent class
     // Auto-loads from appsettings.json, environment variables, and user secrets
     var agent = new AgentBuilder(agentConfig)
-        .WithPlanMode()  // ✨ Financial analysis plugin (explicitly registered)  // ✨ Financial analysis skills (that reference the plugin)
-        .WithPlugin<FinancialAnalysisPlugin>()
-        .WithPermissions() // ✨ NEW: Unified permission filter - events handled in streaming loop
         .WithLogging()
+        .WithPlanMode()  // ✨ Financial analysis plugin (explicitly registered)  // ✨ Financial analysis skills (that reference the plugin)
+        .WithPlugin<FinancialAnalysisSkills>()
+        .WithPermissions() // ✨ NEW: Unified permission filter - events handled in streaming loop
         .BuildCoreAgent();  // ✨ Build CORE agent (internal access via InternalsVisibleTo)
 
     // 💬 Create thread using agent directly

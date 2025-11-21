@@ -1,0 +1,10 @@
+{
+  "DocumentId": "01-quickliquidityanalysis-sop",
+  "Name": "01-quickliquidityanalysis-sop",
+  "Description": "Step-by-step procedure for analyzing liquidity ratios",
+  "SizeBytes": 7297,
+  "ContentHash": "sha256:b1ff5bdd4c889049411c81b422a67b4f66a1861462a7247dc7d8aad23c7b0bc8",
+  "Version": 1,
+  "CreatedAt": "2025-11-21T02:26:46.234478Z",
+  "LastModified": "2025-11-21T02:26:46.234488Z"
+}

@@ -13,6 +13,8 @@ internal enum FilterScope
     Global,
     /// <summary>Filter applies to all functions from a specific plugin</summary>
     Plugin,
+    /// <summary>Filter applies to skill container and functions called by a specific skill</summary>
+    Skill,
     /// <summary>Filter applies to a specific function only</summary>
     Function
 }
@@ -37,13 +39,22 @@ internal class ScopedFilter
     /// <summary>
     /// Determines if this filter should be applied to the given function
     /// </summary>
-    public bool AppliesTo(string functionName, string? pluginTypeName)
+    /// <param name="functionName">The name of the function being invoked</param>
+    /// <param name="pluginTypeName">The plugin that contains this function (optional)</param>
+    /// <param name="skillName">The skill context (if function is called by a skill)</param>
+    /// <param name="isSkillContainer">Whether this function is a skill container itself</param>
+    public bool AppliesTo(string functionName, string? pluginTypeName = null, string? skillName = null, bool isSkillContainer = false)
     {
         return Scope switch
         {
             FilterScope.Global => true,
-            FilterScope.Plugin => !string.IsNullOrEmpty(pluginTypeName) && 
+            FilterScope.Plugin => !string.IsNullOrEmpty(pluginTypeName) &&
                                  string.Equals(Target, pluginTypeName, StringComparison.Ordinal),
+            FilterScope.Skill =>
+                // Apply if this function IS the skill container itself
+                (isSkillContainer && string.Equals(Target, functionName, StringComparison.Ordinal)) ||
+                // OR if this function is called FROM this skill (via mapping)
+                (!string.IsNullOrEmpty(skillName) && string.Equals(Target, skillName, StringComparison.Ordinal)),
             FilterScope.Function => string.Equals(Target, functionName, StringComparison.Ordinal),
             _ => false
         };
@@ -58,6 +69,7 @@ internal class ScopedFilterManager
 {
     private readonly List<ScopedFilter> _scopedFilters = new();
     private readonly Dictionary<string, string> _functionToPluginMap = new();
+    private readonly Dictionary<string, string> _functionToSkillMap = new();
     
     /// <summary>
     /// Adds a filter with the specified scope
@@ -74,26 +86,52 @@ internal class ScopedFilterManager
     {
         _functionToPluginMap[functionName] = pluginTypeName;
     }
+
+    /// <summary>
+    /// Registers a mapping from a function to the skill that references it.
+    /// Used for fallback skill lookup when skill context is not explicitly provided.
+    /// </summary>
+    /// <param name="functionName">The function name (e.g., "ReadFile")</param>
+    /// <param name="skillName">The skill that references this function (e.g., "analyze_codebase")</param>
+    public void RegisterFunctionSkill(string functionName, string skillName)
+    {
+        _functionToSkillMap[functionName] = skillName;
+    }
     
     /// <summary>
     /// Gets all filters that apply to the specified function, ordered by scope priority:
-    /// 1. Function-specific filters
-    /// 2. Plugin-specific filters  
-    /// 3. Global filters
+    /// 1. Global filters (0)
+    /// 2. Plugin-specific filters (1)
+    /// 3. Skill-specific filters (2)
+    /// 4. Function-specific filters (3)
     /// </summary>
-    public IEnumerable<IAiFunctionFilter> GetApplicableFilters(string functionName, string? pluginTypeName = null)
+    /// <param name="functionName">The name of the function being invoked</param>
+    /// <param name="pluginTypeName">The plugin that contains this function (optional)</param>
+    /// <param name="skillName">The skill context (if function is called by a skill)</param>
+    /// <param name="isSkillContainer">Whether this function is a skill container itself</param>
+    public IEnumerable<IAiFunctionFilter> GetApplicableFilters(
+        string functionName,
+        string? pluginTypeName = null,
+        string? skillName = null,
+        bool isSkillContainer = false)
     {
-        // If no plugin type provided, try to look it up
+        // Fallback lookup for plugin (existing)
         if (string.IsNullOrEmpty(pluginTypeName))
         {
             _functionToPluginMap.TryGetValue(functionName, out pluginTypeName);
         }
-        
+
+        // Fallback lookup for skill
+        if (string.IsNullOrEmpty(skillName))
+        {
+            _functionToSkillMap.TryGetValue(functionName, out skillName);
+        }
+
         var applicableFilters = _scopedFilters
-            .Where(sf => sf.AppliesTo(functionName, pluginTypeName))
-            .OrderBy(sf => sf.Scope) // Function(2) -> Plugin(1) -> Global(0)
+            .Where(sf => sf.AppliesTo(functionName, pluginTypeName, skillName, isSkillContainer))
+            .OrderBy(sf => sf.Scope) // Global(0) → Plugin(1) → Skill(2) → Function(3)
             .Select(sf => sf.Filter);
-            
+
         return applicableFilters;
     }
     
@@ -121,19 +159,25 @@ internal class BuilderScopeContext
 {
     public FilterScope CurrentScope { get; set; } = FilterScope.Global;
     public string? CurrentTarget { get; set; }
-    
+
     public void SetGlobalScope()
     {
         CurrentScope = FilterScope.Global;
         CurrentTarget = null;
     }
-    
+
     public void SetPluginScope(string pluginTypeName)
     {
         CurrentScope = FilterScope.Plugin;
         CurrentTarget = pluginTypeName;
     }
-    
+
+    public void SetSkillScope(string skillName)
+    {
+        CurrentScope = FilterScope.Skill;
+        CurrentTarget = skillName;
+    }
+
     public void SetFunctionScope(string functionName)
     {
         CurrentScope = FilterScope.Function;

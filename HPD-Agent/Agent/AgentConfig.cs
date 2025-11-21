@@ -11,6 +11,12 @@ namespace HPD.Agent;
 /// </summary>
 public class AgentConfig
 {
+    /// <summary>
+    /// Global configuration instance used by source-generated code.
+    /// Set by AgentBuilder during agent construction.
+    /// </summary>
+    internal static AgentConfig? GlobalConfig { get; set; }
+
     public string Name { get; set; } = "HPD-Agent";
     public string SystemInstructions { get; set; } = "You are a helpful assistant.";
     
@@ -881,6 +887,26 @@ public class MistralSettings
 }
 
 /// <summary>
+/// Controls where skill instructions are injected during skill execution.
+/// Prompt filter ALWAYS injects to system prompt - this controls whether to ALSO include in function result.
+/// </summary>
+public enum SkillInstructionMode
+{
+    /// <summary>
+    /// Instructions only in system prompt via prompt filter (function result has activation message only).
+    /// Most token efficient - instructions appear once in system prompt.
+    /// </summary>
+    PromptFilterOnly,
+
+    /// <summary>
+    /// Instructions in BOTH system prompt (via filter) AND function result (redundant double emphasis).
+    /// Most effective for LLM compliance, but uses more tokens.
+    /// Recommended for critical skills that must be executed completely.
+    /// </summary>
+    Both
+}
+
+/// <summary>
 /// Configuration for scoping feature.
 /// Controls hierarchical organization of functions to reduce token usage.
 /// </summary>
@@ -905,6 +931,15 @@ public class ScopingConfig
     /// Default: 10.
     /// </summary>
     public int MaxFunctionNamesInDescription { get; set; } = 10;
+
+    /// <summary>
+    /// Controls whether skill instructions appear in function result (in addition to system prompt).
+    /// Prompt filter ALWAYS injects to system prompt - this controls redundancy in function result.
+    /// - PromptFilterOnly: Instructions only in system prompt (most token efficient)
+    /// - Both: Instructions in both system prompt AND function result (double emphasis, recommended)
+    /// Default: Both (recommended for maximum LLM compliance).
+    /// </summary>
+    public SkillInstructionMode SkillInstructionMode { get; set; } = SkillInstructionMode.Both;
 
     /// <summary>
     /// Optional post-expansion instructions for specific MCP servers.

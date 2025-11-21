@@ -26,4 +26,19 @@ public static class PromptFilterContextKeys
     /// Available when thread context is present.
     /// </summary>
     public const string Thread = "Thread";
+
+    /// <summary>
+    /// Key for expanded skill containers (set by AgentCore before filter execution).
+    /// Type: ImmutableHashSet&lt;string&gt;
+    /// Available during skill activation turns.
+    /// </summary>
+    public const string ExpandedSkills = "ExpandedSkills";
+
+    /// <summary>
+    /// Key for skill instructions map (accumulated during turn).
+    /// Type: ImmutableDictionary&lt;string, string&gt;
+    /// Maps skill name → full instruction text from container metadata.
+    /// Available during skill activation turns.
+    /// </summary>
+    public const string SkillInstructions = "SkillInstructions";
 }

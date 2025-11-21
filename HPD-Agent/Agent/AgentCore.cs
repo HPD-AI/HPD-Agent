@@ -489,7 +489,6 @@ internal sealed class AgentCore
 
     private async IAsyncEnumerable<InternalAgentEvent> RunAgenticLoopInternal(
         PreparedTurn turn,
-        ChatOptions? options,
         string[]? documentPaths,
         List<ChatMessage> turnHistory,
         TaskCompletionSource<IReadOnlyList<ChatMessage>> historyCompletionSource,
@@ -545,9 +544,9 @@ internal sealed class AgentCore
         // Generate IDs for this message turn
         var messageTurnId = Guid.NewGuid().ToString();
 
-        // Extract conversation ID from options, thread, or generate new one
+        // Extract conversation ID from turn.Options, thread, or generate new one
         string conversationId;
-        if (options?.AdditionalProperties?.TryGetValue("ConversationId", out var convIdObj) == true && convIdObj is string convId)
+        if (turn.Options?.AdditionalProperties?.TryGetValue("ConversationId", out var convIdObj) == true && convIdObj is string convId)
         {
             conversationId = convId;
         }
@@ -597,8 +596,8 @@ internal sealed class AgentCore
                 // Use messages from restored state (already prepared - includes system instructions)
                 effectiveMessages = state.CurrentMessages;
 
-                // Use provided options as-is (no merging needed on resume)
-                effectiveOptions = options;
+                // Use options from PreparedTurn (already merged and filtered)
+                effectiveOptions = turn.Options;
 
                 // No reduction on resume (messages were already reduced in original run)
                 reductionMetadata = null;
@@ -662,119 +661,58 @@ internal sealed class AgentCore
             else
             {
                 // ═══════════════════════════════════════════════════════════════════════
-                // FRESH RUN PATH: Full preparation pipeline
+                // FRESH RUN PATH: Use PreparedTurn directly (all preparation already done)
                 // ═══════════════════════════════════════════════════════════════════════
 
-                // Process documents if provided
-                if (documentPaths?.Length > 0)
-                {
-                    var processed = await AgentDocumentProcessor.ProcessDocumentsAsync(
-                        messages, documentPaths, Config, cancellationToken).ConfigureAwait(false);
-                    messages = processed.ToList();
-                }
-
-                // ✅ Initialize state with FULL unreduced history FIRST
-                // This ensures state.CurrentMessages.Count matches thread.Messages.Count
-                // History reduction is ONLY an optimization for LLM calls, not stored state
+                // Initialize state with FULL unreduced history
+                // PreparedTurn.MessagesForLLM contains the reduced version (for LLM calls)
+                // We store the full history in state for proper message counting
                 state = AgentLoopState.Initial(messages.ToList(), messageTurnId, conversationId, this.Name);
 
-                // ═══════════════════════════════════════════════════════════════════════
-                // CACHE-AWARE HISTORY REDUCTION (NEW SYSTEM)
-                // ═══════════════════════════════════════════════════════════════════════
-                // Check if we can reuse cached reduction from thread.LastReduction
-                // This avoids redundant LLM calls for re-summarization
+                // Use PreparedTurn's already-prepared messages and options
+                effectiveMessages = turn.MessagesForLLM;  // Already reduced (if needed)
+                effectiveOptions = turn.Options;  // Already merged + filtered
+                reductionMetadata = turn.NewReductionMetadata;  // Already computed (if new reduction)
 
-                HistoryReductionState? reductionToUse = null;
-                bool usedCachedReduction = false;
-
-                // Check cache: Is thread.LastReduction still valid for current message count?
-                if (thread?.LastReduction != null &&
-                    thread.LastReduction.IsValidFor(messages.ToList().Count))
+                // Apply reduction state if available
+                if (turn.ActiveReduction != null)
                 {
-                    // ✅ CACHE HIT: Reuse existing reduction
-                    reductionToUse = thread.LastReduction;
-                    state = state.WithReduction(reductionToUse);
-                    usedCachedReduction = true;
+                    state = state.WithReduction(turn.ActiveReduction);
 
-                    // Emit cache hit event
-                    yield return new InternalHistoryReductionCacheEvent(
-                        _name,
-                        IsHit: true,
-                        reductionToUse.CreatedAt,
-                        reductionToUse.SummarizedUpToIndex,
-                        messages.ToList().Count,
-                        TokenSavings: null, // Token savings would need to be calculated
-                        DateTimeOffset.UtcNow);
-
-                    // TODO: Future optimization - Apply cached reduction here to bypass PrepareMessagesAsync
-                    // This would save the LLM call for summarization on cache hit
-                    // For now, PrepareMessagesAsync will run reduction again (but could be optimized)
-                }
-
-                // Prepare messages using MessageProcessor for LLM calls
-                // This adds system instructions, merges options, and may run history reduction
-                // NOTE: Currently still runs reduction even on cache hit (future optimization opportunity)
-                try
-                {
-                    var prep = await _messageProcessor.PrepareMessagesAsync(
-                        messages, options, _name, effectiveCancellationToken).ConfigureAwait(false);
-                    (effectiveMessages, effectiveOptions, reductionMetadata) = prep;
-
-                    // If PrepareMessagesAsync performed a NEW reduction (cache miss), capture it
-                    if (!string.IsNullOrEmpty(reductionMetadata?.SummaryText) && !usedCachedReduction)
+                    // Emit cache hit/miss event based on whether this was a new reduction
+                    if (turn.NewReductionMetadata != null)
                     {
-                        // ❌ CACHE MISS: New reduction was created by PrepareMessagesAsync
-                        // Extract reduction state from results and cache it
-                        var historyConfig = Config?.HistoryReduction;
-                        if (historyConfig != null && reductionMetadata.MessagesRemovedCount > 0)
-                        {
-                            var messagesList = messages.ToList();
-                            var summarizedUpToIndex = reductionMetadata.MessagesRemovedCount;
-
-                            reductionToUse = HistoryReductionState.Create(
-                                messagesList,
-                                reductionMetadata.SummaryText,
-                                summarizedUpToIndex,
-                                historyConfig.TargetMessageCount,
-                                historyConfig.SummarizationThreshold ?? 5);
-
-                            state = state.WithReduction(reductionToUse);
-
-                            // Cache for next run
-                            if (thread != null)
-                            {
-                                thread.LastReduction = reductionToUse;
-                            }
-                        }
+                        // Cache miss - new reduction was performed in PrepareTurnAsync
+                        yield return new InternalHistoryReductionCacheEvent(
+                            _name,
+                            IsHit: false,
+                            turn.ActiveReduction.CreatedAt,
+                            turn.ActiveReduction.SummarizedUpToIndex,
+                            messages.ToList().Count,
+                            TokenSavings: null,
+                            DateTimeOffset.UtcNow);
                     }
-                }
-                catch (Exception ex)
-                {
-                    reductionCompletionSource.TrySetException(ex);
-                    historyCompletionSource.TrySetException(ex);
-                    throw;
+                    else
+                    {
+                        // Cache hit - existing reduction was reused
+                        yield return new InternalHistoryReductionCacheEvent(
+                            _name,
+                            IsHit: true,
+                            turn.ActiveReduction.CreatedAt,
+                            turn.ActiveReduction.SummarizedUpToIndex,
+                            messages.ToList().Count,
+                            TokenSavings: null,
+                            DateTimeOffset.UtcNow);
+                    }
                 }
 
                 // Set reduction metadata immediately
                 reductionCompletionSource.TrySetResult(reductionMetadata);
 
-                // Emit cache miss event if reduction was performed
-                if (!string.IsNullOrEmpty(reductionMetadata?.SummaryText) && !usedCachedReduction && reductionToUse != null)
-                {
-                    yield return new InternalHistoryReductionCacheEvent(
-                        _name,
-                        IsHit: false,
-                        reductionToUse.CreatedAt,
-                        reductionToUse.SummarizedUpToIndex,
-                        messages.ToList().Count,
-                        TokenSavings: null, // Token savings would need to be calculated
-                        DateTimeOffset.UtcNow);
-                }
-
-                // ✅ NOTE: state.CurrentMessages now contains FULL history (unreduced)
+                // ✅ NOTE: state.CurrentMessages contains FULL history (unreduced)
                 // ✅ NOTE: state.ActiveReduction contains reduction metadata (if reduced)
                 // ✅ NOTE: effectiveMessages contains REDUCED history (for LLM calls only)
-                // This ensures perfect sync: state.CurrentMessages.Count == thread.Messages.Count
+                // ✅ NOTE: All preparation done in PrepareTurnAsync - no duplicate work!
             }
 
             // ═══════════════════════════════════════════════════════════════════════════
@@ -955,7 +893,7 @@ internal sealed class AgentCore
                     }
                     else if (state.Iteration == 0)
                     {
-                        // ✅ FIRST ITERATION: Use effectiveMessages (reduced) from PrepareMessagesAsync
+                        // ✅ FIRST ITERATION: Use effectiveMessages (reduced) from PrepareTurnAsync
                         // This applies history reduction for the initial LLM call
                         // effectiveMessages already contains reduced history if reduction was applied
                         messagesToSend = effectiveMessages;
@@ -1272,7 +1210,7 @@ internal sealed class AgentCore
                             }
                         }
 
-                        var (toolResultMessage, pluginExpansions, skillExpansions, successfulFunctions) = await executeTask.ConfigureAwait(false);
+                        var (toolResultMessage, pluginExpansions, skillExpansions, skillInstructions, successfulFunctions) = await executeTask.ConfigureAwait(false);
 
                         // Final drain
                         while (_eventCoordinator.EventReader.TryRead(out var filterEvt))
@@ -1351,6 +1289,15 @@ internal sealed class AgentCore
                         foreach (var skillName in skillExpansions)
                         {
                             state = state.WithExpandedSkill(skillName);
+                        }
+
+                        // Accumulate skill instructions in state (for prompt filter)
+                        foreach (var (skillName, instructions) in skillInstructions)
+                        {
+                            state = state with
+                            {
+                                ActiveSkillInstructions = state.ActiveSkillInstructions.SetItem(skillName, instructions)
+                            };
                         }
 
                         // ═══════════════════════════════════════════════════════
@@ -2248,7 +2195,7 @@ Best practices:
     #region History Reduction Metadata
 
     // Reduction metadata is now properly handled via StreamingTurnResult.ReductionTask.
-    // This ensures the metadata is available when the turn completes and PrepareMessagesAsync
+    // This ensures the metadata is available when the turn completes and PrepareTurnAsync
     // has finished executing. The task-based approach eliminates the timing bug where
     // metadata was captured before the reduction actually occurred.
 
@@ -2339,7 +2286,6 @@ Best practices:
 
         await foreach (var evt in RunAgenticLoopInternal(
             turn,
-            options,
             documentPaths: null,
             turnHistory,
             historyCompletionSource,
@@ -2397,7 +2343,6 @@ Best practices:
 
         var internalStream = RunAgenticLoopInternal(
             turn,
-            options,
             documentPaths: null,
             turnHistory,
             historyCompletionSource,
@@ -2487,8 +2432,7 @@ Best practices:
         // EXECUTE AGENTIC LOOP with PreparedTurn
         // ═══════════════════════════════════════════════════════════════════════════
         var internalStream = RunAgenticLoopInternal(
-            turn,  // ✅ PreparedTurn contains MessagesForLLM and NewInputMessages
-            options,
+            turn,  // ✅ PreparedTurn contains MessagesForLLM, NewInputMessages, and Options
             documentPaths: null,
             turnHistory,
             historyCompletionSource,
@@ -2940,6 +2884,14 @@ public sealed record AgentLoopState
     /// </summary>
     public required ImmutableHashSet<string> ExpandedSkillContainers { get; init; }
 
+    /// <summary>
+    /// Skill instructions for expanded skills (accumulated during turn).
+    /// Maps skill name → full instruction text from container metadata.
+    /// Ephemeral - cleared at end of message turn, used to inject into system prompt via filter.
+    /// Accumulates ALL skills activated within the turn across iterations.
+    /// </summary>
+    public required ImmutableDictionary<string, string> ActiveSkillInstructions { get; init; }
+
     // ═══════════════════════════════════════════════════════
     // FUNCTION TRACKING
     // ═══════════════════════════════════════════════════════
@@ -3031,6 +2983,7 @@ public sealed record AgentLoopState
         ConsecutiveCountPerTool = ImmutableDictionary<string, int>.Empty,
         expandedScopedPluginContainers = ImmutableHashSet<string>.Empty,
         ExpandedSkillContainers = ImmutableHashSet<string>.Empty,
+        ActiveSkillInstructions = ImmutableDictionary<string, string>.Empty,
         CompletedFunctions = ImmutableHashSet<string>.Empty,
         InnerClientTracksHistory = false,
         MessagesSentToInnerClient = 0,
@@ -3954,7 +3907,27 @@ internal class FunctionCallProcessor
                 pluginTypeName = pluginName as string;
             }
 
-            var scopedFilters = _scopedFilterManager?.GetApplicableFilters(functionCall.Name, pluginTypeName)
+            // Extract skill metadata
+            string? skillName = null;
+            bool isSkillContainer = false;
+
+            // Check if this function IS a skill container
+            if (context.Function?.AdditionalProperties?.TryGetValue("IsSkill", out var isSkillValue) == true
+                && isSkillValue is bool isS && isS)
+            {
+                isSkillContainer = true;
+                // Note: When invoking a skill container, skillName remains null
+                // The container IS the skill, it doesn't have a "parent skill"
+            }
+
+            // For regular functions, skillName will be resolved via fallback mapping
+            // in GetApplicableFilters() using _functionToSkillMap
+
+            var scopedFilters = _scopedFilterManager?.GetApplicableFilters(
+                functionCall.Name,
+                pluginTypeName,
+                skillName,
+                isSkillContainer)
                                 ?? Enumerable.Empty<IAiFunctionFilter>();
 
             // Combine scoped filters with general AI function filters
@@ -4256,28 +4229,31 @@ internal class MessageProcessor
 
     /// <summary>
     /// Prepares a complete turn for execution.
-    /// Loads thread history, applies reduction (with caching), merges options, and filters messages.
+    /// Loads thread history, merges options, adds system instructions, applies reduction (with caching), and filters messages.
     /// </summary>
     /// <param name="thread">Conversation thread (null for stateless execution).</param>
     /// <param name="inputMessages">NEW messages from the caller (to be added to history).</param>
     /// <param name="options">Chat options to merge with defaults.</param>
     /// <param name="agentName">Agent name for logging/filtering.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
+    /// <param name="expandedSkills">Optional set of expanded skill names for SkillInstructionPromptFilter.</param>
+    /// <param name="skillInstructions">Optional dictionary of skill-specific instructions for SkillInstructionPromptFilter.</param>
     /// <returns>PreparedTurn with all state needed for execution.</returns>
     /// <remarks>
     /// <para>
-    /// <b>This is the ENTRY POINT for turn preparation</b> (Option 2 pattern).
-    /// Consolidates logic that was scattered across Agent.RunAsync.
+    /// <b>This is the SINGLE ENTRY POINT for all turn preparation</b>.
+    /// All message preparation logic is consolidated here - no more layering through PrepareMessagesAsync.
     /// </para>
     /// <para>
     /// <b>Steps:</b>
     /// <list type="number">
     /// <item>Load thread history (if thread provided)</item>
+    /// <item>Add new input messages to history</item>
+    /// <item>Merge ChatOptions and inject system instructions</item>
     /// <item>Check reduction cache (thread.LastReduction.IsValidFor)</item>
-    /// <item>Apply cached reduction OR perform new reduction</item>
-    /// <item>Merge options and add system instructions</item>
-    /// <item>Apply prompt filters</item>
-    /// <item>Return PreparedTurn with separated concerns</item>
+    /// <item>Apply cached reduction OR perform new reduction via IChatReducer</item>
+    /// <item>Apply prompt filters (can modify messages, options, instructions)</item>
+    /// <item>Return PreparedTurn with all prepared state</item>
     /// </list>
     /// </para>
     /// <para>
@@ -4290,7 +4266,9 @@ internal class MessageProcessor
         IEnumerable<ChatMessage> inputMessages,
         ChatOptions? options,
         string agentName,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ImmutableHashSet<string>? expandedSkills = null,
+        ImmutableDictionary<string, string>? skillInstructions = null)
     {
         var inputMessagesList = inputMessages.ToList();
         var messagesForLLM = new List<ChatMessage>();
@@ -4305,7 +4283,27 @@ internal class MessageProcessor
         // STEP 2: Add new input messages
         messagesForLLM.AddRange(inputMessagesList);
 
-        // STEP 3: Check reduction cache (cache-aware reduction)
+        // STEP 3: Merge options and add system instructions
+        var effectiveOptions = MergeOptions(options);
+
+        // Add system instructions to ChatOptions.Instructions (Microsoft's pattern)
+        // This follows the official Microsoft.Extensions.AI pattern used by ChatClientAgent
+        if (!string.IsNullOrEmpty(_systemInstructions))
+        {
+            effectiveOptions ??= new ChatOptions();
+
+            // Avoid duplicate injection if system instructions already present
+            if (string.IsNullOrWhiteSpace(effectiveOptions.Instructions))
+            {
+                effectiveOptions.Instructions = _systemInstructions;
+            }
+            else if (!effectiveOptions.Instructions.Contains(_systemInstructions))
+            {
+                effectiveOptions.Instructions = $"{_systemInstructions}\n{effectiveOptions.Instructions}";
+            }
+        }
+
+        // STEP 4: Check reduction cache (cache-aware reduction)
         HistoryReductionState? activeReduction = null;
         ReductionMetadata? newReductionMetadata = null;
         bool usedCachedReduction = false;
@@ -4325,79 +4323,14 @@ internal class MessageProcessor
             }
         }
 
-        // STEP 4: Prepare messages (reduction if cache miss, filters, options)
-        var (preparedMessages, preparedOptions, reductionMetadata) = await PrepareMessagesAsync(
-            usedCachedReduction ? messagesForLLM : messagesForLLM, // If cached, already reduced
-            options,
-            agentName,
-            cancellationToken);
-
-        // STEP 5: Capture new reduction metadata (if cache miss and reduction occurred)
-        if (!usedCachedReduction && reductionMetadata != null)
+        // STEP 5: Apply new reduction if cache miss and reducer is configured
+        if (!usedCachedReduction && _chatReducer != null)
         {
-            newReductionMetadata = reductionMetadata;
-
-            // Create HistoryReductionState from metadata
-            var summarizedUpToIndex = reductionMetadata.MessagesRemovedCount;
-
-            if (!string.IsNullOrEmpty(reductionMetadata.SummaryText))
-            {
-                activeReduction = HistoryReductionState.Create(
-                    messagesForLLM,
-                    reductionMetadata.SummaryText,
-                    summarizedUpToIndex,
-                    _reductionConfig?.TargetMessageCount ?? 20,
-                    _reductionConfig?.SummarizationThreshold ?? 5);
-            }
-        }
-
-        // STEP 6: Return PreparedTurn
-        return new PreparedTurn
-        {
-            MessagesForLLM = preparedMessages.ToList(),
-            NewInputMessages = inputMessagesList,
-            Options = preparedOptions,
-            ActiveReduction = activeReduction,
-            NewReductionMetadata = newReductionMetadata
-        };
-    }
-
-    /// <summary>
-    /// Prepares the final list of messages and chat options for the LLM call.
-    /// Returns reduction metadata directly for thread-safety (no shared mutable state).
-    /// </summary>
-    public async Task<(IEnumerable<ChatMessage> messages, ChatOptions? options, ReductionMetadata? reduction)> PrepareMessagesAsync(
-        IEnumerable<ChatMessage> messages,
-        ChatOptions? options,
-        string agentName,
-        CancellationToken cancellationToken)
-    {
-        // ✅ NEW: Don't prepend system message - use ChatOptions.Instructions instead
-        var effectiveMessages = messages;
-        var effectiveOptions = MergeOptions(options);
-
-        // ✅ NEW: Add system instructions to ChatOptions.Instructions (Microsoft's pattern)
-        // This follows the official Microsoft.Extensions.AI pattern used by ChatClientAgent
-        if (!string.IsNullOrEmpty(_systemInstructions))
-        {
-            effectiveOptions ??= new ChatOptions();
-            effectiveOptions.Instructions = string.IsNullOrWhiteSpace(effectiveOptions.Instructions)
-                ? _systemInstructions
-                : $"{_systemInstructions}\n{effectiveOptions.Instructions}";
-        }
-
-        // Apply cache-aware history reduction if configured
-        if (_chatReducer != null)
-        {
-            var messagesList = effectiveMessages.ToList();
-
-            bool shouldReduce = ShouldTriggerReduction(messagesList);
-
-            ReductionMetadata? reductionMetadata = null;
+            bool shouldReduce = ShouldTriggerReduction(messagesForLLM);
 
             if (shouldReduce)
             {
-                var reduced = await _chatReducer.ReduceAsync(effectiveMessages, cancellationToken).ConfigureAwait(false);
+                var reduced = await _chatReducer.ReduceAsync(messagesForLLM, cancellationToken).ConfigureAwait(false);
 
                 if (reduced != null)
                 {
@@ -4413,29 +4346,51 @@ internal class MessageProcessor
                     if (summaryMsg != null)
                     {
                         // Calculate how many messages were removed
-                        int removedCount = messagesList.Count - reducedList.Count + 1; // +1 for summary itself
+                        int removedCount = messagesForLLM.Count - reducedList.Count + 1; // +1 for summary itself
 
-                        // Return metadata directly for thread-safety
-                        reductionMetadata = new ReductionMetadata
+                        // Create reduction metadata
+                        newReductionMetadata = new ReductionMetadata
                         {
                             SummaryText = summaryMsg.Text,
                             MessagesRemovedCount = removedCount
                         };
+
+                        // Create HistoryReductionState from metadata
+                        var summarizedUpToIndex = removedCount;
+
+                        activeReduction = HistoryReductionState.Create(
+                            messagesForLLM,
+                            summaryMsg.Text,
+                            summarizedUpToIndex,
+                            _reductionConfig?.TargetMessageCount ?? 20,
+                            _reductionConfig?.SummarizationThreshold ?? 5);
                     }
 
-                    effectiveMessages = reducedList;
+                    messagesForLLM = reducedList;
                 }
             }
-
-            effectiveMessages = await ApplyPromptFiltersAsync(effectiveMessages, effectiveOptions, agentName, cancellationToken).ConfigureAwait(false);
-
-            return (effectiveMessages, effectiveOptions, reductionMetadata);
         }
 
-        effectiveMessages = await ApplyPromptFiltersAsync(effectiveMessages, effectiveOptions, agentName, cancellationToken).ConfigureAwait(false);
+        // STEP 6: Apply prompt filters
+        var preparedMessages = await ApplyPromptFiltersAsync(
+            messagesForLLM,
+            effectiveOptions,
+            agentName,
+            cancellationToken,
+            expandedSkills,
+            skillInstructions).ConfigureAwait(false);
 
-        return (effectiveMessages, effectiveOptions, null);
+        // STEP 7: Return PreparedTurn
+        return new PreparedTurn
+        {
+            MessagesForLLM = preparedMessages.ToList(),
+            NewInputMessages = inputMessagesList,
+            Options = effectiveOptions,
+            ActiveReduction = activeReduction,
+            NewReductionMetadata = newReductionMetadata
+        };
     }
+
 
     /// <summary>
     /// Determines if history reduction should be triggered based on configured thresholds.
@@ -4549,7 +4504,9 @@ internal class MessageProcessor
         IEnumerable<ChatMessage> messages,
         ChatOptions? options,
         string agentName,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ImmutableHashSet<string>? expandedSkills = null,
+        ImmutableDictionary<string, string>? skillInstructions = null)
     {
         if (!_promptFilters.Any())
         {
@@ -4566,6 +4523,16 @@ internal class MessageProcessor
             {
                 context.Properties[kvp.Key] = kvp.Value!;
             }
+        }
+
+        // Add skill state for SkillInstructionPromptFilter
+        if (expandedSkills != null && expandedSkills.Count > 0)
+        {
+            context.Properties[PromptFilterContextKeys.ExpandedSkills] = expandedSkills;
+        }
+        if (skillInstructions != null && skillInstructions.Count > 0)
+        {
+            context.Properties[PromptFilterContextKeys.SkillInstructions] = skillInstructions;
         }
 
         // ✅ PHASE 2: Track filter pipeline execution
@@ -4988,7 +4955,7 @@ internal class ToolScheduler
     /// <param name="ExpandedSkillContainers">Set of expanded skill names (message-turn scoped)</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>A chat message containing the tool execution results</returns>
-    public async Task<(ChatMessage Message, HashSet<string> PluginExpansions, HashSet<string> SkillExpansions, HashSet<string> SuccessfulFunctions)> ExecuteToolsAsync(
+    public async Task<(ChatMessage Message, HashSet<string> PluginExpansions, HashSet<string> SkillExpansions, Dictionary<string, string> SkillInstructions, HashSet<string> SuccessfulFunctions)> ExecuteToolsAsync(
         List<ChatMessage> currentHistory,
         List<FunctionCallContent> toolRequests,
         ChatOptions? options,
@@ -5008,7 +4975,7 @@ internal class ToolScheduler
     /// <summary>
     /// Executes tools sequentially (used for single tools or as fallback)
     /// </summary>
-    private async Task<(ChatMessage Message, HashSet<string> PluginExpansions, HashSet<string> SkillExpansions, HashSet<string> SuccessfulFunctions)> ExecuteSequentiallyAsync(
+    private async Task<(ChatMessage Message, HashSet<string> PluginExpansions, HashSet<string> SkillExpansions, Dictionary<string, string> SkillInstructions, HashSet<string> SuccessfulFunctions)> ExecuteSequentiallyAsync(
         List<ChatMessage> currentHistory,
         List<FunctionCallContent> toolRequests,
         ChatOptions? options,
@@ -5020,6 +4987,7 @@ internal class ToolScheduler
         // Track which tool requests are containers for expansion after invocation
         var pluginContainerExpansions = new Dictionary<string, string>(); // callId -> pluginName
         var skillContainerExpansions = new Dictionary<string, string>(); // callId -> skillName
+        var skillInstructionsMap = new Dictionary<string, string>(); // skillName -> instructions
 
         foreach (var toolRequest in toolRequests)
         {
@@ -5041,6 +5009,15 @@ internal class ToolScheduler
                         // Skill container
                         var skillName = function.Name ?? toolRequest.Name;
                         skillContainerExpansions[toolRequest.CallId] = skillName;
+
+                        // Extract instructions from metadata for prompt filter
+                        // Filter will build complete context from metadata
+                        if (function.AdditionalProperties?.TryGetValue("Instructions", out var instructionsObj) == true
+                            && instructionsObj is string instructions
+                            && !string.IsNullOrWhiteSpace(instructions))
+                        {
+                            skillInstructionsMap[skillName] = instructions;
+                        }
                     }
                     else
                     {
@@ -5091,13 +5068,13 @@ internal class ToolScheduler
         // ✅ Extract successful functions from actual results (not before execution)
         var successfulFunctions = ExtractSuccessfulFunctions(allContents, toolRequests);
 
-        return (new ChatMessage(ChatRole.Tool, allContents), pluginExpansions, skillExpansions, successfulFunctions);
+        return (new ChatMessage(ChatRole.Tool, allContents), pluginExpansions, skillExpansions, skillInstructionsMap, successfulFunctions);
     }
 
     /// <summary>
     /// Executes tools in parallel for improved performance with multiple independent tools
     /// </summary>
-    private async Task<(ChatMessage Message, HashSet<string> PluginExpansions, HashSet<string> SkillExpansions, HashSet<string> SuccessfulFunctions)> ExecuteInParallelAsync(
+    private async Task<(ChatMessage Message, HashSet<string> PluginExpansions, HashSet<string> SkillExpansions, Dictionary<string, string> SkillInstructions, HashSet<string> SuccessfulFunctions)> ExecuteInParallelAsync(
         List<ChatMessage> currentHistory,
         List<FunctionCallContent> toolRequests,
         ChatOptions? options,
@@ -5114,6 +5091,7 @@ internal class ToolScheduler
         // PHASE 0: Identify containers and track them for expansion after invocation
         var pluginContainerExpansions = new Dictionary<string, string>(); // callId -> pluginName
         var skillContainerExpansions = new Dictionary<string, string>(); // callId -> skillName
+        var skillInstructionsMap = new Dictionary<string, string>(); // skillName -> instructions
 
         foreach (var toolRequest in toolRequests)
         {
@@ -5135,6 +5113,15 @@ internal class ToolScheduler
                         // Skill container
                         var skillName = function.Name ?? toolRequest.Name;
                         skillContainerExpansions[toolRequest.CallId] = skillName;
+
+                        // Extract instructions from metadata for prompt filter
+                        // Filter will build complete context from metadata
+                        if (function.AdditionalProperties?.TryGetValue("Instructions", out var instructionsObj) == true
+                            && instructionsObj is string instructions
+                            && !string.IsNullOrWhiteSpace(instructions))
+                        {
+                            skillInstructionsMap[skillName] = instructions;
+                        }
                     }
                     else
                     {
@@ -5248,7 +5235,7 @@ internal class ToolScheduler
         // ✅ Extract successful functions from actual results (not before execution)
         var successfulFunctions = ExtractSuccessfulFunctions(allContents, approvedTools);
 
-        return (new ChatMessage(ChatRole.Tool, allContents), pluginExpansions, skillExpansions, successfulFunctions);
+        return (new ChatMessage(ChatRole.Tool, allContents), pluginExpansions, skillExpansions, skillInstructionsMap, successfulFunctions);
     }
 
     /// <summary>
@@ -7252,7 +7239,7 @@ public sealed record HistoryReductionState
     /// Returns: [summary message] + [recent unreduced messages]
     /// </summary>
     /// <param name="allMessages">Full conversation history (unreduced)</param>
-    /// <param name="systemMessage">Optional system message to prepend (typically added by PrepareMessagesAsync)</param>
+    /// <param name="systemMessage">Optional system message to prepend (now handled via ChatOptions.Instructions in PrepareTurnAsync)</param>
     /// <returns>Reduced messages ready for LLM (summary + recent)</returns>
     /// <exception cref="InvalidOperationException">If integrity check fails</exception>
     /// <example>

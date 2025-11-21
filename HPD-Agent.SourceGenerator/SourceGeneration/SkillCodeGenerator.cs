@@ -143,34 +143,12 @@ internal static class SkillCodeGenerator
     {
         var sb = new StringBuilder();
 
+        // Simple activation message for function result
+        // The prompt filter will build the complete context from metadata
         var functionList = string.Join(", ", skill.ResolvedFunctionReferences);
         var returnMessage = $"{skill.Name} skill activated. Available functions: {functionList}";
 
-        // Add document information if documents are referenced
-        if (skill.Options.DocumentReferences.Any() || skill.Options.DocumentUploads.Any())
-        {
-            returnMessage += "\n\n📚 Available Documents:";
-
-            // Document uploads
-            foreach (var upload in skill.Options.DocumentUploads)
-            {
-                // Auto-derive document ID if not provided (same logic as SkillOptions)
-                var docId = string.IsNullOrEmpty(upload.DocumentId)
-                    ? DeriveDocumentIdFromPath(upload.FilePath)
-                    : upload.DocumentId;
-                returnMessage += $"\n- {docId}: {upload.Description}";
-            }
-
-            // Document references
-            foreach (var reference in skill.Options.DocumentReferences)
-            {
-                var description = reference.DescriptionOverride ?? "[Use read_skill_document to view]";
-                returnMessage += $"\n- {reference.DocumentId}: {description}";
-            }
-
-            returnMessage += "\n\nUse read_skill_document(documentId) to retrieve document content.";
-        }
-
+        // Still include instructions in function result for backward compatibility
         if (!string.IsNullOrEmpty(skill.Instructions))
         {
             returnMessage += $"\n\n{skill.Instructions}";
@@ -187,11 +165,36 @@ internal static class SkillCodeGenerator
         sb.AppendLine($"        /// </summary>");
         sb.AppendLine($"        private static AIFunction Create{skill.MethodName}Skill()");
         sb.AppendLine("        {");
-        sb.AppendLine("            return HPDAIFunctionFactory.Create(");
-        sb.AppendLine("                async (arguments, cancellationToken) =>");
-        sb.AppendLine("                {");
-        sb.AppendLine($"                    return @\"{escapedReturnMessage}\";");
-        sb.AppendLine("                },");
+
+        // Generate runtime function body that checks configuration
+        var baseMessage = $"{skill.Name} skill activated. Available functions: {functionList}";
+        var escapedBaseMessage = baseMessage.Replace("\"", "\"\"");
+
+        if (!string.IsNullOrEmpty(skill.Instructions))
+        {
+            var escapedInstructions = skill.Instructions.Replace("\"", "\"\"");
+            sb.AppendLine("            return HPDAIFunctionFactory.Create(");
+            sb.AppendLine("                async (arguments, cancellationToken) =>");
+            sb.AppendLine("                {");
+            sb.AppendLine("                    // Check if instructions should be included in function result");
+            sb.AppendLine("                    var mode = HPD.Agent.AgentConfig.GlobalConfig?.Scoping?.SkillInstructionMode ?? HPD.Agent.SkillInstructionMode.Both;");
+            sb.AppendLine("                    if (mode == HPD.Agent.SkillInstructionMode.Both)");
+            sb.AppendLine("                    {");
+            sb.AppendLine($"                        return @\"{escapedBaseMessage}");
+            sb.AppendLine();
+            sb.AppendLine($"{escapedInstructions}\";");
+            sb.AppendLine("                    }");
+            sb.AppendLine($"                    return @\"{escapedBaseMessage}\";");
+            sb.AppendLine("                },");
+        }
+        else
+        {
+            sb.AppendLine("            return HPDAIFunctionFactory.Create(");
+            sb.AppendLine("                async (arguments, cancellationToken) =>");
+            sb.AppendLine("                {");
+            sb.AppendLine($"                    return @\"{escapedBaseMessage}\";");
+            sb.AppendLine("                },");
+        }
         sb.AppendLine("                new HPDAIFunctionFactoryOptions");
         sb.AppendLine("                {");
         sb.AppendLine($"                    Name = \"{skill.Name}\",");
@@ -204,6 +207,14 @@ internal static class SkillCodeGenerator
         sb.AppendLine($"                        [\"ParentSkillContainer\"] = \"{skill.ContainingClass.Identifier.ValueText}\",");
         sb.AppendLine($"                        [\"ReferencedFunctions\"] = new string[] {{ {string.Join(", ", skill.ResolvedFunctionReferences.Select(f => $"\"{f}\""))} }},");
         sb.AppendLine($"                        [\"ReferencedPlugins\"] = new string[] {{ {string.Join(", ", skill.ResolvedPluginTypes.Select(p => $"\"{p}\""))} }},");
+
+        // Store instructions separately for prompt filter to use
+        // Filter will build complete context from metadata (functions + documents + instructions)
+        if (!string.IsNullOrEmpty(skill.Instructions))
+        {
+            var escapedInstructions = skill.Instructions.Replace("\"", "\"\"");
+            sb.AppendLine($"                        [\"Instructions\"] = @\"{escapedInstructions}\",");
+        }
 
         // Add Document References and Uploads (metadata only, actual functionality in Phase 5/6)
         if (skill.Options.DocumentReferences.Any())

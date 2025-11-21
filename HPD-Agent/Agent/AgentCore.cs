@@ -3942,7 +3942,19 @@ internal class FunctionCallProcessor
             };
 
             // Get scoped filters for this function
-            var scopedFilters = _scopedFilterManager?.GetApplicableFilters(functionCall.Name)
+            // Extract plugin name from function metadata if available
+            string? pluginTypeName = null;
+            if (context.Function?.AdditionalProperties?.TryGetValue("ParentPlugin", out var parentPlugin) == true)
+            {
+                pluginTypeName = parentPlugin as string;
+            }
+            else if (context.Function?.AdditionalProperties?.TryGetValue("PluginName", out var pluginName) == true)
+            {
+                // For container functions, PluginName IS the plugin type
+                pluginTypeName = pluginName as string;
+            }
+
+            var scopedFilters = _scopedFilterManager?.GetApplicableFilters(functionCall.Name, pluginTypeName)
                                 ?? Enumerable.Empty<IAiFunctionFilter>();
 
             // Combine scoped filters with general AI function filters

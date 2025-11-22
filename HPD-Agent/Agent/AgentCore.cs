@@ -5617,6 +5617,73 @@ internal class PermissionManager
 
 #endregion
 
+#region Error Formatting Helper
+
+/// <summary>
+/// Helper class for formatting detailed error messages with provider-specific information.
+/// </summary>
+internal static class ErrorFormatter
+{
+    /// <summary>
+    /// Formats an exception with detailed error information for display to users.
+    /// Extracts provider-specific error details using the error handler.
+    /// </summary>
+    internal static string FormatDetailedError(Exception ex, ErrorHandling.IProviderErrorHandler? errorHandler)
+    {
+        var sb = new System.Text.StringBuilder();
+
+        // Try to get provider-specific error details
+        var providerDetails = errorHandler?.ParseError(ex);
+
+        if (providerDetails != null)
+        {
+            // Use structured error information from provider
+            sb.AppendLine($"[{providerDetails.Category}] {providerDetails.Message}");
+
+            if (providerDetails.StatusCode.HasValue)
+                sb.AppendLine($"HTTP Status: {providerDetails.StatusCode}");
+
+            if (!string.IsNullOrEmpty(providerDetails.ErrorCode))
+                sb.AppendLine($"Error Code: {providerDetails.ErrorCode}");
+
+            if (!string.IsNullOrEmpty(providerDetails.ErrorType))
+                sb.AppendLine($"Error Type: {providerDetails.ErrorType}");
+
+            if (!string.IsNullOrEmpty(providerDetails.RequestId))
+                sb.AppendLine($"Request ID: {providerDetails.RequestId}");
+
+            if (providerDetails.RetryAfter.HasValue)
+                sb.AppendLine($"Retry After: {providerDetails.RetryAfter.Value.TotalSeconds:F1}s");
+
+            if (providerDetails.RawDetails != null && providerDetails.RawDetails.Count > 0)
+            {
+                foreach (var kvp in providerDetails.RawDetails)
+                {
+                    sb.AppendLine($"{kvp.Key}: {kvp.Value}");
+                }
+            }
+        }
+        else
+        {
+            // Fallback to basic error message with exception type
+            sb.AppendLine($"[{ex.GetType().Name}] {ex.Message}");
+
+            if (ex is HttpRequestException httpEx && httpEx.StatusCode.HasValue)
+                sb.AppendLine($"HTTP Status: {(int)httpEx.StatusCode}");
+        }
+
+        // Add inner exception if present
+        if (ex.InnerException != null)
+        {
+            sb.AppendLine($"Inner Exception: {ex.InnerException.Message}");
+        }
+
+        return sb.ToString().TrimEnd();
+    }
+}
+
+#endregion
+
 #region Event Stream Adapters
 
 /// <summary>
@@ -5687,7 +5754,7 @@ internal static class EventStreamAdapter
                 {
                     var errorMessage = caughtError is OperationCanceledException
                         ? "Turn was canceled or timed out."
-                        : caughtError.Message;
+                        : ErrorFormatter.FormatDetailedError(caughtError, null);
 
                     yield return EventSerialization.CreateRunError(errorMessage);
                     break;

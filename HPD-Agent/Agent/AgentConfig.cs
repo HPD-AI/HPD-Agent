@@ -888,20 +888,21 @@ public class MistralSettings
 
 /// <summary>
 /// Controls where skill instructions are injected during skill execution.
-/// Prompt filter ALWAYS injects to system prompt - this controls whether to ALSO include in function result.
+/// Iteration filter ALWAYS injects to system prompt - this controls whether to ALSO include in function result.
 /// </summary>
 public enum SkillInstructionMode
 {
     /// <summary>
-    /// Instructions only in system prompt via prompt filter (function result has activation message only).
+    /// Instructions only in system prompt via iteration filter (function result has activation message only).
     /// Most token efficient - instructions appear once in system prompt.
+    /// Recommended: Use this mode to avoid redundant instructions in conversation history.
     /// </summary>
     PromptFilterOnly,
 
     /// <summary>
-    /// Instructions in BOTH system prompt (via filter) AND function result (redundant double emphasis).
-    /// Most effective for LLM compliance, but uses more tokens.
-    /// Recommended for critical skills that must be executed completely.
+    /// Instructions in BOTH system prompt (via iteration filter) AND function result (redundant double emphasis).
+    /// Uses more tokens but may improve LLM compliance for complex skills.
+    /// Default for backward compatibility.
     /// </summary>
     Both
 }
@@ -934,10 +935,10 @@ public class ScopingConfig
 
     /// <summary>
     /// Controls whether skill instructions appear in function result (in addition to system prompt).
-    /// Prompt filter ALWAYS injects to system prompt - this controls redundancy in function result.
-    /// - PromptFilterOnly: Instructions only in system prompt (most token efficient)
-    /// - Both: Instructions in both system prompt AND function result (double emphasis, recommended)
-    /// Default: Both (recommended for maximum LLM compliance).
+    /// Iteration filter ALWAYS injects to system prompt - this controls redundancy in function result.
+    /// - PromptFilterOnly: Instructions only in system prompt (most token efficient, recommended)
+    /// - Both: Instructions in both system prompt AND function result (backward compatibility)
+    /// Default: Both (for backward compatibility, but PromptFilterOnly is recommended).
     /// </summary>
     public SkillInstructionMode SkillInstructionMode { get; set; } = SkillInstructionMode.Both;
 

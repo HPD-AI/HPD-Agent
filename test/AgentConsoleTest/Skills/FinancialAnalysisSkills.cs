@@ -2,361 +2,59 @@ using System;
 using System.Collections.Generic;
 
 /// <summary>
-/// Financial Analysis Skills - Orchestrates FinancialAnalysisPlugin functions into semantic workflows
-/// Each skill groups related functions that are consistently used together
-/// SOPs are documented in Skills/SOPs/ directory
+/// Financial Analysis Skills - Strategic guides for balance sheet analysis
+/// Skills teach Claude how to approach financial analysis tasks optimally
+/// Each skill recommends best approaches while providing tactical alternatives
 /// </summary>
 public class FinancialAnalysisSkills
 {
     /// <summary>
-    /// Quick Liquidity Analysis Skill
-    /// Analyzes a company's ability to meet short-term obligations
-    /// </summary>
-    [Skill(Category = "Liquidity Analysis", Priority = 10)]
-    public Skill QuickLiquidityAnalysis(SkillOptions? options = null)
-    {
-        return SkillFactory.Create(
-            name: "QuickLiquidityAnalysis",
-            description: "Analyze company's short-term liquidity position using current ratio, quick ratio, and working capital. Calls base FinancialAnalysisPlugin functions directly.",
-            instructions: @"
-📋 QUICK LIQUIDITY ANALYSIS - EXECUTION PROTOCOL
-
-Use this skill to assess whether a company can pay its short-term obligations.
-
-⚠️ FOR DETAILED GUIDANCE:
-→ read_skill_document('01-quickliquidityanalysis-sop')
-
-═══════════════════════════════════════════════════════════
-PARALLEL EXECUTION (All metrics are independent):
-═══════════════════════════════════════════════════════════
-
-🚀 Execute ALL metrics SIMULTANEOUSLY for optimal performance:
-
-→ Call: FinancialAnalysisPlugin.CalculateCurrentRatio(currentAssets, currentLiabilities)
-   Interpretation: >1.5 is generally healthy
-
-→ Call: FinancialAnalysisPlugin.CalculateQuickRatio(currentAssets, currentLiabilities, inventory)
-   Interpretation: >1.0 is conservative
-
-→ Call: FinancialAnalysisPlugin.CalculateWorkingCapital(currentAssets, currentLiabilities)
-   Interpretation: Positive indicates liquidity cushion
-
-⚠️ These three functions have NO dependencies - execute in parallel for speed.
-
-═══════════════════════════════════════════════════════════
-After parallel execution completes, synthesize findings:
-- Can company meet short-term obligations?
-- Is liquidity position healthy vs. industry benchmarks?
-- Any red flags requiring investigation?
-
-For detailed interpretation, thresholds, and industry benchmarks:
-→ read_skill_document('01-quickliquidityanalysis-sop')",
-            options: new SkillOptions()
-                .AddDocumentFromFile(
-                    "./Skills/SOPs/01-QuickLiquidityAnalysis-SOP.md",
-                    "Step-by-step procedure for analyzing liquidity ratios"),
-            "FinancialAnalysisPlugin.CalculateCurrentRatio",
-            "FinancialAnalysisPlugin.CalculateQuickRatio",
-            "FinancialAnalysisPlugin.CalculateWorkingCapital"
-        );
-    }
-
-    /// <summary>
-    /// Capital Structure Analysis Skill
-    /// Analyzes how the company finances itself (debt vs equity mix)
-    /// </summary>
-    [Skill(Category = "Leverage Analysis", Priority = 11)]
-    public Skill CapitalStructureAnalysis(SkillOptions? options = null)
-    {
-        return SkillFactory.Create(
-            name: "CapitalStructureAnalysis",
-            description: "Analyze company's capital structure and financial leverage through debt and equity ratios. Calls base FinancialAnalysisPlugin functions directly.",
-            instructions: @"
-📋 CAPITAL STRUCTURE ANALYSIS - EXECUTION PROTOCOL
-
-Use this skill to understand how the company is financed and assess financial risk.
-
-⚠️ FOR DETAILED GUIDANCE:
-→ read_skill_document('02-capitalstructureanalysis-sop')
-
-═══════════════════════════════════════════════════════════
-PARALLEL EXECUTION (All leverage ratios are independent):
-═══════════════════════════════════════════════════════════
-
-🚀 Execute ALL leverage metrics SIMULTANEOUSLY for optimal performance:
-
-→ Call: FinancialAnalysisPlugin.CalculateDebtToEquityRatio(totalLiabilities, stockholdersEquity)
-   Interpretation: >1.0 means more debt than equity (higher leverage)
-
-→ Call: FinancialAnalysisPlugin.CalculateDebtToAssetsRatio(totalLiabilities, totalAssets)
-   Interpretation: Shows what % of assets are financed by debt
-
-→ Call: FinancialAnalysisPlugin.CalculateEquityMultiplier(totalAssets, stockholdersEquity)
-   Interpretation: Part of DuPont analysis
-
-→ Call: FinancialAnalysisPlugin.EquityToTotalAssetsPercentage(stockholdersEquity, totalAssets)
-   Interpretation: Conservative companies have higher equity %
-
-⚠️ These four functions have NO dependencies - execute in parallel for speed.
-
-═══════════════════════════════════════════════════════════
-After parallel execution completes, synthesize findings:
-- What's the debt/equity mix?
-- Is leverage appropriate for the industry?
-- What's the financial risk level?
-
-For detailed interpretation, industry benchmarks, and risk assessment:
-→ read_skill_document('02-capitalstructureanalysis-sop')",
-            options: new SkillOptions()
-                .AddDocumentFromFile(
-                    "./Skills/SOPs/02-CapitalStructureAnalysis-SOP.md",
-                    "Step-by-step procedure for analyzing capital structure and leverage"),
-            "FinancialAnalysisPlugin.CalculateDebtToEquityRatio",
-            "FinancialAnalysisPlugin.CalculateDebtToAssetsRatio",
-            "FinancialAnalysisPlugin.CalculateEquityMultiplier",
-            "FinancialAnalysisPlugin.EquityToTotalAssetsPercentage"
-        );
-    }
-
-    /// <summary>
-    /// Period Change Analysis Skill
-    /// Analyzes how financial metrics changed from one period to another
-    /// </summary>
-    [Skill(Category = "Trend Analysis", Priority = 12)]
-    public Skill PeriodChangeAnalysis(SkillOptions? options = null)
-    {
-        return SkillFactory.Create(
-            name: "PeriodChangeAnalysis",
-            description: "Analyze period-over-period changes in financial metrics using absolute and relative measures. Calls base FinancialAnalysisPlugin functions directly.",
-            instructions: @"
-📋 PERIOD CHANGE ANALYSIS - EXECUTION PROTOCOL
-
-Use this skill to understand how financial items changed between periods.
-
-⚠️ FOR DETAILED GUIDANCE:
-→ read_skill_document('03-periodchangeanalysis-sop')
-
-═══════════════════════════════════════════════════════════
-PARALLEL EXECUTION PER LINE ITEM:
-═══════════════════════════════════════════════════════════
-
-For each financial line item being analyzed, execute ALL three metrics in PARALLEL:
-
-→ Call: FinancialAnalysisPlugin.CalculateAbsoluteChange(currentPeriodValue, priorPeriodValue)
-   Shows: Raw dollar impact
-
-→ Call: FinancialAnalysisPlugin.CalculatePercentageChange(currentPeriodValue, priorPeriodValue)
-   Shows: Relative magnitude of change (growth rate)
-
-→ Call: FinancialAnalysisPlugin.CalculatePercentagePointChange(currentPercent, priorPercent)
-   Shows: Change in common-size percentages
-
-⚠️ These three functions have NO dependencies - execute in parallel for speed.
-⚠️ Process MULTIPLE line items in parallel - each line item's calculations are independent.
-
-═══════════════════════════════════════════════════════════
-When to use each metric:
-- Absolute Change: Total dollar impact on balance sheet
-- Percentage Change: Growth rate and relative magnitude
-- Percentage Point Change: How much share of total changed
-
-After completing all parallel calculations, synthesize the change story:
-- What changed and by how much?
-- Are changes favorable or concerning?
-- What business drivers explain the changes?
-
-For detailed interpretation and example scenarios:
-→ read_skill_document('03-periodchangeanalysis-sop')",
-            options: new SkillOptions()
-                .AddDocumentFromFile(
-                    "./Skills/SOPs/03-PeriodChangeAnalysis-SOP.md",
-                    "Step-by-step procedure for analyzing period-over-period changes"),
-            "FinancialAnalysisPlugin.CalculateAbsoluteChange",
-            "FinancialAnalysisPlugin.CalculatePercentageChange",
-            "FinancialAnalysisPlugin.CalculatePercentagePointChange"
-        );
-    }
-
-    /// <summary>
-    /// Common-Size Balance Sheet Skill
-    /// Normalizes balance sheet items to percentages for comparison
-    /// </summary>
-    [Skill(Category = "Comparative Analysis", Priority = 13)]
-    public Skill CommonSizeBalanceSheet(SkillOptions? options = null)
-    {
-        return SkillFactory.Create(
-            name: "CommonSizeBalanceSheet",
-            description: "Create a common-size balance sheet showing each item as a percentage of total assets. Calls base FinancialAnalysisPlugin functions directly.",
-            instructions: @"
-📋 COMMON-SIZE BALANCE SHEET - EXECUTION PROTOCOL
-
-Use this skill to build a common-size balance sheet for comparison across periods or companies.
-
-⚠️ FOR DETAILED GUIDANCE:
-→ read_skill_document('04-commonsizebalancesheet-sop')
-
-═══════════════════════════════════════════════════════════
-PARALLEL EXECUTION (Asset and liability calculations are independent):
-═══════════════════════════════════════════════════════════
-
-🚀 Execute asset and liability calculations SIMULTANEOUSLY:
-
-→ Call: FinancialAnalysisPlugin.CommonSizeBalanceSheetAssets(...)
-   Shows: Each asset as % of total assets
-
-→ Call: FinancialAnalysisPlugin.CommonSizeBalanceSheetLiabilities(...)
-   Shows: Each liability as % of total liabilities
-
-→ Call: FinancialAnalysisPlugin.EquityToTotalAssetsPercentage(stockholdersEquity, totalAssets)
-   Shows: Capital structure
-
-⚠️ Asset and liability calculations have NO dependencies - execute in parallel for speed.
-
-SEQUENTIAL STEP: Verify percentages
-→ All asset percentages should sum to 100%
-→ All liability percentages should sum to 100%
-→ Run this AFTER parallel calculations complete
-
-═══════════════════════════════════════════════════════════
-Benefits of common-size analysis:
-- Compare companies of different sizes
-- Identify structural changes over time
-- Spot unusual asset/liability distributions
-
-After verification completes:
-- Identify any unusual concentrations
-- Compare to industry benchmarks
-- Flag any structural concerns
-
-For detailed interpretation and industry comparisons:
-→ read_skill_document('04-commonsizebalancesheet-sop')",
-            options: new SkillOptions()
-                .AddDocumentFromFile(
-                    "./Skills/SOPs/04-CommonSizeBalanceSheet-SOP.md",
-                    "Step-by-step procedure for creating common-size financial statements"),
-            "FinancialAnalysisPlugin.CalculateCommonSizePercentage",
-            "FinancialAnalysisPlugin.CommonSizeBalanceSheetAssets",
-            "FinancialAnalysisPlugin.CommonSizeBalanceSheetLiabilities",
-            "FinancialAnalysisPlugin.EquityToTotalAssetsPercentage"
-        );
-    }
-
-    /// <summary>
     /// Financial Health Dashboard Skill
-    /// Comprehensive financial analysis combining all analysis techniques
+    /// PRIMARY SKILL - Comprehensive balance sheet analysis
     /// </summary>
     [Skill(Category = "Executive Summary", Priority = 1)]
     public Skill FinancialHealthDashboard(SkillOptions? options = null)
     {
         return SkillFactory.Create(
             name: "FinancialHealthDashboard",
-            description: "Comprehensive financial health assessment combining liquidity, leverage, common-size, and change analysis. Calls base FinancialAnalysisPlugin functions directly (NOT sub-skill containers).",
+            description: "Comprehensive balance sheet analysis covering liquidity, solvency, structure, and trends",
             instructions: @"
-📋 FINANCIAL HEALTH DASHBOARD - EXECUTION PROTOCOL
+RECOMMENDED APPROACH:
+For comprehensive multi-period balance sheet analysis, use a single call:
 
-Use this skill for a complete financial health assessment.
+→ FinancialAnalysisPlugin.ComprehensiveBalanceSheetAnalysis(
+    y1CurrentAssets, y1TotalAssets, y1CurrentLiabilities, y1TotalLiabilities, y1Equity,
+    y2CurrentAssets, y2TotalAssets, y2CurrentLiabilities, y2TotalLiabilities, y2Equity)
 
-⚠️ FOR DETAILED GUIDANCE:
-→ read_skill_document('05-financialhealthdashboard-sop')
-→ read_skill_document('00-analysisframework-overview')
+Returns: Common-size analysis, period-over-period changes, top 3 changes by magnitude.
 
-⚠️ CRITICAL RULES:
-1. Call BASE FinancialAnalysisPlugin functions DIRECTLY
-2. DO NOT activate sub-skill containers (QuickLiquidityAnalysis, CapitalStructureAnalysis, etc.)
-3. Follow the execution sequence below - sequential prerequisite then parallel batches
+WHEN COMPREHENSIVE FUNCTION ISN'T ENOUGH:
+If you need additional metrics not in ComprehensiveBalanceSheetAnalysis, supplement with:
 
-═══════════════════════════════════════════════════════════
-SEQUENTIAL PREREQUISITE:
-═══════════════════════════════════════════════════════════
+Validate first (if needed):
+→ ValidateBalanceSheetEquation(totalAssets, totalLiabilities, stockholdersEquity)
 
-STEP 1: VALIDATE Balance Sheet
-→ Call: FinancialAnalysisPlugin.ValidateBalanceSheetEquation(totalAssets, totalLiabilities, stockholdersEquity)
-→ Purpose: Verify data integrity before analysis
-→ ⚠️ WAIT for validation result before proceeding
-→ If invalid, investigate data issues first
+Additional liquidity metrics:
+→ CalculateCurrentRatio(currentAssets, currentLiabilities)
+→ CalculateQuickRatio(currentAssets, currentLiabilities, inventory)  
+→ CalculateWorkingCapital(currentAssets, currentLiabilities)
 
-═══════════════════════════════════════════════════════════
-PARALLEL EXECUTION BATCHES (After validation passes):
-═══════════════════════════════════════════════════════════
+Additional leverage metrics:
+→ CalculateDebtToEquityRatio(totalLiabilities, stockholdersEquity)
+→ CalculateDebtToAssetsRatio(totalLiabilities, totalAssets)
+→ CalculateEquityMultiplier(totalAssets, stockholdersEquity)
 
-🚀 PARALLEL BATCH 1: LIQUIDITY & LEVERAGE & STRUCTURE ANALYSIS
-   All three analysis categories can run simultaneously
+DECISION FRAMEWORK:
+- User says 'analyze this balance sheet' → Use ComprehensiveBalanceSheetAnalysis + supplement if needed
+- User requests specific metrics only → Use individual functions
+- User needs validation → Start with ValidateBalanceSheetEquation
 
-   LIQUIDITY METRICS (3 parallel calls):
-   → FinancialAnalysisPlugin.CalculateCurrentRatio(currentAssets, currentLiabilities)
-   → FinancialAnalysisPlugin.CalculateQuickRatio(currentAssets, currentLiabilities, inventory)
-   → FinancialAnalysisPlugin.CalculateWorkingCapital(currentAssets, currentLiabilities)
-   Purpose: Can company meet short-term obligations?
-
-   LEVERAGE METRICS (3 parallel calls):
-   → FinancialAnalysisPlugin.CalculateDebtToEquityRatio(totalLiabilities, stockholdersEquity)
-   → FinancialAnalysisPlugin.CalculateDebtToAssetsRatio(totalLiabilities, totalAssets)
-   → FinancialAnalysisPlugin.CalculateEquityMultiplier(totalAssets, stockholdersEquity)
-   Purpose: What's the debt/equity mix? Is it sustainable?
-
-   STRUCTURE METRICS (3 parallel calls):
-   → FinancialAnalysisPlugin.CommonSizeBalanceSheetAssets(...)
-   → FinancialAnalysisPlugin.CommonSizeBalanceSheetLiabilities(...)
-   → FinancialAnalysisPlugin.EquityToTotalAssetsPercentage(stockholdersEquity, totalAssets)
-   Purpose: How is the balance sheet distributed?
-
-🚀 PARALLEL BATCH 2: TRENDS ANALYSIS (if comparing periods)
-   All change metrics can run simultaneously
-
-   → FinancialAnalysisPlugin.CalculateAbsoluteChange(currentAmount, priorAmount)
-   → FinancialAnalysisPlugin.CalculatePercentageChange(currentAmount, priorAmount)
-   Purpose: How did metrics change from prior period?
-
-═══════════════════════════════════════════════════════════
-🚫 PROHIBITED - DO NOT ACTIVATE THESE SUB-SKILLS:
-═══════════════════════════════════════════════════════════
-❌ QuickLiquidityAnalysis() - Use Batch 1 liquidity functions instead
-❌ CapitalStructureAnalysis() - Use Batch 1 leverage functions instead
-❌ PeriodChangeAnalysis() - Use Batch 2 trend functions instead
-❌ CommonSizeBalanceSheet() - Use Batch 1 structure functions instead
-
-These container skills are for STANDALONE use only when user requests
-specific focused analysis. The Dashboard uses BASE FUNCTIONS directly.
-
-═══════════════════════════════════════════════════════════
-OUTPUT FORMAT:
-═══════════════════════════════════════════════════════════
-After completing ALL parallel batches, provide comprehensive synthesis:
-
-1. Liquidity Assessment
-   - Current liquidity position
-   - Ability to meet short-term obligations
-   - Red flags or concerns
-
-2. Solvency Assessment
-   - Capital structure analysis
-   - Financial leverage evaluation
-   - Debt sustainability
-
-3. Structural Analysis
-   - Balance sheet composition
-   - Unusual concentrations
-   - Asset/liability distribution
-
-4. Trend Analysis (if periods compared)
-   - Key changes from prior period
-   - Favorable vs. concerning trends
-   - Business trajectory
-
-5. Overall Risk Rating
-   - Low / Medium / High financial risk
-   - Key strengths and weaknesses
-   - Recommendations
-
-For detailed interpretation, industry benchmarks, and analysis framework:
-→ read_skill_document('05-financialhealthdashboard-sop')",
+For interpretation guidance: read_skill_document('05-financialhealthdashboard-sop')",
             options: new SkillOptions()
                 .AddDocumentFromFile(
                     "./Skills/SOPs/05-FinancialHealthDashboard-SOP.md",
-                    "Complete framework for comprehensive financial analysis")
-                .AddDocumentFromFile(
-                    "./Skills/SOPs/00-AnalysisFramework-Overview.md",
-                    "Overview of all financial analysis skills and when to use them"),
+                    "Interpretation framework and benchmarks"),
+            "FinancialAnalysisPlugin.ComprehensiveBalanceSheetAnalysis",
             "FinancialAnalysisPlugin.ValidateBalanceSheetEquation",
             "FinancialAnalysisPlugin.CalculateCurrentRatio",
             "FinancialAnalysisPlugin.CalculateQuickRatio",
@@ -366,9 +64,189 @@ For detailed interpretation, industry benchmarks, and analysis framework:
             "FinancialAnalysisPlugin.CalculateEquityMultiplier",
             "FinancialAnalysisPlugin.CommonSizeBalanceSheetAssets",
             "FinancialAnalysisPlugin.CommonSizeBalanceSheetLiabilities",
+            "FinancialAnalysisPlugin.EquityToTotalAssetsPercentage",
             "FinancialAnalysisPlugin.CalculateAbsoluteChange",
             "FinancialAnalysisPlugin.CalculatePercentageChange",
             "FinancialAnalysisPlugin.CalculatePercentagePointChange"
+        );
+    }
+
+    /// <summary>
+    /// Quick Liquidity Analysis Skill
+    /// Use when the task specifically requires ONLY liquidity assessment
+    /// </summary>
+    [Skill(Category = "Liquidity Analysis", Priority = 10)]
+    public Skill QuickLiquidityAnalysis(SkillOptions? options = null)
+    {
+        return SkillFactory.Create(
+            name: "QuickLiquidityAnalysis",
+            description: "Focused liquidity assessment - current ratio, quick ratio, working capital",
+            instructions: @"
+WHEN TO USE THIS SKILL:
+Use when the user specifically requests liquidity analysis, current ratio, quick ratio, or working capital.
+For comprehensive analysis, use FinancialHealthDashboard instead.
+
+APPROACH:
+Execute these functions (can be parallel):
+
+→ FinancialAnalysisPlugin.CalculateCurrentRatio(currentAssets, currentLiabilities)
+  Healthy benchmark: >1.5 for most industries
+
+→ FinancialAnalysisPlugin.CalculateQuickRatio(currentAssets, currentLiabilities, inventory)
+  Conservative benchmark: >1.0
+
+→ FinancialAnalysisPlugin.CalculateWorkingCapital(currentAssets, currentLiabilities)
+  Positive = liquidity cushion; Negative may indicate efficiency or stress
+
+SYNTHESIS:
+After calculations, assess: Can the company meet short-term obligations? Compare to industry norms.
+
+For benchmarks: read_skill_document('01-quickliquidityanalysis-sop')",
+            options: new SkillOptions()
+                .AddDocumentFromFile(
+                    "./Skills/SOPs/01-QuickLiquidityAnalysis-SOP.md",
+                    "Liquidity benchmarks and interpretation"),
+            "FinancialAnalysisPlugin.CalculateCurrentRatio",
+            "FinancialAnalysisPlugin.CalculateQuickRatio",
+            "FinancialAnalysisPlugin.CalculateWorkingCapital"
+        );
+    }
+
+    /// <summary>
+    /// Capital Structure Analysis Skill
+    /// Use when the task specifically requires ONLY leverage/capital structure assessment
+    /// </summary>
+    [Skill(Category = "Leverage Analysis", Priority = 11)]
+    public Skill CapitalStructureAnalysis(SkillOptions? options = null)
+    {
+        return SkillFactory.Create(
+            name: "CapitalStructureAnalysis",
+            description: "Focused capital structure assessment - debt ratios and financial leverage",
+            instructions: @"
+WHEN TO USE THIS SKILL:
+Use when the user specifically requests leverage analysis, debt ratios, or capital structure.
+For comprehensive analysis, use FinancialHealthDashboard instead.
+
+APPROACH:
+Execute these functions (can be parallel):
+
+→ FinancialAnalysisPlugin.CalculateDebtToEquityRatio(totalLiabilities, stockholdersEquity)
+  >1.0 = more debt than equity (varies by industry)
+
+→ FinancialAnalysisPlugin.CalculateDebtToAssetsRatio(totalLiabilities, totalAssets)
+  Shows % of assets financed by debt
+
+→ FinancialAnalysisPlugin.CalculateEquityMultiplier(totalAssets, stockholdersEquity)
+  Used in DuPont analysis; measures leverage
+
+→ FinancialAnalysisPlugin.EquityToTotalAssetsPercentage(stockholdersEquity, totalAssets)
+  Higher % = more conservative capital structure
+
+SYNTHESIS:
+After calculations, assess: Is leverage appropriate for the industry? What's the financial risk?
+
+For benchmarks: read_skill_document('02-capitalstructureanalysis-sop')",
+            options: new SkillOptions()
+                .AddDocumentFromFile(
+                    "./Skills/SOPs/02-CapitalStructureAnalysis-SOP.md",
+                    "Leverage benchmarks and risk assessment"),
+            "FinancialAnalysisPlugin.CalculateDebtToEquityRatio",
+            "FinancialAnalysisPlugin.CalculateDebtToAssetsRatio",
+            "FinancialAnalysisPlugin.CalculateEquityMultiplier",
+            "FinancialAnalysisPlugin.EquityToTotalAssetsPercentage"
+        );
+    }
+
+    /// <summary>
+    /// Period Change Analysis Skill
+    /// Use when analyzing period-over-period changes in financial metrics
+    /// </summary>
+    [Skill(Category = "Trend Analysis", Priority = 12)]
+    public Skill PeriodChangeAnalysis(SkillOptions? options = null)
+    {
+        return SkillFactory.Create(
+            name: "PeriodChangeAnalysis",
+            description: "Period-over-period change analysis using absolute and relative measures",
+            instructions: @"
+WHEN TO USE THIS SKILL:
+Use when the user asks about changes, trends, or period-over-period analysis.
+For comprehensive analysis, use FinancialHealthDashboard instead.
+
+APPROACH:
+For each line item you're analyzing, use these functions (can be parallel):
+
+→ FinancialAnalysisPlugin.CalculateAbsoluteChange(currentPeriodValue, priorPeriodValue)
+  Shows raw dollar impact
+
+→ FinancialAnalysisPlugin.CalculatePercentageChange(currentPeriodValue, priorPeriodValue)
+  Shows growth rate (relative magnitude)
+
+→ FinancialAnalysisPlugin.CalculatePercentagePointChange(currentPercent, priorPercent)
+  Shows change in composition (use with common-size percentages)
+
+WHEN TO USE EACH:
+- Absolute Change: Understanding total dollar impact
+- Percentage Change: Comparing growth rates of different-sized items  
+- Percentage Point Change: Analyzing structural shifts in balance sheet
+
+SYNTHESIS:
+After calculations, explain: What changed? Favorable or concerning? Business drivers?
+
+For examples: read_skill_document('03-periodchangeanalysis-sop')",
+            options: new SkillOptions()
+                .AddDocumentFromFile(
+                    "./Skills/SOPs/03-PeriodChangeAnalysis-SOP.md",
+                    "Change analysis examples and interpretation"),
+            "FinancialAnalysisPlugin.CalculateAbsoluteChange",
+            "FinancialAnalysisPlugin.CalculatePercentageChange",
+            "FinancialAnalysisPlugin.CalculatePercentagePointChange"
+        );
+    }
+
+    /// <summary>
+    /// Common-Size Balance Sheet Skill
+    /// Use for normalizing balance sheets to percentages for comparison
+    /// </summary>
+    [Skill(Category = "Comparative Analysis", Priority = 13)]
+    public Skill CommonSizeBalanceSheet(SkillOptions? options = null)
+    {
+        return SkillFactory.Create(
+            name: "CommonSizeBalanceSheet",
+            description: "Common-size balance sheet - express items as percentages for comparison",
+            instructions: @"
+WHEN TO USE THIS SKILL:
+Use when the user requests common-size analysis, percentage breakdowns, or structural composition.
+For comprehensive analysis, use FinancialHealthDashboard instead.
+
+APPROACH:
+Execute these functions (can be parallel):
+
+→ FinancialAnalysisPlugin.CommonSizeBalanceSheetAssets(currentAssets, totalAssets)
+  Returns: Current Assets % | Non-Current Assets % | Total: 100%
+
+→ FinancialAnalysisPlugin.CommonSizeBalanceSheetLiabilities(currentLiabilities, totalLiabilities)
+  Returns: Current Liabilities % | Non-Current Liabilities % | Total: 100%
+
+→ FinancialAnalysisPlugin.EquityToTotalAssetsPercentage(stockholdersEquity, totalAssets)
+  Returns: Equity as % of total assets
+
+BENEFITS:
+- Compare companies of different sizes
+- Identify structural changes over time
+- Spot unusual concentrations
+
+SYNTHESIS:
+After calculations: Verify percentages sum to 100%, identify unusual patterns, compare to benchmarks.
+
+For interpretation: read_skill_document('04-commonsizebalancesheet-sop')",
+            options: new SkillOptions()
+                .AddDocumentFromFile(
+                    "./Skills/SOPs/04-CommonSizeBalanceSheet-SOP.md",
+                    "Common-size interpretation and comparisons"),
+            "FinancialAnalysisPlugin.CalculateCommonSizePercentage",
+            "FinancialAnalysisPlugin.CommonSizeBalanceSheetAssets",
+            "FinancialAnalysisPlugin.CommonSizeBalanceSheetLiabilities",
+            "FinancialAnalysisPlugin.EquityToTotalAssetsPercentage"
         );
     }
 }

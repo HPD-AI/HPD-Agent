@@ -64,7 +64,7 @@ internal class SkillInstructionIterationFilter : IIterationFilter
                 activeSkills,
                 context.Options);
 
-            // Inject with proper formatting
+            // Inject with proper formatting - append AFTER original instructions
             var currentInstructions = context.Options.Instructions ?? string.Empty;
 
             // Avoid duplicate injection
@@ -72,7 +72,7 @@ internal class SkillInstructionIterationFilter : IIterationFilter
             {
                 context.Options.Instructions = string.IsNullOrEmpty(currentInstructions)
                     ? protocolsSection
-                    : $"{protocolsSection}\n\n{currentInstructions}";
+                    : $"{currentInstructions}\n\n{protocolsSection}";
             }
         }
 

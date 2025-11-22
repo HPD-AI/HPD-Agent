@@ -727,18 +727,18 @@ public class AgentBuilder
         // AUTO-REGISTER ITERATION FILTERS
         // ═══════════════════════════════════════════════════════
 
-        // Register IterationLoggingFilter if logger available
-        if (_logger != null)
-        {
-            var iterationLogger = _logger.CreateLogger<HPD.Agent.Internal.Filters.IterationLoggingFilter>();
-            _iterationFilters.Add(new HPD.Agent.Internal.Filters.IterationLoggingFilter(iterationLogger));
-        }
-
         // Register SkillInstructionIterationFilter if skills are registered
+        // CRITICAL: Must run BEFORE IterationLoggingFilter so skill instructions are visible in logs
         if (_pluginManager.GetPluginRegistrations().Any())
         {
             _iterationFilters.Add(new HPD.Agent.Internal.Filters.SkillInstructionIterationFilter());
         }
+
+        // Register IterationLoggingFilter - always register (falls back to Console.Error if no logger)
+        // CRITICAL: Must run AFTER SkillInstructionIterationFilter to capture injected skill instructions
+        // DISABLED for testing
+        //var iterationLogger = _logger?.CreateLogger<HPD.Agent.Internal.Filters.IterationLoggingFilter>();
+        //_iterationFilters.Add(new HPD.Agent.Internal.Filters.IterationLoggingFilter(iterationLogger));
 
         // Register ContinuationPermissionIterationFilter if enabled
         // This requests user permission when iteration limit is reached

@@ -44,11 +44,11 @@ static Task<(ConversationThread, AgentCore)> CreateAIAssistant(ILoggerFactory lo
     {
         Name = "AI Assistant",
         SystemInstructions = "You are an accountant agent. You can do sequential and parallel tool calls. You can also plan out stuff before you start if the task requires sub steps. If you open a skill, it will give you instructions of how to use the skill and what to read.",
-        MaxAgenticIterations = 20,  // Set to 2 to test continuation filter
+        MaxAgenticIterations = 50,  // Set to 2 to test continuation filter
         Provider = new ProviderConfig
         {
-            ProviderKey = "openrouter",
-            ModelName = "z-ai/glm-4.6", // 🧠 Reasoning model - FREE on OpenRouter!
+            ProviderKey = "openai",
+            ModelName = "gpt-4.1-2025-04-14", // 🧠 Reasoning model - FREE on OpenRouter!
         },
         DynamicMemory = new DynamicMemoryConfig
         {
@@ -68,7 +68,8 @@ static Task<(ConversationThread, AgentCore)> CreateAIAssistant(ILoggerFactory lo
         {
             Enabled = true,              // Scope C# plugins (MathPlugin, etc.)      // Scope MCP tools by server (MCP_filesystem, MCP_github, etc.)
             ScopeFrontendTools = false,   // Scope Frontend/AGUI tools (FrontendTools container)
-            MaxFunctionNamesInDescription = 10  // Max function names shown in container descriptions
+            MaxFunctionNamesInDescription = 10,  // Max function names shown in container descriptions
+            SkillInstructionMode = SkillInstructionMode.PromptFilterOnly  // 🎯 Instructions only in system prompt (not in function result)
         },
         // 💭 Reasoning Token Preservation: Controls whether reasoning from models like o1/Gemini is saved in history
         // Default: false (reasoning shown in UI but excluded from history to save tokens/cost)
@@ -81,8 +82,7 @@ static Task<(ConversationThread, AgentCore)> CreateAIAssistant(ILoggerFactory lo
     var agent = new AgentBuilder(agentConfig)
         .WithLogging()
         .WithPlanMode()  // ✨ Financial analysis plugin (explicitly registered)  // ✨ Financial analysis skills (that reference the plugin)
-        .WithPlugin<FinancialAnalysisSkills>()  // ✨ Math plugin (basic math functions)
-        .WithPlugin<MathPlugin>()  // ✨ Math plugin (basic math functions)
+        .WithPlugin<FinancialAnalysisSkills>()  // ✨ Math plugin (basic math functions
         .WithPermissions() // ✨ NEW: Unified permission filter - events handled in streaming loop
         .BuildCoreAgent();  // ✨ Build CORE agent (internal access via InternalsVisibleTo)
 

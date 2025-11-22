@@ -170,6 +170,9 @@ internal static class SkillCodeGenerator
         var baseMessage = $"{skill.Name} skill activated. Available functions: {functionList}";
         var escapedBaseMessage = baseMessage.Replace("\"", "\"\"");
 
+        // Determine if skill has documents
+        var hasDocuments = skill.Options.DocumentReferences.Any() || skill.Options.DocumentUploads.Any();
+
         if (!string.IsNullOrEmpty(skill.Instructions))
         {
             var escapedInstructions = skill.Instructions.Replace("\"", "\"\"");
@@ -184,7 +187,20 @@ internal static class SkillCodeGenerator
             sb.AppendLine();
             sb.AppendLine($"{escapedInstructions}\";");
             sb.AppendLine("                    }");
-            sb.AppendLine($"                    return @\"{escapedBaseMessage}\";");
+
+            // Generate appropriate message based on whether skill has documents
+            if (hasDocuments)
+            {
+                var documentMessage = $"{skill.Name} skill activated. Available functions: {functionList}.\\n\\nIMPORTANT: This skill has associated documents. You MUST read the skill documents using the read_skill_document function to understand how to properly use this skill's functions.";
+                var escapedDocumentMessage = documentMessage.Replace("\"", "\"\"");
+                sb.AppendLine($"                    return @\"{escapedDocumentMessage}\";");
+            }
+            else
+            {
+                var reinforcementMessage = $"{skill.Name} skill activated. Available functions: {functionList}.\\n\\nREMINDER: Follow the instructions provided for this skill when using its functions.";
+                var escapedReinforcementMessage = reinforcementMessage.Replace("\"", "\"\"");
+                sb.AppendLine($"                    return @\"{escapedReinforcementMessage}\";");
+            }
             sb.AppendLine("                },");
         }
         else
@@ -192,7 +208,18 @@ internal static class SkillCodeGenerator
             sb.AppendLine("            return HPDAIFunctionFactory.Create(");
             sb.AppendLine("                async (arguments, cancellationToken) =>");
             sb.AppendLine("                {");
-            sb.AppendLine($"                    return @\"{escapedBaseMessage}\";");
+
+            // Generate appropriate message based on whether skill has documents
+            if (hasDocuments)
+            {
+                var documentMessage = $"{skill.Name} skill activated. Available functions: {functionList}.\\n\\nIMPORTANT: This skill has associated documents. You MUST read the skill documents using the read_skill_document function to understand how to properly use this skill's functions.";
+                var escapedDocumentMessage = documentMessage.Replace("\"", "\"\"");
+                sb.AppendLine($"                    return @\"{escapedDocumentMessage}\";");
+            }
+            else
+            {
+                sb.AppendLine($"                    return @\"{escapedBaseMessage}\";");
+            }
             sb.AppendLine("                },");
         }
         sb.AppendLine("                new HPDAIFunctionFactoryOptions");

@@ -62,9 +62,20 @@ internal sealed class OpenRouterChatClient : IChatClient
         };
 
         var httpResponse = await _httpClient.SendAsync(httpRequest, cancellationToken).ConfigureAwait(false);
-        httpResponse.EnsureSuccessStatusCode();
 
+        // Read response body first (needed for error details)
         var responseJson = await httpResponse.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+
+        // Check for HTTP errors and include response body in exception
+        if (!httpResponse.IsSuccessStatusCode)
+        {
+            throw new HttpRequestException(
+                $"OpenRouter API request failed [Status: {(int)httpResponse.StatusCode} {httpResponse.StatusCode}, Model: {_modelName}, Endpoint: chat/completions]. Response: {responseJson}",
+                inner: null,
+                statusCode: httpResponse.StatusCode
+            );
+        }
+
         var openRouterResponse = JsonSerializer.Deserialize(responseJson, _jsonContext.OpenRouterChatResponse);
 
         if (openRouterResponse == null)
@@ -87,7 +98,18 @@ internal sealed class OpenRouterChatClient : IChatClient
         };
 
         using var httpResponse = await _httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
-        httpResponse.EnsureSuccessStatusCode();
+
+        // Check for HTTP errors before starting to read stream
+        if (!httpResponse.IsSuccessStatusCode)
+        {
+            // Read error response body for detailed error information
+            var errorBody = await httpResponse.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            throw new HttpRequestException(
+                $"OpenRouter API streaming request failed [Status: {(int)httpResponse.StatusCode} {httpResponse.StatusCode}, Model: {_modelName}, Endpoint: chat/completions]. Response: {errorBody}",
+                inner: null,
+                statusCode: httpResponse.StatusCode
+            );
+        }
 
         using var stream = await httpResponse.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
         using var reader = new StreamReader(stream);

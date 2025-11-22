@@ -106,13 +106,9 @@ internal class IterationLoggingFilter : IIterationFilter
 
     private void LogMessage(string message)
     {
-        // Always output to console for visibility during testing
-        Console.WriteLine(message);
-
-        // Also log through framework if available
-        if (_logger != null)
-        {
-            _logger.LogInformation(message);
-        }
+        // ALWAYS write directly to Console.Error to ensure it appears immediately
+        // Console.Error is not buffered like Console.Out
+        Console.Error.WriteLine(message);
+        Console.Error.Flush();
     }
 }

@@ -50,7 +50,7 @@ public class FinancialAnalysisPluginMetadataContext : IPluginMetadataContext
     public bool HasProperty(string propertyName) => _properties.ContainsKey(propertyName);
     public IEnumerable<string> GetPropertyNames() => _properties.Keys;
 }
-[Scope("Financial Analysis Plugin", "Provides advanced financial analysis functions for balance sheet analysis, common-sizing, and ratio calculations.")]
+
 public class FinancialAnalysisPlugin
 {
     // ==================== COMMON-SIZE ANALYSIS ====================

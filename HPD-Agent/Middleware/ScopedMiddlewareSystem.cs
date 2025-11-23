@@ -1,43 +1,43 @@
 using Microsoft.Extensions.AI;
-using HPD.Agent.Internal.Filters;
+using HPD.Agent.Internal.MiddleWare;
 
-namespace HPD.Agent.Internal.Filters;
+namespace HPD.Agent.Internal.MiddleWare;
 
 /// <summary>
-/// Represents the scope of a filter - what functions it applies to.
+/// Represents the scope of a Middleware - what functions it applies to.
 /// Internal enum for HPD-Agent internals.
 /// </summary>
-internal enum FilterScope
+internal enum MiddlewareScope
 {
-    /// <summary>Filter applies to all functions globally</summary>
+    /// <summary>Middleware applies to all functions globally</summary>
     Global,
-    /// <summary>Filter applies to all functions from a specific plugin</summary>
+    /// <summary>Middleware applies to all functions from a specific plugin</summary>
     Plugin,
-    /// <summary>Filter applies to skill container and functions called by a specific skill</summary>
+    /// <summary>Middleware applies to skill container and functions called by a specific skill</summary>
     Skill,
-    /// <summary>Filter applies to a specific function only</summary>
+    /// <summary>Middleware applies to a specific function only</summary>
     Function
 }
 
 /// <summary>
-/// Associates a filter with its scope and target.
+/// Associates a Middleware with its scope and target.
 /// Internal class for HPD-Agent internals.
 /// </summary>
-internal class ScopedFilter
+internal class ScopedMiddleware
 {
-    public IAiFunctionFilter Filter { get; }
-    public FilterScope Scope { get; }
+    public IAIFunctionMiddleware Middleware { get; }
+    public MiddlewareScope Scope { get; }
     public string? Target { get; } // Plugin type name or function name, null for global
     
-    public ScopedFilter(IAiFunctionFilter filter, FilterScope scope, string? target = null)
+    public ScopedMiddleware(IAIFunctionMiddleware Middleware, MiddlewareScope scope, string? target = null)
     {
-        Filter = filter ?? throw new ArgumentNullException(nameof(filter));
+        Middleware = Middleware ?? throw new ArgumentNullException(nameof(Middleware));
         Scope = scope;
         Target = target;
     }
     
     /// <summary>
-    /// Determines if this filter should be applied to the given function
+    /// Determines if this Middleware should be applied to the given function
     /// </summary>
     /// <param name="functionName">The name of the function being invoked</param>
     /// <param name="pluginTypeName">The plugin that contains this function (optional)</param>
@@ -47,36 +47,36 @@ internal class ScopedFilter
     {
         return Scope switch
         {
-            FilterScope.Global => true,
-            FilterScope.Plugin => !string.IsNullOrEmpty(pluginTypeName) &&
+            MiddlewareScope.Global => true,
+            MiddlewareScope.Plugin => !string.IsNullOrEmpty(pluginTypeName) &&
                                  string.Equals(Target, pluginTypeName, StringComparison.Ordinal),
-            FilterScope.Skill =>
+            MiddlewareScope.Skill =>
                 // Apply if this function IS the skill container itself
                 (isSkillContainer && string.Equals(Target, functionName, StringComparison.Ordinal)) ||
                 // OR if this function is called FROM this skill (via mapping)
                 (!string.IsNullOrEmpty(skillName) && string.Equals(Target, skillName, StringComparison.Ordinal)),
-            FilterScope.Function => string.Equals(Target, functionName, StringComparison.Ordinal),
+            MiddlewareScope.Function => string.Equals(Target, functionName, StringComparison.Ordinal),
             _ => false
         };
     }
 }
 
 /// <summary>
-/// Manages the collection of scoped filters and provides methods to retrieve applicable filters.
+/// Manages the collection of scoped Middlewares and provides methods to retrieve applicable Middlewares.
 /// Internal class for HPD-Agent internals.
 /// </summary>
-internal class ScopedFilterManager
+internal class ScopedFunctionMiddlewareManager
 {
-    private readonly List<ScopedFilter> _scopedFilters = new();
+    private readonly List<ScopedMiddleware> _scopedMiddlewares = new();
     private readonly Dictionary<string, string> _functionToPluginMap = new();
     private readonly Dictionary<string, string> _functionToSkillMap = new();
     
     /// <summary>
-    /// Adds a filter with the specified scope
+    /// Adds a Middleware with the specified scope
     /// </summary>
-    public void AddFilter(IAiFunctionFilter filter, FilterScope scope, string? target = null)
+    public void AddMiddleware(IAIFunctionMiddleware Middleware, MiddlewareScope scope, string? target = null)
     {
-        _scopedFilters.Add(new ScopedFilter(filter, scope, target));
+        _scopedMiddlewares.Add(new ScopedMiddleware(Middleware, scope, target));
     }
     
     /// <summary>
@@ -99,17 +99,17 @@ internal class ScopedFilterManager
     }
     
     /// <summary>
-    /// Gets all filters that apply to the specified function, ordered by scope priority:
-    /// 1. Global filters (0)
-    /// 2. Plugin-specific filters (1)
-    /// 3. Skill-specific filters (2)
-    /// 4. Function-specific filters (3)
+    /// Gets all Middlewares that apply to the specified function, ordered by scope priority:
+    /// 1. Global Middlewares (0)
+    /// 2. Plugin-specific Middlewares (1)
+    /// 3. Skill-specific Middlewares (2)
+    /// 4. Function-specific Middlewares (3)
     /// </summary>
     /// <param name="functionName">The name of the function being invoked</param>
     /// <param name="pluginTypeName">The plugin that contains this function (optional)</param>
     /// <param name="skillName">The skill context (if function is called by a skill)</param>
     /// <param name="isSkillContainer">Whether this function is a skill container itself</param>
-    public IEnumerable<IAiFunctionFilter> GetApplicableFilters(
+    public IEnumerable<IAIFunctionMiddleware> GetApplicableMiddlewares(
         string functionName,
         string? pluginTypeName = null,
         string? skillName = null,
@@ -127,60 +127,60 @@ internal class ScopedFilterManager
             _functionToSkillMap.TryGetValue(functionName, out skillName);
         }
 
-        var applicableFilters = _scopedFilters
+        var applicableMiddlewares = _scopedMiddlewares
             .Where(sf => sf.AppliesTo(functionName, pluginTypeName, skillName, isSkillContainer))
             .OrderBy(sf => sf.Scope) // Global(0) → Plugin(1) → Skill(2) → Function(3)
-            .Select(sf => sf.Filter);
+            .Select(sf => sf.Middleware);
 
-        return applicableFilters;
+        return applicableMiddlewares;
     }
     
     /// <summary>
-    /// Gets all scoped filters
+    /// Gets all scoped Middlewares
     /// </summary>
-    public IReadOnlyList<ScopedFilter> GetAllScopedFilters() => _scopedFilters.AsReadOnly();
+    public IReadOnlyList<ScopedMiddleware> GetAllScopedMiddlewares() => _scopedMiddlewares.AsReadOnly();
     
     /// <summary>
-    /// Gets all global filters that apply to all functions
+    /// Gets all global Middlewares that apply to all functions
     /// </summary>
-    public List<IAiFunctionFilter> GetGlobalFilters()
+    public List<IAIFunctionMiddleware> GetGlobalMiddlewares()
     {
-        return _scopedFilters
-            .Where(sf => sf.Scope == FilterScope.Global)
-            .Select(sf => sf.Filter)
+        return _scopedMiddlewares
+            .Where(sf => sf.Scope == MiddlewareScope.Global)
+            .Select(sf => sf.Middleware)
             .ToList();
     }
 }
 
 /// <summary>
-/// Tracks the current context for scoped filter registration in the builder
+/// Tracks the current context for scoped Middleware registration in the builder
 /// </summary>
 internal class BuilderScopeContext
 {
-    public FilterScope CurrentScope { get; set; } = FilterScope.Global;
+    public MiddlewareScope CurrentScope { get; set; } = MiddlewareScope.Global;
     public string? CurrentTarget { get; set; }
 
     public void SetGlobalScope()
     {
-        CurrentScope = FilterScope.Global;
+        CurrentScope = MiddlewareScope.Global;
         CurrentTarget = null;
     }
 
     public void SetPluginScope(string pluginTypeName)
     {
-        CurrentScope = FilterScope.Plugin;
+        CurrentScope = MiddlewareScope.Plugin;
         CurrentTarget = pluginTypeName;
     }
 
     public void SetSkillScope(string skillName)
     {
-        CurrentScope = FilterScope.Skill;
+        CurrentScope = MiddlewareScope.Skill;
         CurrentTarget = skillName;
     }
 
     public void SetFunctionScope(string functionName)
     {
-        CurrentScope = FilterScope.Function;
+        CurrentScope = MiddlewareScope.Function;
         CurrentTarget = functionName;
     }
 }

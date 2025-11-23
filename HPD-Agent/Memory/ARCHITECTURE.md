@@ -218,7 +218,7 @@ HPD-Agent/Memory/Agent/
       ├─> Creates DynamicMemoryPlugin(store)
       ├─> Creates DynamicMemoryFilter(store, options)
       ├─> Registers plugin to PluginManager
-      └─> Registers filter to PromptFilters
+      └─> Registers filter to PromptMiddlewares
 
 
 2. Prompt Injection (Every Request)
@@ -319,7 +319,7 @@ public record DynamicMemoryStoreSnapshot
       ├─> Creates StaticMemoryStore (JSON or InMemory)
       ├─> If documents specified, add them to store
       ├─> Creates StaticMemoryFilter(store, agentName, maxTokens)
-      └─> Registers filter to PromptFilters (NO PLUGIN)
+      └─> Registers filter to PromptMiddlewares (NO PLUGIN)
 
 
 2. Prompt Injection (Every Request)
@@ -464,7 +464,7 @@ StaticMemoryFilter.InvokeAsync()
       ├─> Creates AgentPlanPlugin(store)
       ├─> Creates AgentPlanFilter(store)
       ├─> Registers plugin to PluginManager
-      └─> Registers filter to PromptFilters
+      └─> Registers filter to PromptMiddlewares
 
 
 2. Prompt Injection (Every Request)
@@ -749,7 +749,7 @@ AgentBuilder.Build()
    ├─> Register StaticMemoryFilter
    ├─> Register AgentPlanFilter
    ├─> Register UserCustomFilter
-   └─> Register PermissionFilter
+   └─> Register PermissionMiddleware
 ```
 
 **Execution Flow**:
@@ -764,33 +764,33 @@ AgentPlanFilter      (injects current plan)
     ↓
 UserCustomFilter     (custom logic)
     ↓
-PermissionFilter     (permissions check)
+PermissionMiddleware     (permissions check)
     ↓
 Agent Execution
 ```
 
-### IPromptFilter Interface
+### IPromptMiddleware Interface
 
 ```csharp
-public interface IPromptFilter
+public interface IPromptMiddleware
 {
     Task<IEnumerable<ChatMessage>> InvokeAsync(
-        PromptFilterContext context,
-        Func<PromptFilterContext, Task<IEnumerable<ChatMessage>>> next);
+        PromptMiddlewareContext context,
+        Func<PromptMiddlewareContext, Task<IEnumerable<ChatMessage>>> next);
 }
 ```
 
 ### Filter Implementation Pattern
 
 ```csharp
-public class DynamicMemoryFilter : IPromptFilter
+public class DynamicMemoryFilter : IPromptMiddleware
 {
     private readonly DynamicMemoryStore _store;
     private readonly DynamicMemoryOptions _options;
 
     public async Task<IEnumerable<ChatMessage>> InvokeAsync(
-        PromptFilterContext context,
-        Func<PromptFilterContext, Task<IEnumerable<ChatMessage>>> next)
+        PromptMiddlewareContext context,
+        Func<PromptMiddlewareContext, Task<IEnumerable<ChatMessage>>> next)
     {
         // 1. Get storage key (from options or context)
         var storageKey = _options.MemoryId ?? context.AgentName;
@@ -1004,7 +1004,7 @@ public class JsonEpisodicMemoryStore : EpisodicMemoryStore { }
 
 4. **Create filter** (for injection):
 ```csharp
-public class EpisodicMemoryFilter : IPromptFilter
+public class EpisodicMemoryFilter : IPromptMiddleware
 {
     private readonly EpisodicMemoryStore _store;
 
@@ -1062,7 +1062,7 @@ public static AgentBuilder WithEpisodicMemory(
     var filter = new EpisodicMemoryFilter(store, options);
 
     builder.PluginManager.RegisterPlugin(plugin);
-    builder.PromptFilters.Add(filter);
+    builder.PromptMiddlewares.Add(filter);
 
     return builder;
 }

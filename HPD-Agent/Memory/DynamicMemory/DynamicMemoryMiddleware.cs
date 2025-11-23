@@ -1,24 +1,24 @@
 using Microsoft.Extensions.Logging;
-using HPD.Agent.Internal.Filters;
+using HPD.Agent.Internal.MiddleWare;
 using Microsoft.Extensions.AI;
 using System.Text;
 
 
 /// <summary>
-/// Prompt filter that injects memory content into the system message.
+/// Prompt Middleware that injects memory content into the system message.
 /// </summary>
-internal class DynamicMemoryFilter : IPromptFilter
+internal class DynamicMemoryMiddleware : IPromptMiddleware
 {
     private readonly DynamicMemoryStore _store;
     private readonly DynamicMemoryOptions _options;
-    private readonly ILogger<DynamicMemoryFilter>? _logger;
+    private readonly ILogger<DynamicMemoryMiddleware>? _logger;
     private readonly string? _memoryId;
     private string? _cachedMemoryContext;
     private DateTime _lastCacheTime = DateTime.MinValue;
     private readonly TimeSpan _cacheValidTime;
     private readonly object _cacheLock = new object();
 
-    public DynamicMemoryFilter(DynamicMemoryStore store, DynamicMemoryOptions options, ILogger<DynamicMemoryFilter>? logger = null)
+    public DynamicMemoryMiddleware(DynamicMemoryStore store, DynamicMemoryOptions options, ILogger<DynamicMemoryMiddleware>? logger = null)
     {
         _store = store;
         _options = options;
@@ -31,8 +31,8 @@ internal class DynamicMemoryFilter : IPromptFilter
     }
 
     public async Task<IEnumerable<ChatMessage>> InvokeAsync(
-        PromptFilterContext context,
-        Func<PromptFilterContext, Task<IEnumerable<ChatMessage>>> next)
+        PromptMiddlewareContext context,
+        Func<PromptMiddlewareContext, Task<IEnumerable<ChatMessage>>> next)
     {
         var now = DateTime.UtcNow;
         string memoryTag = string.Empty;

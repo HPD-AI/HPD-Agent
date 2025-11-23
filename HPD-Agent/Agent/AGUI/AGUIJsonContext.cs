@@ -38,8 +38,6 @@ using System.Text.Json.Serialization.Metadata;
 [JsonSerializable(typeof(ContinuationPermissionRequestEvent))]
 [JsonSerializable(typeof(CustomEvent))]
 [JsonSerializable(typeof(RawEvent))]
-[JsonSerializable(typeof(PermissionScope))]
-[JsonSerializable(typeof(PermissionScope[]))]
 [JsonSerializable(typeof(Tool))]
 [JsonSerializable(typeof(Context))]
 [JsonSerializable(typeof(Dictionary<string, object>))]

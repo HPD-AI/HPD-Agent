@@ -21,7 +21,7 @@ History Reduction (if enabled)
     ↓ May remove: Old messages
 effectiveMessages = [System, Summary?, ...recentMessages]
     ↓
-ApplyPromptFiltersAsync(effectiveMessages)
+ApplyPromptMiddlewaresAsync(effectiveMessages)
     ↓ May add: Document context, RAG results, injected instructions
     ↓ May modify: Existing messages
 effectiveMessages = [System, Documents?, ...filteredMessages]

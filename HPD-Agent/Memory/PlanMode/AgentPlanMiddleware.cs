@@ -1,5 +1,5 @@
 using Microsoft.Extensions.Logging;
-using HPD.Agent.Internal.Filters;
+using HPD.Agent.Internal.MiddleWare;
 using Microsoft.Extensions.AI;
 using System.Collections.Generic;
 using System.Linq;
@@ -7,23 +7,23 @@ using System.Threading.Tasks;
 using HPD_Agent.Memory.Agent.PlanMode;
 
 /// <summary>
-/// Prompt filter that injects the current plan into system messages.
+/// Prompt Middleware that injects the current plan into system messages.
 /// Only injects when a plan exists.
 /// </summary>
-internal class AgentPlanFilter : IPromptFilter
+internal class AgentPlanMiddleware : IPromptMiddleware
 {
     private readonly AgentPlanStore _store;
-    private readonly ILogger<AgentPlanFilter>? _logger;
+    private readonly ILogger<AgentPlanMiddleware>? _logger;
 
-    public AgentPlanFilter(AgentPlanStore store, ILogger<AgentPlanFilter>? logger = null)
+    public AgentPlanMiddleware(AgentPlanStore store, ILogger<AgentPlanMiddleware>? logger = null)
     {
         _store = store;
         _logger = logger;
     }
 
     public async Task<IEnumerable<ChatMessage>> InvokeAsync(
-        PromptFilterContext context,
-        Func<PromptFilterContext, Task<IEnumerable<ChatMessage>>> next)
+        PromptMiddlewareContext context,
+        Func<PromptMiddlewareContext, Task<IEnumerable<ChatMessage>>> next)
     {
         // Get conversation ID from options (injected by Conversation class)
         var conversationId = context.Options?.AdditionalProperties?["ConversationId"] as string;

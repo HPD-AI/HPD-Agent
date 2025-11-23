@@ -62,7 +62,7 @@ await foreach (var evt in orchestratorConv.RunStreamingAsync("Build an auth syst
             Console.WriteLine($"🔐 {permReq.FunctionName} needs permission");
             var approved = GetUserApproval();
             orchestrator.SendFilterResponse(permReq.PermissionId,
-                new InternalPermissionResponseEvent(permReq.PermissionId, "PermissionFilter", approved));
+                new InternalPermissionResponseEvent(permReq.PermissionId, "PermissionMiddleware", approved));
             break;
 
         case InternalTextDeltaEvent text:
@@ -84,7 +84,7 @@ All filter events from nested agents automatically bubble to the orchestrator:
 
 ### ✅ Permission Events
 ```csharp
-// From PermissionFilter in nested agent
+// From PermissionMiddleware in nested agent
 - InternalPermissionRequestEvent
 - InternalPermissionResponseEvent
 - InternalPermissionApprovedEvent
@@ -129,7 +129,7 @@ Orchestrator Turn 0:
     CodingAgent Turn 0 (nested):
       LLM calls: WriteFile()
         ↓
-        PermissionFilter emits: InternalPermissionRequestEvent
+        PermissionMiddleware emits: InternalPermissionRequestEvent
           ↓
           Event written to CodingAgent.EventCoordinator ✅
           Event ALSO written to Orchestrator.EventCoordinator ✅ (BUBBLING!)
@@ -389,7 +389,7 @@ class Program
                         permReq.PermissionId,
                         new InternalPermissionResponseEvent(
                             permReq.PermissionId,
-                            "PermissionFilter",
+                            "PermissionMiddleware",
                             approved,
                             approved ? "User approved" : "User denied"
                         )
@@ -531,7 +531,7 @@ await foreach (var evt in orchestrator.RunStreamingAsync("test"))
 
 ```csharp
 // In your nested agent's filter
-public class DebugFilter : IAiFunctionFilter
+public class DebugFilter : IAIFunctionMiddleware
 {
     public async Task InvokeAsync(AiFunctionContext context, Func<AiFunctionContext, Task> next)
     {

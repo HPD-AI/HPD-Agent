@@ -242,17 +242,17 @@ private ChatOptions? MergeOptions(ChatOptions? providedOptions)
 
 **Current Code:**
 ```csharp
-private async Task<IEnumerable<ChatMessage>> ApplyPromptFiltersAsync(
+private async Task<IEnumerable<ChatMessage>> ApplyPromptMiddlewaresAsync(
     IEnumerable<ChatMessage> messages,
     ChatOptions? options,
     string agentName,
     CancellationToken cancellationToken)
 {
-    if (!_promptFilters.Any())
+    if (!_PromptMiddlewares.Any())
         return messages;
 
     // Create filter context
-    var context = new PromptFilterContext(messages, options, agentName, cancellationToken);
+    var context = new PromptMiddlewareContext(messages, options, agentName, cancellationToken);
 
     // Transfer additional properties to filter context
     if (options?.AdditionalProperties != null)
@@ -268,17 +268,17 @@ private async Task<IEnumerable<ChatMessage>> ApplyPromptFiltersAsync(
 
 **Target (Phase 1-3):**
 ```csharp
-private async Task<IEnumerable<ChatMessage>> ApplyPromptFiltersAsync(
+private async Task<IEnumerable<ChatMessage>> ApplyPromptMiddlewaresAsync(
     IEnumerable<ChatMessage> messages,
     ChatOptions? options,
     string agentName,
     CancellationToken cancellationToken)
 {
-    if (!_promptFilters.Any())
+    if (!_PromptMiddlewares.Any())
         return messages;
 
     // Create filter context using builder (Phase 1+)
-    var context = PromptFilterContextBuilder.Create(messages, options, agentName, cancellationToken);
+    var context = PromptMiddlewareContextBuilder.Create(messages, options, agentName, cancellationToken);
     // ... rest of method
 }
 ```
@@ -311,7 +311,7 @@ chatOptions
 ## Files to Create
 
 ### New File: ChatOptionsContextExtensions.cs
-**Location:** `/HPD-Agent/Filters/PromptFiltering/ChatOptionsContextExtensions.cs`
+**Location:** `/HPD-Agent/Filters/PromptMiddlewareing/ChatOptionsContextExtensions.cs`
 
 ```csharp
 public static class ChatOptionsContextExtensions
@@ -340,19 +340,19 @@ public static class ChatOptionsContextExtensions
 
 ---
 
-### New File: PromptFilterContextBuilder.cs
-**Location:** `/HPD-Agent/Filters/PromptFiltering/PromptFilterContextBuilder.cs`
+### New File: PromptMiddlewareContextBuilder.cs
+**Location:** `/HPD-Agent/Filters/PromptMiddlewareing/PromptMiddlewareContextBuilder.cs`
 
 ```csharp
-public static class PromptFilterContextBuilder
+public static class PromptMiddlewareContextBuilder
 {
-    public static PromptFilterContext Create(
+    public static PromptMiddlewareContext Create(
         IEnumerable<ChatMessage> messages,
         ChatOptions? options,
         string agentName,
         CancellationToken cancellationToken)
     {
-        var context = new PromptFilterContext(messages, options, agentName, cancellationToken);
+        var context = new PromptMiddlewareContext(messages, options, agentName, cancellationToken);
         
         // Populate properties from typed ChatOptions properties (Phase 1+)
         if (options != null)
@@ -424,7 +424,7 @@ public object? ResponseSchema { get; set; }
 
 1. **Create Extension Methods** (Low risk, no existing code changes)
    - ChatOptionsContextExtensions.cs
-   - PromptFilterContextBuilder.cs
+   - PromptMiddlewareContextBuilder.cs
 
 2. **Phase 1: ConversationId** (Low risk, backward compatible)
    - Agent.cs lines 394-404

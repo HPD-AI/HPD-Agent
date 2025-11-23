@@ -1,7 +1,7 @@
 using System.Text;
 using Microsoft.Extensions.AI;
 
-namespace HPD.Agent.Internal.Filters;
+namespace HPD.Agent.Internal.MiddleWare;
 
 /// <summary>
 /// Injects active skill instructions before each LLM call.
@@ -11,13 +11,13 @@ namespace HPD.Agent.Internal.Filters;
 /// <para><b>Problem Solved:</b></para>
 /// <para>
 /// Skills are activated during agentic execution (iteration 0), but their instructions
-/// need to be available for subsequent LLM calls (iteration 1+). Prompt filters only run
+/// need to be available for subsequent LLM calls (iteration 1+). Prompt Middlewares only run
 /// once at message turn start, so they cannot inject skill instructions dynamically.
 /// </para>
 ///
 /// <para><b>Solution:</b></para>
 /// <para>
-/// This iteration filter runs before EVERY LLM call and checks the agent's state for
+/// This iteration Middleware runs before EVERY LLM call and checks the agent's state for
 /// active skills. If skills are active, it injects their instructions into the system prompt.
 /// </para>
 ///
@@ -25,34 +25,34 @@ namespace HPD.Agent.Internal.Filters;
 /// <code>
 /// Turn 1: "Activate trading skill and buy AAPL"
 ///   Iteration 0:
-///     - Filter: No active skills yet
+///     - Middleware: No active skills yet
 ///     - LLM: Returns activate_skill("trading")
 ///     - Execute: Skill activated → State.ActiveSkillInstructions += {"trading": "..."}
 ///
 ///   Iteration 1: 🔥 KEY MOMENT
-///     - Filter: Detects State.ActiveSkillInstructions["trading"]
-///     - Filter: Injects trading instructions into ChatOptions.Instructions
+///     - Middleware: Detects State.ActiveSkillInstructions["trading"]
+///     - Middleware: Injects trading instructions into ChatOptions.Instructions
 ///     - LLM: NOW SEES trading instructions, knows how to buy stocks!
 ///     - LLM: Returns buy_stock(symbol="AAPL", quantity=10)
 ///
 ///   Iteration 2:
-///     - Filter: Still injects trading instructions
+///     - Middleware: Still injects trading instructions
 ///     - LLM: Returns final response
-///     - Filter: Detects IsFinalIteration = true, signals cleanup
+///     - Middleware: Detects IsFinalIteration = true, signals cleanup
 ///     - Agent: At end of message turn, clears ActiveSkillInstructions
 ///
 /// Turn 2: "What's the weather?"
 ///   - Skills are cleared → Trading instructions NOT injected
 /// </code>
 /// </remarks>
-internal class SkillInstructionIterationFilter : IIterationFilter
+internal class SkillInstructionIterationMiddleWare : IIterationMiddleWare
 {
     /// <summary>
     /// Called BEFORE the LLM call begins.
     /// Injects active skill instructions into the system prompt with rich formatting.
     /// </summary>
     public Task BeforeIterationAsync(
-        IterationFilterContext context,
+        IterationMiddleWareContext context,
         CancellationToken cancellationToken)
     {
         var activeSkills = context.State.ActiveSkillInstructions;
@@ -84,7 +84,7 @@ internal class SkillInstructionIterationFilter : IIterationFilter
     /// Detects final iteration and signals cleanup.
     /// </summary>
     public Task AfterIterationAsync(
-        IterationFilterContext context,
+        IterationMiddleWareContext context,
         CancellationToken cancellationToken)
     {
         var activeSkills = context.State.ActiveSkillInstructions;
@@ -101,7 +101,7 @@ internal class SkillInstructionIterationFilter : IIterationFilter
 
     /// <summary>
     /// Builds a rich, formatted skill protocols section with metadata.
-    /// Matches the formatting from SkillInstructionPromptFilter.
+    /// Matches the formatting from SkillInstructionPromptMiddleware.
     /// </summary>
     private static string BuildSkillProtocolsSection(
         System.Collections.Immutable.ImmutableDictionary<string, string> activeSkills,

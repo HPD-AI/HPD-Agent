@@ -1,30 +1,30 @@
 using System;
-using HPD.Agent.Internal.Filters;
+using HPD.Agent.Internal.MiddleWare;
 using HPD.Agent;
 using System.Threading.Tasks;
 
 /// <summary>
-/// Unified permission filter that works with any protocol (Console, AGUI, Web, etc.).
+/// Unified permission Middleware that works with any protocol (Console, AGUI, Web, etc.).
 /// Emits standardized permission events that can be handled by application-specific UI code.
-/// Replaces both ConsolePermissionFilter and AGUIPermissionFilter with a single, protocol-agnostic implementation.
+/// Replaces both ConsolePermissionMiddleware and AGUIPermissionMiddleware with a single, protocol-agnostic implementation.
 /// </summary>
-internal class PermissionFilter : IPermissionFilter
+internal class PermissionMiddleware : IPermissionMiddleware
 {
     private readonly IPermissionStorage? _storage;
     private readonly AgentConfig? _config;
-    private readonly string _filterName;
+    private readonly string _MiddlewareName;
 
     /// <summary>
-    /// Creates a new unified permission filter.
+    /// Creates a new unified permission Middleware.
     /// </summary>
     /// <param name="storage">Optional permission storage for persistent decisions</param>
     /// <param name="config">Optional agent configuration for continuation settings</param>
-    /// <param name="filterName">Optional name for this filter instance (defaults to "PermissionFilter")</param>
-    public PermissionFilter(IPermissionStorage? storage = null, AgentConfig? config = null, string? filterName = null)
+    /// <param name="MiddlewareName">Optional name for this Middleware instance (defaults to "PermissionMiddleware")</param>
+    public PermissionMiddleware(IPermissionStorage? storage = null, AgentConfig? config = null, string? MiddlewareName = null)
     {
         _storage = storage;
         _config = config;
-        _filterName = filterName ?? "PermissionFilter";
+        _MiddlewareName = MiddlewareName ?? "PermissionMiddleware";
     }
 
     public async Task InvokeAsync(FunctionInvocationContext context, Func<FunctionInvocationContext, Task> next)
@@ -45,18 +45,10 @@ internal class PermissionFilter : IPermissionFilter
             ? idObj?.ToString()
             : null;
 
-        // Extract project ID from run context metadata if available
-        string? projectId = null;
-        // Note: Project feature has been removed. This can be re-enabled if needed.
-        // if (context.Metadata.TryGetValue("Project", out var projectObj))
-        // {
-        //     projectId = (projectObj as Project)?.Id;
-        // }
-
         // Check storage if available
         if (_storage != null && !string.IsNullOrEmpty(conversationId))
         {
-            var storedChoice = await _storage.GetStoredPermissionAsync(functionName, conversationId, projectId);
+            var storedChoice = await _storage.GetStoredPermissionAsync(functionName, conversationId);
 
             if (storedChoice == PermissionChoice.AlwaysAllow)
             {
@@ -78,7 +70,7 @@ internal class PermissionFilter : IPermissionFilter
         // Emit permission request event (standardized, protocol-agnostic)
         context.Emit(new InternalPermissionRequestEvent(
             permissionId,
-            _filterName,
+            _MiddlewareName,
             functionName,
             context.Function.Description ?? "No description available",
             callId ?? string.Empty,
@@ -97,7 +89,7 @@ internal class PermissionFilter : IPermissionFilter
             // Emit denial event for observability
             context.Emit(new InternalPermissionDeniedEvent(
                 permissionId,
-                _filterName,
+                _MiddlewareName,
                 "Permission request timed out after 5 minutes"));
 
             context.Result = "Permission request timed out. Please respond to permission requests promptly.";
@@ -109,7 +101,7 @@ internal class PermissionFilter : IPermissionFilter
             // Emit denial event for observability
             context.Emit(new InternalPermissionDeniedEvent(
                 permissionId,
-                _filterName,
+                _MiddlewareName,
                 "Permission request was cancelled"));
 
             context.Result = "Permission request was cancelled.";
@@ -121,20 +113,16 @@ internal class PermissionFilter : IPermissionFilter
         if (response.Approved)
         {
             // Emit approval event for observability
-            context.Emit(new InternalPermissionApprovedEvent(permissionId, _filterName));
+            context.Emit(new InternalPermissionApprovedEvent(permissionId, _MiddlewareName));
 
             // Store persistent choice if user requested it
             if (_storage != null && response.Choice != PermissionChoice.Ask)
             {
-                // Determine scope based on available context
-                var scope = DetermineScope(conversationId, projectId);
-
+                // Scope is implicit based on conversationId parameter
                 await _storage.SavePermissionAsync(
                     functionName,
                     response.Choice,
-                    scope,
-                    conversationId,
-                    projectId);
+                    conversationId: conversationId);
             }
 
             // Continue execution
@@ -151,7 +139,7 @@ internal class PermissionFilter : IPermissionFilter
             // Emit denial event for observability
             context.Emit(new InternalPermissionDeniedEvent(
                 permissionId,
-                _filterName,
+                _MiddlewareName,
                 denialReason));
 
             // Set result to denial reason - will be sent to LLM as tool result
@@ -161,25 +149,4 @@ internal class PermissionFilter : IPermissionFilter
         }
     }
 
-    /// <summary>
-    /// Determines the appropriate permission scope based on available context.
-    /// </summary>
-    private static PermissionScope DetermineScope(string conversationId, string? projectId)
-    {
-        // If we have a project, default to conversation scope (most restrictive with context)
-        // User can override to Project or Global if they choose
-        if (!string.IsNullOrEmpty(projectId))
-        {
-            return PermissionScope.Conversation;
-        }
-
-        // If we only have conversation, default to conversation scope
-        if (!string.IsNullOrEmpty(conversationId))
-        {
-            return PermissionScope.Conversation;
-        }
-
-        // Fallback to global if no context available
-        return PermissionScope.Global;
-    }
 }

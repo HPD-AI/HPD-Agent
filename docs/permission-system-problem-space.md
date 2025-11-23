@@ -18,7 +18,7 @@ The library **hardcodes presentation logic** that applications need to control.
 **Evidence:**
 
 ```csharp
-// ConsolePermissionFilter.cs:123-141
+// ConsolePermissionMiddleware.cs:123-141
 Console.WriteLine($"\n[PERMISSION REQUIRED]");
 Console.WriteLine($"Function: {functionName}");
 Console.WriteLine($"Description: {functionDescription}");
@@ -117,34 +117,34 @@ Should be:
 Core permission logic is duplicated across 2 filters (AutoApprove doesn't count as a full implementation):
 
 1. **Function Metadata Checking** (2 copies)
-   - [ConsolePermissionFilter.cs:37-42](ConsolePermissionFilter.cs#L37-L42)
-   - [AGUIPermissionFilter.cs:44-49](AGUIPermissionFilter.cs#L44-L49)
+   - [ConsolePermissionMiddleware.cs:37-42](ConsolePermissionMiddleware.cs#L37-L42)
+   - [AGUIPermissionMiddleware.cs:44-49](AGUIPermissionMiddleware.cs#L44-L49)
 
 2. **Storage Operations** (2 copies)
-   - [ConsolePermissionFilter.cs:68-84](ConsolePermissionFilter.cs#L68-L84)
-   - [AGUIPermissionFilter.cs:62-78](AGUIPermissionFilter.cs#L62-L78)
+   - [ConsolePermissionMiddleware.cs:68-84](ConsolePermissionMiddleware.cs#L68-L84)
+   - [AGUIPermissionMiddleware.cs:62-78](AGUIPermissionMiddleware.cs#L62-L78)
 
 3. **Continuation Permission** (2 copies)
-   - [ConsolePermissionFilter.cs:170-213](ConsolePermissionFilter.cs#L170-L213)
-   - [AGUIPermissionFilter.cs:167-214](AGUIPermissionFilter.cs#L167-L214)
+   - [ConsolePermissionMiddleware.cs:170-213](ConsolePermissionMiddleware.cs#L170-L213)
+   - [AGUIPermissionMiddleware.cs:167-214](AGUIPermissionMiddleware.cs#L167-L214)
 
 4. **Timeout Handling** (2 copies with magic numbers)
-   - Console: 5 minutes ([line 125](ConsolePermissionFilter.cs#L125))
-   - AGUI: 5 minutes ([line 125](AGUIPermissionFilter.cs#L125))
+   - Console: 5 minutes ([line 125](ConsolePermissionMiddleware.cs#L125))
+   - AGUI: 5 minutes ([line 125](AGUIPermissionMiddleware.cs#L125))
    - No shared constant - must manually keep in sync
 
 ### Evidence of Behavioral Drift (Already Happening!)
 
 | Feature | Console | AGUI | Impact |
 |---------|---------|------|--------|
-| **Duplicate prompt prevention** | ✅ Implemented ([lines 49-58](ConsolePermissionFilter.cs#L49-L58)) | ❌ Missing | Console prevents duplicate prompts during parallel execution, AGUI doesn't |
+| **Duplicate prompt prevention** | ✅ Implemented ([lines 49-58](ConsolePermissionMiddleware.cs#L49-L58)) | ❌ Missing | Console prevents duplicate prompts during parallel execution, AGUI doesn't |
 | **Timeout values** | 5min (hardcoded) | 5min (hardcoded) | Must manually sync - compiler can't help |
-| **Continuation extension** | Reads config ([line 204](ConsolePermissionFilter.cs#L204)) | Reads config ([line 203](AGUIPermissionFilter.cs#L203)) | Same logic, duplicated implementation |
+| **Continuation extension** | Reads config ([line 204](ConsolePermissionMiddleware.cs#L204)) | Reads config ([line 203](AGUIPermissionMiddleware.cs#L203)) | Same logic, duplicated implementation |
 
 **Real Example of Drift:**
 
 ```csharp
-// ConsolePermissionFilter.cs:49-58
+// ConsolePermissionMiddleware.cs:49-58
 // Get the unique call ID for this specific tool invocation
 var callId = context.Metadata.TryGetValue("CallId", out var idObj)
     ? idObj?.ToString()
@@ -159,14 +159,14 @@ if (callId != null && context.RunContext?.IsToolApproved(callId) == true)
 ```
 
 ```csharp
-// AGUIPermissionFilter.cs
+// AGUIPermissionMiddleware.cs
 // ❌ This logic is MISSING in AGUI implementation
 // Result: AGUI can show duplicate prompts, Console doesn't
 ```
 
 **Why did this happen?**
 - Console developer discovered the duplicate prompt bug
-- Fixed it in ConsolePermissionFilter
+- Fixed it in ConsolePermissionMiddleware
 - AGUI implementation didn't get the fix (no shared code)
 - Behavioral inconsistency between filters
 
@@ -202,7 +202,7 @@ Adding a new platform requires **full reimplementation** of permission logic.
 **Example: Discord Bot Permissions**
 
 ```csharp
-public class DiscordPermissionFilter : IPermissionFilter
+public class DiscordPermissionMiddleware : IPermissionMiddleware
 {
     public async Task InvokeAsync(AiFunctionContext context, Func<AiFunctionContext, Task> next)
     {
@@ -297,7 +297,7 @@ Permission logic is **inseparable from UI**, making unit tests impossible.
 ### Console Filter Testing
 
 ```csharp
-// ConsolePermissionFilter.cs:118-163
+// ConsolePermissionMiddleware.cs:118-163
 private async Task<PermissionDecision> RequestPermissionAsync(...)
 {
     return await Task.Run(() =>
@@ -328,7 +328,7 @@ private async Task<PermissionDecision> RequestPermissionAsync(...)
 ### AGUI Filter Testing
 
 ```csharp
-// AGUIPermissionFilter.cs:106-135
+// AGUIPermissionMiddleware.cs:106-135
 private async Task<PermissionDecision> RequestPermissionAsync(...)
 {
     var permissionId = Guid.NewGuid().ToString();
@@ -420,17 +420,17 @@ await foreach (var update in EventStreamAdapter.ToIChatClient(internalStream, ca
 ```
 Multiple Implementations → Different UIs
 
-ConsolePermissionFilter (Console UI + permission logic)
-AGUIPermissionFilter (Event emission + permission logic)
-AutoApprovePermissionFilter (Auto-approve logic)
+ConsolePermissionMiddleware (Console UI + permission logic)
+AGUIPermissionMiddleware (Event emission + permission logic)
+AutoApprovePermissionMiddleware (Auto-approve logic)
 ```
 
 **Evidence:**
 ```csharp
 // AgentBuilderPermissionExtensions.cs:9-38
-builder.WithConsolePermissions()      // → ConsolePermissionFilter
-builder.WithAGUIPermissions(...)      // → AGUIPermissionFilter
-builder.WithAutoApprovePermissions()  // → AutoApprovePermissionFilter
+builder.WithConsolePermissions()      // → ConsolePermissionMiddleware
+builder.WithAGUIPermissions(...)      // → AGUIPermissionMiddleware
+builder.WithAutoApprovePermissions()  // → AutoApprovePermissionMiddleware
 ```
 
 **Pattern Characteristics:**
@@ -488,11 +488,11 @@ If simplicity is valued → current pattern might be acceptable.
 
 | Behavior | Console | AGUI | Root Cause |
 |----------|---------|------|------------|
-| **Duplicate prompt prevention** | ✅ Tracks approved call IDs ([lines 49-58](ConsolePermissionFilter.cs#L49-L58)) | ❌ No tracking | Console developer noticed issue, AGUI didn't |
-| **Function permission timeout** | 5 minutes ([line 125](ConsolePermissionFilter.cs#L125)) | 5 minutes ([line 125](AGUIPermissionFilter.cs#L125)) | Magic numbers - must manually sync |
-| **Continuation timeout** | 2 minutes ([line 195](ConsolePermissionFilter.cs#L195)) | 2 minutes ([line 195](AGUIPermissionFilter.cs#L195)) | Magic numbers - must manually sync |
-| **Default on timeout** | Deny ([line 159](ConsolePermissionFilter.cs#L159)) | Deny ([line 133](AGUIPermissionFilter.cs#L133)) | Same behavior, but no test ensuring consistency |
-| **Continuation extension amount** | Reads config ([line 204](ConsolePermissionFilter.cs#L204)) | Reads config ([line 203](AGUIPermissionFilter.cs#L203)) | Same logic, duplicated code |
+| **Duplicate prompt prevention** | ✅ Tracks approved call IDs ([lines 49-58](ConsolePermissionMiddleware.cs#L49-L58)) | ❌ No tracking | Console developer noticed issue, AGUI didn't |
+| **Function permission timeout** | 5 minutes ([line 125](ConsolePermissionMiddleware.cs#L125)) | 5 minutes ([line 125](AGUIPermissionMiddleware.cs#L125)) | Magic numbers - must manually sync |
+| **Continuation timeout** | 2 minutes ([line 195](ConsolePermissionMiddleware.cs#L195)) | 2 minutes ([line 195](AGUIPermissionMiddleware.cs#L195)) | Magic numbers - must manually sync |
+| **Default on timeout** | Deny ([line 159](ConsolePermissionMiddleware.cs#L159)) | Deny ([line 133](AGUIPermissionMiddleware.cs#L133)) | Same behavior, but no test ensuring consistency |
+| **Continuation extension amount** | Reads config ([line 204](ConsolePermissionMiddleware.cs#L204)) | Reads config ([line 203](AGUIPermissionMiddleware.cs#L203)) | Same logic, duplicated code |
 
 ### Real User Impact
 
@@ -564,9 +564,9 @@ When permission logic lives in 2 places:
 
 All claims in this document are backed by specific line numbers in the codebase:
 
-- **ConsolePermissionFilter**: [HPD-Agent/Permissions/ConsolePermissionFilter.cs](ConsolePermissionFilter.cs)
-- **AGUIPermissionFilter**: [HPD-Agent/Permissions/AGUIPermissionFilter.cs](AGUIPermissionFilter.cs)
-- **AutoApprovePermissionFilter**: [HPD-Agent/Permissions/AutoApprovePermissionFilter.cs](AutoApprovePermissionFilter.cs)
+- **ConsolePermissionMiddleware**: [HPD-Agent/Permissions/ConsolePermissionMiddleware.cs](ConsolePermissionMiddleware.cs)
+- **AGUIPermissionMiddleware**: [HPD-Agent/Permissions/AGUIPermissionMiddleware.cs](AGUIPermissionMiddleware.cs)
+- **AutoApprovePermissionMiddleware**: [HPD-Agent/Permissions/AutoApprovePermissionMiddleware.cs](AutoApprovePermissionMiddleware.cs)
 - **Permission Models**: [HPD-Agent/Permissions/PermissionModels.cs](PermissionModels.cs)
 - **Permission Events**: [HPD-Agent/Permissions/PermissionEvents.cs](PermissionEvents.cs)
 - **Agent EventStreamAdapter**: [HPD-Agent/Agent/Agent.cs:2958-3063](Agent.cs#L2958-L3063)

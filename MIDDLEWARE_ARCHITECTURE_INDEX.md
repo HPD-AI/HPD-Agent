@@ -98,12 +98,12 @@ This document serves as an index to comprehensive documentation of the HPD-Agent
 
 ## Key Components
 
-### 1. Prompt Filters (IPromptFilter)
-**Location**: `HPD-Agent/Filters/PromptFiltering/IPromptFilter.cs`
+### 1. Prompt Filters (IPromptMiddleware)
+**Location**: `HPD-Agent/Filters/PromptMiddlewareing/IPromptMiddleware.cs`
 
 **When**: Before and after LLM invocation
 **What**: Modify messages, extract memories, analyze context usage
-**Context**: `PromptFilterContext` (pre), `PostInvokeContext` (post)
+**Context**: `PromptMiddlewareContext` (pre), `PostInvokeContext` (post)
 
 **Key Methods**:
 - `InvokeAsync()`: Modify messages before LLM call
@@ -111,7 +111,7 @@ This document serves as an index to comprehensive documentation of the HPD-Agent
 
 ---
 
-### 2. AI Function Filters (IAiFunctionFilter)
+### 2. AI Function Filters (IAIFunctionMiddleware)
 **Location**: `HPD-Agent/Filters/AiFunctionOrchestrationContext.cs`
 
 **When**: Before and after function execution
@@ -125,23 +125,23 @@ This document serves as an index to comprehensive documentation of the HPD-Agent
 - Control execution via `context.IsTerminated`
 
 **Implementations**:
-- `LoggingAiFunctionFilter`: Logs calls and results
-- `ObservabilityAiFunctionFilter`: OpenTelemetry spans/metrics
-- `PermissionFilter`: Permission checking
+- `LoggingAIFunctionMiddleware`: Logs calls and results
+- `ObservabilityAIFunctionMiddleware`: OpenTelemetry spans/metrics
+- `PermissionMiddleware`: Permission checking
 - `DynamicMemoryFilter`: Memory extraction
 - `StaticMemoryFilter`: Memory injection
 - `AgentPlanFilter`: Plan mode orchestration
 
 ---
 
-### 3. Permission Filters (IPermissionFilter)
-**Location**: `HPD-Agent/Permissions/IPermissionFilter.cs`
+### 3. Permission Filters (IPermissionMiddleware)
+**Location**: `HPD-Agent/Permissions/IPermissionMiddleware.cs`
 
 **When**: Before function execution
 **What**: Check permissions, request user approval
-**Context**: `FunctionInvocationContext` (inherits from IAiFunctionFilter)
+**Context**: `FunctionInvocationContext` (inherits from IAIFunctionMiddleware)
 
-**Primary Implementation**: `PermissionFilter`
+**Primary Implementation**: `PermissionMiddleware`
 - Checks function permission requirements
 - Emits `InternalPermissionRequestEvent`
 - Waits for user response
@@ -150,12 +150,12 @@ This document serves as an index to comprehensive documentation of the HPD-Agent
 
 ---
 
-### 4. Message Turn Filters (IMessageTurnFilter)
+### 4. Message Turn Filters (IMessageTurnMiddleware)
 **Location**: `HPD-Agent/Filters/Conversation/IConversationFilter.cs`
 
 **When**: After complete message turn finishes
 **What**: Analyze turns, extract insights, update external systems
-**Context**: `MessageTurnFilterContext` (read-only)
+**Context**: `MessageTurnMiddlewareContext` (read-only)
 
 **Characteristics**:
 - Read-only access (mutations not persisted)
@@ -187,7 +187,7 @@ When multiple filters apply, execution order:
 3. Global filters (lowest priority)
 
 ### Management
-- `ScopedFilterManager`: Stores and retrieves filters by scope
+- `ScopedFunctionMiddlewareManager`: Stores and retrieves filters by scope
 - `BuilderScopeContext`: Tracks current scope during configuration
 - `GetApplicableFilters()`: Returns filters in priority order
 
@@ -303,27 +303,27 @@ Events emitted through channels in real-time:
 **AI Function Filters**:
 ```csharp
 builder.WithFilter(filter)
-builder.WithFilter<LoggingAiFunctionFilter>()
+builder.WithFilter<LoggingAIFunctionMiddleware>()
 builder.WithFunctionInvocationFilters(filter1, filter2)
 ```
 
 **Prompt Filters**:
 ```csharp
-builder.WithPromptFilter(filter)
-builder.WithPromptFilter<MyFilter>()
-builder.WithPromptFilters(filter1, filter2)
+builder.WithPromptMiddleware(filter)
+builder.WithPromptMiddleware<MyFilter>()
+builder.WithPromptMiddlewares(filter1, filter2)
 ```
 
 **Permission Filters**:
 ```csharp
-builder.WithPermissionFilter(filter)
+builder.WithPermissionMiddleware(filter)
 ```
 
 **Message Turn Filters**:
 ```csharp
-builder.WithMessageTurnFilter(filter)
-builder.WithMessageTurnFilter<MyFilter>()
-builder.WithMessageTurnFilters(filter1, filter2)
+builder.WithMessageTurnMiddleware(filter)
+builder.WithMessageTurnMiddleware<MyFilter>()
+builder.WithMessageTurnMiddlewares(filter1, filter2)
 ```
 
 ### Scoped Registration
@@ -416,9 +416,9 @@ Fully async-first, delegate-based pipelines
 ### Core Interfaces
 | File | Purpose |
 |------|---------|
-| `HPD-Agent/Filters/PromptFiltering/IPromptFilter.cs` | Prompt filter interface |
+| `HPD-Agent/Filters/PromptMiddlewareing/IPromptMiddleware.cs` | Prompt filter interface |
 | `HPD-Agent/Filters/AiFunctionOrchestrationContext.cs` | AI function filter interface |
-| `HPD-Agent/Permissions/IPermissionFilter.cs` | Permission filter interface |
+| `HPD-Agent/Permissions/IPermissionMiddleware.cs` | Permission filter interface |
 | `HPD-Agent/Filters/Conversation/IConversationFilter.cs` | Message turn filter interface |
 
 ### Implementation & Management
@@ -431,9 +431,9 @@ Fully async-first, delegate-based pipelines
 ### Concrete Implementations
 | File | Purpose |
 |------|---------|
-| `HPD-Agent/Filters/LoggingAiFunctionFilter.cs` | Logging implementation |
-| `HPD-Agent/Filters/ObservabilityAiFunctionFilter.cs` | Telemetry implementation |
-| `HPD-Agent/Permissions/PermissionFilter.cs` | Permission checking |
+| `HPD-Agent/Filters/LoggingAIFunctionMiddleware.cs` | Logging implementation |
+| `HPD-Agent/Filters/ObservabilityAIFunctionMiddleware.cs` | Telemetry implementation |
+| `HPD-Agent/Permissions/PermissionMiddleware.cs` | Permission checking |
 | `HPD-Agent/Memory/Agent/DynamicMemory/DynamicMemoryFilter.cs` | Memory extraction |
 | `HPD-Agent/Memory/Agent/StaticMemory/StaticMemoryFilter.cs` | Memory injection |
 | `HPD-Agent/Memory/Agent/PlanMode/AgentPlanFilter.cs` | Plan mode orchestration |
@@ -441,8 +441,8 @@ Fully async-first, delegate-based pipelines
 ### Context Classes
 | File | Purpose |
 |------|---------|
-| `HPD-Agent/Filters/PromptFiltering/PromptFilterContext.cs` | Pre-LLM context |
-| `HPD-Agent/Filters/PromptFiltering/PostInvokeContext.cs` | Post-LLM context |
+| `HPD-Agent/Filters/PromptMiddlewareing/PromptMiddlewareContext.cs` | Pre-LLM context |
+| `HPD-Agent/Filters/PromptMiddlewareing/PostInvokeContext.cs` | Post-LLM context |
 
 ### Secondary System (HPD.Memory)
 | File | Purpose |

@@ -3,7 +3,7 @@ using Microsoft.Extensions.AI;
 namespace HPD.Agent;
 
 /// <summary>
-/// Context provided to iteration filters before each LLM call in the agentic loop.
+/// Context provided to iteration Middlewares before each LLM call in the agentic loop.
 /// Contains both input (messages, options, state) and output (response, tool calls).
 /// Output properties are populated after next() returns.
 /// </summary>
@@ -15,7 +15,7 @@ namespace HPD.Agent;
 /// The State property is immutable (record type) and provides a snapshot of the agent's execution state.
 /// To signal state changes, use the Properties dictionary to communicate with the agent loop.
 /// </remarks>
-public class IterationFilterContext
+public class IterationMiddleWareContext
 {
     // ═══════════════════════════════════════════════════════
     // METADATA (What iteration is this?)
@@ -38,19 +38,19 @@ public class IterationFilterContext
     public required CancellationToken CancellationToken { get; init; }
 
     // ═══════════════════════════════════════════════════════
-    // INPUT - MUTABLE (Filters can modify before LLM call)
+    // INPUT - MUTABLE (Middlewares can modify before LLM call)
     // ═══════════════════════════════════════════════════════
 
     /// <summary>
     /// Messages to send to the LLM.
-    /// MUTABLE: Filters can add, remove, or modify messages.
+    /// MUTABLE: Middlewares can add, remove, or modify messages.
     /// Includes conversation history and tool results from previous iterations.
     /// </summary>
     public required IList<ChatMessage> Messages { get; set; }
 
     /// <summary>
     /// Chat options for this LLM call.
-    /// MUTABLE: Filters can modify Instructions, Tools, Temperature, etc.
+    /// MUTABLE: Middlewares can modify Instructions, Tools, Temperature, etc.
     /// Most common use case: Appending to Instructions property.
     /// </summary>
     public ChatOptions? Options { get; set; }
@@ -70,7 +70,7 @@ public class IterationFilterContext
     /// - Full conversation history
     /// </summary>
     /// <remarks>
-    /// This is a record type and cannot be modified. Filters observe state but
+    /// This is a record type and cannot be modified. Middlewares observe state but
     /// cannot change it directly. To request state changes, use Properties to signal intent.
     /// </remarks>
     public required AgentLoopState State { get; init; }
@@ -104,21 +104,21 @@ public class IterationFilterContext
     public Exception? Exception { get; set; }
 
     // ═══════════════════════════════════════════════════════
-    // CONTROL (Filters can signal actions)
+    // CONTROL (Middlewares can signal actions)
     // ═══════════════════════════════════════════════════════
 
     /// <summary>
     /// Set to true to skip the LLM call entirely.
     /// Useful for caching, short-circuiting, or conditional execution.
     /// If set before next() is called, the LLM invocation will be skipped.
-    /// The filter that sets this flag should populate Response and ToolCalls with cached/computed values.
+    /// The Middleware that sets this flag should populate Response and ToolCalls with cached/computed values.
     /// </summary>
     public bool SkipLLMCall { get; set; }
 
     /// <summary>
-    /// Extensible property bag for inter-filter communication and signaling.
+    /// Extensible property bag for inter-Middleware communication and signaling.
     /// Use this to:
-    /// - Pass data between filters in the pipeline
+    /// - Pass data between Middlewares in the pipeline
     /// - Signal cleanup actions to the agent loop
     /// - Store computed values for reuse
     /// Example: Properties["ShouldClearSkills"] = true;
@@ -126,7 +126,7 @@ public class IterationFilterContext
     public Dictionary<string, object> Properties { get; init; } = new();
 
     // ═══════════════════════════════════════════════════════
-    // BIDIRECTIONAL EVENTS (For interactive filters)
+    // BIDIRECTIONAL EVENTS (For interactive Middlewares)
     // ═══════════════════════════════════════════════════════
 
     /// <summary>
@@ -172,7 +172,7 @@ public class IterationFilterContext
 
         var effectiveTimeout = timeout ?? TimeSpan.FromMinutes(5);
 
-        return await Agent.WaitForFilterResponseAsync<T>(
+        return await Agent.WaitForMiddlewareResponseAsync<T>(
             requestId,
             effectiveTimeout,
             CancellationToken);

@@ -148,7 +148,7 @@ Skills work **identically** to plugin containers:
 
 1. **Container Expansion**: Skill containers appear in Tools list
 2. **Two-Turn Pattern**: LLM invokes skill container → sees instructions + functions
-3. **Ephemeral Instructions**: Container results filtered from persistent history (message-turn scoped)
+3. **Ephemeral Instructions**: Container results Middlewareed from persistent history (message-turn scoped)
 4. **Token Efficient**: Instructions shown once per expansion, not repeated
 
 ## Skill Reusability
@@ -461,14 +461,14 @@ var agent = new Agent(
     config,
     baseClient,
     chatOptions,
-    promptFilters,
-    scopedFilterManager,
+    PromptMiddlewares,
+    ScopedFunctionMiddlewareManager,
     providerErrorHandler,
     providerRegistry,
     skillScopingManager: skillScopingManager, // NEW: Pass skill scoping manager
-    permissionFilters,
-    aiFunctionFilters,
-    messageTurnFilters
+    PermissionMiddlewares,
+    AIFunctionMiddlewares,
+    MessageTurnMiddlewares
 );
 ```
 
@@ -575,7 +575,7 @@ Available Tools:
 
 ### Container Results are Ephemeral
 
-Container expansion messages are **filtered from persistent conversation history**:
+Container expansion messages are **Middlewareed from persistent conversation history**:
 
 ```csharp
 // In Agent.cs - container results are filtered (line ~898)

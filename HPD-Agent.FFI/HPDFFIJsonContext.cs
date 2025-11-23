@@ -118,8 +118,8 @@ namespace HPD_Agent.FFI;
 [JsonSerializable(typeof(InternalContinuationResponseEvent))]
 [JsonSerializable(typeof(InternalClarificationRequestEvent))]
 [JsonSerializable(typeof(InternalClarificationResponseEvent))]
-[JsonSerializable(typeof(InternalFilterProgressEvent))]
-[JsonSerializable(typeof(InternalFilterErrorEvent))]
+[JsonSerializable(typeof(InternalMiddlewareProgressEvent))]
+[JsonSerializable(typeof(InternalMiddlewareErrorEvent))]
 
 // --- Agent State Types ---
 [JsonSerializable(typeof(AgentLoopState))]
@@ -130,9 +130,7 @@ namespace HPD_Agent.FFI;
 
 // --- Permission Types ---
 [JsonSerializable(typeof(PermissionChoice))]
-[JsonSerializable(typeof(PermissionScope))]
 [JsonSerializable(typeof(PermissionDecision))]
-[JsonSerializable(typeof(PermissionStorage))]
 
 // --- AGUI Protocol Types ---
 [JsonSerializable(typeof(RunAgentInput))]
@@ -174,7 +172,6 @@ namespace HPD_Agent.FFI;
 [JsonSerializable(typeof(IReadOnlyList<BaseMessage>))]
 [JsonSerializable(typeof(IReadOnlyList<Tool>))]
 [JsonSerializable(typeof(IReadOnlyList<Context>))]
-[JsonSerializable(typeof(PermissionScope[]))]
 
 public partial class HPDFFIJsonContext : JsonSerializerContext
 {

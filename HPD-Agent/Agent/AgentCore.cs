@@ -1,6 +1,6 @@
 ﻿using Microsoft.Extensions.AI;
 using System.Threading.Channels;
-using HPD.Agent.Internal.Filters;
+using HPD.Agent.Internal.MiddleWare;
 using System.Runtime.CompilerServices;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
@@ -57,7 +57,7 @@ internal sealed class AgentCore
     private readonly IChatClient _baseClient;
     private readonly IChatClient? _summarizerClient;
     private readonly string _name;
-    private readonly ScopedFilterManager? _scopedFilterManager;
+    private readonly ScopedFunctionMiddlewareManager? _ScopedFunctionMiddlewareManager;
     private readonly int _maxFunctionCalls;
     private readonly IServiceProvider? _serviceProvider; // Used for middleware dependency injection
 
@@ -86,13 +86,12 @@ internal sealed class AgentCore
     private readonly MessageProcessor _messageProcessor;
     private readonly FunctionCallProcessor _functionCallProcessor;
     private readonly AgentTurn _agentTurn;
-    private readonly ToolScheduler _toolScheduler;
     private readonly UnifiedScopingManager _scopingManager;
     private readonly PermissionManager _permissionManager;
     private readonly BidirectionalEventCoordinator _eventCoordinator;
-    private readonly IReadOnlyList<IAiFunctionFilter> _aiFunctionFilters;
-    private readonly IReadOnlyList<IMessageTurnFilter> _messageTurnFilters;
-    private readonly IReadOnlyList<IIterationFilter> _iterationFilters;
+    private readonly IReadOnlyList<IAIFunctionMiddleware> _AIFunctionMiddlewares;
+    private readonly IReadOnlyList<IMessageTurnMiddleware> _MessageTurnMiddlewares;
+    private readonly IReadOnlyList<IIterationMiddleWare> _IterationMiddleWares;
     private readonly ErrorHandling.IProviderErrorHandler _providerErrorHandler;
 
     // Observer pattern for event-driven observability
@@ -117,7 +116,7 @@ internal sealed class AgentCore
     /// Returns null if no function is currently executing.
     /// </summary>
     /// <remarks>
-    /// Use this in plugins/filters to access metadata about the current function call:
+    /// Use this in plugins/Middlewares to access metadata about the current function call:
     /// - Function name and description
     /// - Call ID for correlation
     /// - Agent name and iteration number
@@ -173,7 +172,7 @@ internal sealed class AgentCore
     /// This flows across async calls and provides access to thread context throughout agent execution.
     /// </summary>
     /// <remarks>
-    /// This property enables filters and other components to access thread-specific context
+    /// This property enables Middlewares and other components to access thread-specific context
     /// such as project information, conversation history, and thread metadata.
     /// </remarks>
     public static ConversationThread? CurrentThread
@@ -209,19 +208,19 @@ internal sealed class AgentCore
     internal BidirectionalEventCoordinator EventCoordinator => _eventCoordinator;
 
     /// <summary>
-    /// Internal access to filter event channel writer for context setup.
+    /// Internal access to Middleware event channel writer for context setup.
     /// Delegates to the event coordinator.
     /// </summary>
-    internal ChannelWriter<InternalAgentEvent> FilterEventWriter => _eventCoordinator.EventWriter;
+    internal ChannelWriter<InternalAgentEvent> MiddlewareEventWriter => _eventCoordinator.EventWriter;
 
     /// <summary>
-    /// Internal access to filter event channel reader for RunAgenticLoopInternal.
+    /// Internal access to Middleware event channel reader for RunAgenticLoopInternal.
     /// Delegates to the event coordinator.
     /// </summary>
-    internal ChannelReader<InternalAgentEvent> FilterEventReader => _eventCoordinator.EventReader;
+    internal ChannelReader<InternalAgentEvent> MiddlewareEventReader => _eventCoordinator.EventReader;
 
     /// <summary>
-    /// Sends a response to a filter waiting for a specific request.
+    /// Sends a response to a Middleware waiting for a specific request.
     /// Called by external handlers when user provides input.
     /// Thread-safe: Can be called from any thread.
     /// Delegates to the event coordinator.
@@ -229,17 +228,17 @@ internal sealed class AgentCore
     /// <param name="requestId">The unique identifier for the request</param>
     /// <param name="response">The response event to deliver</param>
     /// <exception cref="ArgumentNullException">If response is null</exception>
-    public void SendFilterResponse(string requestId, InternalAgentEvent response)
+    public void SendMiddlewareResponse(string requestId, InternalAgentEvent response)
     {
         _eventCoordinator.SendResponse(requestId, response);
     }
 
     /// <summary>
-    /// Internal method for filters to wait for responses.
+    /// Internal method for Middlewares to wait for responses.
     /// Called by AiFunctionContext.WaitForResponseAsync().
     /// Delegates to the event coordinator.
     /// </summary>
-    internal async Task<T> WaitForFilterResponseAsync<T>(
+    internal async Task<T> WaitForMiddlewareResponseAsync<T>(
         string requestId,
         TimeSpan timeout,
         CancellationToken cancellationToken) where T : InternalAgentEvent
@@ -261,13 +260,13 @@ internal sealed class AgentCore
         AgentConfig config,
         IChatClient baseClient,
         ChatOptions? mergedOptions,
-        List<IPromptFilter> promptFilters,
-        ScopedFilterManager scopedFilterManager,
+        List<IPromptMiddleware> PromptMiddlewares,
+        ScopedFunctionMiddlewareManager ScopedFunctionMiddlewareManager,
         ErrorHandling.IProviderErrorHandler providerErrorHandler,
-        IReadOnlyList<IPermissionFilter>? permissionFilters = null,
-        IReadOnlyList<IAiFunctionFilter>? aiFunctionFilters = null,
-        IReadOnlyList<IMessageTurnFilter>? messageTurnFilters = null,
-        IReadOnlyList<IIterationFilter>? iterationFilters = null,
+        IReadOnlyList<IPermissionMiddleware>? PermissionMiddlewares = null,
+        IReadOnlyList<IAIFunctionMiddleware>? AIFunctionMiddlewares = null,
+        IReadOnlyList<IMessageTurnMiddleware>? MessageTurnMiddlewares = null,
+        IReadOnlyList<IIterationMiddleWare>? IterationMiddleWares = null,
         IServiceProvider? serviceProvider = null,
         IEnumerable<IAgentEventObserver>? observers = null,
         IChatClient? summarizerClient = null)
@@ -276,7 +275,7 @@ internal sealed class AgentCore
         _baseClient = baseClient ?? throw new ArgumentNullException(nameof(baseClient));
         _summarizerClient = summarizerClient;
         _name = config.Name ?? "Agent"; // Default to "Agent" to prevent null dictionary key exceptions
-        _scopedFilterManager = scopedFilterManager ?? throw new ArgumentNullException(nameof(scopedFilterManager));
+        _ScopedFunctionMiddlewareManager = ScopedFunctionMiddlewareManager ?? throw new ArgumentNullException(nameof(ScopedFunctionMiddlewareManager));
         _maxFunctionCalls = config.MaxAgenticIterations;
         _providerErrorHandler = providerErrorHandler;
         // Used for middleware dependency injection (e.g., ILoggerFactory)
@@ -304,16 +303,16 @@ internal sealed class AgentCore
             MaxRetries = config.ErrorHandling?.MaxRetries ?? 3
         };
 
-        // Fix: Store and use AI function filters
-        _aiFunctionFilters = aiFunctionFilters ?? new List<IAiFunctionFilter>();
-        _messageTurnFilters = messageTurnFilters ?? new List<IMessageTurnFilter>();
-        _iterationFilters = iterationFilters ?? new List<IIterationFilter>();
+        // Fix: Store and use AI function Middlewares
+        _AIFunctionMiddlewares = AIFunctionMiddlewares ?? new List<IAIFunctionMiddleware>();
+        _MessageTurnMiddlewares = MessageTurnMiddlewares ?? new List<IMessageTurnMiddleware>();
+        _IterationMiddleWares = IterationMiddleWares ?? new List<IIterationMiddleWare>();
 
-        // Create bidirectional event coordinator for filter events and human-in-the-loop
+        // Create bidirectional event coordinator for Middleware events and human-in-the-loop
         _eventCoordinator = new BidirectionalEventCoordinator();
 
         // Create permission manager
-        _permissionManager = new PermissionManager(permissionFilters);
+        _permissionManager = new PermissionManager(PermissionMiddlewares);
 
         // Create history reducer if configured
         var chatReducer = CreateChatReducer(config, baseClient);
@@ -324,14 +323,14 @@ internal sealed class AgentCore
         _messageProcessor = new MessageProcessor(
             systemInstructions,
             mergedOptions ?? config.Provider?.DefaultChatOptions,
-            promptFilters,
+            PromptMiddlewares,
             chatReducer,
             config.HistoryReduction);
         _functionCallProcessor = new FunctionCallProcessor(
-            this, // NEW: Pass agent reference for filter event coordination
-            scopedFilterManager,
+            this, // NEW: Pass agent reference for Middleware event coordination
+            ScopedFunctionMiddlewareManager,
             _permissionManager,
-            _aiFunctionFilters,
+            _AIFunctionMiddlewares,
             config.MaxAgenticIterations,
             config.ErrorHandling,
             config.ServerConfiguredTools,
@@ -354,7 +353,7 @@ internal sealed class AgentCore
             initialTools,
             explicitlyRegisteredPlugins);
 
-        _toolScheduler = new ToolScheduler(this, _functionCallProcessor, _permissionManager, config, _scopingManager);
+        // ToolScheduler removed - FunctionCallProcessor now handles all tool execution
 
         // ═══════════════════════════════════════════════════════
         // INITIALIZE OBSERVABILITY SERVICES
@@ -409,9 +408,9 @@ internal sealed class AgentCore
     public ChatOptions? DefaultOptions => Config?.Provider?.DefaultChatOptions ?? _messageProcessor.DefaultOptions;
 
     /// <summary>
-    /// AIFuncton filters applied to tool calls in conversations (via ScopedFilterManager)
+    /// AIFuncton Middlewares applied to tool calls in conversations (via ScopedFunctionMiddlewareManager)
     /// </summary>
-    public IReadOnlyList<IAiFunctionFilter> AIFunctionFilters => _aiFunctionFilters;
+    public IReadOnlyList<IAIFunctionMiddleware> AIFunctionMiddlewares => _AIFunctionMiddlewares;
 
     /// <summary>
     /// Maximum number of function calls allowed in a single conversation turn
@@ -419,9 +418,9 @@ internal sealed class AgentCore
     public int MaxFunctionCalls => _maxFunctionCalls;
 
     /// <summary>
-    /// Scoped filter manager for applying filters based on function/plugin scope
+    /// Scoped Middleware manager for applying Middlewares based on function/plugin scope
     /// </summary>
-    public ScopedFilterManager? ScopedFilterManager => _scopedFilterManager;
+    public ScopedFunctionMiddlewareManager? ScopedFunctionMiddlewareManager => _ScopedFunctionMiddlewareManager;
 
     #region internal loop
     /// <summary>
@@ -460,7 +459,7 @@ internal sealed class AgentCore
                 continue;
             }
 
-            // Check observer-specific filter
+            // Check observer-specific Middleware
             if (!observer.ShouldProcess(evt))
             {
                 continue;
@@ -603,7 +602,7 @@ internal sealed class AgentCore
                 // Use messages from restored state (already prepared - includes system instructions)
                 effectiveMessages = state.CurrentMessages;
 
-                // Use options from PreparedTurn (already merged and filtered)
+                // Use options from PreparedTurn (already merged and Middlewareed)
                 effectiveOptions = turn.Options;
 
                 // No reduction on resume (messages were already reduced in original run)
@@ -680,7 +679,7 @@ internal sealed class AgentCore
 
                 // Use PreparedTurn's already-prepared messages and options
                 effectiveMessages = turn.MessagesForLLM;  // Already reduced (if needed)
-                effectiveOptions = turn.Options;  // Already merged + filtered
+                effectiveOptions = turn.Options;  // Already merged + Middlewareed
                 reductionMetadata = turn.NewReductionMetadata;  // Already computed (if new reduction)
 
                 // Apply reduction state if available
@@ -773,8 +772,8 @@ internal sealed class AgentCore
             // MAIN AGENTIC LOOP (Hybrid: Pure Decisions + Inline Execution)
             // ═══════════════════════════════════════════════════════
             // NOTE: Use <= so that when MaxAgenticIterations=2, we allow iterations 0, 1, AND 2.
-            // Iteration 2 will hit the continuation filter before attempting the 3rd LLM call.
-            // This allows the filter to emit the continuation request event.
+            // Iteration 2 will hit the continuation Middleware before attempting the 3rd LLM call.
+            // This allows the Middleware to emit the continuation request event.
 
             while (!state.IsTerminated && state.Iteration <= config.MaxIterations)
             {
@@ -795,9 +794,9 @@ internal sealed class AgentCore
                     AgentName: _name,
                     Timestamp: DateTimeOffset.UtcNow);
 
-                // Drain filter events before decision
-                while (_eventCoordinator.EventReader.TryRead(out var filterEvt))
-                    yield return filterEvt;
+                // Drain Middleware events before decision
+                while (_eventCoordinator.EventReader.TryRead(out var MiddlewareEvt))
+                    yield return MiddlewareEvt;
 
                 // ═══════════════════════════════════════════════════
                 // FUNCTIONAL CORE: Pure Decision (No I/O)
@@ -854,10 +853,10 @@ internal sealed class AgentCore
                     }
                 }
 
-                // Drain filter events after decision-making, before execution
+                // Drain Middleware events after decision-making, before execution
                 // CRITICAL: Ensures events emitted during decision logic are yielded before LLM streaming starts
-                while (_eventCoordinator.EventReader.TryRead(out var filterEvt))
-                    yield return filterEvt;
+                while (_eventCoordinator.EventReader.TryRead(out var MiddlewareEvt))
+                    yield return MiddlewareEvt;
 
                 // ═══════════════════════════════════════════════════════════════
                 // ARCHITECTURAL DECISION: Inline Execution for Zero-Latency Streaming
@@ -887,7 +886,7 @@ internal sealed class AgentCore
                 if (decision is AgentDecision.CallLLM)
                 {
                     // ═══════════════════════════════════════════════════════
-                    // EXECUTE LLM CALL WITH ITERATION FILTERS
+                    // EXECUTE LLM CALL WITH ITERATION Middlewares
                     // ═══════════════════════════════════════════════════════
 
                     // ✅ NEW: Determine messages to send with cache-aware reduction
@@ -971,10 +970,10 @@ internal sealed class AgentCore
                     }
 
                     // ═══════════════════════════════════════════════════════
-                    // ✅ NEW: Create iteration filter context
+                    // ✅ NEW: Create iteration Middleware context
                     // ═══════════════════════════════════════════════════════
 
-                    var filterContext = new IterationFilterContext
+                    var MiddlewareContext = new IterationMiddleWareContext
                     {
                         Iteration = state.Iteration,
                         AgentName = _name,
@@ -986,54 +985,54 @@ internal sealed class AgentCore
                     };
 
                     // ═══════════════════════════════════════════════════════
-                    // ✅ NEW: Execute BEFORE iteration filters
+                    // ✅ NEW: Execute BEFORE iteration Middlewares
                     // ═══════════════════════════════════════════════════════
-                    // CRITICAL: Execute iteration filters with event polling
+                    // CRITICAL: Execute iteration Middlewares with event polling
                     // This allows bidirectional events (continuation requests) to be
-                    // yielded to the consumer while filters wait for responses.
-                    // Without polling, continuation filter requests would deadlock.
+                    // yielded to the consumer while Middlewares wait for responses.
+                    // Without polling, continuation Middleware requests would deadlock.
 
-                    foreach (var filter in _iterationFilters)
+                    foreach (var Middleware in _IterationMiddleWares)
                     {
-                        // Execute filter as a task and poll for events while it runs
-                        var filterTask = filter.BeforeIterationAsync(
-                            filterContext,
+                        // Execute Middleware as a task and poll for events while it runs
+                        var MiddlewareTask = Middleware.BeforeIterationAsync(
+                            MiddlewareContext,
                             effectiveCancellationToken);
 
-                        // Poll for filter events while iteration filter is executing
+                        // Poll for Middleware events while iteration Middleware is executing
                         // This is identical to the polling pattern used for tool execution
-                        while (!filterTask.IsCompleted)
+                        while (!MiddlewareTask.IsCompleted)
                         {
                             var delayTask = Task.Delay(10, effectiveCancellationToken);
-                            await Task.WhenAny(filterTask, delayTask).ConfigureAwait(false);
+                            await Task.WhenAny(MiddlewareTask, delayTask).ConfigureAwait(false);
 
-                            // Drain any events that were emitted during filter execution
-                            while (_eventCoordinator.EventReader.TryRead(out var filterEvt))
+                            // Drain any events that were emitted during Middleware execution
+                            while (_eventCoordinator.EventReader.TryRead(out var MiddlewareEvt))
                             {
-                                yield return filterEvt;
+                                yield return MiddlewareEvt;
                             }
                         }
 
-                        // Ensure filter completes (won't block since task is complete)
-                        await filterTask.ConfigureAwait(false);
+                        // Ensure Middleware completes (won't block since task is complete)
+                        await MiddlewareTask.ConfigureAwait(false);
 
-                        if (filterContext.SkipLLMCall)
+                        if (MiddlewareContext.SkipLLMCall)
                         {
-                            // Filter wants to skip (e.g., cached response)
-                            // Response and ToolCalls should be populated by filter
+                            // Middleware wants to skip (e.g., cached response)
+                            // Response and ToolCalls should be populated by Middleware
                             break;
                         }
                     }
 
-                    // Final drain of any remaining events from iteration filters
-                    while (_eventCoordinator.EventReader.TryRead(out var filterEvt))
+                    // Final drain of any remaining events from iteration Middlewares
+                    while (_eventCoordinator.EventReader.TryRead(out var MiddlewareEvt))
                     {
-                        yield return filterEvt;
+                        yield return MiddlewareEvt;
                     }
 
-                    // Use potentially modified values from filters
-                    messagesToSend = filterContext.Messages;
-                    scopedOptions = filterContext.Options;
+                    // Use potentially modified values from Middlewares
+                    messagesToSend = MiddlewareContext.Messages;
+                    scopedOptions = MiddlewareContext.Options;
 
                     // Streaming state
                     var assistantContents = new List<AIContent>();
@@ -1043,17 +1042,17 @@ internal sealed class AgentCore
                     bool reasoningMessageStarted = false;
 
                     // ═══════════════════════════════════════════════════════
-                    // Execute LLM call (unless skipped by filter)
+                    // Execute LLM call (unless skipped by Middleware)
                     // ═══════════════════════════════════════════════════════
 
-                    if (filterContext.SkipLLMCall)
+                    if (MiddlewareContext.SkipLLMCall)
                     {
-                        // Use cached/provided response from filter
-                        if (filterContext.Response != null)
+                        // Use cached/provided response from Middleware
+                        if (MiddlewareContext.Response != null)
                         {
-                            assistantContents.AddRange(filterContext.Response.Contents);
+                            assistantContents.AddRange(MiddlewareContext.Response.Contents);
                         }
-                        toolRequests.AddRange(filterContext.ToolCalls);
+                        toolRequests.AddRange(MiddlewareContext.ToolCalls);
                     }
                     else
                     {
@@ -1154,10 +1153,10 @@ internal sealed class AgentCore
                             }
                         }
 
-                        // Periodically yield filter events during LLM streaming
-                        while (_eventCoordinator.EventReader.TryRead(out var filterEvt))
+                        // Periodically yield Middleware events during LLM streaming
+                        while (_eventCoordinator.EventReader.TryRead(out var MiddlewareEvt))
                         {
-                            yield return filterEvt;
+                            yield return MiddlewareEvt;
                         }
 
                         // Check for stream completion
@@ -1205,27 +1204,27 @@ internal sealed class AgentCore
                     // ✅ NEW: Populate context with results
                     // ═══════════════════════════════════════════════════════
 
-                    filterContext.Response = new ChatMessage(
+                    MiddlewareContext.Response = new ChatMessage(
                         ChatRole.Assistant, assistantContents);
-                    filterContext.ToolCalls = toolRequests.AsReadOnly();
-                    filterContext.Exception = null;
+                    MiddlewareContext.ToolCalls = toolRequests.AsReadOnly();
+                    MiddlewareContext.Exception = null;
 
                     // ═══════════════════════════════════════════════════════
-                    // ✅ NEW: Execute AFTER iteration filters
+                    // ✅ NEW: Execute AFTER iteration Middlewares
                     // ═══════════════════════════════════════════════════════
 
-                    foreach (var filter in _iterationFilters)
+                    foreach (var Middleware in _IterationMiddleWares)
                     {
-                        await filter.AfterIterationAsync(
-                            filterContext,
+                        await Middleware.AfterIterationAsync(
+                            MiddlewareContext,
                             effectiveCancellationToken).ConfigureAwait(false);
                     }
 
                     // ═══════════════════════════════════════════════════════
-                    // ✅ NEW: Process filter signals
+                    // ✅ NEW: Process Middleware signals
                     // ═══════════════════════════════════════════════════════
 
-                    ProcessIterationFilterSignals(filterContext, ref state);
+                    ProcessIterationMiddleWareSignals(MiddlewareContext, ref state);
 
                     // If there are tool requests, execute them immediately
                     if (toolRequests.Count > 0)
@@ -1273,10 +1272,10 @@ internal sealed class AgentCore
                             effectiveOptionsForTools = ApplyPluginScoping(effectiveOptions, state.expandedScopedPluginContainers, state.ExpandedSkillContainers);
                         }
 
-                        // Yield filter events before tool execution
-                        while (_eventCoordinator.EventReader.TryRead(out var filterEvt))
+                        // Yield Middleware events before tool execution
+                        while (_eventCoordinator.EventReader.TryRead(out var MiddlewareEvt))
                         {
-                            yield return filterEvt;
+                            yield return MiddlewareEvt;
                         }
 
                         // ═══════════════════════════════════════════════════════
@@ -1323,31 +1322,38 @@ internal sealed class AgentCore
                         }
 
                         // Execute tools with event polling (CRITICAL for permissions)
-                        var executeTask = _toolScheduler.ExecuteToolsAsync(
+                        var executeTask = _functionCallProcessor.ExecuteToolsAsync(
                             currentMessages,
                             toolRequests,
                             effectiveOptionsForTools,
                             state,
                             effectiveCancellationToken);
 
-                        // Poll for filter events while tool execution is in progress
+                        // Poll for Middleware events while tool execution is in progress
                         while (!executeTask.IsCompleted)
                         {
                             var delayTask = Task.Delay(10, effectiveCancellationToken);
                             await Task.WhenAny(executeTask, delayTask).ConfigureAwait(false);
 
-                            while (_eventCoordinator.EventReader.TryRead(out var filterEvt))
+                            while (_eventCoordinator.EventReader.TryRead(out var MiddlewareEvt))
                             {
-                                yield return filterEvt;
+                                yield return MiddlewareEvt;
                             }
                         }
 
-                        var (toolResultMessage, pluginExpansions, skillExpansions, skillInstructions, successfulFunctions) = await executeTask.ConfigureAwait(false);
+                        var executionResult = await executeTask.ConfigureAwait(false);
+
+                        // Extract structured results from ToolExecutionResult
+                        var toolResultMessage = executionResult.Message;
+                        var pluginExpansions = executionResult.PluginExpansions;
+                        var skillExpansions = executionResult.SkillExpansions;
+                        var skillInstructions = executionResult.SkillInstructions;
+                        var successfulFunctions = executionResult.SuccessfulFunctions;
 
                         // Final drain
-                        while (_eventCoordinator.EventReader.TryRead(out var filterEvt))
+                        while (_eventCoordinator.EventReader.TryRead(out var MiddlewareEvt))
                         {
-                            yield return filterEvt;
+                            yield return MiddlewareEvt;
                         }
 
                         // ═══════════════════════════════════════════════════════
@@ -1423,7 +1429,7 @@ internal sealed class AgentCore
                             state = state.WithExpandedSkill(skillName);
                         }
 
-                        // Accumulate skill instructions in state (for prompt filter)
+                        // Accumulate skill instructions in state (for prompt Middleware)
                         foreach (var (skillName, instructions) in skillInstructions)
                         {
                             state = state with
@@ -1443,24 +1449,24 @@ internal sealed class AgentCore
 
 
                         // ═══════════════════════════════════════════════════════
-                        // FILTER CONTAINER EXPANSIONS FOR PERSISTENCE
+                        // Middleware CONTAINER EXPANSIONS FOR PERSISTENCE
                         // Container expansion results are temporary (turn-scoped only)
                         // They should NOT be saved to persistent history or thread storage
                         // BUT they MUST be visible to the LLM within the current turn
                         // ═══════════════════════════════════════════════════════
-                        var nonContainerResults = FilterContainerResults(
+                        var nonContainerResults = MiddlewareContainerResults(
                             toolResultMessage.Contents,
                             toolRequests,
                             effectiveOptionsForTools);
 
-                        // ✅ ALWAYS add unfiltered results to currentMessages (LLM needs to see container expansions)
+                        // ✅ ALWAYS add unMiddlewareed results to currentMessages (LLM needs to see container expansions)
                         currentMessages.Add(toolResultMessage);
 
-                        // ✅ Only add filtered results to turnHistory (for persistence - exclude containers)
+                        // ✅ Only add Middlewareed results to turnHistory (for persistence - exclude containers)
                         if (nonContainerResults.Count > 0)
                         {
-                            var filteredMessage = new ChatMessage(ChatRole.Tool, nonContainerResults);
-                            turnHistory.Add(filteredMessage);
+                            var MiddlewareedMessage = new ChatMessage(ChatRole.Tool, nonContainerResults);
+                            turnHistory.Add(MiddlewareedMessage);
                         }
 
                         // Note: turnHistory does NOT include container results
@@ -1648,7 +1654,7 @@ internal sealed class AgentCore
             // FINALIZATION
             // ═══════════════════════════════════════════════════════
             // NOTE: Do NOT auto-generate termination messages for max iterations.
-            // Iteration filters (like ContinuationPermissionIterationFilter) are responsible
+            // Iteration Middlewares (like ContinuationPermissionIterationMiddleWare) are responsible
             // for emitting bidirectional events (InternalContinuationRequestEvent) that the
             // consumer can handle. The fallback termination message would mask these events,
             // defeating the purpose of bidirectional communication.
@@ -1679,9 +1685,9 @@ internal sealed class AgentCore
                 }
             }
 
-            // Final drain of filter events after loop
-            while (_eventCoordinator.EventReader.TryRead(out var filterEvt))
-                yield return filterEvt;
+            // Final drain of Middleware events after loop
+            while (_eventCoordinator.EventReader.TryRead(out var MiddlewareEvt))
+                yield return MiddlewareEvt;
 
             // Emit MESSAGE TURN finished event
             turnStopwatch.Stop();
@@ -1888,15 +1894,15 @@ internal sealed class AgentCore
     }
 
     /// <summary>
-    /// Filters out container expansion results from history.
+    /// Middlewares out container expansion results from history.
     /// Container expansions are temporary - only relevant within the current turn.
     /// Persistent history should NOT contain "ExpandPlugin" or "ExpandSkill" results.
     /// </summary>
     /// <param name="contents">All tool result contents</param>
     /// <param name="toolRequests">Original tool call requests</param>
     /// <param name="options">Chat options containing tool metadata</param>
-    /// <returns>Filtered contents (non-container results only)</returns>
-    private static List<AIContent> FilterContainerResults(
+    /// <returns>Middlewareed contents (non-container results only)</returns>
+    private static List<AIContent> MiddlewareContainerResults(
         IList<AIContent> contents,
         IList<FunctionCallContent> toolRequests,
         ChatOptions? options)
@@ -1927,7 +1933,7 @@ internal sealed class AgentCore
 
     /// <summary>
     /// Checks if a function result is from ANY container expansion (scoped plugin OR skill).
-    /// All container activation messages are filtered from persistent history because:
+    /// All container activation messages are Middlewareed from persistent history because:
     /// 1. They're only relevant within the current message turn
     /// 2. They prevent history pollution across message turns
     /// 3. Containers re-collapse at the start of each new turn
@@ -1958,7 +1964,7 @@ internal sealed class AgentCore
             var isContainer = function.AdditionalProperties.TryGetValue("IsContainer", out var containerVal) == true
                 && containerVal is bool isCont && isCont;
 
-            // Filter ALL containers (both scoped plugins AND skills) from persistent history
+            // Middleware ALL containers (both scoped plugins AND skills) from persistent history
             // Container activation messages are only relevant within the current turn
             // and should not pollute the persistent chat history across message turns
             return isContainer;
@@ -2247,31 +2253,31 @@ Best practices:
 
     #endregion
 
-    #region Message Turn Filters
+    #region Message Turn Middlewares
 
     /// <summary>
-    /// Applies message turn filters after a complete turn (including all function calls) finishes.
+    /// Applies message turn Middlewares after a complete turn (including all function calls) finishes.
     /// 
-    /// IMPORTANT: Message turn filters are READ-ONLY for observation and logging purposes.
-    /// Mutations made by filters to the MessageTurnFilterContext are NOT persisted back to conversation history.
+    /// IMPORTANT: Message turn Middlewares are READ-ONLY for observation and logging purposes.
+    /// Mutations made by Middlewares to the MessageTurnMiddlewareContext are NOT persisted back to conversation history.
     /// 
-    /// Use cases for message turn filters:
+    /// Use cases for message turn Middlewares:
     /// - Telemetry and logging of completed turns
     /// - Monitoring agent behavior and function call patterns
     /// - Triggering side effects based on conversation events
     /// 
     /// If you need to mutate conversation history, use:
-    /// - IPromptFilter (pre-turn) to modify messages before LLM execution
-    /// - IAiFunctionFilter (during-turn) to intercept and modify tool execution
+    /// - IPromptMiddleware (pre-turn) to modify messages before LLM execution
+    /// - IAIFunctionMiddleware (during-turn) to intercept and modify tool execution
     /// - Conversation APIs directly to append/modify persisted messages
     /// </summary>
-    private async Task ApplyMessageTurnFilters(
+    private async Task ApplyMessageTurnMiddlewares(
         ChatMessage userMessage,
         IReadOnlyList<ChatMessage> finalHistory,
         ChatOptions? options,
         CancellationToken cancellationToken)
     {
-        if (!_messageTurnFilters.Any())
+        if (!_MessageTurnMiddlewares.Any())
         {
             return;
         }
@@ -2280,7 +2286,7 @@ Best practices:
         var assistantMessages = finalHistory.Where(m => m.Role == ChatRole.Assistant).ToList();
         if (!assistantMessages.Any())
         {
-            return; // No response to filter
+            return; // No response to Middleware
         }
 
         var response = new ChatResponse(assistantMessages);
@@ -2288,7 +2294,7 @@ Best practices:
         // Collect agent function call metadata
         var agentFunctionCalls = ContentExtractor.ExtractFunctionCallsFromHistory(finalHistory, _name);
 
-        // Create filter context (convert AdditionalProperties to Dictionary if available)
+        // Create Middleware context (convert AdditionalProperties to Dictionary if available)
         Dictionary<string, object>? metadata = null;
         if (options?.AdditionalProperties != null)
         {
@@ -2298,7 +2304,7 @@ Best practices:
         // Extract conversationId from options or generate new one
         var conversationId = options?.ConversationId ?? Guid.NewGuid().ToString();
 
-        var context = new MessageTurnFilterContext(
+        var context = new MessageTurnMiddlewareContext(
             conversationId,
             userMessage,
             response,
@@ -2307,9 +2313,9 @@ Best practices:
             options,
             cancellationToken);
 
-        // Build and execute the message turn filter pipeline using FilterChain
-        Func<MessageTurnFilterContext, Task> finalAction = _ => Task.CompletedTask;
-        var pipeline = FilterChain.BuildMessageTurnPipeline(_messageTurnFilters, finalAction);
+        // Build and execute the message turn Middleware pipeline using MiddlewareChain
+        Func<MessageTurnMiddlewareContext, Task> finalAction = _ => Task.CompletedTask;
+        var pipeline = MiddlewareChain.BuildMessageTurnPipeline(_MessageTurnMiddlewares, finalAction);
         await pipeline(context).ConfigureAwait(false);
     }
 
@@ -2574,17 +2580,17 @@ Best practices:
     }
 
     // ═══════════════════════════════════════════════════════
-    // ITERATION FILTER SUPPORT
+    // ITERATION Middleware SUPPORT
     // ═══════════════════════════════════════════════════════
 
     /// <summary>
-    /// Processes signals from iteration filters (cleanup requests, etc.).
-    /// Called after iteration filters complete.
+    /// Processes signals from iteration Middlewares (cleanup requests, etc.).
+    /// Called after iteration Middlewares complete.
     /// </summary>
-    /// <param name="context">The iteration filter context with potential signals</param>
+    /// <param name="context">The iteration Middleware context with potential signals</param>
     /// <param name="state">The current agent loop state (may be updated based on signals)</param>
-    private void ProcessIterationFilterSignals(
-        IterationFilterContext context,
+    private void ProcessIterationMiddleWareSignals(
+        IterationMiddleWareContext context,
         ref AgentLoopState state)
     {
         // Check for skill cleanup signal
@@ -2657,7 +2663,7 @@ internal sealed class AgentDecisionEngine
         // These checks happen first - most important
         // ═══════════════════════════════════════════════════════
 
-        // Check: Already terminated by external source (e.g., permission filter, manual termination)
+        // Check: Already terminated by external source (e.g., permission Middleware, manual termination)
         if (state.IsTerminated)
             return new AgentDecision.Terminate(state.TerminationReason ?? "Terminated");
 
@@ -3036,7 +3042,7 @@ public sealed record AgentLoopState
     /// <summary>
     /// Skill instructions for expanded skills (accumulated during turn).
     /// Maps skill name → full instruction text from container metadata.
-    /// Ephemeral - cleared at end of message turn, used to inject into system prompt via filter.
+    /// Ephemeral - cleared at end of message turn, used to inject into system prompt via Middleware.
     /// Accumulates ALL skills activated within the turn across iterations.
     /// </summary>
     public required ImmutableDictionary<string, string> ActiveSkillInstructions { get; init; }
@@ -3712,7 +3718,7 @@ internal static class FunctionMapBuilder
 #region Content Extraction Utilities
 
 /// <summary>
-/// High-performance content extraction and filtering utilities.
+/// High-performance content extraction and Middlewareing utilities.
 /// Optimized with manual iteration to avoid LINQ overhead.
 /// Eliminates duplication of content extraction logic across Agent, MessageProcessor,
 /// and AgentDocumentProcessor.
@@ -3876,21 +3882,21 @@ internal static class ContentExtractor
     }
 
     /// <summary>
-    /// Filters out specific content types (e.g., remove reasoning to save tokens).
+    /// Middlewares out specific content types (e.g., remove reasoning to save tokens).
     /// </summary>
     /// <typeparam name="TExclude">The content type to exclude</typeparam>
-    /// <param name="contents">The content list to filter</param>
+    /// <param name="contents">The content list to Middleware</param>
     /// <returns>New list with excluded type removed</returns>
-    public static List<AIContent> FilterByType<TExclude>(
+    public static List<AIContent> MiddlewareByType<TExclude>(
         IList<AIContent> contents) where TExclude : AIContent
     {
-        var filtered = new List<AIContent>(contents.Count);
+        var Middlewareed = new List<AIContent>(contents.Count);
         for (int i = 0; i < contents.Count; i++)
         {
             if (contents[i] is not TExclude)
-                filtered.Add(contents[i]);
+                Middlewareed.Add(contents[i]);
         }
-        return filtered;
+        return Middlewareed;
     }
 
     /// <summary>
@@ -3910,14 +3916,14 @@ internal static class ContentExtractor
 #region FunctionCallProcessor
 
 /// <summary>
-/// Handles all function calling logic, including multi-turn execution and filter pipelines.
+/// Handles all function calling logic, including multi-turn execution and Middleware pipelines.
 /// </summary>
 internal class FunctionCallProcessor
 {
-    private readonly AgentCore _agent; // NEW: Reference to agent for filter event coordination
-    private readonly ScopedFilterManager? _scopedFilterManager;
+    private readonly AgentCore _agent; // NEW: Reference to agent for Middleware event coordination
+    private readonly ScopedFunctionMiddlewareManager? _ScopedFunctionMiddlewareManager;
     private readonly PermissionManager _permissionManager;
-    private readonly IReadOnlyList<IAiFunctionFilter> _aiFunctionFilters;
+    private readonly IReadOnlyList<IAIFunctionMiddleware> _AIFunctionMiddlewares;
     private readonly int _maxFunctionCalls;
     private readonly ErrorHandlingConfig? _errorHandlingConfig;
     private readonly IList<AITool>? _serverConfiguredTools;
@@ -3925,24 +3931,286 @@ internal class FunctionCallProcessor
 
     public FunctionCallProcessor(
         AgentCore agent, // NEW: Added parameter
-        ScopedFilterManager? scopedFilterManager,
+        ScopedFunctionMiddlewareManager? ScopedFunctionMiddlewareManager,
         PermissionManager permissionManager,
-        IReadOnlyList<IAiFunctionFilter>? aiFunctionFilters,
+        IReadOnlyList<IAIFunctionMiddleware>? AIFunctionMiddlewares,
         int maxFunctionCalls,
         ErrorHandlingConfig? errorHandlingConfig = null,
         IList<AITool>? serverConfiguredTools = null,
         AgenticLoopConfig? agenticLoopConfig = null)
     {
         _agent = agent ?? throw new ArgumentNullException(nameof(agent));
-        _scopedFilterManager = scopedFilterManager;
+        _ScopedFunctionMiddlewareManager = ScopedFunctionMiddlewareManager;
         _permissionManager = permissionManager ?? throw new ArgumentNullException(nameof(permissionManager));
-        _aiFunctionFilters = aiFunctionFilters ?? new List<IAiFunctionFilter>();
+        _AIFunctionMiddlewares = AIFunctionMiddlewares ?? new List<IAIFunctionMiddleware>();
         _maxFunctionCalls = maxFunctionCalls;
         _errorHandlingConfig = errorHandlingConfig;
         _serverConfiguredTools = serverConfiguredTools;
         _agenticLoopConfig = agenticLoopConfig;
     }
 
+
+    /// <summary>
+    /// Executes function calls with automatic routing between sequential/parallel execution.
+    /// Handles container detection, permission checking, and result aggregation.
+    /// This is the new consolidated API that replaces ToolScheduler.
+    /// </summary>
+    /// <param name="currentHistory">Current conversation messages</param>
+    /// <param name="toolRequests">Function calls to execute</param>
+    /// <param name="options">Chat options containing tool definitions</param>
+    /// <param name="agentLoopState">Current agent loop state</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Structured result with message, expansions, and successful functions</returns>
+    public async Task<ToolExecutionResult> ExecuteToolsAsync(
+        List<ChatMessage> currentHistory,
+        List<FunctionCallContent> toolRequests,
+        ChatOptions? options,
+        AgentLoopState agentLoopState,
+        CancellationToken cancellationToken)
+    {
+        // PHASE 0: Container detection (ONCE, not duplicated)
+        var containerInfo = DetectContainers(toolRequests, options);
+
+        // PHASE 1: Route to appropriate execution strategy
+        // For single tool calls, inline execution (no parallel overhead)
+        if (toolRequests.Count <= 1)
+        {
+            return await ExecuteSequentiallyAsync(
+                currentHistory, toolRequests, options, agentLoopState,
+                containerInfo, cancellationToken).ConfigureAwait(false);
+        }
+
+        // For multiple tools, use parallel execution with throttling
+        return await ExecuteInParallelAsync(
+            currentHistory, toolRequests, options, agentLoopState,
+            containerInfo, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Executes tools sequentially (used for single tools).
+    /// No permission duplication - checks once per tool.
+    /// </summary>
+    private async Task<ToolExecutionResult> ExecuteSequentiallyAsync(
+        List<ChatMessage> currentHistory,
+        List<FunctionCallContent> toolRequests,
+        ChatOptions? options,
+        AgentLoopState agentLoopState,
+        ContainerDetectionInfo containerInfo,
+        CancellationToken cancellationToken)
+    {
+        var allContents = new List<AIContent>();
+        var pluginExpansions = new HashSet<string>();
+        var skillExpansions = new HashSet<string>();
+
+        // Process ALL tools (containers + regular) through the existing processor
+        var resultMessages = await ProcessFunctionCallsAsync(
+            currentHistory, options, toolRequests, agentLoopState, cancellationToken).ConfigureAwait(false);
+
+        // Combine results
+        foreach (var message in resultMessages)
+        {
+            foreach (var content in message.Contents)
+            {
+                allContents.Add(content);
+            }
+        }
+
+        // Track container expansions from results
+        foreach (var content in allContents)
+        {
+            if (content is FunctionResultContent functionResult)
+            {
+                if (containerInfo.PluginContainers.TryGetValue(functionResult.CallId, out var pluginName))
+                {
+                    pluginExpansions.Add(pluginName);
+                }
+                else if (containerInfo.SkillContainers.TryGetValue(functionResult.CallId, out var skillName))
+                {
+                    skillExpansions.Add(skillName);
+                }
+            }
+        }
+
+        // Extract successful functions
+        var successfulFunctions = ExtractSuccessfulFunctions(allContents, toolRequests);
+
+        return new ToolExecutionResult(
+            new ChatMessage(ChatRole.Tool, allContents),
+            pluginExpansions,
+            skillExpansions,
+            containerInfo.SkillInstructions,
+            successfulFunctions);
+    }
+
+    /// <summary>
+    /// Executes tools in parallel with throttling and batch permission checking.
+    /// Eliminates redundant per-tool permission checks.
+    /// </summary>
+    private async Task<ToolExecutionResult> ExecuteInParallelAsync(
+        List<ChatMessage> currentHistory,
+        List<FunctionCallContent> toolRequests,
+        ChatOptions? options,
+        AgentLoopState agentLoopState,
+        ContainerDetectionInfo containerInfo,
+        CancellationToken cancellationToken)
+    {
+        // PHASE 1: Batch permission check (ONCE, not duplicated per-tool)
+        var permissionResult = await _permissionManager.CheckPermissionsAsync(
+            toolRequests, options, agentLoopState, _agent, cancellationToken).ConfigureAwait(false);
+
+        var approvedTools = permissionResult.Approved;
+        var deniedTools = permissionResult.Denied;
+
+        // PHASE 2: Parallel execution with semaphore throttling
+        var maxParallel = _agenticLoopConfig?.MaxParallelFunctions ?? Environment.ProcessorCount * 4;
+        using var semaphore = new SemaphoreSlim(maxParallel);
+
+        var executionTasks = approvedTools.Select(async toolRequest =>
+        {
+            await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                // Execute each approved tool call through the processor
+                // NO permission check here - already done in batch above
+                var singleToolList = new List<FunctionCallContent> { toolRequest };
+                var resultMessages = await ProcessFunctionCallsAsync(
+                    currentHistory, options, singleToolList, agentLoopState, cancellationToken).ConfigureAwait(false);
+
+                return (Success: true, Messages: resultMessages, Error: (Exception?)null, ToolRequest: toolRequest);
+            }
+            catch (Exception ex)
+            {
+                return (Success: false, Messages: new List<ChatMessage>(), Error: ex, ToolRequest: toolRequest);
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+        }).ToArray();
+
+        // Wait for all approved tasks to complete
+        var results = await Task.WhenAll(executionTasks).ConfigureAwait(false);
+
+        // Aggregate results
+        var allContents = new List<AIContent>();
+        var pluginExpansions = new HashSet<string>();
+        var skillExpansions = new HashSet<string>();
+
+        // Add results from approved tools
+        foreach (var result in results)
+        {
+            if (result.Success)
+            {
+                foreach (var message in result.Messages)
+                {
+                    allContents.AddRange(message.Contents);
+                }
+
+                // Check if this was a container and track expansion
+                foreach (var content in result.Messages.SelectMany(m => m.Contents))
+                {
+                    if (content is FunctionResultContent functionResult)
+                    {
+                        if (containerInfo.PluginContainers.TryGetValue(functionResult.CallId, out var pluginName))
+                        {
+                            pluginExpansions.Add(pluginName);
+                        }
+                        else if (containerInfo.SkillContainers.TryGetValue(functionResult.CallId, out var skillName))
+                        {
+                            skillExpansions.Add(skillName);
+                        }
+                    }
+                }
+            }
+            else if (result.Error != null)
+            {
+                // Include error in results
+                var errorContent = new TextContent($"⚠️ Error executing tool: {result.Error.Message}");
+                allContents.Add(errorContent);
+            }
+        }
+
+        // Add denied tool results with proper error messages
+        foreach (var deniedEntry in deniedTools)
+        {
+            var functionResult = new FunctionResultContent(
+                deniedEntry.Tool.CallId,
+                $"Execution of '{deniedEntry.Tool.Name}' was denied: {deniedEntry.Reason}"
+            );
+            allContents.Add(functionResult);
+        }
+
+        // Extract successful functions
+        var successfulFunctions = ExtractSuccessfulFunctions(allContents, approvedTools);
+
+        return new ToolExecutionResult(
+            new ChatMessage(ChatRole.Tool, allContents),
+            pluginExpansions,
+            skillExpansions,
+            containerInfo.SkillInstructions,
+            successfulFunctions);
+    }
+
+    /// <summary>
+    /// Extracts successful function names from execution results.
+    /// Only includes functions that completed without errors.
+    /// </summary>
+    private static HashSet<string> ExtractSuccessfulFunctions(
+        IList<AIContent> resultContents,
+        IList<FunctionCallContent> toolRequests)
+    {
+        var successful = new HashSet<string>();
+
+        foreach (var content in resultContents)
+        {
+            if (content is FunctionResultContent frc && IsFunctionResultSuccessful(frc))
+            {
+                // Find the tool name from the original request
+                foreach (var toolRequest in toolRequests)
+                {
+                    if (toolRequest.CallId == frc.CallId && !string.IsNullOrEmpty(toolRequest.Name))
+                    {
+                        successful.Add(toolRequest.Name);
+                        break;
+                    }
+                }
+            }
+        }
+
+        return successful;
+    }
+
+    /// <summary>
+    /// Determines if a function result indicates success.
+    /// Checks for exceptions and error-like result strings.
+    /// </summary>
+    private static bool IsFunctionResultSuccessful(FunctionResultContent result)
+    {
+        // Exception present = failure
+        if (result.Exception != null)
+            return false;
+
+        // Check if result looks like an error message
+        var resultStr = result.Result?.ToString();
+        return !IsLikelyErrorString(resultStr);
+    }
+
+    /// <summary>
+    /// Heuristic to detect error strings in function results.
+    /// Mirrors the error detection logic used in AgentCore.
+    /// </summary>
+    private static bool IsLikelyErrorString(string? s) =>
+        !string.IsNullOrEmpty(s) &&
+        (s.StartsWith("Error:", StringComparison.OrdinalIgnoreCase) ||
+         s.StartsWith("Failed:", StringComparison.OrdinalIgnoreCase) ||
+         s.Contains("exception occurred", StringComparison.OrdinalIgnoreCase) ||
+         s.Contains("unhandled exception", StringComparison.OrdinalIgnoreCase) ||
+         s.Contains("exception was thrown", StringComparison.OrdinalIgnoreCase) ||
+         s.Contains("rate limit exceeded", StringComparison.OrdinalIgnoreCase) ||
+         s.Contains("rate limited", StringComparison.OrdinalIgnoreCase) ||
+         s.Contains("quota exceeded", StringComparison.OrdinalIgnoreCase) ||
+         s.Contains("quota reached", StringComparison.OrdinalIgnoreCase) ||
+         s.Contains("timeout", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Processes the function calls and returns the messages to add to the conversation.
@@ -3961,7 +4229,7 @@ internal class FunctionCallProcessor
         // Merge server-configured tools with request tools (request tools take precedence)
         var functionMap = FunctionMapBuilder.BuildMergedMap(_serverConfiguredTools, options?.Tools);
 
-        // Process each function call through the filter pipeline
+        // Process each function call through the Middleware pipeline
         foreach (var functionCall in functionCallContents)
         {
             // Skip functions without names (safety check)
@@ -3986,7 +4254,7 @@ internal class FunctionCallProcessor
                 Iteration = agentLoopState.Iteration,
                 TotalFunctionCallsInRun = agentLoopState.CompletedFunctions.Count,
                 // Point to Agent's shared channel for event emission
-                OutboundEvents = _agent.FilterEventWriter,
+                OutboundEvents = _agent.MiddlewareEventWriter,
                 Agent = _agent
             };
 
@@ -4043,7 +4311,7 @@ internal class FunctionCallProcessor
                 await ExecuteWithRetryAsync(ctx, cancellationToken).ConfigureAwait(false);
             };
 
-            // Get scoped filters for this function
+            // Get scoped Middlewares for this function
             // Extract plugin name from function metadata if available
             string? pluginTypeName = null;
             if (context.Function?.AdditionalProperties?.TryGetValue("ParentPlugin", out var parentPlugin) == true)
@@ -4070,24 +4338,24 @@ internal class FunctionCallProcessor
             }
 
             // For regular functions, skillName will be resolved via fallback mapping
-            // in GetApplicableFilters() using _functionToSkillMap
+            // in GetApplicableMiddlewares() using _functionToSkillMap
 
-            var scopedFilters = _scopedFilterManager?.GetApplicableFilters(
+            var scopedMiddlewares = _ScopedFunctionMiddlewareManager?.GetApplicableMiddlewares(
                 functionCall.Name,
                 pluginTypeName,
                 skillName,
                 isSkillContainer)
-                                ?? Enumerable.Empty<IAiFunctionFilter>();
+                                ?? Enumerable.Empty<IAIFunctionMiddleware>();
 
-            // Combine scoped filters with general AI function filters
-            var allStandardFilters = _aiFunctionFilters.Concat(scopedFilters);
+            // Combine scoped Middlewares with general AI function Middlewares
+            var allStandardMiddlewares = _AIFunctionMiddlewares.Concat(scopedMiddlewares);
 
-            // ✅ PHASE 2: Track AIFunction filter pipeline execution
-            var filterStopwatch = System.Diagnostics.Stopwatch.StartNew();
-            var filterCount = allStandardFilters.Count();
+            // ✅ PHASE 2: Track AIFunction Middleware pipeline execution
+            var Middlewarestopwatch = System.Diagnostics.Stopwatch.StartNew();
+            var MiddlewareCount = allStandardMiddlewares.Count();
 
-            // Build and execute the filter pipeline using FilterChain
-            var pipeline = FilterChain.BuildAiFunctionPipeline(allStandardFilters, finalInvoke);
+            // Build and execute the Middleware pipeline using MiddlewareChain
+            var pipeline = MiddlewareChain.BuildAiFunctionPipeline(allStandardMiddlewares, finalInvoke);
 
             // Execute pipeline SYNCHRONOUSLY (no Task.Run!)
             // Events flow directly to shared channel, drained by background task
@@ -4095,16 +4363,16 @@ internal class FunctionCallProcessor
             {
                 await pipeline(context).ConfigureAwait(false);
 
-                filterStopwatch.Stop();
+                Middlewarestopwatch.Stop();
             }
             catch (Exception ex)
             {
-                filterStopwatch.Stop();
+                Middlewarestopwatch.Stop();
 
                 // Emit error event before handling
-                context.OutboundEvents?.TryWrite(new InternalFilterErrorEvent(
-                    "FilterPipeline",
-                    $"Error in filter pipeline: {ex.Message}",
+                context.OutboundEvents?.TryWrite(new InternalMiddlewareErrorEvent(
+                    "MiddlewarePipeline",
+                    $"Error in Middleware pipeline: {ex.Message}",
                     ex));
 
                 // Mark context as terminated
@@ -4253,6 +4521,66 @@ internal class FunctionCallProcessor
     }
 
     /// <summary>
+    /// Detects plugin and skill containers in tool requests (consolidates duplication).
+    /// Extracts container metadata to eliminate duplicate detection logic between sequential/parallel paths.
+    /// </summary>
+    /// <param name="toolRequests">The tool call requests to analyze</param>
+    /// <param name="options">Chat options containing tool definitions</param>
+    /// <returns>Container detection info with plugin/skill metadata</returns>
+    private ContainerDetectionInfo DetectContainers(
+        List<FunctionCallContent> toolRequests,
+        ChatOptions? options)
+    {
+        var pluginContainers = new Dictionary<string, string>(); // callId -> pluginName
+        var skillContainers = new Dictionary<string, string>(); // callId -> skillName
+        var skillInstructions = new Dictionary<string, string>(); // skillName -> instructions
+
+        foreach (var toolRequest in toolRequests)
+        {
+            // Find the function in the options to check if it's a container
+            var function = FunctionMapBuilder.FindFunctionInList(toolRequest.Name, options?.Tools);
+
+            if (function == null) continue;
+
+            // Check if it's a container (plugin or skill)
+            if (function.AdditionalProperties?.TryGetValue("IsContainer", out var isCont) == true
+                && isCont is bool isC && isC)
+            {
+                // Check if it's a skill container (has both IsContainer=true AND IsSkill=true)
+                var isSkill = function.AdditionalProperties?.TryGetValue("IsSkill", out var isSkillValue) == true
+                    && isSkillValue is bool isS && isS;
+
+                if (isSkill)
+                {
+                    // Skill container
+                    var skillName = function.Name ?? toolRequest.Name;
+                    skillContainers[toolRequest.CallId] = skillName;
+
+                    // Extract instructions from metadata for prompt Middleware
+                    if (function.AdditionalProperties?.TryGetValue("Instructions", out var instructionsObj) == true
+                        && instructionsObj is string instructions
+                        && !string.IsNullOrWhiteSpace(instructions))
+                    {
+                        skillInstructions[skillName] = instructions;
+                    }
+                }
+                else
+                {
+                    // Plugin container
+                    var pluginName = function.AdditionalProperties
+                        ?.TryGetValue("PluginName", out var value) == true && value is string pn
+                        ? pn
+                        : toolRequest.Name;
+
+                    pluginContainers[toolRequest.CallId] = pluginName;
+                }
+            }
+        }
+
+        return new ContainerDetectionInfo(pluginContainers, skillContainers, skillInstructions);
+    }
+
+    /// <summary>
     /// Prepares the various chat message lists after a response from the inner client and before invoking functions
     /// </summary>
 }
@@ -4268,7 +4596,7 @@ internal class FunctionCallProcessor
 /// <remarks>
 /// <para>
 /// <b>Design Philosophy:</b> "Functional Core, Imperative Shell"
-/// - <b>Preparation</b> (MessageProcessor.PrepareTurnAsync): Load history, apply reduction, merge options, filter messages → PreparedTurn
+/// - <b>Preparation</b> (MessageProcessor.PrepareTurnAsync): Load history, apply reduction, merge options, Middleware messages → PreparedTurn
 /// - <b>Execution</b> (RunAgenticLoopInternal): LLM calls, tool invocations, checkpointing, persistence
 /// </para>
 /// <para>
@@ -4315,7 +4643,7 @@ internal record PreparedTurn
     public required IReadOnlyList<ChatMessage> NewInputMessages { get; init; }
 
     /// <summary>
-    /// Final chat options after merging defaults, applying filters, and adding system instructions.
+    /// Final chat options after merging defaults, applying Middlewares, and adding system instructions.
     /// </summary>
     public ChatOptions? Options { get; init; }
 
@@ -4346,7 +4674,7 @@ internal record PreparedTurn
 /// </summary>
 internal class MessageProcessor
 {
-    private readonly IReadOnlyList<IPromptFilter> _promptFilters;
+    private readonly IReadOnlyList<IPromptMiddleware> _PromptMiddlewares;
     private readonly string? _systemInstructions;
     private readonly ChatOptions? _defaultOptions;
     private readonly IChatReducer? _chatReducer;
@@ -4355,13 +4683,13 @@ internal class MessageProcessor
     public MessageProcessor(
         string? systemInstructions,
         ChatOptions? defaultOptions,
-        IReadOnlyList<IPromptFilter> promptFilters,
+        IReadOnlyList<IPromptMiddleware> PromptMiddlewares,
         IChatReducer? chatReducer,
         HistoryReductionConfig? reductionConfig)
     {
         _systemInstructions = systemInstructions;
         _defaultOptions = defaultOptions;
-        _promptFilters = promptFilters ?? new List<IPromptFilter>();
+        _PromptMiddlewares = PromptMiddlewares ?? new List<IPromptMiddleware>();
         _chatReducer = chatReducer;
         _reductionConfig = reductionConfig;
     }
@@ -4378,15 +4706,15 @@ internal class MessageProcessor
 
     /// <summary>
     /// Prepares a complete turn for execution.
-    /// Loads thread history, merges options, adds system instructions, applies reduction (with caching), and filters messages.
+    /// Loads thread history, merges options, adds system instructions, applies reduction (with caching), and Middlewares messages.
     /// </summary>
     /// <param name="thread">Conversation thread (null for stateless execution).</param>
     /// <param name="inputMessages">NEW messages from the caller (to be added to history).</param>
     /// <param name="options">Chat options to merge with defaults.</param>
-    /// <param name="agentName">Agent name for logging/filtering.</param>
+    /// <param name="agentName">Agent name for logging/Middlewareing.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <param name="expandedSkills">Optional set of expanded skill names for SkillInstructionPromptFilter.</param>
-    /// <param name="skillInstructions">Optional dictionary of skill-specific instructions for SkillInstructionPromptFilter.</param>
+    /// <param name="expandedSkills">Optional set of expanded skill names for SkillInstructionPromptMiddleware.</param>
+    /// <param name="skillInstructions">Optional dictionary of skill-specific instructions for SkillInstructionPromptMiddleware.</param>
     /// <returns>PreparedTurn with all state needed for execution.</returns>
     /// <remarks>
     /// <para>
@@ -4401,7 +4729,7 @@ internal class MessageProcessor
     /// <item>Merge ChatOptions and inject system instructions</item>
     /// <item>Check reduction cache (thread.LastReduction.IsValidFor)</item>
     /// <item>Apply cached reduction OR perform new reduction via IChatReducer</item>
-    /// <item>Apply prompt filters (can modify messages, options, instructions)</item>
+    /// <item>Apply prompt Middlewares (can modify messages, options, instructions)</item>
     /// <item>Return PreparedTurn with all prepared state</item>
     /// </list>
     /// </para>
@@ -4518,8 +4846,8 @@ internal class MessageProcessor
             }
         }
 
-        // STEP 6: Apply prompt filters
-        var preparedMessages = await ApplyPromptFiltersAsync(
+        // STEP 6: Apply prompt Middlewares
+        var preparedMessages = await ApplyPromptMiddlewaresAsync(
             messagesForLLM,
             effectiveOptions,
             agentName,
@@ -4643,23 +4971,23 @@ internal class MessageProcessor
     }
 
     /// <summary>
-    /// Applies the registered prompt filters pipeline.
+    /// Applies the registered prompt Middlewares pipeline.
     /// </summary>
-    private async Task<IEnumerable<ChatMessage>> ApplyPromptFiltersAsync(
+    private async Task<IEnumerable<ChatMessage>> ApplyPromptMiddlewaresAsync(
         IEnumerable<ChatMessage> messages,
         ChatOptions? options,
         string agentName,
         CancellationToken cancellationToken)
     {
-        if (!_promptFilters.Any())
+        if (!_PromptMiddlewares.Any())
         {
             return messages;
         }
 
-        // Create filter context
-        var context = new PromptFilterContext(messages, options, agentName, cancellationToken);
+        // Create Middleware context
+        var context = new PromptMiddlewareContext(messages, options, agentName, cancellationToken);
 
-        // Transfer additional properties to filter context
+        // Transfer additional properties to Middleware context
         if (options?.AdditionalProperties != null)
         {
             foreach (var kvp in options.AdditionalProperties)
@@ -4668,12 +4996,12 @@ internal class MessageProcessor
             }
         }
 
-        // ✅ PHASE 2: Track filter pipeline execution
+        // ✅ PHASE 2: Track Middleware pipeline execution
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
-        // Build and execute the prompt filt er pipeline using FilterChain
-        Func<PromptFilterContext, Task<IEnumerable<ChatMessage>>> finalAction = ctx => Task.FromResult(ctx.Messages);
-        var pipeline = FilterChain.BuildPromptPipeline(_promptFilters, finalAction);
+        // Build and execute the prompt filt er pipeline using MiddlewareChain
+        Func<PromptMiddlewareContext, Task<IEnumerable<ChatMessage>>> finalAction = ctx => Task.FromResult(ctx.Messages);
+        var pipeline = MiddlewareChain.BuildPromptPipeline(_PromptMiddlewares, finalAction);
         var result = await pipeline(context).ConfigureAwait(false);
 
         stopwatch.Stop();
@@ -4682,7 +5010,7 @@ internal class MessageProcessor
     }
 
     /// <summary>
-    /// Applies post-invocation filters to process results, extract memories, etc.
+    /// Applies post-invocation Middlewares to process results, extract memories, etc.
     /// </summary>
     /// <param name="requestMessages">The messages sent to the LLM (after pre-processing)</param>
     /// <param name="responseMessages">The messages returned by the LLM, or null if failed</param>
@@ -4690,7 +5018,7 @@ internal class MessageProcessor
     /// <param name="options">The chat options used for the invocation</param>
     /// <param name="agentName">The agent name</param>
     /// <param name="cancellationToken">Cancellation token</param>
-    public async Task ApplyPostInvokeFiltersAsync(
+    public async Task ApplyPostInvokeMiddlewaresAsync(
         IEnumerable<ChatMessage> requestMessages,
         IEnumerable<ChatMessage>? responseMessages,
         Exception? exception,
@@ -4698,7 +5026,7 @@ internal class MessageProcessor
         string agentName,
         CancellationToken cancellationToken)
     {
-        if (!_promptFilters.Any())
+        if (!_PromptMiddlewares.Any())
         {
             return;
         }
@@ -4722,17 +5050,17 @@ internal class MessageProcessor
             agentName,
             options);
 
-        // Call PostInvokeAsync on all filters (in order, not reversed)
-        foreach (var filter in _promptFilters)
+        // Call PostInvokeAsync on all Middlewares (in order, not reversed)
+        foreach (var Middleware in _PromptMiddlewares)
         {
             try
             {
-                await filter.PostInvokeAsync(context, cancellationToken).ConfigureAwait(false);
+                await Middleware.PostInvokeAsync(context, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception)
             {
                 // Log but don't fail - post-processing is best-effort
-                // Individual filter failures shouldn't break the response
+                // Individual Middleware failures shouldn't break the response
             }
         }
     }
@@ -4968,420 +5296,6 @@ internal class StreamingTurnResult
 
 #endregion
 
-#region Tool Scheduler
-
-/// <summary>
-/// Responsible for executing tools and running the associated IAiFunctionFilter pipeline
-/// </summary>
-internal class ToolScheduler
-{
-    private readonly AgentCore _agent;
-    private readonly FunctionCallProcessor _functionCallProcessor;
-    private readonly PermissionManager _permissionManager;
-    private readonly AgentConfig? _config;
-    private readonly UnifiedScopingManager _scopingManager;
-
-    /// <summary>
-    /// Initializes a new instance of ToolScheduler
-    /// </summary>
-    /// <param name="agent">The agent instance for event emission</param>
-    /// <param name="functionCallProcessor">The function call processor to use for tool execution</param>
-    /// <param name="permissionManager">The permission manager for authorization checks</param>
-    /// <param name="config">Agent configuration for execution settings</param>
-    /// <param name="scopingManager">Unified scoping manager for plugin and skill container detection</param>
-    public ToolScheduler(
-        AgentCore agent,
-        FunctionCallProcessor functionCallProcessor,
-        PermissionManager permissionManager,
-        AgentConfig? config,
-        UnifiedScopingManager scopingManager)
-    {
-        _agent = agent ?? throw new ArgumentNullException(nameof(agent));
-        _functionCallProcessor = functionCallProcessor ?? throw new ArgumentNullException(nameof(functionCallProcessor));
-        _permissionManager = permissionManager ?? throw new ArgumentNullException(nameof(permissionManager));
-        _config = config;
-        _scopingManager = scopingManager ?? throw new ArgumentNullException(nameof(scopingManager));
-    }
-
-    /// <summary>
-    /// Determines if a function result indicates success.
-    /// Checks for exceptions and error-like result strings.
-    /// </summary>
-    private static bool IsFunctionResultSuccessful(FunctionResultContent result)
-    {
-        // Exception present = failure
-        if (result.Exception != null)
-            return false;
-
-        // Check if result looks like an error message
-        var resultStr = result.Result?.ToString();
-        return !IsLikelyErrorString(resultStr);
-    }
-
-    /// <summary>
-    /// Heuristic to detect error strings in function results.
-    /// Mirrors the error detection logic used in result filtering.
-    /// </summary>
-    private static bool IsLikelyErrorString(string? s) =>
-        !string.IsNullOrEmpty(s) &&
-        (s.StartsWith("Error:", StringComparison.OrdinalIgnoreCase) ||
-         s.StartsWith("Failed:", StringComparison.OrdinalIgnoreCase) ||
-         s.Contains("exception occurred", StringComparison.OrdinalIgnoreCase) ||
-         s.Contains("unhandled exception", StringComparison.OrdinalIgnoreCase) ||
-         s.Contains("exception was thrown", StringComparison.OrdinalIgnoreCase) ||
-         s.Contains("rate limit exceeded", StringComparison.OrdinalIgnoreCase) ||
-         s.Contains("rate limited", StringComparison.OrdinalIgnoreCase) ||
-         s.Contains("quota exceeded", StringComparison.OrdinalIgnoreCase) ||
-         s.Contains("quota reached", StringComparison.OrdinalIgnoreCase) ||
-         s.Contains("timeout", StringComparison.OrdinalIgnoreCase));
-
-    /// <summary>
-    /// Tries to get the tool name for a given call ID from the request list.
-    /// </summary>
-    private static bool TryGetToolName(IList<FunctionCallContent> requests, string callId, out string name)
-    {
-        for (int i = 0; i < requests.Count; i++)
-        {
-            if (requests[i].CallId == callId)
-            {
-                name = requests[i].Name ?? "_unknown";
-                return true;
-            }
-        }
-        name = "";
-        return false;
-    }
-
-    /// <summary>
-    /// Extracts successful function names from execution results.
-    /// Only includes functions that completed without errors.
-    /// </summary>
-    private static HashSet<string> ExtractSuccessfulFunctions(
-        IList<AIContent> resultContents,
-        IList<FunctionCallContent> toolRequests)
-    {
-        var successful = new HashSet<string>();
-
-        foreach (var content in resultContents)
-        {
-            if (content is FunctionResultContent frc && IsFunctionResultSuccessful(frc))
-            {
-                if (TryGetToolName(toolRequests, frc.CallId, out var toolName))
-                {
-                    successful.Add(toolName);
-                }
-            }
-        }
-
-        return successful;
-    }
-
-    /// <summary>
-    /// Executes the requested tools in parallel and returns the tool response message
-    /// </summary>
-    /// <param name="currentHistory">The current conversation history</param>
-    /// <param name="toolRequests">The tool call requests to execute</param>
-    /// <param name="options">Optional chat options containing tool definitions</param>
-    /// <param name="agentRunContext">Agent run context for cross-call tracking</param>
-    /// <param name="agentName">The name of the agent executing the tools</param>
-    /// <param name="expandedScopedPluginContainers">Set of expanded plugin names (message-turn scoped)</param>
-    /// <param name="ExpandedSkillContainers">Set of expanded skill names (message-turn scoped)</param>
-    /// <param name="cancellationToken">Cancellation token</param>
-    /// <returns>A chat message containing the tool execution results</returns>
-    public async Task<(ChatMessage Message, HashSet<string> PluginExpansions, HashSet<string> SkillExpansions, Dictionary<string, string> SkillInstructions, HashSet<string> SuccessfulFunctions)> ExecuteToolsAsync(
-        List<ChatMessage> currentHistory,
-        List<FunctionCallContent> toolRequests,
-        ChatOptions? options,
-        AgentLoopState agentLoopState,
-        CancellationToken cancellationToken)
-    {
-        // For single tool calls, use sequential execution (no parallelization overhead)
-        if (toolRequests.Count <= 1)
-        {
-            return await ExecuteSequentiallyAsync(currentHistory, toolRequests, options, agentLoopState, cancellationToken).ConfigureAwait(false);
-        }
-
-        // For multiple tool calls, execute in parallel for better performance
-        return await ExecuteInParallelAsync(currentHistory, toolRequests, options, agentLoopState, cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <summary>
-    /// Executes tools sequentially (used for single tools or as fallback)
-    /// </summary>
-    private async Task<(ChatMessage Message, HashSet<string> PluginExpansions, HashSet<string> SkillExpansions, Dictionary<string, string> SkillInstructions, HashSet<string> SuccessfulFunctions)> ExecuteSequentiallyAsync(
-        List<ChatMessage> currentHistory,
-        List<FunctionCallContent> toolRequests,
-        ChatOptions? options,
-        AgentLoopState agentLoopState,
-        CancellationToken cancellationToken)
-    {
-        var allContents = new List<AIContent>();
-
-        // Track which tool requests are containers for expansion after invocation
-        var pluginContainerExpansions = new Dictionary<string, string>(); // callId -> pluginName
-        var skillContainerExpansions = new Dictionary<string, string>(); // callId -> skillName
-        var skillInstructionsMap = new Dictionary<string, string>(); // skillName -> instructions
-
-        foreach (var toolRequest in toolRequests)
-        {
-            // Find the function in the options to check if it's a container
-            // PERFORMANCE: Use optimized helper instead of LINQ (O(n) direct vs O(n) with overhead)
-            var function = FunctionMapBuilder.FindFunctionInList(toolRequest.Name, options?.Tools);
-
-            if (function != null)
-            {
-                // Check if it's a container (plugin or skill)
-                if (function.AdditionalProperties?.TryGetValue("IsContainer", out var isCont) == true && isCont is bool isC && isC)
-                {
-                    // Check if it's a skill container (has both IsContainer=true AND IsSkill=true)
-                    var isSkill = function.AdditionalProperties?.TryGetValue("IsSkill", out var isSkillValue) == true
-                        && isSkillValue is bool isS && isS;
-
-                    if (isSkill)
-                    {
-                        // Skill container
-                        var skillName = function.Name ?? toolRequest.Name;
-                        skillContainerExpansions[toolRequest.CallId] = skillName;
-
-                        // Extract instructions from metadata for prompt filter
-                        // Filter will build complete context from metadata
-                        if (function.AdditionalProperties?.TryGetValue("Instructions", out var instructionsObj) == true
-                            && instructionsObj is string instructions
-                            && !string.IsNullOrWhiteSpace(instructions))
-                        {
-                            skillInstructionsMap[skillName] = instructions;
-                        }
-                    }
-                    else
-                    {
-                        // Plugin container
-                        var pluginName = function.AdditionalProperties
-                            ?.TryGetValue("PluginName", out var value) == true && value is string pn
-                            ? pn
-                            : toolRequest.Name;
-
-                        pluginContainerExpansions[toolRequest.CallId] = pluginName;
-                    }
-                }
-            }
-        }
-
-        // Process ALL tools (containers + regular) through the existing processor
-        var resultMessages = await _functionCallProcessor.ProcessFunctionCallsAsync(
-            currentHistory, options, toolRequests, agentLoopState, cancellationToken).ConfigureAwait(false);
-
-        // Combine results
-        foreach (var message in resultMessages)
-        {
-            foreach (var content in message.Contents)
-            {
-                allContents.Add(content);
-            }
-        }
-
-        // Extract plugin expansions from results
-        var pluginExpansions = new HashSet<string>();
-        var skillExpansions = new HashSet<string>();
-
-        foreach (var content in allContents)
-        {
-            if (content is FunctionResultContent functionResult)
-            {
-                if (pluginContainerExpansions.TryGetValue(functionResult.CallId, out var pluginName))
-                {
-                    pluginExpansions.Add(pluginName);
-                }
-                else if (skillContainerExpansions.TryGetValue(functionResult.CallId, out var skillName))
-                {
-                    skillExpansions.Add(skillName);
-                }
-            }
-        }
-
-        // ✅ Extract successful functions from actual results (not before execution)
-        var successfulFunctions = ExtractSuccessfulFunctions(allContents, toolRequests);
-
-        return (new ChatMessage(ChatRole.Tool, allContents), pluginExpansions, skillExpansions, skillInstructionsMap, successfulFunctions);
-    }
-
-    /// <summary>
-    /// Executes tools in parallel for improved performance with multiple independent tools
-    /// </summary>
-    private async Task<(ChatMessage Message, HashSet<string> PluginExpansions, HashSet<string> SkillExpansions, Dictionary<string, string> SkillInstructions, HashSet<string> SuccessfulFunctions)> ExecuteInParallelAsync(
-        List<ChatMessage> currentHistory,
-        List<FunctionCallContent> toolRequests,
-        ChatOptions? options,
-        AgentLoopState agentLoopState,
-        CancellationToken cancellationToken)
-    {
-        // THREE-PHASE EXECUTION (inspired by Gemini CLI's CoreToolScheduler with plugin & skill scoping)
-        // Phase 0: Separate container expansions from regular tools
-        // Phase 1: Check permissions for ALL tools SEQUENTIALLY (prevents race conditions)
-        // Phase 2: Execute ALL approved tools in PARALLEL (with optional throttling)
-
-        var allContents = new List<AIContent>();
-
-        // PHASE 0: Identify containers and track them for expansion after invocation
-        var pluginContainerExpansions = new Dictionary<string, string>(); // callId -> pluginName
-        var skillContainerExpansions = new Dictionary<string, string>(); // callId -> skillName
-        var skillInstructionsMap = new Dictionary<string, string>(); // skillName -> instructions
-
-        foreach (var toolRequest in toolRequests)
-        {
-            // Find the function in the options to check if it's a container
-            // PERFORMANCE: Use optimized helper instead of LINQ (O(n) direct vs O(n) with overhead)
-            var function = FunctionMapBuilder.FindFunctionInList(toolRequest.Name, options?.Tools);
-
-            if (function != null)
-            {
-                // Check if it's a container (plugin or skill)
-                if (function.AdditionalProperties?.TryGetValue("IsContainer", out var isCont) == true && isCont is bool isC && isC)
-                {
-                    // Check if it's a skill container (has both IsContainer=true AND IsSkill=true)
-                    var isSkill = function.AdditionalProperties?.TryGetValue("IsSkill", out var isSkillValue) == true
-                        && isSkillValue is bool isS && isS;
-
-                    if (isSkill)
-                    {
-                        // Skill container
-                        var skillName = function.Name ?? toolRequest.Name;
-                        skillContainerExpansions[toolRequest.CallId] = skillName;
-
-                        // Extract instructions from metadata for prompt filter
-                        // Filter will build complete context from metadata
-                        if (function.AdditionalProperties?.TryGetValue("Instructions", out var instructionsObj) == true
-                            && instructionsObj is string instructions
-                            && !string.IsNullOrWhiteSpace(instructions))
-                        {
-                            skillInstructionsMap[skillName] = instructions;
-                        }
-                    }
-                    else
-                    {
-                        // Plugin container
-                        var pluginName = function.AdditionalProperties
-                            ?.TryGetValue("PluginName", out var value) == true && value is string pn
-                            ? pn
-                            : toolRequest.Name;
-
-                        pluginContainerExpansions[toolRequest.CallId] = pluginName;
-                    }
-                }
-            }
-        }
-
-        // PHASE 1: Permission checking (sequential to prevent race conditions)
-        var permissionResult = await _permissionManager.CheckPermissionsAsync(
-            toolRequests, options, agentLoopState, _agent, cancellationToken).ConfigureAwait(false);
-
-        var approvedTools = permissionResult.Approved;
-        var deniedTools = permissionResult.Denied;
-
-        // PHASE 2: Execute approved tools in parallel with optional throttling
-        // SAFETY: Default to bounded parallelism (following Microsoft's conservative approach)
-        // Unlike their boolean flag, we use a numeric limit for finer control
-        var maxParallel = _config?.AgenticLoop?.MaxParallelFunctions ?? Environment.ProcessorCount * 4;
-        using var semaphore = new SemaphoreSlim(maxParallel);
-
-        var executionTasks = approvedTools.Select(async toolRequest =>
-        {
-            await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try
-            {
-                // Execute each approved tool call through the processor
-                var singleToolList = new List<FunctionCallContent> { toolRequest };
-                var resultMessages = await _functionCallProcessor.ProcessFunctionCallsAsync(
-                    currentHistory, options, singleToolList, agentLoopState, cancellationToken).ConfigureAwait(false);
-
-                return (Success: true, Messages: resultMessages, Error: (Exception?)null, ToolRequest: toolRequest);
-            }
-            catch (Exception ex)
-            {
-                // Capture any errors for aggregation
-                return (Success: false, Messages: new List<ChatMessage>(), Error: ex, ToolRequest: toolRequest);
-            }
-            finally
-            {
-                semaphore.Release();
-            }
-        }).ToArray();
-
-        // Wait for all approved tasks to complete
-        var results = await Task.WhenAll(executionTasks).ConfigureAwait(false);
-
-        // Aggregate results and handle errors
-        var errors = new List<Exception>();
-
-        // Extract plugin expansions from results
-        var pluginExpansions = new HashSet<string>();
-        var skillExpansions = new HashSet<string>();
-
-        // Add results from approved tools
-        foreach (var result in results)
-        {
-            if (result.Success)
-            {
-                foreach (var message in result.Messages)
-                {
-                    allContents.AddRange(message.Contents);
-                }
-
-                // Check if this was a container and track expansion
-                foreach (var content in result.Messages.SelectMany(m => m.Contents))
-                {
-                    if (content is FunctionResultContent functionResult)
-                    {
-                        if (pluginContainerExpansions.TryGetValue(functionResult.CallId, out var pluginName))
-                        {
-                            pluginExpansions.Add(pluginName);
-                        }
-                        else if (skillContainerExpansions.TryGetValue(functionResult.CallId, out var skillName))
-                        {
-                            skillExpansions.Add(skillName);
-                        }
-                    }
-                }
-            }
-            else if (result.Error != null)
-            {
-                errors.Add(result.Error);
-            }
-        }
-
-        // Add denied tool results with proper error messages
-        foreach (var deniedEntry in deniedTools)
-        {
-            var functionResult = new FunctionResultContent(
-                deniedEntry.Tool.CallId,
-                $"Execution of '{deniedEntry.Tool.Name}' was denied: {deniedEntry.Reason}"
-            );
-            allContents.Add(functionResult);
-        }
-
-        // If there were any execution errors, include them in the response
-        if (errors.Count > 0)
-        {
-            var errorMessage = $"Some tool executions failed: {string.Join("; ", errors.Select(e => e.Message))}";
-            allContents.Add(new TextContent($"⚠️ Tool Execution Errors: {errorMessage}"));
-        }
-
-        // ✅ Extract successful functions from actual results (not before execution)
-        var successfulFunctions = ExtractSuccessfulFunctions(allContents, approvedTools);
-
-        return (new ChatMessage(ChatRole.Tool, allContents), pluginExpansions, skillExpansions, skillInstructionsMap, successfulFunctions);
-    }
-
-    /// <summary>
-    /// Fast O(1) function lookup helper for ToolScheduler.
-    /// Uses manual iteration
-    /// PERFORMANCE: Replaces OfType + FirstOrDefault LINQ chain with direct iteration.
-    /// </summary>
-    /// <param name="functionName">The name of the function to find</param>
-    /// <param name="tools">The list of available tools</param>
-}
-
-#endregion
-
 #region Document Processing Helper
 
 /// <summary>
@@ -5506,11 +5420,11 @@ internal record PermissionBatchResult(
 /// </summary>
 internal class PermissionManager
 {
-    private readonly IReadOnlyList<IPermissionFilter> _permissionFilters;
+    private readonly IReadOnlyList<IPermissionMiddleware> _PermissionMiddlewares;
 
-    public PermissionManager(IReadOnlyList<IPermissionFilter>? permissionFilters)
+    public PermissionManager(IReadOnlyList<IPermissionMiddleware>? PermissionMiddlewares)
     {
-        _permissionFilters = permissionFilters ?? Array.Empty<IPermissionFilter>();
+        _PermissionMiddlewares = PermissionMiddlewares ?? Array.Empty<IPermissionMiddleware>();
     }
 
     /// <summary>
@@ -5543,12 +5457,12 @@ internal class PermissionManager
         if (!RequiresPermission(function))
             return PermissionResult.AutoApproved();
 
-        // If no permission filters are configured, auto-deny functions requiring permission
+        // If no permission Middlewares are configured, auto-deny functions requiring permission
         // This is a safety measure - functions with [RequiresPermission] should not auto-approve
-        if (_permissionFilters.Count == 0)
-            return PermissionResult.Denied("No permission filter configured for function requiring permission");
+        if (_PermissionMiddlewares.Count == 0)
+            return PermissionResult.Denied("No permission Middleware configured for function requiring permission");
 
-        // Build and execute permission filter pipeline
+        // Build and execute permission Middleware pipeline
         var toolCallRequest = new ToolCallRequest
         {
             FunctionName = functionCall.Name,
@@ -5567,7 +5481,7 @@ internal class PermissionManager
             Iteration = state.Iteration,
             TotalFunctionCallsInRun = state.CompletedFunctions.Count,
             // Set OutboundEvents and Agent for permission event emission
-            OutboundEvents = agent.FilterEventWriter,
+            OutboundEvents = agent.MiddlewareEventWriter,
             Agent = agent
         };
 
@@ -5575,14 +5489,14 @@ internal class PermissionManager
 
         await ExecutePermissionPipeline(context, cancellationToken).ConfigureAwait(false);
 
-        // If filter terminated the context, permission was denied
+        // If Middleware terminated the context, permission was denied
         if (context.IsTerminated)
         {
-            var denialReason = context.Result?.ToString() ?? "Permission denied by filter";
+            var denialReason = context.Result?.ToString() ?? "Permission denied by Middleware";
             return PermissionResult.Denied(denialReason);
         }
 
-        // If filter did not terminate, permission was approved
+        // If Middleware did not terminate, permission was approved
         return PermissionResult.Approved();
     }
 
@@ -5622,15 +5536,15 @@ internal class PermissionManager
     }
 
     /// <summary>
-    /// Executes the permission filter pipeline (single responsibility)
+    /// Executes the permission Middleware pipeline (single responsibility)
     /// </summary>
     private async Task ExecutePermissionPipeline(
         FunctionInvocationContext context,
         CancellationToken cancellationToken)
     {
-        // Build and execute the permission filter pipeline using FilterChain
+        // Build and execute the permission Middleware pipeline using MiddlewareChain
         Func<FunctionInvocationContext, Task> finalAction = _ => Task.CompletedTask;
-        var pipeline = FilterChain.BuildPermissionPipeline(_permissionFilters, finalAction);
+        var pipeline = MiddlewareChain.BuildPermissionPipeline(_PermissionMiddlewares, finalAction);
         await pipeline(context).ConfigureAwait(false);
     }
 }
@@ -5808,12 +5722,12 @@ internal static class EventStreamAdapter
 
 /// <summary>
 /// Manages bidirectional event coordination for request/response patterns.
-/// Used by filters (permissions, clarifications) and supports nested agent communication.
+/// Used by Middlewares (permissions, clarifications) and supports nested agent communication.
 /// Thread-safe for concurrent event emission and response coordination.
 /// </summary>
 /// <remarks>
 /// This coordinator provides the infrastructure for:
-/// - Event emission from filters to handlers (one-way communication)
+/// - Event emission from Middlewares to handlers (one-way communication)
 /// - Request/response patterns (bidirectional communication)
 /// - Event bubbling in nested agent scenarios (parent coordinator support)
 ///
@@ -5824,7 +5738,7 @@ internal static class EventStreamAdapter
 ///
 /// Thread-safety:
 /// - All public methods are thread-safe
-/// - Multiple filters can emit concurrently
+/// - Multiple Middlewares can emit concurrently
 /// - Event channel supports multiple producers, single consumer
 /// </remarks>
 internal class BidirectionalEventCoordinator : IDisposable
@@ -5832,7 +5746,7 @@ internal class BidirectionalEventCoordinator : IDisposable
     /// <summary>
     /// Shared event channel for all events.
     /// Unbounded to prevent blocking during event emission.
-    /// Thread-safe: Multiple producers (filters), single consumer (background drainer).
+    /// Thread-safe: Multiple producers (Middlewares), single consumer (background drainer).
     /// </summary>
     private readonly Channel<InternalAgentEvent> _eventChannel;
 
@@ -5858,7 +5772,7 @@ internal class BidirectionalEventCoordinator : IDisposable
     {
         _eventChannel = Channel.CreateUnbounded<InternalAgentEvent>(new UnboundedChannelOptions
         {
-            SingleWriter = false,  // Multiple filters can emit concurrently
+            SingleWriter = false,  // Multiple Middlewares can emit concurrently
             SingleReader = true,   // Only background drainer reads
             AllowSynchronousContinuations = false  // Performance & safety
         });
@@ -5866,7 +5780,7 @@ internal class BidirectionalEventCoordinator : IDisposable
 
     /// <summary>
     /// Gets the channel writer for event emission.
-    /// Used by filters and contexts to emit events directly to the channel.
+    /// Used by Middlewares and contexts to emit events directly to the channel.
     /// </summary>
     /// <remarks>
     /// Note: For most use cases, prefer Emit() method over direct channel access
@@ -5967,7 +5881,7 @@ internal class BidirectionalEventCoordinator : IDisposable
     }
 
     /// <summary>
-    /// Sends a response to a filter waiting for a specific request.
+    /// Sends a response to a Middleware waiting for a specific request.
     /// Called by external handlers when user provides input.
     /// Thread-safe: Can be called from any thread.
     /// </summary>
@@ -6018,15 +5932,15 @@ internal class BidirectionalEventCoordinator : IDisposable
     /// <exception cref="OperationCanceledException">Operation was cancelled</exception>
     /// <exception cref="InvalidOperationException">Response type mismatch</exception>
     /// <remarks>
-    /// This method is used by filters that need bidirectional communication:
-    /// 1. Filter emits request event (e.g., InternalPermissionRequestEvent)
-    /// 2. Filter calls WaitForResponseAsync() - BLOCKS HERE
+    /// This method is used by Middlewares that need bidirectional communication:
+    /// 1. Middleware emits request event (e.g., InternalPermissionRequestEvent)
+    /// 2. Middleware calls WaitForResponseAsync() - BLOCKS HERE
     /// 3. Handler receives request event (via agent's event loop)
     /// 4. User provides input
     /// 5. Handler calls SendResponse()
-    /// 6. Filter receives response and continues
+    /// 6. Middleware receives response and continues
     ///
-    /// Important: The filter is blocked during step 2-5, but events still flow
+    /// Important: The Middleware is blocked during step 2-5, but events still flow
     /// because of the polling mechanism in RunAgenticLoopInternal.
     ///
     /// Timeout vs. Cancellation:
@@ -6035,7 +5949,7 @@ internal class BidirectionalEventCoordinator : IDisposable
     ///
     /// Example:
     /// <code>
-    /// // In filter
+    /// // In Middleware
     /// var requestId = Guid.NewGuid().ToString();
     /// coordinator.Emit(new InternalPermissionRequestEvent(requestId, ...));
     ///
@@ -6326,30 +6240,30 @@ internal class FunctionRetryExecutor
 
 #endregion
 
-#region Filter Chain
+#region Middleware Chain
 
 /// <summary>
-/// Builds and executes filter chains with proper ordering and pipeline execution.
-/// Eliminates duplication of filter pipeline construction across the Agent codebase.
+/// Builds and executes Middleware chains with proper ordering and pipeline execution.
+/// Eliminates duplication of Middleware pipeline construction across the Agent codebase.
 /// 
 /// Usage Pattern:
 /// 1. Define a final action (core logic)
-/// 2. Build pipeline with filters (automatically reversed for correct execution order)
+/// 2. Build pipeline with Middlewares (automatically reversed for correct execution order)
 /// 3. Execute the built pipeline
 /// 
-/// Supports all filter types: IAiFunctionFilter, IPromptFilter, IPermissionFilter, IMessageTurnFilter
+/// Supports all Middleware types: IAIFunctionMiddleware, IPromptMiddleware, IPermissionMiddleware, IMessageTurnMiddleware
 /// </summary>
-internal static class FilterChain
+internal static class MiddlewareChain
 {
     /// <summary>
-    /// Builds an IAiFunctionFilter pipeline.
-    /// Filters are applied in REVERSE order so they execute in the order provided.
+    /// Builds an IAIFunctionMiddleware pipeline.
+    /// Middlewares are applied in REVERSE order so they execute in the order provided.
     /// </summary>
-    /// <param name="filters">The filters to apply, in the order they should execute</param>
-    /// <param name="finalAction">The final action to execute after all filters</param>
+    /// <param name="Middlewares">The Middlewares to apply, in the order they should execute</param>
+    /// <param name="finalAction">The final action to execute after all Middlewares</param>
     /// <returns>A function that executes the complete pipeline</returns>
     public static Func<FunctionInvocationContext, Task> BuildAiFunctionPipeline(
-        IEnumerable<IAiFunctionFilter> filters,
+        IEnumerable<IAIFunctionMiddleware> Middlewares,
         Func<FunctionInvocationContext, Task> finalAction)
     {
         if (finalAction == null)
@@ -6357,51 +6271,51 @@ internal static class FilterChain
 
         var pipeline = finalAction;
 
-        // Wrap in reverse order so filters execute in the order provided
-        foreach (var filter in filters.Reverse())
+        // Wrap in reverse order so Middlewares execute in the order provided
+        foreach (var Middleware in Middlewares.Reverse())
         {
             var previous = pipeline;
-            pipeline = ctx => filter.InvokeAsync(ctx, previous);
+            pipeline = ctx => Middleware.InvokeAsync(ctx, previous);
         }
 
         return pipeline;
     }
 
     /// <summary>
-    /// Builds an IPromptFilter pipeline with result transformation.
-    /// Filters can modify messages and return transformed results.
+    /// Builds an IPromptMiddleware pipeline with result transformation.
+    /// Middlewares can modify messages and return transformed results.
     /// </summary>
-    /// <param name="filters">The filters to apply, in the order they should execute</param>
+    /// <param name="Middlewares">The Middlewares to apply, in the order they should execute</param>
     /// <param name="finalAction">The final action that returns the messages</param>
     /// <returns>A function that executes the complete pipeline and returns messages</returns>
-    public static Func<PromptFilterContext, Task<IEnumerable<ChatMessage>>> BuildPromptPipeline(
-        IEnumerable<IPromptFilter> filters,
-        Func<PromptFilterContext, Task<IEnumerable<ChatMessage>>> finalAction)
+    public static Func<PromptMiddlewareContext, Task<IEnumerable<ChatMessage>>> BuildPromptPipeline(
+        IEnumerable<IPromptMiddleware> Middlewares,
+        Func<PromptMiddlewareContext, Task<IEnumerable<ChatMessage>>> finalAction)
     {
         if (finalAction == null)
             throw new ArgumentNullException(nameof(finalAction));
 
         var pipeline = finalAction;
 
-        // Wrap in reverse order so filters execute in the order provided
-        foreach (var filter in filters.Reverse())
+        // Wrap in reverse order so Middlewares execute in the order provided
+        foreach (var Middleware in Middlewares.Reverse())
         {
             var previous = pipeline;
-            pipeline = ctx => filter.InvokeAsync(ctx, previous);
+            pipeline = ctx => Middleware.InvokeAsync(ctx, previous);
         }
 
         return pipeline;
     }
 
     /// <summary>
-    /// Builds an IPermissionFilter pipeline.
+    /// Builds an IPermissionMiddleware pipeline.
     /// Used specifically for permission checking before function execution.
     /// </summary>
-    /// <param name="filters">The filters to apply, in the order they should execute</param>
+    /// <param name="Middlewares">The Middlewares to apply, in the order they should execute</param>
     /// <param name="finalAction">The final action (typically a no-op for permission checks)</param>
     /// <returns>A function that executes the complete pipeline</returns>
     public static Func<FunctionInvocationContext, Task> BuildPermissionPipeline(
-        IEnumerable<IPermissionFilter> filters,
+        IEnumerable<IPermissionMiddleware> Middlewares,
         Func<FunctionInvocationContext, Task> finalAction)
     {
         if (finalAction == null)
@@ -6409,37 +6323,37 @@ internal static class FilterChain
 
         var pipeline = finalAction;
 
-        // Wrap in reverse order so filters execute in the order provided
-        foreach (var filter in filters.Reverse())
+        // Wrap in reverse order so Middlewares execute in the order provided
+        foreach (var Middleware in Middlewares.Reverse())
         {
             var previous = pipeline;
-            pipeline = ctx => filter.InvokeAsync(ctx, previous);
+            pipeline = ctx => Middleware.InvokeAsync(ctx, previous);
         }
 
         return pipeline;
     }
 
     /// <summary>
-    /// Builds an IMessageTurnFilter pipeline.
+    /// Builds an IMessageTurnMiddleware pipeline.
     /// Used for post-turn observation and telemetry.
     /// </summary>
-    /// <param name="filters">The filters to apply, in the order they should execute</param>
+    /// <param name="Middlewares">The Middlewares to apply, in the order they should execute</param>
     /// <param name="finalAction">The final action (typically a no-op for observation)</param>
     /// <returns>A function that executes the complete pipeline</returns>
-    public static Func<MessageTurnFilterContext, Task> BuildMessageTurnPipeline(
-        IEnumerable<IMessageTurnFilter> filters,
-        Func<MessageTurnFilterContext, Task> finalAction)
+    public static Func<MessageTurnMiddlewareContext, Task> BuildMessageTurnPipeline(
+        IEnumerable<IMessageTurnMiddleware> Middlewares,
+        Func<MessageTurnMiddlewareContext, Task> finalAction)
     {
         if (finalAction == null)
             throw new ArgumentNullException(nameof(finalAction));
 
         var pipeline = finalAction;
 
-        // Wrap in reverse order so filters execute in the order provided
-        foreach (var filter in filters.Reverse())
+        // Wrap in reverse order so Middlewares execute in the order provided
+        foreach (var Middleware in Middlewares.Reverse())
         {
             var previous = pipeline;
-            pipeline = ctx => filter.InvokeAsync(ctx, previous);
+            pipeline = ctx => Middleware.InvokeAsync(ctx, previous);
         }
 
         return pipeline;
@@ -6608,7 +6522,7 @@ public record InternalToolCallResultEvent(
 
 #endregion
 
-#region Filter Events
+#region Middleware Events
 
 /// <summary>
 /// Marker interface for events that support bidirectional communication.
@@ -6620,14 +6534,14 @@ public record InternalToolCallResultEvent(
 public interface IBidirectionalEvent
 {
     /// <summary>
-    /// Name of the filter that emitted this event.
+    /// Name of the Middleware that emitted this event.
     /// </summary>
     string SourceName { get; }
 }
 
 /// <summary>
-/// Marker interface for permission-related filter events.
-/// Permission events are a specialized subset of filter events
+/// Marker interface for permission-related Middleware events.
+/// Permission events are a specialized subset of Middleware events
 /// that require user interaction and approval workflows.
 /// </summary>
 public interface IPermissionEvent : IBidirectionalEvent
@@ -6640,7 +6554,7 @@ public interface IPermissionEvent : IBidirectionalEvent
 }
 
 /// <summary>
-/// Filter requests permission to execute a function.
+/// Middleware requests permission to execute a function.
 /// Handler should prompt user and send InternalPermissionResponseEvent.
 /// </summary>
 public record InternalPermissionRequestEvent(
@@ -6653,7 +6567,7 @@ public record InternalPermissionRequestEvent(
 
 /// <summary>
 /// Response to permission request.
-/// Sent by external handler back to waiting filter.
+/// Sent by external handler back to waiting Middleware.
 /// </summary>
 public record InternalPermissionResponseEvent(
     string PermissionId,
@@ -6678,7 +6592,7 @@ public record InternalPermissionDeniedEvent(
     string Reason) : InternalAgentEvent, IPermissionEvent;
 
 /// <summary>
-/// Filter requests permission to continue beyond max iterations.
+/// Middleware requests permission to continue beyond max iterations.
 /// </summary>
 public record InternalContinuationRequestEvent(
     string ContinuationId,
@@ -6750,17 +6664,17 @@ public record InternalClarificationResponseEvent(
     string Answer) : InternalAgentEvent, IClarificationEvent;
 
 /// <summary>
-/// Filter reports progress (one-way, no response needed).
+/// Middleware reports progress (one-way, no response needed).
 /// </summary>
-public record InternalFilterProgressEvent(
+public record InternalMiddlewareProgressEvent(
     string SourceName,
     string Message,
     int? PercentComplete = null) : InternalAgentEvent, IBidirectionalEvent;
 
 /// <summary>
-/// Filter reports an error (one-way, no response needed).
+/// Middleware reports an error (one-way, no response needed).
 /// </summary>
-public record InternalFilterErrorEvent(
+public record InternalMiddlewareErrorEvent(
     string SourceName,
     string ErrorMessage,
     Exception? Exception = null) : InternalAgentEvent, IBidirectionalEvent;
@@ -6804,18 +6718,18 @@ public record InternalContainerExpandedEvent(
 public enum ContainerType { Plugin, Skill }
 
 /// <summary>
-/// Emitted when filter pipeline execution starts.
+/// Emitted when Middleware pipeline execution starts.
 /// </summary>
-public record InternalFilterPipelineStartEvent(
+public record InternalMiddlewarePipelineStartEvent(
     string FunctionName,
-    int FilterCount,
+    int MiddlewareCount,
     DateTimeOffset Timestamp
 ) : InternalAgentEvent, IObservabilityEvent;
 
 /// <summary>
-/// Emitted when filter pipeline execution completes.
+/// Emitted when Middleware pipeline execution completes.
 /// </summary>
-public record InternalFilterPipelineEndEvent(
+public record InternalMiddlewarePipelineEndEvent(
     string FunctionName,
     TimeSpan Duration,
     bool Success,
@@ -7043,6 +6957,30 @@ public record InternalIterationMessagesEvent(
 
 #endregion
 
+#region Tool Execution Result Types
+
+/// <summary>
+/// Structured result from tool execution, replacing the 5-tuple return type.
+/// Provides strongly-typed access to execution outcomes.
+/// </summary>
+internal record ToolExecutionResult(
+    ChatMessage Message,
+    HashSet<string> PluginExpansions,
+    HashSet<string> SkillExpansions,
+    Dictionary<string, string> SkillInstructions,
+    HashSet<string> SuccessfulFunctions);
+
+/// <summary>
+/// Container detection metadata extracted from tool requests.
+/// Consolidates plugin and skill container information to eliminate duplication.
+/// </summary>
+internal record ContainerDetectionInfo(
+    Dictionary<string, string> PluginContainers,
+    Dictionary<string, string> SkillContainers,
+    Dictionary<string, string> SkillInstructions);
+
+#endregion
+
 #region Function Invocation Context
 
 /// <summary>
@@ -7053,24 +6991,24 @@ public record InternalIterationMessagesEvent(
 /// <remarks>
 /// This class serves dual purposes:
 /// 1. AMBIENT CONTEXT: Flows across async calls via AsyncLocal in Agent.CurrentFunctionContext
-/// 2. ORCHESTRATION CONTEXT: Passed through filter pipelines with rich coordination features
+/// 2. ORCHESTRATION CONTEXT: Passed through Middleware pipelines with rich coordination features
 ///
 /// Key capabilities:
 /// - Function metadata (name, description, arguments, CallId)
 /// - Agent context (AgentName, RunContext, Iteration tracking)
 /// - Bidirectional communication (Emit, WaitForResponseAsync)
 /// - Event coordination and bubbling (Agent reference, OutboundEvents)
-/// - Filter pipeline control (IsTerminated, Result)
+/// - Middleware pipeline control (IsTerminated, Result)
 ///
 /// Use cases:
 /// - Plugins accessing execution context via Agent.CurrentFunctionContext
-/// - Filters emitting events and waiting for user responses
+/// - Middlewares emitting events and waiting for user responses
 /// - Permission/clarification workflows (human-in-the-loop)
 /// - Telemetry, logging, and security auditing
 /// - Nested agent coordination and event bubbling
 /// </remarks>
 /// <summary>
-/// Context for function invocations in the filter pipeline.
+/// Context for function invocations in the Middleware pipeline.
 /// Internal class for HPD-Agent internals.
 /// </summary>
 internal class FunctionInvocationContext
@@ -7092,7 +7030,7 @@ internal class FunctionInvocationContext
 
     /// <summary>
     /// Arguments being passed to the function (structured access).
-    /// For filter pipeline: Use this for AIFunctionArguments wrapper.
+    /// For Middleware pipeline: Use this for AIFunctionArguments wrapper.
     /// For ambient access: Use Arguments property for raw dictionary.
     /// </summary>
     public AIFunctionArguments? ArgumentsWrapper { get; set; }
@@ -7133,12 +7071,12 @@ internal class FunctionInvocationContext
     public Dictionary<string, object> Metadata { get; set; } = new();
 
     /// <summary>
-    /// The raw tool call request from the Language Model (for filter pipeline).
+    /// The raw tool call request from the Language Model (for Middleware pipeline).
     /// </summary>
     public ToolCallRequest? ToolCallRequest { get; set; }
 
     /// <summary>
-    /// A flag to allow a filter to terminate the pipeline.
+    /// A flag to allow a Middleware to terminate the pipeline.
     /// </summary>
     public bool IsTerminated { get; set; } = false;
 
@@ -7148,18 +7086,18 @@ internal class FunctionInvocationContext
     public object? Result { get; set; }
 
     /// <summary>
-    /// Channel writer for emitting events during filter execution.
+    /// Channel writer for emitting events during Middleware execution.
     /// Points to Agent's shared channel - events are immediately visible to background drainer.
     ///
-    /// Thread-safety: Multiple filters in the pipeline can emit concurrently.
-    /// Event ordering: FIFO within each filter, interleaved across filters.
-    /// Lifetime: Valid for entire filter execution.
+    /// Thread-safety: Multiple Middlewares in the pipeline can emit concurrently.
+    /// Event ordering: FIFO within each Middleware, interleaved across Middlewares.
+    /// Lifetime: Valid for entire Middleware execution.
     /// </summary>
     internal ChannelWriter<InternalAgentEvent>? OutboundEvents { get; set; }
 
     /// <summary>
     /// Reference to the agent for response coordination.
-    /// Lifetime: Set by ProcessFunctionCallsAsync, valid for entire filter execution.
+    /// Lifetime: Set by ProcessFunctionCallsAsync, valid for entire Middleware execution.
     /// </summary>
     internal AgentCore? Agent { get; set; }
 
@@ -7168,10 +7106,10 @@ internal class FunctionInvocationContext
     /// Events are delivered immediately to background drainer (not batched).
     /// Automatically bubbles events to parent agent if this is a nested agent call.
     ///
-    /// Thread-safety: Safe to call from any filter in the pipeline.
+    /// Thread-safety: Safe to call from any Middleware in the pipeline.
     /// Performance: Non-blocking write (unbounded channel).
-    /// Event ordering: Guaranteed FIFO per filter, interleaved across filters.
-    /// Real-time visibility: Handler sees event WHILE filter is executing (not after).
+    /// Event ordering: Guaranteed FIFO per Middleware, interleaved across Middlewares.
+    /// Real-time visibility: Handler sees event WHILE Middleware is executing (not after).
     /// Event bubbling: If Agent.RootAgent is set, events bubble to orchestrator.
     /// </summary>
     /// <param name="evt">The event to emit</param>
@@ -7215,9 +7153,9 @@ internal class FunctionInvocationContext
 
     /// <summary>
     /// Waits for a response event with automatic timeout and cancellation handling.
-    /// Used for request/response patterns in interactive filters (permissions, approvals, etc.)
+    /// Used for request/response patterns in interactive Middlewares (permissions, approvals, etc.)
     ///
-    /// Thread-safety: Safe to call from any filter.
+    /// Thread-safety: Safe to call from any Middleware.
     /// Cancellation: Respects both timeout and external cancellation token.
     /// Type safety: Validates response type and throws clear error on mismatch.
     /// Cleanup: Automatically removes TCS from waiters dictionary on completion/timeout/cancellation.
@@ -7240,7 +7178,7 @@ internal class FunctionInvocationContext
 
         var effectiveTimeout = timeout ?? TimeSpan.FromMinutes(5);
 
-        return await Agent.WaitForFilterResponseAsync<T>(requestId, effectiveTimeout, cancellationToken);
+        return await Agent.WaitForMiddlewareResponseAsync<T>(requestId, effectiveTimeout, cancellationToken);
     }
 
     /// <summary>

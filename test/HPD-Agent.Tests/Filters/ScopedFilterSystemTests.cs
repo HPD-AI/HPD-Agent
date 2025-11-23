@@ -1,5 +1,5 @@
 using Xunit;
-using HPD.Agent.Internal.Filters;
+using HPD.Agent.Internal.MiddleWare;
 using HPD.Agent;
 using Microsoft.Extensions.AI;
 
@@ -7,7 +7,7 @@ namespace HPD.Agent.Tests.Filters;
 
 public class ScopedFilterSystemTests
 {
-    private class TestFilter : IAiFunctionFilter
+    private class TestFilter : IAIFunctionMiddleware
     {
         public string Name { get; }
         public bool WasCalled { get; private set; }
@@ -147,13 +147,13 @@ public class ScopedFilterSystemTests
 
     #endregion
 
-    #region ScopedFilterManager Tests
+    #region ScopedFunctionMiddlewareManager Tests
 
     [Fact]
-    public void ScopedFilterManager_RegisterFunctionSkill_StoresMapping()
+    public void ScopedFunctionMiddlewareManager_RegisterFunctionSkill_StoresMapping()
     {
         // Arrange
-        var manager = new ScopedFilterManager();
+        var manager = new ScopedFunctionMiddlewareManager();
         var filter = new TestFilter("skill");
 
         manager.AddFilter(filter, FilterScope.Skill, "analyze_codebase");
@@ -167,10 +167,10 @@ public class ScopedFilterSystemTests
     }
 
     [Fact]
-    public void ScopedFilterManager_GetApplicableFilters_ReturnsCorrectFilters()
+    public void ScopedFunctionMiddlewareManager_GetApplicableFilters_ReturnsCorrectFilters()
     {
         // Arrange
-        var manager = new ScopedFilterManager();
+        var manager = new ScopedFunctionMiddlewareManager();
         var globalFilter = new TestFilter("Global");
         var pluginFilter = new TestFilter("Plugin");
         var skillFilter = new TestFilter("Skill");
@@ -201,10 +201,10 @@ public class ScopedFilterSystemTests
     }
 
     [Fact]
-    public void ScopedFilterManager_GetApplicableFilters_OrdersByScope()
+    public void ScopedFunctionMiddlewareManager_GetApplicableFilters_OrdersByScope()
     {
         // Arrange
-        var manager = new ScopedFilterManager();
+        var manager = new ScopedFunctionMiddlewareManager();
         var globalFilter = new TestFilter("Global");
         var pluginFilter = new TestFilter("Plugin");
         var skillFilter = new TestFilter("Skill");
@@ -235,10 +235,10 @@ public class ScopedFilterSystemTests
     }
 
     [Fact]
-    public void ScopedFilterManager_FallbackLookup_FindsPluginFromMapping()
+    public void ScopedFunctionMiddlewareManager_FallbackLookup_FindsPluginFromMapping()
     {
         // Arrange
-        var manager = new ScopedFilterManager();
+        var manager = new ScopedFunctionMiddlewareManager();
         var filter = new TestFilter("plugin");
 
         manager.AddFilter(filter, FilterScope.Plugin, "FileSystemPlugin");
@@ -252,10 +252,10 @@ public class ScopedFilterSystemTests
     }
 
     [Fact]
-    public void ScopedFilterManager_FallbackLookup_FindsSkillFromMapping()
+    public void ScopedFunctionMiddlewareManager_FallbackLookup_FindsSkillFromMapping()
     {
         // Arrange
-        var manager = new ScopedFilterManager();
+        var manager = new ScopedFunctionMiddlewareManager();
         var filter = new TestFilter("skill");
 
         manager.AddFilter(filter, FilterScope.Skill, "analyze_codebase");
@@ -269,10 +269,10 @@ public class ScopedFilterSystemTests
     }
 
     [Fact]
-    public void ScopedFilterManager_SkillContainerInvocation_DoesNotRequireSkillName()
+    public void ScopedFunctionMiddlewareManager_SkillContainerInvocation_DoesNotRequireSkillName()
     {
         // Arrange
-        var manager = new ScopedFilterManager();
+        var manager = new ScopedFunctionMiddlewareManager();
         var filter = new TestFilter("skill");
 
         manager.AddFilter(filter, FilterScope.Skill, "analyze_codebase");
@@ -369,7 +369,7 @@ public class ScopedFilterSystemTests
     public void SkillFilter_AppliesToBothContainerAndReferencedFunctions()
     {
         // Arrange
-        var manager = new ScopedFilterManager();
+        var manager = new ScopedFunctionMiddlewareManager();
         var filter = new TestFilter("skill");
 
         manager.AddFilter(filter, FilterScope.Skill, "analyze_codebase");
@@ -402,7 +402,7 @@ public class ScopedFilterSystemTests
     public void MultipleSkills_CanReferenceeSameFunction()
     {
         // Arrange
-        var manager = new ScopedFilterManager();
+        var manager = new ScopedFunctionMiddlewareManager();
         var skill1Filter = new TestFilter("skill1");
         var skill2Filter = new TestFilter("skill2");
 

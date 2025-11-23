@@ -1,21 +1,21 @@
-namespace HPD.Agent.Internal.Filters;
+namespace HPD.Agent.Internal.MiddleWare;
 
 /// <summary>
-/// Filter that runs before and after each LLM call in the agentic loop.
+/// Middleware that runs before and after each LLM call in the agentic loop.
 /// Provides access to iteration state and can modify messages/options dynamically.
 /// Uses explicit lifecycle methods instead of middleware pattern due to streaming constraints.
 /// </summary>
 /// <remarks>
-/// Iteration filters complement prompt filters (which run once per message turn).
-/// Use iteration filters when you need:
+/// Iteration Middlewares complement prompt Middlewares (which run once per message turn).
+/// Use iteration Middlewares when you need:
 /// - Access to tool results from previous iterations
 /// - Dynamic instruction modification per iteration
 /// - Iteration-aware guidance
 /// - Pre and post LLM call hooks
 ///
-/// Performance Note: Iteration filters run multiple times per message turn (once per LLM call).
+/// Performance Note: Iteration Middlewares run multiple times per message turn (once per LLM call).
 /// Keep operations lightweight (< 1ms). For heavy operations like RAG or memory retrieval,
-/// use IPromptFilter instead (runs once per message turn).
+/// use IPromptMiddleware instead (runs once per message turn).
 ///
 /// Architecture Note: This uses a lifecycle pattern (BeforeIterationAsync/AfterIterationAsync)
 /// instead of middleware pattern because the LLM call uses yield return for streaming,
@@ -23,10 +23,10 @@ namespace HPD.Agent.Internal.Filters;
 /// </remarks>
 /// <example>
 /// <code>
-/// public class MyIterationFilter : IIterationFilter
+/// public class MyIterationMiddleWare : IIterationMiddleWare
 /// {
 ///     public Task BeforeIterationAsync(
-///         IterationFilterContext context,
+///         IterationMiddleWareContext context,
 ///         CancellationToken cancellationToken)
 ///     {
 ///         // Modify before LLM call
@@ -38,7 +38,7 @@ namespace HPD.Agent.Internal.Filters;
 ///     }
 ///
 ///     public Task AfterIterationAsync(
-///         IterationFilterContext context,
+///         IterationMiddleWareContext context,
 ///         CancellationToken cancellationToken)
 ///     {
 ///         // React to response after LLM call
@@ -51,29 +51,29 @@ namespace HPD.Agent.Internal.Filters;
 /// }
 /// </code>
 /// </example>
-internal interface IIterationFilter
+internal interface IIterationMiddleWare
 {
     /// <summary>
     /// Called BEFORE the LLM call begins.
-    /// Filters can modify messages/options to inject dynamic context.
+    /// Middlewares can modify messages/options to inject dynamic context.
     /// Can skip the LLM call by setting context.SkipLLMCall = true.
     /// </summary>
     /// <param name="context">Iteration context with mutable messages/options</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Task that completes when pre-processing is done</returns>
     Task BeforeIterationAsync(
-        IterationFilterContext context,
+        IterationMiddleWareContext context,
         CancellationToken cancellationToken);
 
     /// <summary>
     /// Called AFTER the LLM call completes (streaming finished).
-    /// Filters can inspect the response and signal state changes.
+    /// Middlewares can inspect the response and signal state changes.
     /// Response, ToolCalls, and Exception properties are populated at this point.
     /// </summary>
     /// <param name="context">Iteration context with populated Response and ToolCalls</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Task that completes when post-processing is done</returns>
     Task AfterIterationAsync(
-        IterationFilterContext context,
+        IterationMiddleWareContext context,
         CancellationToken cancellationToken);
 }

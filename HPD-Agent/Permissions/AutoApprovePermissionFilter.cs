@@ -1,13 +1,13 @@
 using System;
-using HPD.Agent.Internal.Filters;
+using HPD.Agent.Internal.MiddleWare;
 using HPD.Agent;
 using System.Threading.Tasks;
 
 /// <summary>
-/// Auto-approve permission filter for testing and automation scenarios.
+/// Auto-approve permission Middleware for testing and automation scenarios.
 /// Automatically approves all function executions that require permission.
 /// </summary>
-internal class AutoApprovePermissionFilter : IPermissionFilter
+internal class AutoApprovePermissionMiddleware : IPermissionMiddleware
 {
     public async Task InvokeAsync(FunctionInvocationContext context, Func<FunctionInvocationContext, Task> next)
     {

@@ -24,10 +24,10 @@ public class PluginRegistration
     public bool IsInstance => Instance != null;
 
     /// <summary>
-    /// Optional function filter - if set, only these functions will be registered.
+    /// Optional function Middleware - if set, only these functions will be registered.
     /// Phase 4.5: Used for selective function registration from skills.
     /// </summary>
-    public string[]? FunctionFilter { get; }
+    public string[]? FunctionMiddleware { get; }
 
     /// <summary>
     /// Factory method to register a plugin by type (will be instantiated when needed).
@@ -68,11 +68,11 @@ public class PluginRegistration
     /// <summary>
     /// Internal constructor to ensure valid state.
     /// </summary>
-    private PluginRegistration(Type pluginType, object? instance, string[]? functionFilter)
+    private PluginRegistration(Type pluginType, object? instance, string[]? functionMiddleware)
     {
         PluginType = pluginType ?? throw new ArgumentNullException(nameof(pluginType));
         Instance = instance;
-        FunctionFilter = functionFilter;
+        FunctionMiddleware = functionMiddleware;
 
         // If instance is provided, validate it matches the type
         if (instance != null && !pluginType.IsInstanceOfType(instance))
@@ -153,11 +153,11 @@ public class PluginRegistration
             
             var allFunctions = result as List<AIFunction> ?? new List<AIFunction>();
 
-            // Phase 4.5: Filter functions if FunctionFilter is set
-            if (FunctionFilter != null && FunctionFilter.Length > 0)
+            // Phase 4.5: Middleware functions if FunctionMiddleware is set
+            if (FunctionMiddleware != null && FunctionMiddleware.Length > 0)
             {
                 allFunctions = allFunctions
-                    .Where(f => FunctionFilter.Contains(f.Name))
+                    .Where(f => FunctionMiddleware.Contains(f.Name))
                     .ToList();
             }
 

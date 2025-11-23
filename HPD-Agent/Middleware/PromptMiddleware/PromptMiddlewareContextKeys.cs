@@ -1,10 +1,10 @@
 
 
 /// <summary>
-/// Well-known context keys available in PromptFilterContext.Properties and PostInvokeContext.Properties.
+/// Well-known context keys available in PromptMiddlewareContext.Properties and PostInvokeContext.Properties.
 /// These provide discoverable, strongly-typed access to context information.
 /// </summary>
-public static class PromptFilterContextKeys
+public static class PromptMiddlewareContextKeys
 {
     /// <summary>
     /// Key for accessing the conversation thread ID.

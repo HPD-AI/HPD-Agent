@@ -113,7 +113,7 @@ public class AGUIEventConverter
         var backendTools = new List<AIFunction>();
         if (options.Tools != null)
         {
-            // Filter out any FrontendTool instances and keep real backend tools
+            // Middleware out any FrontendTool instances and keep real backend tools
             backendTools.AddRange(options.Tools.OfType<AIFunction>().Where(f => f is not FrontendTool));
         }
         

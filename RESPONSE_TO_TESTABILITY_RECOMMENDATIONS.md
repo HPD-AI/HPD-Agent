@@ -259,8 +259,8 @@ public class AgentBuilder
     // Fluent API
     public AgentBuilder WithInstructions(string instructions) => ...;
     public AgentBuilder WithPlugin<T>() => ...;
-    public AgentBuilder WithFilter(IAiFunctionFilter filter) => ...;
-    public AgentBuilder WithPermissionFilter(IPermissionFilter filter) => ...;
+    public AgentBuilder WithFilter(IAIFunctionMiddleware filter) => ...;
+    public AgentBuilder WithPermissionMiddleware(IPermissionMiddleware filter) => ...;
     public AgentBuilder WithOpenTelemetry(...) => ...;
     public AgentBuilder WithLogging(...) => ...;
 
@@ -273,7 +273,7 @@ public class AgentBuilder
 var agent = new AgentBuilder()
     .WithProvider("openai", "gpt-4", apiKey)
     .WithPlugin<CalculatorPlugin>()
-    .WithPermissionFilter(mockPermissionFilter)
+    .WithPermissionMiddleware(mockPermissionMiddleware)
     .Build();
 ```
 
@@ -299,11 +299,11 @@ var agent = new AgentBuilder()
 // Agent.cs:3356-3492
 public class PermissionManager
 {
-    private readonly IReadOnlyList<IPermissionFilter> _permissionFilters;  // IMMUTABLE
+    private readonly IReadOnlyList<IPermissionMiddleware> _PermissionMiddlewares;  // IMMUTABLE
 
-    public PermissionManager(IReadOnlyList<IPermissionFilter>? permissionFilters)
+    public PermissionManager(IReadOnlyList<IPermissionMiddleware>? PermissionMiddlewares)
     {
-        _permissionFilters = permissionFilters ?? Array.Empty<IPermissionFilter>();
+        _PermissionMiddlewares = PermissionMiddlewares ?? Array.Empty<IPermissionMiddleware>();
     }
 
     // ALL METHODS ARE PURE - NO MUTABLE STATE
@@ -569,7 +569,7 @@ Your codebase demonstrates **production-grade architecture**:
 
 ### **4. Protocol-Agnostic Design**
 - Events work with Console, AGUI, Web, etc.
-- `IPermissionFilter` interface for extensibility
+- `IPermissionMiddleware` interface for extensibility
 - `IPermissionStorage` for custom backends
 
 ### **5. Observability Built-In**

@@ -1,4 +1,4 @@
-using HPD.Agent.Internal.Filters;
+using HPD.Agent.Internal.MiddleWare;
 
 namespace HPD.Agent;
 
@@ -20,7 +20,7 @@ namespace HPD.Agent;
 /// 2. It must run before LLM calls to prevent exceeding limits
 /// 3. It's part of agent loop control, not function execution
 /// </remarks>
-internal class ContinuationPermissionIterationFilter : IIterationFilter
+internal class ContinuationPermissionIterationMiddleWare : IIterationMiddleWare
 {
     private readonly int _maxIterations;
     private readonly int _extensionAmount;
@@ -33,14 +33,14 @@ internal class ContinuationPermissionIterationFilter : IIterationFilter
     /// <param name="maxIterations">Base maximum iterations before requiring permission</param>
     /// <param name="extensionAmount">How many iterations to add when user approves continuation</param>
     /// <param name="filterName">Name for this filter instance (for event correlation)</param>
-    public ContinuationPermissionIterationFilter(
+    public ContinuationPermissionIterationMiddleWare(
         int maxIterations = 20,
         int extensionAmount = 3,
         string? filterName = null)
     {
         _maxIterations = maxIterations;
         _extensionAmount = extensionAmount;
-        _filterName = filterName ?? "ContinuationPermissionFilter";
+        _filterName = filterName ?? "ContinuationPermissionMiddleware";
         _currentExtendedLimit = maxIterations;
     }
 
@@ -49,7 +49,7 @@ internal class ContinuationPermissionIterationFilter : IIterationFilter
     /// Checks if iteration limit reached and requests continuation permission if needed.
     /// </summary>
     public async Task BeforeIterationAsync(
-        IterationFilterContext context,
+        IterationMiddleWareContext context,
         CancellationToken cancellationToken)
     {
         // Check if we've EXCEEDED the iteration limit
@@ -86,7 +86,7 @@ internal class ContinuationPermissionIterationFilter : IIterationFilter
     /// No action needed in this filter (all logic is in before phase).
     /// </summary>
     public Task AfterIterationAsync(
-        IterationFilterContext context,
+        IterationMiddleWareContext context,
         CancellationToken cancellationToken)
     {
         // Nothing to do after iteration for continuation permission
@@ -97,7 +97,7 @@ internal class ContinuationPermissionIterationFilter : IIterationFilter
     /// Requests continuation permission via bidirectional events.
     /// </summary>
     /// <returns>True if user approves continuation, false otherwise</returns>
-    private async Task<bool> RequestContinuationPermissionAsync(IterationFilterContext context)
+    private async Task<bool> RequestContinuationPermissionAsync(IterationMiddleWareContext context)
     {
         var continuationId = Guid.NewGuid().ToString();
 

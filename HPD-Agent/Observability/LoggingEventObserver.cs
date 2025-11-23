@@ -59,27 +59,27 @@ public class LoggingEventObserver : IAgentEventObserver
                 }
                 break;
 
-            // Filter pipeline
-            case InternalFilterPipelineStartEvent e:
+            // Middleware pipeline
+            case InternalMiddlewarePipelineStartEvent e:
                 if (_logger.IsEnabled(LogLevel.Trace))
                 {
                     _logger.LogTrace(
-                        "Filter pipeline starting for '{Function}' with {FilterCount} filters",
-                        e.FunctionName, e.FilterCount);
+                        "Middleware pipeline starting for '{Function}' with {MiddlewareCount} Middlewares",
+                        e.FunctionName, e.MiddlewareCount);
                 }
                 break;
 
-            case InternalFilterPipelineEndEvent e:
+            case InternalMiddlewarePipelineEndEvent e:
                 if (_logger.IsEnabled(LogLevel.Trace))
                 {
                     _logger.LogTrace(
-                        "Filter pipeline for '{Function}' completed in {Duration}ms (Success: {Success})",
+                        "Middleware pipeline for '{Function}' completed in {Duration}ms (Success: {Success})",
                         e.FunctionName, e.Duration.TotalMilliseconds, e.Success);
                 }
                 if (!e.Success && !string.IsNullOrEmpty(e.ErrorMessage))
                 {
                     _logger.LogWarning(
-                        "Filter pipeline for '{Function}' failed: {Error}",
+                        "Middleware pipeline for '{Function}' failed: {Error}",
                         e.FunctionName, e.ErrorMessage);
                 }
                 break;

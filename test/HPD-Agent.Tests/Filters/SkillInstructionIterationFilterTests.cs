@@ -1,5 +1,5 @@
 using HPD.Agent;
-using HPD.Agent.Internal.Filters;
+using HPD.Agent.Internal.MiddleWare;
 using Microsoft.Extensions.AI;
 using System.Collections.Immutable;
 using Xunit;
@@ -7,15 +7,15 @@ using Xunit;
 namespace HPD.Agent.Tests.Filters;
 
 /// <summary>
-/// Tests for SkillInstructionIterationFilter functionality.
+/// Tests for SkillInstructionIterationMiddleWare functionality.
 /// </summary>
-public class SkillInstructionIterationFilterTests
+public class SkillInstructionIterationMiddleWareTests
 {
     [Fact]
     public async Task Filter_DoesNotModifyInstructions_WhenNoActiveSkills()
     {
         // Arrange
-        var filter = new SkillInstructionIterationFilter();
+        var filter = new SkillInstructionIterationMiddleWare();
         var context = CreateContext(activeSkills: ImmutableDictionary<string, string>.Empty);
         var originalInstructions = context.Options!.Instructions;
 
@@ -30,7 +30,7 @@ public class SkillInstructionIterationFilterTests
     public async Task Filter_InjectsSkillInstructions_WhenActiveSkillsExist()
     {
         // Arrange
-        var filter = new SkillInstructionIterationFilter();
+        var filter = new SkillInstructionIterationMiddleWare();
         var activeSkills = ImmutableDictionary<string, string>.Empty
             .Add("trading", "Trading skill instructions for buying and selling stocks");
         var context = CreateContext(activeSkills: activeSkills);
@@ -49,7 +49,7 @@ public class SkillInstructionIterationFilterTests
     public async Task Filter_InjectsMultipleSkillInstructions_WhenMultipleActiveSkills()
     {
         // Arrange
-        var filter = new SkillInstructionIterationFilter();
+        var filter = new SkillInstructionIterationMiddleWare();
         var activeSkills = ImmutableDictionary<string, string>.Empty
             .Add("trading", "Trading skill instructions")
             .Add("weather", "Weather skill instructions");
@@ -69,7 +69,7 @@ public class SkillInstructionIterationFilterTests
     public async Task Filter_SignalsClearSkills_OnFinalIteration()
     {
         // Arrange
-        var filter = new SkillInstructionIterationFilter();
+        var filter = new SkillInstructionIterationMiddleWare();
         var activeSkills = ImmutableDictionary<string, string>.Empty
             .Add("trading", "Trading skill instructions");
         var context = CreateContext(activeSkills: activeSkills);
@@ -92,7 +92,7 @@ public class SkillInstructionIterationFilterTests
     public async Task Filter_DoesNotSignalClearSkills_WhenNotFinalIteration()
     {
         // Arrange
-        var filter = new SkillInstructionIterationFilter();
+        var filter = new SkillInstructionIterationMiddleWare();
         var activeSkills = ImmutableDictionary<string, string>.Empty
             .Add("trading", "Trading skill instructions");
         var context = CreateContext(activeSkills: activeSkills);
@@ -114,7 +114,7 @@ public class SkillInstructionIterationFilterTests
     public async Task Filter_DoesNotSignalClearSkills_WhenNoActiveSkills()
     {
         // Arrange
-        var filter = new SkillInstructionIterationFilter();
+        var filter = new SkillInstructionIterationMiddleWare();
         var context = CreateContext(activeSkills: ImmutableDictionary<string, string>.Empty);
 
         // Simulate final iteration
@@ -134,7 +134,7 @@ public class SkillInstructionIterationFilterTests
     public async Task Filter_HandlesNullOptions_Gracefully()
     {
         // Arrange
-        var filter = new SkillInstructionIterationFilter();
+        var filter = new SkillInstructionIterationMiddleWare();
         var activeSkills = ImmutableDictionary<string, string>.Empty
             .Add("trading", "Trading skill instructions");
         var context = CreateContext(activeSkills: activeSkills);
@@ -151,7 +151,7 @@ public class SkillInstructionIterationFilterTests
     public async Task Filter_InjectsInBefore_DetectsFinalInAfter()
     {
         // Arrange
-        var filter = new SkillInstructionIterationFilter();
+        var filter = new SkillInstructionIterationMiddleWare();
         var activeSkills = ImmutableDictionary<string, string>.Empty
             .Add("trading", "Trading instructions");
         var context = CreateContext(activeSkills: activeSkills);
@@ -174,7 +174,7 @@ public class SkillInstructionIterationFilterTests
         Assert.True(context.Properties.ContainsKey("ShouldClearActiveSkills"));
     }
 
-    private static IterationFilterContext CreateContext(ImmutableDictionary<string, string> activeSkills)
+    private static IterationMiddleWareContext CreateContext(ImmutableDictionary<string, string> activeSkills)
     {
         var state = AgentLoopState.Initial(
             messages: new List<ChatMessage>(),
@@ -186,7 +186,7 @@ public class SkillInstructionIterationFilterTests
                 ActiveSkillInstructions = activeSkills
             };
 
-        return new IterationFilterContext
+        return new IterationMiddleWareContext
         {
             Iteration = 0,
             AgentName = "TestAgent",

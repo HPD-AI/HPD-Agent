@@ -43,8 +43,7 @@ static Task<(ConversationThread, AgentCore)> CreateAIAssistant(ILoggerFactory lo
     var agentConfig = new AgentConfig
     {
         Name = "AI Assistant",
-        SystemInstructions = "You are an accountant agent. You can do sequential and parallel tool calls. You can also plan out stuff before you start if the task requires sub steps. If you open a skill, it will give you instructions of how to use the skill and what to read.",
-        MaxAgenticIterations = 50,  // Set to 2 to test continuation filter
+        MaxAgenticIterations = 50,  // Set to 2 to test continuation Middleware
         Provider = new ProviderConfig
         {
             ProviderKey = "openai",
@@ -61,6 +60,12 @@ static Task<(ConversationThread, AgentCore)> CreateAIAssistant(ILoggerFactory lo
         {
             ManifestPath = "./MCP.json"
         },
+        // 📚 Static Memory: Read-only knowledge base (domain expertise, docs, patterns)
+        StaticMemory = new StaticMemoryConfig
+        {
+            StorageDirectory = "./agent-static-memory",
+            Strategy = MemoryStrategy.FullTextInjection
+        },
         // 🎯 Plugin Scoping: OFF by default (set Enabled = true to enable)
         // When enabled, plugin functions are hidden behind container functions to reduce token usage by up to 87.5%
         // The agent must first call the container (e.g., MathPlugin) before individual functions (Add, Multiply) become visible
@@ -69,7 +74,7 @@ static Task<(ConversationThread, AgentCore)> CreateAIAssistant(ILoggerFactory lo
             Enabled = true,              // Scope C# plugins (MathPlugin, etc.)      // Scope MCP tools by server (MCP_filesystem, MCP_github, etc.)
             ScopeFrontendTools = false,   // Scope Frontend/AGUI tools (FrontendTools container)
             MaxFunctionNamesInDescription = 10,  // Max function names shown in container descriptions
-            SkillInstructionMode = SkillInstructionMode.PromptFilterOnly  // 🎯 Instructions only in system prompt (not in function result)
+            SkillInstructionMode = SkillInstructionMode.PromptMiddlewareOnly  // 🎯 Instructions only in system prompt (not in function result)
         },
         // 💭 Reasoning Token Preservation: Controls whether reasoning from models like o1/Gemini is saved in history
         // Default: false (reasoning shown in UI but excluded from history to save tokens/cost)
@@ -83,7 +88,8 @@ static Task<(ConversationThread, AgentCore)> CreateAIAssistant(ILoggerFactory lo
         .WithLogging()
         .WithPlanMode()  // ✨ Financial analysis plugin (explicitly registered)  // ✨ Financial analysis skills (that reference the plugin)
         .WithPlugin<FinancialAnalysisSkills>()  // ✨ Math plugin (basic math functions
-        .WithPermissions() // ✨ NEW: Unified permission filter - events handled in streaming loop
+        .WithPlugin<MathPlugin>()  // ✨ MCP tool integration (auto-loads tools from MCP.json manifest)
+        .WithPermissions() // ✨ NEW: Unified permission Middleware - events handled in streaming loop
         .BuildCoreAgent();  // ✨ Build CORE agent (internal access via InternalsVisibleTo)
 
     // 💬 Create thread using agent directly
@@ -166,7 +172,7 @@ static async Task RunInteractiveChat(AgentCore agent, ConversationThread thread)
                     thread: thread,
                     cancellationToken: cts.Token))
                 {
-                    // ✨ Handle INTERNAL permission events from the unified filter
+                    // ✨ Handle INTERNAL permission events from the unified Middleware
                     if (evt is InternalPermissionRequestEvent permReq)
                     {
                         // Close any open sections
@@ -218,8 +224,8 @@ static async Task RunInteractiveChat(AgentCore agent, ConversationThread thread)
                                 break;
                         }
 
-                        // Send response back to the filter via agent
-                        agent.SendFilterResponse(
+                        // Send response back to the Middleware via agent
+                        agent.SendMiddlewareResponse(
                             permReq.PermissionId,
                             new InternalPermissionResponseEvent(
                                 permReq.PermissionId,
@@ -258,8 +264,8 @@ static async Task RunInteractiveChat(AgentCore agent, ConversationThread thread)
                         var userInput = Console.ReadLine();
                         var approved = !string.IsNullOrEmpty(userInput) && char.ToLower(userInput[0]) == 'y';
 
-                        // Send response back to the filter
-                        agent.SendFilterResponse(
+                        // Send response back to the Middleware
+                        agent.SendMiddlewareResponse(
                             contReq.ContinuationId,
                             new InternalContinuationResponseEvent(
                                 contReq.ContinuationId,

@@ -1,5 +1,5 @@
 using Microsoft.Extensions.AI;
-using HPD.Agent.Internal.Filters;
+using HPD.Agent.Internal.MiddleWare;
 using System.Threading.Channels;
 using System.Runtime.CompilerServices;
 using CoreAgent = HPD.Agent.AgentCore;
@@ -23,13 +23,13 @@ public sealed class Agent
         AgentConfig config,
         IChatClient baseClient,
         ChatOptions? mergedOptions,
-        List<IPromptFilter> promptFilters,
-        ScopedFilterManager scopedFilterManager,
+        List<IPromptMiddleware> PromptMiddlewares,
+        ScopedFunctionMiddlewareManager ScopedFunctionMiddlewareManager,
         ErrorHandling.IProviderErrorHandler providerErrorHandler,
-        IReadOnlyList<IPermissionFilter>? permissionFilters = null,
-        IReadOnlyList<IAiFunctionFilter>? aiFunctionFilters = null,
-        IReadOnlyList<IMessageTurnFilter>? messageTurnFilters = null,
-        IReadOnlyList<IIterationFilter>? iterationFilters = null,
+        IReadOnlyList<IPermissionMiddleware>? PermissionMiddlewares = null,
+        IReadOnlyList<IAIFunctionMiddleware>? AIFunctionMiddlewares = null,
+        IReadOnlyList<IMessageTurnMiddleware>? MessageTurnMiddlewares = null,
+        IReadOnlyList<IIterationMiddleWare>? IterationMiddleWares = null,
         IServiceProvider? serviceProvider = null,
         IEnumerable<IAgentEventObserver>? observers = null,
         IChatClient? summarizerClient = null)
@@ -38,13 +38,13 @@ public sealed class Agent
             config,
             baseClient,
             mergedOptions,
-            promptFilters,
-            scopedFilterManager,
+            PromptMiddlewares,
+            ScopedFunctionMiddlewareManager,
             providerErrorHandler,
-            permissionFilters,
-            aiFunctionFilters,
-            messageTurnFilters,
-            iterationFilters,
+            PermissionMiddlewares,
+            AIFunctionMiddlewares,
+            MessageTurnMiddlewares,
+            IterationMiddleWares,
             serviceProvider,
             observers,
             summarizerClient);
@@ -152,13 +152,13 @@ public sealed class Agent
     }
 
     /// <summary>
-    /// Sends a filter response to the core agent (for permission handling, etc.)
+    /// Sends a Middleware response to the core agent (for permission handling, etc.)
     /// </summary>
-    /// <param name="filterId">The filter ID to respond to</param>
+    /// <param name="MiddlewareId">The Middleware ID to respond to</param>
     /// <param name="response">The response event</param>
-    public void SendFilterResponse(string filterId, InternalAgentEvent response)
+    public void SendMiddlewareResponse(string MiddlewareId, InternalAgentEvent response)
     {
-        _core.SendFilterResponse(filterId, response);
+        _core.SendMiddlewareResponse(MiddlewareId, response);
     }
 }
 
@@ -219,8 +219,7 @@ internal static class EventStreamAdapter
                     e.PermissionId,
                     e.FunctionName,
                     e.Description ?? "",
-                    e.Arguments?.ToDictionary(kvp => kvp.Key, kvp => kvp.Value) ?? new Dictionary<string, object?>(),
-                    new[] { PermissionScope.Conversation, PermissionScope.Project, PermissionScope.Global }),
+                    e.Arguments?.ToDictionary(kvp => kvp.Key, kvp => kvp.Value) ?? new Dictionary<string, object?>()),
 
                 InternalContinuationRequestEvent e => EventSerialization.CreateContinuationPermissionRequest(
                     e.ContinuationId,

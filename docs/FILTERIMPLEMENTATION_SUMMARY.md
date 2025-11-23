@@ -84,7 +84,7 @@ Three example filters demonstrating different use cases:
 
 1. **ProgressLoggingFilter** - One-way event emission (progress tracking)
 2. **CostTrackingFilter** - Custom events (cost estimation)
-3. **SimplePermissionFilter** - Bidirectional request/response (permissions)
+3. **SimplePermissionMiddleware** - Bidirectional request/response (permissions)
 
 ### 2. **[FILTER_EVENTS_USAGE.md](HPD-Agent/Filters/FILTER_EVENTS_USAGE.md)** (Documentation)
 
@@ -175,7 +175,7 @@ T6: Filter continues execution
 
 ### Public APIs
 ✅ **Zero breaking changes** to all public/user-facing APIs:
-- `IAiFunctionFilter` interface unchanged
+- `IAIFunctionMiddleware` interface unchanged
 - `ProcessFunctionCallsAsync` signature unchanged
 - `ToolScheduler.ExecuteToolsAsync` signature unchanged
 - `RunAgenticLoopInternal` signature unchanged
@@ -201,7 +201,7 @@ T6: Filter continues execution
 ### Simple One-Way Event
 
 ```csharp
-public class MyFilter : IAiFunctionFilter
+public class MyFilter : IAIFunctionMiddleware
 {
     public async Task InvokeAsync(AiFunctionContext context, Func<AiFunctionContext, Task> next)
     {
@@ -223,7 +223,7 @@ public class MyFilter : IAiFunctionFilter
 ### Bidirectional Request/Response
 
 ```csharp
-public class MyPermissionFilter : IAiFunctionFilter
+public class MyPermissionMiddleware : IAIFunctionMiddleware
 {
     public async Task InvokeAsync(AiFunctionContext context, Func<AiFunctionContext, Task> next)
     {
@@ -295,7 +295,7 @@ await foreach (var evt in agent.RunStreamingAsync(thread, options))
 
 ### Manual Testing Checklist
 - [ ] Test `ProgressLoggingFilter` with sample agent run
-- [ ] Test `SimplePermissionFilter` with AGUI handler
+- [ ] Test `SimplePermissionMiddleware` with AGUI handler
 - [ ] Test timeout behavior (`WaitForResponseAsync` with no response)
 - [ ] Test cancellation behavior (cancel agent mid-execution)
 - [ ] Test concurrent event emission (multiple filters in pipeline)
@@ -313,11 +313,11 @@ await foreach (var evt in agent.RunStreamingAsync(thread, options))
 3. Test timeout and cancellation edge cases
 4. Performance profiling (confirm ~50ns overhead)
 
-### Phase 2: UnifiedPermissionFilter
+### Phase 2: UnifiedPermissionMiddleware
 1. Implement production-ready permission filter using new system
 2. Update AGUI handler to convert permission events
 3. Create console handler for testing
-4. Deprecate old filters (AGUIPermissionFilter, ConsolePermissionFilter)
+4. Deprecate old filters (AGUIPermissionMiddleware, ConsolePermissionMiddleware)
 
 ### Phase 3: Documentation
 1. Update API documentation

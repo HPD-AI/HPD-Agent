@@ -126,14 +126,13 @@ public static class EventSerialization
         Timestamp = GetTimestamp()
     };
 
-    public static FunctionPermissionRequestEvent CreateFunctionPermissionRequest(string permissionId, string functionName, string functionDescription, Dictionary<string, object?> arguments, PermissionScope[] availableScopes) => new()
+    public static FunctionPermissionRequestEvent CreateFunctionPermissionRequest(string permissionId, string functionName, string functionDescription, Dictionary<string, object?> arguments) => new()
     {
         Type = "function",
         PermissionId = permissionId,
         FunctionName = functionName,
         FunctionDescription = functionDescription,
         Arguments = arguments,
-        AvailableScopes = availableScopes,
         Timestamp = GetTimestamp()
     };
 

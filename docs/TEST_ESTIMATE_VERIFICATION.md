@@ -152,25 +152,25 @@ Based on comprehensive codebase analysis:
 ### 2.3 Filter Pipeline System
 **Filter Files**: 17
 **Filter Types**:
-1. **Function Filters** (IAiFunctionFilter)
-   - ObservabilityAiFunctionFilter (OpenTelemetry)
-   - LoggingAiFunctionFilter
+1. **Function Filters** (IAIFunctionMiddleware)
+   - ObservabilityAIFunctionMiddleware (OpenTelemetry)
+   - LoggingAIFunctionMiddleware
    - Custom function filters
 
-2. **Prompt Filters** (IPromptFilter) - 5 implementations
+2. **Prompt Filters** (IPromptMiddleware) - 5 implementations
    - DynamicMemoryFilter
    - StaticMemoryFilter
    - AgentPlanFilter
    - ProjectInjectedMemoryFilter
    - Custom prompt filters
 
-3. **Permission Filters** (IPermissionFilter) - 4 implementations
-   - PermissionFilter (base)
-   - ConsolePermissionFilter
-   - AutoApprovePermissionFilter
-   - AGUIPermissionFilter
+3. **Permission Filters** (IPermissionMiddleware) - 4 implementations
+   - PermissionMiddleware (base)
+   - ConsolePermissionMiddleware
+   - AutoApprovePermissionMiddleware
+   - AGUIPermissionMiddleware
 
-4. **Message Turn Filters** (IMessageTurnFilter)
+4. **Message Turn Filters** (IMessageTurnMiddleware)
    - Post-turn processing
 
 5. **Scoped Filter System**

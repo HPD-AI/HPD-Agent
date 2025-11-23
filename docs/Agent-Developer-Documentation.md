@@ -145,8 +145,8 @@ var agent = new AgentBuilder(agentConfig)
   - `WithConsolePermissions()` - Interactive permission prompts
   - `WithAGUIPermissions()` - GUI-based permissions
   - `WithAutoApprove()` - Auto-approve specific functions
-  - `WithPromptFilter()` - Add prompt transformation filters
-  - `WithAiFunctionFilter()` - Add function execution filters
+  - `WithPromptMiddleware()` - Add prompt transformation filters
+  - `WithAIFunctionMiddleware()` - Add function execution filters
 
 - **Observability**
   - `WithLogging()` - Enable logging
@@ -285,19 +285,19 @@ public class AgentConfigValidator : AbstractValidator<AgentConfig>
 
 The permission system provides fine-grained control over tool/function execution with multiple implementation options.
 
-### IPermissionFilter Interface
+### IPermissionMiddleware Interface
 
 ```csharp
-public interface IPermissionFilter : IAiFunctionFilter
+public interface IPermissionMiddleware : IAIFunctionMiddleware
 {
-    // Inherits IAiFunctionFilter for pipeline integration
+    // Inherits IAIFunctionMiddleware for pipeline integration
     Task InvokeAsync(AiFunctionContext context, Func<AiFunctionContext, Task> next);
 }
 ```
 
 ### Available Permission Filters
 
-#### 1. ConsolePermissionFilter
+#### 1. ConsolePermissionMiddleware
 Interactive console prompts for function approval:
 
 ```csharp
@@ -317,7 +317,7 @@ builder.WithConsolePermissions();
 //   [N] Never allow (Global)
 ```
 
-#### 2. AGUIPermissionFilter
+#### 2. AGUIPermissionMiddleware
 GUI-based permission system with streaming events:
 
 ```csharp
@@ -327,7 +327,7 @@ builder.WithAGUIPermissions(channel);
 // Frontend can approve/deny through UI
 ```
 
-#### 3. AutoApprovePermissionFilter
+#### 3. AutoApprovePermissionMiddleware
 Automatically approve specific functions:
 
 ```csharp
@@ -672,9 +672,9 @@ agent.RegisterCapability("custom", new CustomCapability());
 ### Custom Filters
 
 ```csharp
-public class CustomFilter : IPromptFilter
+public class CustomFilter : IPromptMiddleware
 {
-    public Task TransformAsync(PromptFilterContext context)
+    public Task TransformAsync(PromptMiddlewareContext context)
     {
         // Transform prompts before sending
         context.SystemInstructions += "\nAlways be polite.";
@@ -682,18 +682,18 @@ public class CustomFilter : IPromptFilter
     }
 }
 
-builder.WithPromptFilter(new CustomFilter());
+builder.WithPromptMiddleware(new CustomFilter());
 ```
 
 ### Service Extensions
 
 ```csharp
 // Get internal services
-var scopedFilterManager = agent.GetService<ScopedFilterManager>();
+var ScopedFunctionMiddlewareManager = agent.GetService<ScopedFunctionMiddlewareManager>();
 var capabilityManager = agent.GetService<CapabilityManager>();
 
 // Extend functionality
-scopedFilterManager.AddFilter("custom", customFilter);
+ScopedFunctionMiddlewareManager.AddFilter("custom", customFilter);
 ```
 
 ---

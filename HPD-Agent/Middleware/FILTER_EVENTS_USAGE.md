@@ -94,7 +94,7 @@ IBidirectionalEvent (all bidirectional events)
 ### 1. Create a Simple Progress Filter
 
 ```csharp
-public class MyProgressFilter : IAiFunctionFilter
+public class MyProgressFilter : IAIFunctionMiddleware
 {
     public async Task InvokeAsync(AiFunctionContext context, Func<AiFunctionContext, Task> next)
     {
@@ -293,7 +293,7 @@ var permissionId = Guid.NewGuid().ToString();
 // 1. Emit request
 context.Emit(new InternalPermissionRequestEvent(
     permissionId,
-    sourceName: "MyPermissionFilter",
+    sourceName: "MyPermissionMiddleware",
     functionName: "DeleteFile",
     description: "Delete important file",
     callId: "...",
@@ -322,11 +322,11 @@ else
 ### Filter Code
 
 ```csharp
-public class SimplePermissionFilter : IAiFunctionFilter
+public class SimplePermissionMiddleware : IAIFunctionMiddleware
 {
     private readonly string _filterName;
 
-    public SimplePermissionFilter(string filterName = "SimplePermissionFilter")
+    public SimplePermissionMiddleware(string filterName = "SimplePermissionMiddleware")
     {
         _filterName = filterName;
     }
@@ -425,7 +425,7 @@ public record DatabaseQueryStartEvent(
     TimeSpan EstimatedDuration) : InternalAgentEvent, IFilterEvent;
 
 // 2. Emit in filter
-public class DatabaseFilter : IAiFunctionFilter
+public class DatabaseFilter : IAIFunctionMiddleware
 {
     private readonly string _filterName = "DatabaseFilter";
 
@@ -489,9 +489,9 @@ public record EnterprisePermissionResponseEvent(
 ) : InternalAgentEvent, IPermissionEvent;
 
 // Use in custom filter
-public class EnterprisePermissionFilter : IPermissionFilter
+public class EnterprisePermissionMiddleware : IPermissionMiddleware
 {
-    private readonly string _filterName = "EnterprisePermissionFilter";
+    private readonly string _filterName = "EnterprisePermissionMiddleware";
 
     public async Task InvokeAsync(AiFunctionContext context, Func<AiFunctionContext, Task> next)
     {
@@ -543,11 +543,11 @@ await foreach (var evt in agent.RunStreamingAsync(...))
 
 ### Default Permission Filter: Good for Most Use Cases
 
-The built-in `PermissionFilter` is perfect for 90% of applications:
+The built-in `PermissionMiddleware` is perfect for 90% of applications:
 
 ```csharp
 var agent = new AgentBuilder()
-    .WithPermissions()  // Uses default PermissionFilter
+    .WithPermissions()  // Uses default PermissionMiddleware
     .Build();
 
 // Simple binary decisions: Allow or Deny
@@ -660,7 +660,7 @@ public record EnterprisePermissionRequestEvent(
 #### **5. Cost-Based or Risk-Based Auto-Decisions**
 
 ```csharp
-public class RiskBasedPermissionFilter : IPermissionFilter
+public class RiskBasedPermissionMiddleware : IPermissionMiddleware
 {
     public async Task InvokeAsync(AiFunctionContext context, Func<AiFunctionContext, Task> next)
     {
@@ -748,7 +748,7 @@ Filters don't need dependency injection:
 
 ```csharp
 // No constructor parameters needed!
-public class MyFilter : IAiFunctionFilter
+public class MyFilter : IAIFunctionMiddleware
 {
     public async Task InvokeAsync(AiFunctionContext context, ...)
     {
@@ -849,7 +849,7 @@ public class OldFilter
 
 ### New Way (Standardized)
 ```csharp
-public class NewFilter : IAiFunctionFilter
+public class NewFilter : IAIFunctionMiddleware
 {
     // No dependencies!
 
@@ -868,7 +868,7 @@ public class NewFilter : IAiFunctionFilter
 See `ExampleFilters.cs` for:
 - `ProgressLoggingFilter` - Simple one-way events
 - `CostTrackingFilter` - Custom event types
-- `SimplePermissionFilter` - Bidirectional request/response
+- `SimplePermissionMiddleware` - Bidirectional request/response
 
 Happy filtering! 🎉
 ß

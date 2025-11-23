@@ -897,7 +897,7 @@ public enum SkillInstructionMode
     /// Most token efficient - instructions appear once in system prompt.
     /// Recommended: Use this mode to avoid redundant instructions in conversation history.
     /// </summary>
-    PromptFilterOnly,
+    PromptMiddlewareOnly,
 
     /// <summary>
     /// Instructions in BOTH system prompt (via iteration filter) AND function result (redundant double emphasis).
@@ -936,9 +936,9 @@ public class ScopingConfig
     /// <summary>
     /// Controls whether skill instructions appear in function result (in addition to system prompt).
     /// Iteration filter ALWAYS injects to system prompt - this controls redundancy in function result.
-    /// - PromptFilterOnly: Instructions only in system prompt (most token efficient, recommended)
+    /// - PromptMiddlewareOnly: Instructions only in system prompt (most token efficient, recommended)
     /// - Both: Instructions in both system prompt AND function result (backward compatibility)
-    /// Default: Both (for backward compatibility, but PromptFilterOnly is recommended).
+    /// Default: Both (for backward compatibility, but PromptMiddlewareOnly is recommended).
     /// </summary>
     public SkillInstructionMode SkillInstructionMode { get; set; } = SkillInstructionMode.Both;
 

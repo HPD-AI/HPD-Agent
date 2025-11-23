@@ -1,5 +1,5 @@
 using HPD.Agent;
-using HPD.Agent.Internal.Filters;
+using HPD.Agent.Internal.MiddleWare;
 using Microsoft.Extensions.AI;
 using Xunit;
 
@@ -8,16 +8,16 @@ namespace HPD.Agent.Tests.Filters;
 /// <summary>
 /// Tests for iteration filter before/after lifecycle pattern.
 /// </summary>
-public class IterationFilterPipelineTests
+public class IterationMiddleWarePipelineTests
 {
     [Fact]
     public async Task Filters_ExecuteInOrder_BeforeAndAfter()
     {
         // Arrange
         var executionLog = new List<string>();
-        var filter1 = new TestIterationFilter("Filter1", executionLog);
-        var filter2 = new TestIterationFilter("Filter2", executionLog);
-        var filter3 = new TestIterationFilter("Filter3", executionLog);
+        var filter1 = new TestIterationMiddleWare("Filter1", executionLog);
+        var filter2 = new TestIterationMiddleWare("Filter2", executionLog);
+        var filter3 = new TestIterationMiddleWare("Filter3", executionLog);
 
         var context = CreateContext();
         var filters = new[] { filter1, filter2, filter3 };
@@ -62,7 +62,7 @@ public class IterationFilterPipelineTests
         var filter1 = new InstructionAppendingFilter(" + F1");
         var filter2 = new InstructionAppendingFilter(" + F2");
 
-        var filters = new IIterationFilter[] { filter1, filter2 };
+        var filters = new IIterationMiddleWare[] { filter1, filter2 };
 
         // Act
         foreach (var filter in filters)
@@ -177,7 +177,7 @@ public class IterationFilterPipelineTests
         Assert.Null(context.Options);
     }
 
-    private static IterationFilterContext CreateContext()
+    private static IterationMiddleWareContext CreateContext()
     {
         var state = AgentLoopState.Initial(
             messages: new List<ChatMessage>(),
@@ -185,7 +185,7 @@ public class IterationFilterPipelineTests
             conversationId: "test-conv-id",
             agentName: "TestAgent");
 
-        return new IterationFilterContext
+        return new IterationMiddleWareContext
         {
             Iteration = 0,
             AgentName = "TestAgent",
@@ -198,19 +198,19 @@ public class IterationFilterPipelineTests
 
     // Test helper filters
 
-    private class TestIterationFilter : IIterationFilter
+    private class TestIterationMiddleWare : IIterationMiddleWare
     {
         private readonly string _name;
         private readonly List<string> _log;
 
-        public TestIterationFilter(string name, List<string> log)
+        public TestIterationMiddleWare(string name, List<string> log)
         {
             _name = name;
             _log = log;
         }
 
         public Task BeforeIterationAsync(
-            IterationFilterContext context,
+            IterationMiddleWareContext context,
             CancellationToken cancellationToken)
         {
             _log.Add($"{_name}-before");
@@ -218,7 +218,7 @@ public class IterationFilterPipelineTests
         }
 
         public Task AfterIterationAsync(
-            IterationFilterContext context,
+            IterationMiddleWareContext context,
             CancellationToken cancellationToken)
         {
             _log.Add($"{_name}-after");
@@ -226,7 +226,7 @@ public class IterationFilterPipelineTests
         }
     }
 
-    private class InstructionAppendingFilter : IIterationFilter
+    private class InstructionAppendingFilter : IIterationMiddleWare
     {
         private readonly string _textToAppend;
 
@@ -236,7 +236,7 @@ public class IterationFilterPipelineTests
         }
 
         public Task BeforeIterationAsync(
-            IterationFilterContext context,
+            IterationMiddleWareContext context,
             CancellationToken cancellationToken)
         {
             if (context.Options != null)
@@ -247,17 +247,17 @@ public class IterationFilterPipelineTests
         }
 
         public Task AfterIterationAsync(
-            IterationFilterContext context,
+            IterationMiddleWareContext context,
             CancellationToken cancellationToken)
         {
             return Task.CompletedTask;
         }
     }
 
-    private class SkipLLMCallFilter : IIterationFilter
+    private class SkipLLMCallFilter : IIterationMiddleWare
     {
         public Task BeforeIterationAsync(
-            IterationFilterContext context,
+            IterationMiddleWareContext context,
             CancellationToken cancellationToken)
         {
             // Skip LLM call and provide cached response
@@ -268,14 +268,14 @@ public class IterationFilterPipelineTests
         }
 
         public Task AfterIterationAsync(
-            IterationFilterContext context,
+            IterationMiddleWareContext context,
             CancellationToken cancellationToken)
         {
             return Task.CompletedTask;
         }
     }
 
-    private class ContextModificationTrackingFilter : IIterationFilter
+    private class ContextModificationTrackingFilter : IIterationMiddleWare
     {
         private readonly List<string> _modifications;
 
@@ -285,7 +285,7 @@ public class IterationFilterPipelineTests
         }
 
         public Task BeforeIterationAsync(
-            IterationFilterContext context,
+            IterationMiddleWareContext context,
             CancellationToken cancellationToken)
         {
             // Pre-invoke: Modify context
@@ -295,7 +295,7 @@ public class IterationFilterPipelineTests
         }
 
         public Task AfterIterationAsync(
-            IterationFilterContext context,
+            IterationMiddleWareContext context,
             CancellationToken cancellationToken)
         {
             // Post-invoke: Check response
@@ -307,7 +307,7 @@ public class IterationFilterPipelineTests
         }
     }
 
-    private class FinalIterationDetectingFilter : IIterationFilter
+    private class FinalIterationDetectingFilter : IIterationMiddleWare
     {
         private readonly Action _onFinalIteration;
 
@@ -317,14 +317,14 @@ public class IterationFilterPipelineTests
         }
 
         public Task BeforeIterationAsync(
-            IterationFilterContext context,
+            IterationMiddleWareContext context,
             CancellationToken cancellationToken)
         {
             return Task.CompletedTask;
         }
 
         public Task AfterIterationAsync(
-            IterationFilterContext context,
+            IterationMiddleWareContext context,
             CancellationToken cancellationToken)
         {
             if (context.IsFinalIteration)

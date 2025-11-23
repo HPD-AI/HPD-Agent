@@ -4,7 +4,7 @@
 
 **VERDICT: ✅ STRONGLY RECOMMENDED - This is an excellent design decision**
 
-This document evaluates the proposal to implement a hybrid architecture where `Microsoft.Agents.AI.AIContextProvider` serves as the user-facing API while internally leveraging HPD-Agent's powerful `IPromptFilter` architecture.
+This document evaluates the proposal to implement a hybrid architecture where `Microsoft.Agents.AI.AIContextProvider` serves as the user-facing API while internally leveraging HPD-Agent's powerful `IPromptMiddleware` architecture.
 
 ---
 
@@ -14,7 +14,7 @@ This document evaluates the proposal to implement a hybrid architecture where `M
 
 HPD-Agent currently implements a sophisticated filter architecture with:
 
-1. **IPromptFilter Interface** - Full bidirectional middleware
+1. **IPromptMiddleware Interface** - Full bidirectional middleware
    - Pre-processing via `InvokeAsync()`
    - Post-processing via `PostInvokeAsync()`
    - Full message transformation capability
@@ -25,14 +25,14 @@ HPD-Agent currently implements a sophisticated filter architecture with:
 2. **Existing Implementations**
    - `DynamicMemoryFilter` - Injects agent memories
    - `ProjectInjectedMemoryFilter` - Injects project documents
-   - Custom user filters via `AgentBuilder.WithPromptFilter()`
+   - Custom user filters via `AgentBuilder.WithPromptMiddleware()`
 
 3. **Current Integration Point**
    ```csharp
    var agent = new AgentBuilder()
        .WithName("MyAgent")
-       .WithPromptFilter(new DynamicMemoryFilter(store, options))
-       .WithPromptFilter(new ProjectInjectedMemoryFilter(options))
+       .WithPromptMiddleware(new DynamicMemoryFilter(store, options))
+       .WithPromptMiddleware(new ProjectInjectedMemoryFilter(options))
        .Build();
    ```
 
@@ -63,7 +63,7 @@ public sealed class AIContext
 }
 ```
 
-**Key Difference**: AIContextProvider uses a parallel merge model where multiple providers run independently and their results are merged. IPromptFilter uses a sequential pipeline where filters can transform and see each other's changes.
+**Key Difference**: AIContextProvider uses a parallel merge model where multiple providers run independently and their results are merged. IPromptMiddleware uses a sequential pipeline where filters can transform and see each other's changes.
 
 ---
 
@@ -79,7 +79,7 @@ User calls: agent.SetContextProvider(myProvider)
 Internally creates:
     1. AIContextProviderPreFilter (Priority: FIRST)
        - Calls provider.InvokingAsync()
-       - Merges AIContext into PromptFilterContext
+       - Merges AIContext into PromptMiddlewareContext
     
     2. AIContextProviderPostFilter (Priority: LAST)
        - Calls provider.InvokedAsync() in PostInvokeAsync()
@@ -126,8 +126,8 @@ Final Response
 ```csharp
 // Users must understand filter architecture
 var agent = new AgentBuilder()
-    .WithPromptFilter(new MyMemoryFilter())
-    .WithPromptFilter(new MyRAGFilter())
+    .WithPromptMiddleware(new MyMemoryFilter())
+    .WithPromptMiddleware(new MyRAGFilter())
     .Build();
 ```
 
@@ -168,8 +168,8 @@ var agent = new AgentBuilder()
 ```csharp
 var agent = new AgentBuilder()
     .WithContextProvider(new MyMemoryProvider())  // Simple
-    .WithPromptFilter(new SafetyFilter())         // Advanced
-    .WithPromptFilter(new CustomRAGFilter())      // Advanced
+    .WithPromptMiddleware(new SafetyFilter())         // Advanced
+    .WithPromptMiddleware(new CustomRAGFilter())      // Advanced
     .Build();
 ```
 
@@ -183,12 +183,12 @@ agent.WithContextProvider(new MemoryProvider());
 
 // INTERMEDIATE: Mix context provider + filters
 agent.WithContextProvider(new MemoryProvider())
-     .WithPromptFilter(new SafetyFilter());
+     .WithPromptMiddleware(new SafetyFilter());
 
 // EXPERT: Full filter control, no context provider
-agent.WithPromptFilter(new MemoryFilter())
-     .WithPromptFilter(new RAGFilter())
-     .WithPromptFilter(new CustomFilter());
+agent.WithPromptMiddleware(new MemoryFilter())
+     .WithPromptMiddleware(new RAGFilter())
+     .WithPromptMiddleware(new CustomFilter());
 ```
 
 ### 5. Framework Integration ⭐⭐⭐⭐
@@ -217,8 +217,8 @@ Users understand this pattern - we're not inventing something new.
 
 1. **Two Wrapper Classes** (~150 lines total)
    ```csharp
-   internal class AIContextProviderPreFilter : IPromptFilter
-   internal class AIContextProviderPostFilter : IPromptFilter
+   internal class AIContextProviderPreFilter : IPromptMiddleware
+   internal class AIContextProviderPostFilter : IPromptMiddleware
    ```
 
 2. **AgentBuilder Extension** (~50 lines)
@@ -228,7 +228,7 @@ Users understand this pattern - we're not inventing something new.
    ```
 
 3. **Property Tracking** (Minimal changes)
-   - Store AIContext messages in PromptFilterContext.Properties
+   - Store AIContext messages in PromptMiddlewareContext.Properties
    - Retrieve in PostFilter for InvokedAsync call
 
 **Total Effort**: 1-2 days of development + testing
@@ -246,7 +246,7 @@ Users understand this pattern - we're not inventing something new.
 
 ### Risk 1: Semantic Differences
 
-**Issue**: AIContextProvider uses parallel merge model; IPromptFilter uses sequential pipeline.
+**Issue**: AIContextProvider uses parallel merge model; IPromptMiddleware uses sequential pipeline.
 
 **Mitigation**: 
 - Document that HPD-Agent's implementation runs providers sequentially (if multiple are added)
@@ -269,12 +269,12 @@ Users understand this pattern - we're not inventing something new.
 
 ### Risk 3: Feature Parity
 
-**Issue**: IPromptFilter has capabilities AIContextProvider doesn't (transformation, short-circuit).
+**Issue**: IPromptMiddleware has capabilities AIContextProvider doesn't (transformation, short-circuit).
 
 **Mitigation**:
 - This is intentional - simple API for simple needs
 - Document advanced scenarios require custom filters
-- Users can always drop down to IPromptFilter
+- Users can always drop down to IPromptMiddleware
 
 **Severity**: None - This is by design
 
@@ -349,7 +349,7 @@ For specialized scenarios, add custom filters:
 
 ```csharp
 agent.WithContextProvider(new MemoryProvider())
-     .WithPromptFilter(new SafetyFilter());
+     .WithPromptMiddleware(new SafetyFilter());
 ```
 
 Execution order: Context provider → Custom filters → LLM
@@ -360,10 +360,10 @@ Execution order: Context provider → Custom filters → LLM
 ```markdown
 # Expert: Full Filter Pipeline Control
 
-For complete control, use IPromptFilter directly:
+For complete control, use IPromptMiddleware directly:
 
 ```csharp
-public class MyFilter : IPromptFilter
+public class MyFilter : IPromptMiddleware
 {
     public async Task<IEnumerable<ChatMessage>> InvokeAsync(...)
     {
@@ -372,14 +372,14 @@ public class MyFilter : IPromptFilter
 }
 ```
 
-See IPromptFilter Guide for details.
+See IPromptMiddleware Guide for details.
 ```
 
 ---
 
 ## Comparison with Alternatives
 
-### Alternative 1: Only IPromptFilter
+### Alternative 1: Only IPromptMiddleware
 
 **Pros**:
 - Maximum power and flexibility
@@ -441,7 +441,7 @@ See IPromptFilter Guide for details.
 ### Phase 1: Core Implementation (Week 1)
 1. Create `AIContextProviderPreFilter` and `AIContextProviderPostFilter`
 2. Add `AgentBuilder.WithContextProvider()` method
-3. Update `PromptFilterContext` to track AIContext messages
+3. Update `PromptMiddlewareContext` to track AIContext messages
 4. Add unit tests
 
 ### Phase 2: Integration (Week 1)
@@ -484,7 +484,7 @@ See IPromptFilter Guide for details.
 - Position filters as "advanced" feature
 
 ✅ **Maintain filter architecture quality**
-- Continue to improve IPromptFilter
+- Continue to improve IPromptMiddleware
 - Keep expert users happy
 
 ✅ **Clear migration path**
@@ -512,7 +512,7 @@ HPD-Agent should follow this proven pattern. The hybrid architecture positions H
 
 ```csharp
 // AIContextProviderPreFilter.cs
-internal class AIContextProviderPreFilter : IPromptFilter
+internal class AIContextProviderPreFilter : IPromptMiddleware
 {
     private readonly AIContextProvider _provider;
     
@@ -522,15 +522,15 @@ internal class AIContextProviderPreFilter : IPromptFilter
     }
     
     public async Task<IEnumerable<ChatMessage>> InvokeAsync(
-        PromptFilterContext context,
-        Func<PromptFilterContext, Task<IEnumerable<ChatMessage>>> next)
+        PromptMiddlewareContext context,
+        Func<PromptMiddlewareContext, Task<IEnumerable<ChatMessage>>> next)
     {
         // Call the AIContextProvider's InvokingAsync
         var aiContext = await _provider.InvokingAsync(
             new AIContextProvider.InvokingContext(context.Messages),
             context.CancellationToken);
         
-        // Merge AIContext into PromptFilterContext
+        // Merge AIContext into PromptMiddlewareContext
         if (aiContext.Messages is { Count: > 0 })
         {
             var mergedMessages = new List<ChatMessage>(aiContext.Messages);
@@ -565,7 +565,7 @@ internal class AIContextProviderPreFilter : IPromptFilter
 }
 
 // AIContextProviderPostFilter.cs
-internal class AIContextProviderPostFilter : IPromptFilter
+internal class AIContextProviderPostFilter : IPromptMiddleware
 {
     private readonly AIContextProvider _provider;
     
@@ -575,8 +575,8 @@ internal class AIContextProviderPostFilter : IPromptFilter
     }
     
     public async Task<IEnumerable<ChatMessage>> InvokeAsync(
-        PromptFilterContext context,
-        Func<PromptFilterContext, Task<IEnumerable<ChatMessage>>> next)
+        PromptMiddlewareContext context,
+        Func<PromptMiddlewareContext, Task<IEnumerable<ChatMessage>>> next)
     {
         // No-op on forward pass
         return await next(context);
@@ -625,17 +625,17 @@ public partial class AgentBuilder
         
         // Remove old filters if they exist
         if (_preFilter != null)
-            _promptFilters.Remove(_preFilter);
+            _PromptMiddlewares.Remove(_preFilter);
         if (_postFilter != null)
-            _promptFilters.Remove(_postFilter);
+            _PromptMiddlewares.Remove(_postFilter);
         
         _contextProvider = provider;
         _preFilter = new AIContextProviderPreFilter(provider);
         _postFilter = new AIContextProviderPostFilter(provider);
         
         // Insert at strategic positions
-        _promptFilters.Insert(0, _preFilter);  // Always first
-        _promptFilters.Add(_postFilter);        // Always last
+        _PromptMiddlewares.Insert(0, _preFilter);  // Always first
+        _PromptMiddlewares.Add(_postFilter);        // Always last
         
         return this;
     }

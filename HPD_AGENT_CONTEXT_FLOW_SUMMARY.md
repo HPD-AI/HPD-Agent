@@ -31,7 +31,7 @@ This document summarizes the complete journey of context through the HPD-Agent s
 1. System instructions prepended
 2. ChatOptions merged with defaults
 3. History reduction applied (optional)
-4. **AdditionalProperties transferred to PromptFilterContext.Properties**
+4. **AdditionalProperties transferred to PromptMiddlewareContext.Properties**
 
 ### Step 4: Prompt Filter Pipeline
 **Where**: `FilterChain.BuildPromptPipeline()` line 5722  
@@ -44,7 +44,7 @@ This document summarizes the complete journey of context through the HPD-Agent s
   5. **Custom Filters** - User-defined filters in registration order
 
 - **Each filter**:
-  - Receives `PromptFilterContext` with context.Properties
+  - Receives `PromptMiddlewareContext` with context.Properties
   - Can access Project, ConversationId, Thread via context extension methods
   - Modifies messages by prepending system messages
   - Calls `next()` to continue pipeline
@@ -66,9 +66,9 @@ This document summarizes the complete journey of context through the HPD-Agent s
 **What happens**:
 - For each tool call:
   1. Create `FunctionInvocationContext` 
-  2. Apply `ScopedFilterManager` (function/plugin-specific filters)
+  2. Apply `ScopedFunctionMiddlewareManager` (function/plugin-specific filters)
   3. Check `PermissionManager` (authorization)
-  4. Apply `IAiFunctionFilter` pipeline
+  4. Apply `IAIFunctionMiddleware` pipeline
   5. Invoke actual function
   6. Collect results
 
@@ -82,7 +82,7 @@ This document summarizes the complete journey of context through the HPD-Agent s
   - Can extract memories, update knowledge bases
   - Filters receive: request messages, response messages, exception (if any)
 
-- **MessageTurnFilters**: Applied after turn completes line 1703
+- **MessageTurnMiddlewares**: Applied after turn completes line 1703
   - For telemetry, logging, analytics
   
 - **History Assembly**: Final messages assembled for return
@@ -97,7 +97,7 @@ This document summarizes the complete journey of context through the HPD-Agent s
 **Purpose**: Carry context data through the pipeline  
 **Usage**: 
 - Populated at entry point with Project, ConversationId, Thread
-- Transferred to PromptFilterContext.Properties at line 3661-3666
+- Transferred to PromptMiddlewareContext.Properties at line 3661-3666
 - Accessed by filters via `context.GetProject()`, `context.GetConversationId()`, etc.
 
 ### 2. Filter Pipeline Pattern
@@ -154,7 +154,7 @@ This document summarizes the complete journey of context through the HPD-Agent s
 3. Prepend if no system message exists
 
 ### Custom Filters
-**Registration**: `builder.WithPromptFilter(filter)` or `builder.WithPromptFilter<T>()`  
+**Registration**: `builder.WithPromptMiddleware(filter)` or `builder.WithPromptMiddleware<T>()`  
 **Execution Order**: In registration order, after built-in filters  
 **Capability**: Can modify messages, access context data, emit events
 
@@ -168,7 +168,7 @@ Project (in ConversationThread)
   ↓ [RunStreamingAsync:1772]
 ChatOptions.AdditionalProperties["Project"]
   ↓ [MessageProcessor:3665]
-PromptFilterContext.Properties["Project"]
+PromptMiddlewareContext.Properties["Project"]
   ↓ [ProjectInjectedMemoryFilter:27]
 context.GetProject()
   ↓ [ProjectInjectedMemoryFilter:52]
@@ -234,8 +234,8 @@ Available in next conversation
 ### Via AgentBuilder
 ```csharp
 // Add prompt filters
-builder.WithPromptFilter(myFilter);
-builder.WithPromptFilters(filter1, filter2);
+builder.WithPromptMiddleware(myFilter);
+builder.WithPromptMiddlewares(filter1, filter2);
 
 // Add memory systems
 builder.WithDynamicMemory(opts => { /* config */ });
@@ -246,8 +246,8 @@ builder.WithPlanMode(opts => { /* config */ });
 
 // Add function filters
 builder.WithFilter(functionFilter);
-builder.WithPermissionFilter(permissionFilter);
-builder.WithMessageTurnFilter(turnFilter);
+builder.WithPermissionMiddleware(PermissionMiddleware);
+builder.WithMessageTurnMiddleware(turnFilter);
 
 // Add middleware
 builder.WithLogging();
@@ -261,11 +261,11 @@ builder.WithCaching();
 
 ### Accessing Project in Custom Filter
 ```csharp
-public class CustomFilter : IPromptFilter
+public class CustomFilter : IPromptMiddleware
 {
     public async Task<IEnumerable<ChatMessage>> InvokeAsync(
-        PromptFilterContext context,
-        Func<PromptFilterContext, Task<IEnumerable<ChatMessage>>> next)
+        PromptMiddlewareContext context,
+        Func<PromptMiddlewareContext, Task<IEnumerable<ChatMessage>>> next)
     {
         var project = context.GetProject();
         if (project != null)
@@ -295,7 +295,7 @@ public class MyFunction
 
 ### Extracting Memory After LLM
 ```csharp
-public class MyFilter : IPromptFilter
+public class MyFilter : IPromptMiddleware
 {
     public async Task PostInvokeAsync(
         PostInvokeContext context, 
@@ -326,15 +326,15 @@ Does the context need to be visible during function execution?
 └─ NO: Go to next question
 
 Does the context need to modify the LLM input?
-├─ YES: Create an IPromptFilter and inject content
+├─ YES: Create an IPromptMiddleware and inject content
 └─ NO: Go to next question
 
 Does the context need to be extracted from LLM output?
-├─ YES: Implement IPromptFilter.PostInvokeAsync()
+├─ YES: Implement IPromptMiddleware.PostInvokeAsync()
 └─ NO: Go to next question
 
 Does the context need to observe turn completion?
-└─ YES: Register IMessageTurnFilter with builder.WithMessageTurnFilter()
+└─ YES: Register IMessageTurnMiddleware with builder.WithMessageTurnMiddleware()
 ```
 
 ---
@@ -366,7 +366,7 @@ Does the context need to observe turn completion?
 - Is filter registered with builder?
 - Is filter reading context.Properties (not context.Options)?
 - Is filter calling next(context) to continue pipeline?
-- Is PromptFilterContext created with messages and options?
+- Is PromptMiddlewareContext created with messages and options?
 - Is PostInvokeAsync being called after LLM response?
 - Is AsyncLocal context accessible in nested calls?
 
@@ -378,7 +378,7 @@ The HPD-Agent context flow is a carefully orchestrated pipeline:
 
 1. **Context Extraction** → Properties collected from thread
 2. **Context Transport** → Properties flow via ChatOptions.AdditionalProperties
-3. **Context Bridging** → Properties mapped to PromptFilterContext.Properties
+3. **Context Bridging** → Properties mapped to PromptMiddlewareContext.Properties
 4. **Context Injection** → Filters access properties and inject content as system messages
 5. **Context Utilization** → LLM receives fully prepared context
 6. **Context Execution** → Functions access context via AsyncLocal
@@ -394,5 +394,5 @@ All mechanisms are thread-safe, composable, and testable.
 - **HPD_AGENT_CONTEXT_QUICK_REFERENCE.md** - Visual diagrams and quick lookups
 - **Agent.cs** - Core implementation (primary resource)
 - **AgentBuilder.cs** - Configuration and building
-- **IPromptFilter.cs** - Filter interface definition
+- **IPromptMiddleware.cs** - Filter interface definition
 

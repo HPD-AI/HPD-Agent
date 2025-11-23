@@ -19,10 +19,10 @@ The HPD-Agent middleware architecture implements a **sophisticated, composable f
 
 | Filter Type | Interface | Purpose | Context | Execution |
 |---|---|---|---|---|
-| **Prompt** | `IPromptFilter` | Modify messages before/after LLM | `PromptFilterContext` | Pre/post-LLM |
-| **AI Function** | `IAiFunctionFilter` | Intercept function calls | `FunctionInvocationContext` | Pre/post-function |
-| **Permission** | `IPermissionFilter` | Control execution access | `FunctionInvocationContext` | Pre-function |
-| **Message Turn** | `IMessageTurnFilter` | Analyze completed turns | `MessageTurnFilterContext` | Post-turn |
+| **Prompt** | `IPromptMiddleware` | Modify messages before/after LLM | `PromptMiddlewareContext` | Pre/post-LLM |
+| **AI Function** | `IAIFunctionMiddleware` | Intercept function calls | `FunctionInvocationContext` | Pre/post-function |
+| **Permission** | `IPermissionMiddleware` | Control execution access | `FunctionInvocationContext` | Pre-function |
+| **Message Turn** | `IMessageTurnMiddleware` | Analyze completed turns | `MessageTurnMiddlewareContext` | Post-turn |
 
 ---
 
@@ -30,20 +30,20 @@ The HPD-Agent middleware architecture implements a **sophisticated, composable f
 
 ```
 HPD-Agent/Filters/
-├── PromptFiltering/
-│   ├── IPromptFilter.cs              # Prompt filter interface
-│   ├── PromptFilterContext.cs        # Pre-LLM context
+├── PromptMiddlewareing/
+│   ├── IPromptMiddleware.cs              # Prompt filter interface
+│   ├── PromptMiddlewareContext.cs        # Pre-LLM context
 │   └── PostInvokeContext.cs          # Post-LLM context
 ├── AiFunctionOrchestrationContext.cs # AI function filter interface
 ├── ScopedFilterSystem.cs             # Scoping management
-├── LoggingAiFunctionFilter.cs        # Logging implementation
-├── ObservabilityAiFunctionFilter.cs  # Telemetry implementation
+├── LoggingAIFunctionMiddleware.cs        # Logging implementation
+├── ObservabilityAIFunctionMiddleware.cs  # Telemetry implementation
 └── Conversation/
     └── IConversationFilter.cs        # Message turn filter interface
 
 HPD-Agent/Permissions/
-├── IPermissionFilter.cs              # Permission filter interface
-└── PermissionFilter.cs               # Permission implementation
+├── IPermissionMiddleware.cs              # Permission filter interface
+└── PermissionMiddleware.cs               # Permission implementation
 
 HPD-Agent/Agent/
 └── Agent.cs
@@ -59,19 +59,19 @@ HPD-Agent/Agent/AgentBuilder.cs
 
 ## Core Components Deep Dive
 
-### 1. Prompt Filters (IPromptFilter)
+### 1. Prompt Filters (IPromptMiddleware)
 
-**Location**: `HPD-Agent/Filters/PromptFiltering/IPromptFilter.cs`
+**Location**: `HPD-Agent/Filters/PromptMiddlewareing/IPromptMiddleware.cs`
 
 **Purpose**: Modify messages before LLM invocation and process results after
 
 **Interface**:
 ```csharp
-internal interface IPromptFilter
+internal interface IPromptMiddleware
 {
     Task<IEnumerable<ChatMessage>> InvokeAsync(
-        PromptFilterContext context,
-        Func<PromptFilterContext, Task<IEnumerable<ChatMessage>>> next);
+        PromptMiddlewareContext context,
+        Func<PromptMiddlewareContext, Task<IEnumerable<ChatMessage>>> next);
 
     Task PostInvokeAsync(PostInvokeContext context, CancellationToken cancellationToken)
     {
@@ -88,12 +88,12 @@ internal interface IPromptFilter
 - Transform messages for specific LLM requirements
 
 **Context Classes**:
-- `PromptFilterContext`: Messages, options, agent name, cancellation token, properties
+- `PromptMiddlewareContext`: Messages, options, agent name, cancellation token, properties
 - `PostInvokeContext`: Request messages, response messages, exception, properties
 
 ---
 
-### 2. AI Function Filters (IAiFunctionFilter)
+### 2. AI Function Filters (IAIFunctionMiddleware)
 
 **Location**: `HPD-Agent/Filters/AiFunctionOrchestrationContext.cs`
 
@@ -101,7 +101,7 @@ internal interface IPromptFilter
 
 **Interface**:
 ```csharp
-internal interface IAiFunctionFilter
+internal interface IAIFunctionMiddleware
 {
     Task InvokeAsync(
         FunctionInvocationContext context,
@@ -118,19 +118,19 @@ internal interface IAiFunctionFilter
 
 **Concrete Implementations**:
 
-1. **LoggingAiFunctionFilter**: Logs function names, arguments, and results
-   - File: `HPD-Agent/Filters/LoggingAiFunctionFilter.cs`
+1. **LoggingAIFunctionMiddleware**: Logs function names, arguments, and results
+   - File: `HPD-Agent/Filters/LoggingAIFunctionMiddleware.cs`
    - Pre: Logs function name and arguments
    - Post: Logs result and completion
 
-2. **ObservabilityAiFunctionFilter**: Creates OpenTelemetry spans and metrics
-   - File: `HPD-Agent/Filters/ObservabilityAiFunctionFilter.cs`
+2. **ObservabilityAIFunctionMiddleware**: Creates OpenTelemetry spans and metrics
+   - File: `HPD-Agent/Filters/ObservabilityAIFunctionMiddleware.cs`
    - Pre: Starts Activity span, increments counter
    - Post: Records duration, result tags
    - Error: Records exception details
 
-3. **PermissionFilter**: Implements permission checking with user interaction
-   - File: `HPD-Agent/Permissions/PermissionFilter.cs`
+3. **PermissionMiddleware**: Implements permission checking with user interaction
+   - File: `HPD-Agent/Permissions/PermissionMiddleware.cs`
    - Emits permission request events
    - Waits for user responses
    - Stores preferences persistently
@@ -149,9 +149,9 @@ internal interface IAiFunctionFilter
 
 ---
 
-### 3. Permission Filters (IPermissionFilter)
+### 3. Permission Filters (IPermissionMiddleware)
 
-**Location**: `HPD-Agent/Permissions/IPermissionFilter.cs`
+**Location**: `HPD-Agent/Permissions/IPermissionMiddleware.cs`
 
 **Purpose**: Control function execution based on permissions
 
@@ -162,7 +162,7 @@ internal interface IAiFunctionFilter
 - Store permission preferences persistently
 - Handle continuation limits at iteration boundaries
 
-**Primary Implementation**: `PermissionFilter`
+**Primary Implementation**: `PermissionMiddleware`
 
 **Flow**:
 1. Checks continuation permission if approaching iteration limits
@@ -174,7 +174,7 @@ internal interface IAiFunctionFilter
 
 ---
 
-### 4. Message Turn Filters (IMessageTurnFilter)
+### 4. Message Turn Filters (IMessageTurnMiddleware)
 
 **Location**: `HPD-Agent/Filters/Conversation/IConversationFilter.cs`
 
@@ -189,11 +189,11 @@ internal interface IAiFunctionFilter
 
 **Interface**:
 ```csharp
-internal interface IMessageTurnFilter
+internal interface IMessageTurnMiddleware
 {
     Task InvokeAsync(
-        MessageTurnFilterContext context,
-        Func<MessageTurnFilterContext, Task> next);
+        MessageTurnMiddlewareContext context,
+        Func<MessageTurnMiddlewareContext, Task> next);
 }
 ```
 
@@ -206,21 +206,21 @@ internal interface IMessageTurnFilter
 ```csharp
 // AI Function Filters (with scope support)
 builder.WithFunctionInvocationFilters(filter1, filter2)
-builder.WithFunctionInvocationFilter<LoggingAiFunctionFilter>()
+builder.WithFunctionInvocationFilter<LoggingAIFunctionMiddleware>()
 builder.WithFilter(customFilter)
 
 // Prompt Filters
-builder.WithPromptFilter(promptFilter)
-builder.WithPromptFilter<MyPromptFilter>()
-builder.WithPromptFilters(filter1, filter2)
+builder.WithPromptMiddleware(PromptMiddleware)
+builder.WithPromptMiddleware<MyPromptMiddleware>()
+builder.WithPromptMiddlewares(filter1, filter2)
 
 // Permission Filters
-builder.WithPermissionFilter(permissionFilter)
+builder.WithPermissionMiddleware(PermissionMiddleware)
 
 // Message Turn Filters
-builder.WithMessageTurnFilter(turnFilter)
-builder.WithMessageTurnFilter<MyTurnFilter>()
-builder.WithMessageTurnFilters(filter1, filter2)
+builder.WithMessageTurnMiddleware(turnFilter)
+builder.WithMessageTurnMiddleware<MyTurnFilter>()
+builder.WithMessageTurnMiddlewares(filter1, filter2)
 ```
 
 ### Filter Storage in AgentBuilder
@@ -228,12 +228,12 @@ builder.WithMessageTurnFilters(filter1, filter2)
 ```csharp
 public class AgentBuilder
 {
-    private readonly List<IAiFunctionFilter> _globalFilters = new();
-    internal readonly ScopedFilterManager _scopedFilterManager = new();
+    private readonly List<IAIFunctionMiddleware> _globalFilters = new();
+    internal readonly ScopedFunctionMiddlewareManager _ScopedFunctionMiddlewareManager = new();
     internal readonly BuilderScopeContext _scopeContext = new();
-    internal readonly List<IPromptFilter> _promptFilters = new();
-    internal readonly List<IPermissionFilter> _permissionFilters = new();
-    internal readonly List<IMessageTurnFilter> _messageTurnFilters = new();
+    internal readonly List<IPromptMiddleware> _PromptMiddlewares = new();
+    internal readonly List<IPermissionMiddleware> _PermissionMiddlewares = new();
+    internal readonly List<IMessageTurnMiddleware> _MessageTurnMiddlewares = new();
 }
 ```
 
@@ -254,20 +254,20 @@ internal enum FilterScope
 }
 ```
 
-### ScopedFilterManager
+### ScopedFunctionMiddlewareManager
 
 ```csharp
-internal class ScopedFilterManager
+internal class ScopedFunctionMiddlewareManager
 {
     // Add filter with scope
-    public void AddFilter(IAiFunctionFilter filter, FilterScope scope, string? target = null)
+    public void AddFilter(IAIFunctionMiddleware filter, FilterScope scope, string? target = null)
 
     // Register function-to-plugin mapping
     public void RegisterFunctionPlugin(string functionName, string pluginTypeName)
 
     // Get applicable filters (ordered by priority)
     // Priority: Function (2) → Plugin (1) → Global (0)
-    public IEnumerable<IAiFunctionFilter> GetApplicableFilters(string functionName, string? pluginTypeName = null)
+    public IEnumerable<IAIFunctionMiddleware> GetApplicableFilters(string functionName, string? pluginTypeName = null)
 }
 ```
 
@@ -301,7 +301,7 @@ Filters are composed using **reverse wrapping**:
 internal static class FilterChain
 {
     public static Func<FunctionInvocationContext, Task> BuildAiFunctionPipeline(
-        IEnumerable<IAiFunctionFilter> filters,
+        IEnumerable<IAIFunctionMiddleware> filters,
         Func<FunctionInvocationContext, Task> finalAction)
     {
         var pipeline = finalAction;
@@ -582,9 +582,9 @@ This enables clean implementation of cross-cutting concerns (permissions, loggin
 ## Key Files Reference
 
 ### Core Interfaces
-- `HPD-Agent/Filters/PromptFiltering/IPromptFilter.cs`
+- `HPD-Agent/Filters/PromptMiddlewareing/IPromptMiddleware.cs`
 - `HPD-Agent/Filters/AiFunctionOrchestrationContext.cs`
-- `HPD-Agent/Permissions/IPermissionFilter.cs`
+- `HPD-Agent/Permissions/IPermissionMiddleware.cs`
 - `HPD-Agent/Filters/Conversation/IConversationFilter.cs`
 
 ### Implementation & Management
@@ -593,14 +593,14 @@ This enables clean implementation of cross-cutting concerns (permissions, loggin
 - `HPD-Agent/Agent/AgentBuilder.cs` (extensions at line 1569)
 
 ### Concrete Implementations
-- `HPD-Agent/Filters/LoggingAiFunctionFilter.cs`
-- `HPD-Agent/Filters/ObservabilityAiFunctionFilter.cs`
-- `HPD-Agent/Permissions/PermissionFilter.cs`
+- `HPD-Agent/Filters/LoggingAIFunctionMiddleware.cs`
+- `HPD-Agent/Filters/ObservabilityAIFunctionMiddleware.cs`
+- `HPD-Agent/Permissions/PermissionMiddleware.cs`
 - `HPD-Agent/Memory/Agent/DynamicMemory/DynamicMemoryFilter.cs`
 
 ### Context Classes
-- `HPD-Agent/Filters/PromptFiltering/PromptFilterContext.cs`
-- `HPD-Agent/Filters/PromptFiltering/PostInvokeContext.cs`
+- `HPD-Agent/Filters/PromptMiddlewareing/PromptMiddlewareContext.cs`
+- `HPD-Agent/Filters/PromptMiddlewareing/PostInvokeContext.cs`
 
 ### Memory Pipeline
 - `HPD.Memory/src/HPD.Memory.Abstractions/Abstractions/Pipeline/IPipelineHandler.cs`

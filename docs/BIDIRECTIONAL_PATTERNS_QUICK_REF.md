@@ -12,7 +12,7 @@
 - ✅ Automatic logging/auditing
 - ✅ The pattern should NOT be optional
 
-**Examples**: PermissionFilter, ValidationFilter, AuditFilter
+**Examples**: PermissionMiddleware, ValidationFilter, AuditFilter
 
 ### Use a Function When:
 - ✅ You want **LLM to decide** when to use it
@@ -29,7 +29,7 @@
 | Aspect | Filter | Function |
 |--------|--------|----------|
 | **When runs** | Every function call (automatic) | When LLM calls it (explicit) |
-| **Registration** | `agent.AddFilter(new PermissionFilter())` | `agent.AddFunction(ClarificationFunction.Create())` |
+| **Registration** | `agent.AddFilter(new PermissionMiddleware())` | `agent.AddFunction(ClarificationFunction.Create())` |
 | **Access context** | Via injected parameter `context` | Via `Agent.CurrentFunctionContext` |
 | **Event emission** | `context.Emit(event)` | `context.Emit(event)` |
 | **Wait for response** | `await context.WaitForResponseAsync<T>()` | `await context.WaitForResponseAsync<T>()` |
@@ -40,7 +40,7 @@
 ## Filter Pattern Template
 
 ```csharp
-public class MyCustomFilter : IAiFunctionFilter
+public class MyCustomFilter : IAIFunctionMiddleware
 {
     public async Task InvokeAsync(
         AiFunctionContext context,
@@ -180,11 +180,11 @@ await foreach (var evt in agent.RunAsync(query))
 
 ```csharp
 // Wraps ALL dangerous functions
-agent.AddFilter(new PermissionFilter(
+agent.AddFilter(new PermissionMiddleware(
     dangerousFunctions: ["WriteFile", "ExecuteShell", "DeleteFile"]));
 
 // Flow:
-// Agent calls WriteFile → PermissionFilter intercepts
+// Agent calls WriteFile → PermissionMiddleware intercepts
 // → Emits permission request → User approves/denies
 // → Filter continues or blocks based on response
 ```
@@ -210,7 +210,7 @@ orchestrator.AddFunction(ClarificationFunction.Create());
 ### Pattern 1: Enforce on Specific Functions (Filter)
 
 ```csharp
-public class SelectiveFilter : IAiFunctionFilter
+public class SelectiveFilter : IAIFunctionMiddleware
 {
     private readonly string[] _targetFunctions;
 
@@ -261,7 +261,7 @@ Do you need this to happen on EVERY function call?
 ├─ YES → Use Filter
 │   │
 │   └─ Do you need user input?
-│       ├─ YES → Use BidirectionalEventCoordinator (PermissionFilter pattern)
+│       ├─ YES → Use BidirectionalEventCoordinator (PermissionMiddleware pattern)
 │       └─ NO → Use simple filter (logging, validation, etc.)
 │
 └─ NO → Use Function

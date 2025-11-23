@@ -85,7 +85,7 @@ PrepareMessagesAsync(messages, options, agentName, cancellationToken)
   1. PrependSystemInstructions(messages)
   2. MergeOptions(options)
   3. ApplyHistoryReduction (if configured)
-  4. ApplyPromptFiltersAsync() ← KEY FILTER PIPELINE
+  4. ApplyPromptMiddlewaresAsync() ← KEY FILTER PIPELINE
 ```
 
 **Return value**:
@@ -98,7 +98,7 @@ PrepareMessagesAsync(messages, options, agentName, cancellationToken)
 
 **Context Creation** (line 3658):
 ```csharp
-var context = new PromptFilterContext(messages, options, agentName, cancellationToken);
+var context = new PromptMiddlewareContext(messages, options, agentName, cancellationToken);
 
 // Transfer additional properties from options to filter context
 if (options?.AdditionalProperties != null)
@@ -118,7 +118,7 @@ if (options?.AdditionalProperties != null)
 
 **Pipeline Building** (line 3671):
 ```csharp
-var pipeline = FilterChain.BuildPromptPipeline(_promptFilters, finalAction);
+var pipeline = FilterChain.BuildPromptPipeline(_PromptMiddlewares, finalAction);
 return await pipeline(context);
 ```
 
@@ -201,7 +201,7 @@ InvokeAsync(context, next)
 - Called next() filter
 
 #### 4.5 Custom User Filters
-- Any filters registered via `builder.WithPromptFilter()`
+- Any filters registered via `builder.WithPromptMiddleware()`
 - Applied in registration order
 
 ### Filter Pipeline Pattern (Line 5722)
@@ -210,7 +210,7 @@ InvokeAsync(context, next)
 // Example: [Filter1, Filter2, Filter3] → Filter1 → Filter2 → Filter3 → Messages
 
 // Building (reverse order for execution in forward order):
-Func<PromptFilterContext, Task<IEnumerable<ChatMessage>>> pipeline = finalAction;
+Func<PromptMiddlewareContext, Task<IEnumerable<ChatMessage>>> pipeline = finalAction;
 foreach (var filter in filters.Reverse())  // Reverse iteration
 {
     var previous = pipeline;
@@ -340,15 +340,15 @@ Allows filters to emit events (e.g., permission requests) during execution.
 ExecuteToolsAsync(messages, toolRequests, options, state, cancellationToken)
   ↓
   1. Create FunctionInvocationContext for each tool
-  2. Apply ScopedFilterManager filters
+  2. Apply ScopedFunctionMiddlewareManager filters
   3. Check PermissionManager for authorization
-  4. Apply IAiFunctionFilter pipeline
+  4. Apply IAIFunctionMiddleware pipeline
   5. Invoke actual function
   6. Collect results
   7. Emit InternalToolResultEvent
 ```
 
-### 9.2 ScopedFilterManager
+### 9.2 ScopedFunctionMiddlewareManager
 - Applies filters based on function/plugin scope
 - Supports function-level, plugin-level, and global filters
 - Allows different filter chains per function
@@ -357,7 +357,7 @@ ExecuteToolsAsync(messages, toolRequests, options, state, cancellationToken)
 ```
 PermissionManager.CheckPermissionAsync()
   ↓
-  Applies IPermissionFilter pipeline
+  Applies IPermissionMiddleware pipeline
   ↓
   May yield: InternalPermissionRequestEvent (human-in-the-loop)
 ```
@@ -392,10 +392,10 @@ PermissionManager.CheckPermissionAsync()
 ### 11.1 Applied after complete turn (Line 1703)
 
 ```csharp
-if (_messageTurnFilters.Any())
+if (_MessageTurnMiddlewares.Any())
 {
     var userMessage = currentMessages.LastOrDefault(m => m.Role == ChatRole.User);
-    await ApplyMessageTurnFilters(userMessage, finalHistory, chatOptions, cancellationToken);
+    await ApplyMessageTurnMiddlewares(userMessage, finalHistory, chatOptions, cancellationToken);
 }
 ```
 
@@ -512,9 +512,9 @@ AgentTurn.RunAsync()
   ↓
 Tool Request Detection
   ├─ Create FunctionInvocationContext
-  ├─ Apply ScopedFilterManager
+  ├─ Apply ScopedFunctionMiddlewareManager
   ├─ Check PermissionManager
-  ├─ Apply IAiFunctionFilter pipeline
+  ├─ Apply IAIFunctionMiddleware pipeline
   └─ Execute functions
   ↓
 Tool Result Collection
@@ -542,7 +542,7 @@ Final Response → User
 ### 16.1 ChatOptions.AdditionalProperties
 **Primary mechanism for context injection**:
 - Populated at RunStreamingAsync (line 1776-1779)
-- Transferred to PromptFilterContext (lines 3661-3666)
+- Transferred to PromptMiddlewareContext (lines 3661-3666)
 - Accessed by filters via context.Properties
 
 ### 16.2 AsyncLocal Storage
@@ -551,7 +551,7 @@ Final Response → User
 - `Agent.RootAgent`: Root agent for nested calls
 - `Agent.CurrentFunctionContext`: Function invocation metadata
 
-### 16.3 PromptFilterContext.Properties
+### 16.3 PromptMiddlewareContext.Properties
 **Strongly-typed access via extensions**:
 ```csharp
 context.GetProject()           // Retrieve Project
@@ -570,7 +570,7 @@ context.GetThread()            // Retrieve ConversationThread
 2. StaticMemoryFilter (if WithStaticMemory)
 3. DynamicMemoryFilter (if WithDynamicMemory)
 4. AgentPlanFilter (if WithPlanMode)
-5. Custom filters (via WithPromptFilter)
+5. Custom filters (via WithPromptMiddleware)
 
 **Post-LLM** (not in main pipeline):
 6. PostInvokeAsync callbacks (optional per filter)
@@ -594,9 +594,9 @@ context.GetThread()            // Retrieve ConversationThread
 ## 19. CONFIGURATION & CUSTOMIZATION POINTS
 
 ### Filters:
-- `builder.WithPromptFilter()`
-- `builder.WithPromptFilter<T>()`
-- `builder.WithPromptFilters(params)`
+- `builder.WithPromptMiddleware()`
+- `builder.WithPromptMiddleware<T>()`
+- `builder.WithPromptMiddlewares(params)`
 
 ### Memory:
 - `builder.WithDynamicMemory()`
@@ -610,9 +610,9 @@ context.GetThread()            // Retrieve ConversationThread
 - `builder.WithSummarizingReduction()`
 
 ### Functions/Tools:
-- `builder.WithFilter()` - IAiFunctionFilter
-- `builder.WithPermissionFilter()` - IPermissionFilter
-- `builder.WithMessageTurnFilter()` - IMessageTurnFilter
+- `builder.WithFilter()` - IAIFunctionMiddleware
+- `builder.WithPermissionMiddleware()` - IPermissionMiddleware
+- `builder.WithMessageTurnMiddleware()` - IMessageTurnMiddleware
 
 ### Middleware:
 - `builder.WithOpenTelemetry()`
@@ -628,7 +628,7 @@ context.GetThread()            // Retrieve ConversationThread
 |-------|-------|-----------|--------|-------------|
 | Entry | ChatMessage[], AgentRunOptions | Thread setup | Context-enriched options | RunStreamingAsync |
 | Preparation | Messages + Options | Merge, reduce, prepend | Prepared messages | MessageProcessor |
-| Filters | PromptFilterContext | Chain execution | Modified messages | ProjectInjectedMemoryFilter, DynamicMemoryFilter, etc. |
+| Filters | PromptMiddlewareContext | Chain execution | Modified messages | ProjectInjectedMemoryFilter, DynamicMemoryFilter, etc. |
 | Decision | State + Response | Pure decision logic | Next action | AgentDecisionEngine |
 | LLM Call | ChatMessage[] + ChatOptions | API invocation | Streaming updates | AgentTurn + Provider ChatClient |
 | Tool Exec | FunctionCall[] | Filter → Permission → Invoke | Tool results | ToolScheduler, FunctionCallProcessor |
@@ -643,7 +643,7 @@ context.GetThread()            // Retrieve ConversationThread
 |------|---------|------------|
 | `/HPD-Agent/Agent/Agent.cs` | Core agent logic | RunAsync, RunStreamingAsync, RunAgenticLoopInternal |
 | `/HPD-Agent/Agent/Agent.cs` (line 3420) | Message preparation | MessageProcessor.PrepareMessagesAsync |
-| `/HPD-Agent/Filters/PromptFiltering/IPromptFilter.cs` | Filter interface | InvokeAsync, PostInvokeAsync |
+| `/HPD-Agent/Filters/PromptMiddlewareing/IPromptMiddleware.cs` | Filter interface | InvokeAsync, PostInvokeAsync |
 | `/HPD-Agent/Project/DocumentHandling/FullTextInjection/ProjectInjectedMemoryFilter.cs` | Project documents | InjectDocuments |
 | `/HPD-Agent/Memory/Agent/DynamicMemory/DynamicMemoryFilter.cs` | Dynamic memory injection | InjectMemories |
 | `/HPD-Agent/Memory/Agent/StaticMemory/StaticMemoryFilter.cs` | Static knowledge | InjectKnowledge |
@@ -660,7 +660,7 @@ context.GetThread()            // Retrieve ConversationThread
    ↓
 2. chatOptions.AdditionalProperties["Project"] [RunStreamingAsync:1777]
    ↓
-3. PromptFilterContext.Properties[Project] [MessageProcessor:3665]
+3. PromptMiddlewareContext.Properties[Project] [MessageProcessor:3665]
    ↓
 4. context.GetProject() [ProjectInjectedMemoryFilter:27]
    ↓

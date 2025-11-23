@@ -1,13 +1,13 @@
 using Microsoft.Extensions.AI;
 
-namespace HPD.Agent.Internal.Filters;
+namespace HPD.Agent.Internal.MiddleWare;
 
 /// <summary>
 /// Internal filter interface for modifying prompts before they're sent to the LLM
 /// and optionally processing results after invocation.
 /// NOT exposed to users - implementation detail for HPD-Agent internals.
 /// </summary>
-internal interface IPromptFilter
+internal interface IPromptMiddleware
 {
     /// <summary>
     /// Called before the LLM is invoked to modify messages, options, and context.
@@ -16,8 +16,8 @@ internal interface IPromptFilter
     /// <param name="next">The next filter in the pipeline</param>
     /// <returns>The modified messages to send to the LLM</returns>
     Task<IEnumerable<ChatMessage>> InvokeAsync(
-        PromptFilterContext context,
-        Func<PromptFilterContext, Task<IEnumerable<ChatMessage>>> next);
+        PromptMiddlewareContext context,
+        Func<PromptMiddlewareContext, Task<IEnumerable<ChatMessage>>> next);
 
     /// <summary>
     /// Called after the LLM has responded to process results, extract memories, or perform learning.

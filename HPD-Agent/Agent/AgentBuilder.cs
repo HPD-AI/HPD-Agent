@@ -1,5 +1,5 @@
 using HPD.Agent.Providers;
-using HPD.Agent.Internal.Filters;
+using HPD.Agent.Internal.MiddleWare;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -16,7 +16,7 @@ using HPD_Agent.Memory.Agent.PlanMode;
 
 namespace HPD.Agent;
 
-// NOTE: Project filter classes are defined in the global namespace with the Project class
+// NOTE: Project Middleware classes are defined in the global namespace with the Project class
 
 /// <summary>
 /// Dependencies needed for agent construction
@@ -48,13 +48,13 @@ public class AgentBuilder
     internal HPD_Agent.Skills.DocumentStore.IInstructionDocumentStore? _documentStore;
     // Track explicitly registered plugins (for scoping manager)
     internal readonly HashSet<string> _explicitlyRegisteredPlugins = new(StringComparer.OrdinalIgnoreCase);
-    private readonly List<IAiFunctionFilter> _globalFilters = new();
-    internal readonly ScopedFilterManager _scopedFilterManager = new();
+    private readonly List<IAIFunctionMiddleware> _globalMiddlewares = new();
+    internal readonly ScopedFunctionMiddlewareManager _ScopedFunctionMiddlewareManager = new();
     internal readonly BuilderScopeContext _scopeContext = new();
-    internal readonly List<IPromptFilter> _promptFilters = new();
-    internal readonly List<IPermissionFilter> _permissionFilters = new(); // Permission filters
-    internal readonly List<IMessageTurnFilter> _messageTurnFilters = new(); // Message turn filters
-    internal readonly List<IIterationFilter> _iterationFilters = new(); // Iteration filters
+    internal readonly List<IPromptMiddleware> _PromptMiddlewares = new();
+    internal readonly List<IPermissionMiddleware> _PermissionMiddlewares = new(); // Permission Middlewares
+    internal readonly List<IMessageTurnMiddleware> _MessageTurnMiddlewares = new(); // Message turn Middlewares
+    internal readonly List<IIterationMiddleWare> _IterationMiddleWares = new(); // Iteration Middlewares
 
     // Internal observers for agent-level observability (developer-only, hidden from users)
     private readonly List<IAgentEventObserver> _observers = new();
@@ -408,12 +408,12 @@ public class AgentBuilder
     /// <list type="bullet">
     /// <item><description><b>LLM-level (Microsoft):</b> LLM invocation logging (requests/responses/errors)</description></item>
     /// <item><description><b>Agent-level (HPD):</b> Decision logging, state snapshots, circuit breaker warnings</description></item>
-    /// <item><description><b>Function-level (Optional):</b> Function invocation logging via filter</description></item>
+    /// <item><description><b>Function-level (Optional):</b> Function invocation logging via Middleware</description></item>
     /// </list>
     /// </summary>
     /// <param name="enableSensitiveData">Include prompts/responses at Trace level (default: false)</param>
-    /// <param name="includeFunctionInvocations">Also log function invocations via LoggingAiFunctionFilter (default: true)</param>
-    /// <param name="configureFunctionFilter">Optional callback to configure the function logging filter</param>
+    /// <param name="includeFunctionInvocations">Also log function invocations via LoggingAIFunctionMiddleware (default: true)</param>
+    /// <param name="configureFunctionMiddleware">Optional callback to configure the function logging Middleware</param>
     /// <returns>The builder for chaining</returns>
     /// <remarks>
     /// <para>
@@ -421,7 +421,7 @@ public class AgentBuilder
     /// <list type="number">
     /// <item><description>Microsoft's <c>LoggingChatClient</c> middleware for LLM invocation logging</description></item>
     /// <item><description>HPD's <c>AgentLoggingService</c> for agent orchestration logging</description></item>
-    /// <item><description>(Optional) <c>LoggingAiFunctionFilter</c> for function call logging</description></item>
+    /// <item><description>(Optional) <c>LoggingAIFunctionMiddleware</c> for function call logging</description></item>
     /// </list>
     /// </para>
     /// <para><b>Requirements:</b> Call <c>WithServiceProvider()</c> with an <c>ILoggerFactory</c> registered.</para>
@@ -441,9 +441,9 @@ public class AgentBuilder
     ///     .WithLogging(
     ///         enableSensitiveData: false,  // Don't log prompts/responses
     ///         includeFunctionInvocations: true,
-    ///         configureFunctionFilter: filter => {
-    ///             filter.LogParameters = true;
-    ///             filter.LogResults = false;
+    ///         configureFunctionMiddleware: Middleware => {
+    ///             Middleware.LogParameters = true;
+    ///             Middleware.LogResults = false;
     ///         })
     ///     .WithOpenAI(apiKey, "gpt-4")
     ///     .Build();
@@ -451,7 +451,7 @@ public class AgentBuilder
     /// // Automatically logs:
     /// // - LLM requests/responses (Microsoft)
     /// // - Agent decisions, iterations (HPD)
-    /// // - Function calls with parameters (filter)
+    /// // - Function calls with parameters (Middleware)
     /// </code>
     /// </example>
     public AgentBuilder WithLogging(
@@ -491,11 +491,11 @@ public class AgentBuilder
             _observers.Add(loggingObserver);
         }
 
-        // 3. Optionally add function invocation logging filter
+        // 3. Optionally add function invocation logging Middleware
         if (includeFunctionInvocations)
         {
-            var functionFilter = new LoggingAiFunctionFilter(_logger);
-            this.WithFilter(functionFilter);
+            var functionMiddleware = new LoggingAIFunctionMiddleware(_logger);
+            this.WithMiddleware(functionMiddleware);
         }
 
         return this;
@@ -686,13 +686,13 @@ public class AgentBuilder
             _config!,
             buildData.ClientToUse,
             buildData.MergedOptions,
-            _promptFilters,
-            _scopedFilterManager!,
+            _PromptMiddlewares,
+            _ScopedFunctionMiddlewareManager!,
             buildData.ErrorHandler,
-            _permissionFilters,
-            _globalFilters,
-            _messageTurnFilters,
-            _iterationFilters,
+            _PermissionMiddlewares,
+            _globalMiddlewares,
+            _MessageTurnMiddlewares,
+            _IterationMiddleWares,
             _serviceProvider,
             _observers,
             buildData.SummarizerClient);
@@ -715,37 +715,37 @@ public class AgentBuilder
         // Set global config for source-generated code to access
         AgentConfig.GlobalConfig = _config;
 
-        // Note: Skill instruction injection is now handled by SkillInstructionIterationFilter
+        // Note: Skill instruction injection is now handled by SkillInstructionIterationMiddleWare
         // (runs before each LLM call during the agentic loop, not at message turn start)
 
-        // Register PromptLoggingFilter LAST to capture final instructions after all filters
+        // Register PromptLoggingMiddleware LAST to capture final instructions after all Middlewares
         // Always register - falls back to Console.WriteLine if no logger available
-        var logger = _logger?.CreateLogger<HPD.Agent.Internal.Filters.PromptLoggingFilter>();
-        _promptFilters.Add(new HPD.Agent.Internal.Filters.PromptLoggingFilter(logger));
+        var logger = _logger?.CreateLogger<HPD.Agent.Internal.MiddleWare.PromptLoggingMiddleware>();
+        _PromptMiddlewares.Add(new HPD.Agent.Internal.MiddleWare.PromptLoggingMiddleware(logger));
 
         // ═══════════════════════════════════════════════════════
-        // AUTO-REGISTER ITERATION FILTERS
+        // AUTO-REGISTER ITERATION MiddlewareS
         // ═══════════════════════════════════════════════════════
 
-        // Register SkillInstructionIterationFilter if skills are registered
-        // CRITICAL: Must run BEFORE IterationLoggingFilter so skill instructions are visible in logs
+        // Register SkillInstructionIterationMiddleWare if skills are registered
+        // CRITICAL: Must run BEFORE IterationLoggingMiddleware so skill instructions are visible in logs
         if (_pluginManager.GetPluginRegistrations().Any())
         {
-            _iterationFilters.Add(new HPD.Agent.Internal.Filters.SkillInstructionIterationFilter());
+            _IterationMiddleWares.Add(new HPD.Agent.Internal.MiddleWare.SkillInstructionIterationMiddleWare());
         }
 
-        // Register IterationLoggingFilter - always register (falls back to Console.Error if no logger)
-        // CRITICAL: Must run AFTER SkillInstructionIterationFilter to capture injected skill instructions
+        // Register IterationLoggingMiddleware - always register (falls back to Console.Error if no logger)
+        // CRITICAL: Must run AFTER SkillInstructionIterationMiddleWare to capture injected skill instructions
         // DISABLED for testing
-        //var iterationLogger = _logger?.CreateLogger<HPD.Agent.Internal.Filters.IterationLoggingFilter>();
-        //_iterationFilters.Add(new HPD.Agent.Internal.Filters.IterationLoggingFilter(iterationLogger));
+        //var iterationLogger = _logger?.CreateLogger<HPD.Agent.Internal.Middlewares.IterationLoggingMiddleware>();
+        //_IterationMiddleWares.Add(new HPD.Agent.Internal.Middlewares.IterationLoggingMiddleware(iterationLogger));
 
-        // Register ContinuationPermissionIterationFilter if enabled
+        // Register ContinuationPermissionIterationMiddleWare if enabled
         // This requests user permission when iteration limit is reached
         // Only register if we have a reasonable iteration limit set
         if (_config!.MaxAgenticIterations > 0 && _config.MaxAgenticIterations < 1000)
         {
-            _iterationFilters.Add(new ContinuationPermissionIterationFilter(
+            _IterationMiddleWares.Add(new ContinuationPermissionIterationMiddleWare(
                 maxIterations: _config.MaxAgenticIterations,
                 extensionAmount: _config.ContinuationExtensionAmount));
         }
@@ -755,13 +755,13 @@ public class AgentBuilder
             _config!,
             buildData.ClientToUse,
             buildData.MergedOptions,
-            _promptFilters,
-            _scopedFilterManager!,
+            _PromptMiddlewares,
+            _ScopedFunctionMiddlewareManager!,
             buildData.ErrorHandler,
-            _permissionFilters,
-            _globalFilters,
-            _messageTurnFilters,
-            _iterationFilters,
+            _PermissionMiddlewares,
+            _globalMiddlewares,
+            _MessageTurnMiddlewares,
+            _IterationMiddleWares,
             _serviceProvider,
             _observers,
             buildData.SummarizerClient);
@@ -785,13 +785,13 @@ public class AgentBuilder
             _config!,
             buildData.ClientToUse,
             buildData.MergedOptions,
-            _promptFilters,
-            _scopedFilterManager!,
+            _PromptMiddlewares,
+            _ScopedFunctionMiddlewareManager!,
             buildData.ErrorHandler,
-            _permissionFilters,
-            _globalFilters,
-            _messageTurnFilters,
-            _iterationFilters,
+            _PermissionMiddlewares,
+            _globalMiddlewares,
+            _MessageTurnMiddlewares,
+            _IterationMiddleWares,
             _serviceProvider,
             _observers,
             buildData.SummarizerClient);
@@ -814,13 +814,13 @@ public class AgentBuilder
             _config!,
             buildData.ClientToUse,
             buildData.MergedOptions,
-            _promptFilters,
-            _scopedFilterManager!,
+            _PromptMiddlewares,
+            _ScopedFunctionMiddlewareManager!,
             buildData.ErrorHandler,
-            _permissionFilters,
-            _globalFilters,
-            _messageTurnFilters,
-            _iterationFilters,
+            _PermissionMiddlewares,
+            _globalMiddlewares,
+            _MessageTurnMiddlewares,
+            _IterationMiddleWares,
             _serviceProvider,
             _observers,
             buildData.SummarizerClient);
@@ -842,13 +842,13 @@ public class AgentBuilder
             _config,
             buildData.ClientToUse,
             buildData.MergedOptions,
-            _promptFilters,
-            _scopedFilterManager,
+            _PromptMiddlewares,
+            _ScopedFunctionMiddlewareManager,
             buildData.ErrorHandler,
-            _permissionFilters,
-            _globalFilters,
-            _messageTurnFilters,
-            _iterationFilters,
+            _PermissionMiddlewares,
+            _globalMiddlewares,
+            _MessageTurnMiddlewares,
+            _IterationMiddleWares,
             _serviceProvider,
             null,
             buildData.SummarizerClient);
@@ -1076,7 +1076,7 @@ public class AgentBuilder
         var clientToUse = _baseClient;
 
         // Dynamic Memory registration is handled by WithDynamicMemory() extension method
-        // No need to register here in Build() - the extension already adds filter and plugin
+        // No need to register here in Build() - the extension already adds Middleware and plugin
 
         // Create plugin functions using per-plugin contexts and merge with default options
         var pluginFunctions = new List<AIFunction>();
@@ -1088,7 +1088,7 @@ public class AgentBuilder
             pluginFunctions.AddRange(functions);
         }
 
-        // Filter out container functions if scoping is disabled
+        // Middleware out container functions if scoping is disabled
         // Container functions are only needed when scoping is enabled for the two-turn expansion flow
         if (_config.Scoping?.Enabled != true)
         {
@@ -1098,7 +1098,7 @@ public class AgentBuilder
             ).ToList();
         }
 
-        // Register function-to-plugin mappings for scoped filters
+        // Register function-to-plugin mappings for scoped Middlewares
         RegisterFunctionPluginMappings(pluginFunctions);
 
         // Load MCP tools if configured
@@ -1199,7 +1199,7 @@ public class AgentBuilder
                 _pluginContexts.TryGetValue(registration.PluginType.Name, out var ctx);
                 var functions = registration.ToAIFunctions(ctx ?? _defaultContext);
 
-                // Filter to only skill containers
+                // Middleware to only skill containers
                 var skills = functions.Where(f =>
                     f.AdditionalProperties?.TryGetValue("IsSkill", out var isSkill) == true &&
                     isSkill is bool isSkillBool && isSkillBool);
@@ -1496,12 +1496,12 @@ public class AgentBuilder
 
 
     /// <summary>
-    /// Registers function-to-plugin mappings for scoped filter support
+    /// Registers function-to-plugin mappings for scoped Middleware support
     /// </summary>
     [RequiresUnreferencedCode("This method uses reflection to call generated plugin registration code.")]
     private void RegisterFunctionPluginMappings(List<AIFunction> pluginFunctions)
     {
-        // Map functions to plugins for scoped filter support, using per-plugin contexts
+        // Map functions to plugins for scoped Middleware support, using per-plugin contexts
         var pluginRegistrations = _pluginManager.GetPluginRegistrations();
         foreach (var registration in pluginRegistrations)
         {
@@ -1512,7 +1512,7 @@ public class AgentBuilder
                 var functions = registration.ToAIFunctions(ctx ?? _defaultContext);
                 foreach (var function in functions)
                 {
-                    _scopedFilterManager.RegisterFunctionPlugin(function.Name, pluginName);
+                    _ScopedFunctionMiddlewareManager.RegisterFunctionPlugin(function.Name, pluginName);
 
                     // Register skill mappings
                     var isSkill = function.AdditionalProperties?.TryGetValue("IsSkill", out var isSkillValue) == true
@@ -1532,7 +1532,7 @@ public class AgentBuilder
                                 {
                                     var functionName = parts[1];
                                     // Map the referenced function to this skill
-                                    _scopedFilterManager.RegisterFunctionSkill(functionName, function.Name);
+                                    _ScopedFunctionMiddlewareManager.RegisterFunctionSkill(functionName, function.Name);
                                 }
                             }
                         }
@@ -1541,7 +1541,7 @@ public class AgentBuilder
             }
             catch (Exception)
             {
-                // Ignore errors during mapping - filters will still work at global/function level
+                // Ignore errors during mapping - Middlewares will still work at global/function level
             }
         }
     }
@@ -1653,9 +1653,9 @@ public class AgentBuilder
     internal ILoggerFactory? Logger => _logger;
 
     /// <summary>
-    /// Internal access to scoped filter manager for extension methods
+    /// Internal access to scoped Middleware manager for extension methods
     /// </summary>
-    internal ScopedFilterManager ScopedFilterManager => _scopedFilterManager;
+    internal ScopedFunctionMiddlewareManager ScopedFunctionMiddlewareManager => _ScopedFunctionMiddlewareManager;
 
     /// <summary>
     /// Internal access to plugin manager for extension methods
@@ -1682,14 +1682,14 @@ public class AgentBuilder
     internal BuilderScopeContext ScopeContext => _scopeContext;
 
     /// <summary>
-    /// Internal access to prompt filters for extension methods
+    /// Internal access to prompt Middlewares for extension methods
     /// </summary>
-    internal List<IPromptFilter> PromptFilters => _promptFilters;
+    internal List<IPromptMiddleware> PromptMiddlewares => _PromptMiddlewares;
 
     /// <summary>
-    /// Internal access to permission filters for extension methods
+    /// Internal access to permission Middlewares for extension methods
     /// </summary>
-    internal List<IPermissionFilter> PermissionFilters => _permissionFilters;
+    internal List<IPermissionMiddleware> PermissionMiddlewares => _PermissionMiddlewares;
 
     /// <summary>
     /// Internal access to MCP client manager for extension methods
@@ -1842,144 +1842,144 @@ public class AgentBuilder
 }
 
 
-#region Filter Extensions
+#region Middleware Extensions
 /// <summary>
-/// Extension methods for configuring prompt and function filters for the AgentBuilder.
+/// Extension methods for configuring prompt and function Middlewares for the AgentBuilder.
 /// Internal - not exposed to users. Use AIContextProvider for public API.
 /// </summary>
-internal static class AgentBuilderFilterExtensions
+internal static class AgentBuilderMiddlewareExtensions
 {
     /// <summary>
-    /// Adds Function Invocation filters that apply to all tool calls in conversations
+    /// Adds Function Invocation Middlewares that apply to all tool calls in conversations
     /// </summary>
-    public static AgentBuilder WithFunctionInvokationFilters(this AgentBuilder builder, params IAiFunctionFilter[] filters)
+    public static AgentBuilder WithFunctionInvokationMiddlewares(this AgentBuilder builder, params IAIFunctionMiddleware[] Middlewares)
     {
-        if (filters != null)
+        if (Middlewares != null)
         {
-            foreach (var filter in filters)
+            foreach (var Middleware in Middlewares)
             {
-                builder.ScopedFilterManager.AddFilter(filter, builder.ScopeContext.CurrentScope, builder.ScopeContext.CurrentTarget);
+                builder.ScopedFunctionMiddlewareManager.AddMiddleware(Middleware, builder.ScopeContext.CurrentScope, builder.ScopeContext.CurrentTarget);
             }
         }
         return builder;
     }
 
     /// <summary>
-    /// Adds an Function Invocation filter by type (will be instantiated)
+    /// Adds an Function Invocation Middleware by type (will be instantiated)
     /// </summary>
-    public static AgentBuilder WithFunctionInvocationFilter<T>(this AgentBuilder builder) where T : IAiFunctionFilter, new()
+    public static AgentBuilder WithFunctionInvocationMiddleware<T>(this AgentBuilder builder) where T : IAIFunctionMiddleware, new()
     {
-        var filter = new T();
-        builder.ScopedFilterManager.AddFilter(filter, builder.ScopeContext.CurrentScope, builder.ScopeContext.CurrentTarget);
+        var Middleware = new T();
+        builder.ScopedFunctionMiddlewareManager.AddMiddleware(Middleware, builder.ScopeContext.CurrentScope, builder.ScopeContext.CurrentTarget);
         return builder;
     }
 
     /// <summary>
-    /// Adds an function filter instance
+    /// Adds an function Middleware instance
     /// </summary>
-    public static AgentBuilder WithFilter(this AgentBuilder builder, IAiFunctionFilter filter)
+    public static AgentBuilder WithMiddleware(this AgentBuilder builder, IAIFunctionMiddleware Middleware)
     {
-        if (filter != null)
+        if (Middleware != null)
         {
-            builder.ScopedFilterManager.AddFilter(filter, builder.ScopeContext.CurrentScope, builder.ScopeContext.CurrentTarget);
+            builder.ScopedFunctionMiddlewareManager.AddMiddleware(Middleware, builder.ScopeContext.CurrentScope, builder.ScopeContext.CurrentTarget);
         }
         return builder;
     }
 
     /// <summary>
-    /// Adds a permission filter instance
+    /// Adds a permission Middleware instance
     /// </summary>
-    public static AgentBuilder WithPermissionFilter(this AgentBuilder builder, IPermissionFilter filter)
+    public static AgentBuilder WithPermissionMiddleware(this AgentBuilder builder, IPermissionMiddleware Middleware)
     {
-        if (filter != null)
+        if (Middleware != null)
         {
-            builder.PermissionFilters.Add(filter);
+            builder.PermissionMiddlewares.Add(Middleware);
         }
         return builder;
     }
 
     /// <summary>
-    /// Adds a prompt filter instance
+    /// Adds a prompt Middleware instance
     /// </summary>
-    public static AgentBuilder WithPromptFilter(this AgentBuilder builder, IPromptFilter filter)
+    public static AgentBuilder WithPromptMiddleware(this AgentBuilder builder, IPromptMiddleware Middleware)
     {
-        if (filter != null)
+        if (Middleware != null)
         {
-            builder.PromptFilters.Add(filter);
+            builder.PromptMiddlewares.Add(Middleware);
         }
         return builder;
     }
 
     /// <summary>
-    /// Adds a prompt filter by type (will be instantiated)
+    /// Adds a prompt Middleware by type (will be instantiated)
     /// </summary>
-    public static AgentBuilder WithPromptFilter<T>(this AgentBuilder builder) where T : IPromptFilter, new()
-        => builder.WithPromptFilter(new T());
+    public static AgentBuilder WithPromptMiddleware<T>(this AgentBuilder builder) where T : IPromptMiddleware, new()
+        => builder.WithPromptMiddleware(new T());
 
     /// <summary>
-    /// Adds multiple prompt filters
+    /// Adds multiple prompt Middlewares
     /// </summary>
-    public static AgentBuilder WithPromptFilters(this AgentBuilder builder, params IPromptFilter[] filters)
+    public static AgentBuilder WithPromptMiddlewares(this AgentBuilder builder, params IPromptMiddleware[] Middlewares)
     {
-        if (filters != null)
+        if (Middlewares != null)
         {
-            foreach (var f in filters)
-                builder.PromptFilters.Add(f);
+            foreach (var f in Middlewares)
+                builder.PromptMiddlewares.Add(f);
         }
         return builder;
     }
 
     /// <summary>
-    /// Adds a message turn filter to process completed turns
+    /// Adds a message turn Middleware to process completed turns
     /// </summary>
-    public static AgentBuilder WithMessageTurnFilter(this AgentBuilder builder, IMessageTurnFilter filter)
+    public static AgentBuilder WithMessageTurnMiddleware(this AgentBuilder builder, IMessageTurnMiddleware Middleware)
     {
-        builder._messageTurnFilters.Add(filter);
+        builder._MessageTurnMiddlewares.Add(Middleware);
         return builder;
     }
 
     /// <summary>
-    /// Adds a message turn filter of the specified type (creates new instance)
+    /// Adds a message turn Middleware of the specified type (creates new instance)
     /// </summary>
-    public static AgentBuilder WithMessageTurnFilter<T>(this AgentBuilder builder) where T : IMessageTurnFilter, new()
+    public static AgentBuilder WithMessageTurnMiddleware<T>(this AgentBuilder builder) where T : IMessageTurnMiddleware, new()
     {
-        builder._messageTurnFilters.Add(new T());
+        builder._MessageTurnMiddlewares.Add(new T());
         return builder;
     }
 
     /// <summary>
-    /// Adds multiple message turn filters
+    /// Adds multiple message turn Middlewares
     /// </summary>
-    public static AgentBuilder WithMessageTurnFilters(this AgentBuilder builder, params IMessageTurnFilter[] filters)
+    public static AgentBuilder WithMessageTurnMiddlewares(this AgentBuilder builder, params IMessageTurnMiddleware[] Middlewares)
     {
-        if (filters != null)
+        if (Middlewares != null)
         {
-            foreach (var f in filters)
-                builder._messageTurnFilters.Add(f);
+            foreach (var f in Middlewares)
+                builder._MessageTurnMiddlewares.Add(f);
         }
         return builder;
     }
 
     /// <summary>
-    /// Adds an iteration filter to run before each LLM call in the agentic loop (internal use only).
-    /// Iteration filters provide access to iteration state and can modify messages/options dynamically.
+    /// Adds an iteration Middleware to run before each LLM call in the agentic loop (internal use only).
+    /// Iteration Middlewares provide access to iteration state and can modify messages/options dynamically.
     /// </summary>
     /// <remarks>
-    /// This is an internal API used by the agent core to register built-in filters.
-    /// External users should use public filter APIs instead.
+    /// This is an internal API used by the agent core to register built-in Middlewares.
+    /// External users should use public Middleware APIs instead.
     /// </remarks>
-    internal static AgentBuilder WithIterationFilter(this AgentBuilder builder, IIterationFilter filter)
+    internal static AgentBuilder WithIterationMiddleWare(this AgentBuilder builder, IIterationMiddleWare Middleware)
     {
-        builder._iterationFilters.Add(filter);
+        builder._IterationMiddleWares.Add(Middleware);
         return builder;
     }
 
     /// <summary>
-    /// Adds an iteration filter of the specified type (creates new instance) (internal use only).
+    /// Adds an iteration Middleware of the specified type (creates new instance) (internal use only).
     /// </summary>
-    internal static AgentBuilder WithIterationFilter<T>(this AgentBuilder builder) where T : IIterationFilter, new()
+    internal static AgentBuilder WithIterationMiddleWare<T>(this AgentBuilder builder) where T : IIterationMiddleWare, new()
     {
-        builder._iterationFilters.Add(new T());
+        builder._IterationMiddleWares.Add(new T());
         return builder;
     }
 }
@@ -2088,11 +2088,11 @@ public static class AgentBuilderMemoryExtensions
         // Use MemoryId if provided, otherwise fall back to agent name
         var memoryId = options.MemoryId ?? builder.AgentName;
         var plugin = new DynamicMemoryPlugin(store, memoryId, builder.Logger?.CreateLogger<DynamicMemoryPlugin>());
-        var filter = new DynamicMemoryFilter(store, options, builder.Logger?.CreateLogger<DynamicMemoryFilter>());
+        var Middleware = new DynamicMemoryMiddleware(store, options, builder.Logger?.CreateLogger<DynamicMemoryMiddleware>());
 
-        // Register plugin and filter directly without cross-extension dependencies
+        // Register plugin and Middleware directly without cross-extension dependencies
         RegisterDynamicMemoryPlugin(builder, plugin);
-        RegisterDynamicMemoryFilter(builder, filter);
+        RegisterDynamicMemoryMiddleware(builder, Middleware);
 
         return builder;
     }
@@ -2110,12 +2110,12 @@ public static class AgentBuilderMemoryExtensions
     }
 
     /// <summary>
-    /// Registers the memory filter directly with the builder's filter manager
-    /// Avoids dependency on AgentBuilderFilterExtensions
+    /// Registers the memory Middleware directly with the builder's Middleware manager
+    /// Avoids dependency on AgentBuilderMiddlewareExtensions
     /// </summary>
-    private static void RegisterDynamicMemoryFilter(AgentBuilder builder, DynamicMemoryFilter filter)
+    private static void RegisterDynamicMemoryMiddleware(AgentBuilder builder, DynamicMemoryMiddleware Middleware)
     {
-        builder.PromptFilters.Add(filter);
+        builder.PromptMiddlewares.Add(Middleware);
     }
 
     /// <summary>
@@ -2317,12 +2317,12 @@ public static class AgentBuilderMemoryExtensions
 
         if (options.Strategy == MemoryStrategy.FullTextInjection)
         {
-            var filter = new StaticMemoryFilter(
+            var Middleware = new StaticMemoryMiddleware(
                 options.Store,
                 knowledgeId,
                 options.MaxTokens,
-                builder.Logger?.CreateLogger<StaticMemoryFilter>());
-            builder.WithPromptFilter(filter);
+                builder.Logger?.CreateLogger<StaticMemoryMiddleware>());
+            builder.WithPromptMiddleware(Middleware);
         }
         else if (options.Strategy == MemoryStrategy.IndexedRetrieval)
         {
@@ -2335,12 +2335,12 @@ public static class AgentBuilderMemoryExtensions
     }
 
     /// <summary>
-    /// Registers the knowledge filter directly with the builder's filter manager.
-    /// Avoids dependency on AgentBuilderFilterExtensions.
+    /// Registers the knowledge Middleware directly with the builder's Middleware manager.
+    /// Avoids dependency on AgentBuilderMiddlewareExtensions.
     /// </summary>
-    private static void RegisterStaticMemoryFilter(AgentBuilder builder, StaticMemoryFilter filter)
+    private static void RegisterStaticMemoryMiddleware(AgentBuilder builder, StaticMemoryMiddleware Middleware)
     {
-        builder.PromptFilters.Add(filter);
+        builder.PromptMiddlewares.Add(Middleware);
     }
 
     /// <summary>
@@ -2378,9 +2378,9 @@ public static class AgentBuilderMemoryExtensions
                 builder.Logger?.CreateLogger<InMemoryAgentPlanStore>());
         }
 
-        // Create plugin and filter with store
+        // Create plugin and Middleware with store
         var plugin = new AgentPlanPlugin(store, builder.Logger?.CreateLogger<AgentPlanPlugin>());
-        var filter = new AgentPlanFilter(store, builder.Logger?.CreateLogger<AgentPlanFilter>());
+        var Middleware = new AgentPlanMiddleware(store, builder.Logger?.CreateLogger<AgentPlanMiddleware>());
 
         // Register plugin directly
         builder.PluginManager.RegisterPlugin(plugin);
@@ -2388,8 +2388,8 @@ public static class AgentBuilderMemoryExtensions
         builder.ScopeContext.SetPluginScope(pluginName);
         builder.PluginContexts[pluginName] = null;
 
-        // Register filter directly
-        builder.PromptFilters.Add(filter);
+        // Register Middleware directly
+        builder.PromptMiddlewares.Add(Middleware);
 
         // Update config for backwards compatibility
         var config = new PlanModeConfig
@@ -2629,7 +2629,7 @@ public static class AgentBuilderPluginExtensions
                     continue;
                 }
 
-                // Phase 4.5: Register with function filter if available
+                // Phase 4.5: Register with function Middleware if available
                 if (functionMap != null && functionMap.TryGetValue(referencedPluginName, out var functionNames))
                 {
                     // Register only specific functions
@@ -2848,7 +2848,7 @@ public class ErrorHandlingPolicy
             var m when m.Contains("model_not_found") => ("Model not found or not accessible.", "ModelNotFound"),
             var m when m.Contains("refused") => ("Request was refused by the model.", "Refusal"),
             var m when m.Contains("context_length_exceeded") => ("Input exceeds maximum context length.", "ContextTooLong"),
-            var m when m.Contains("content filter") => ("Content was filtered due to policy violations.", "ContentFiltered"),
+            var m when m.Contains("content Middleware") => ("Content was Middlewareed due to policy violations.", "ContentMiddlewareed"),
             _ => (message, "OpenAIError")
         };
     }
@@ -2876,7 +2876,7 @@ public class ErrorHandlingPolicy
             var m when m.Contains("unauthorized") => ("Authentication failed. Check your API key.", "AuthenticationFailed"),
             var m when m.Contains("deployment not found") => ("Model deployment not found.", "DeploymentNotFound"),
             var m when m.Contains("quota") => ("Deployment quota exceeded.", "QuotaExceeded"),
-            var m when m.Contains("content filter") => ("Content filtered by Azure policies.", "ContentFiltered"),
+            var m when m.Contains("content Middleware") => ("Content Middlewareed by Azure policies.", "ContentMiddlewareed"),
             _ => (message, "AzureError")
         };
     }
@@ -2906,7 +2906,7 @@ public class ErrorHandlingPolicy
             var m when m.Contains("throttling") => ("Request was throttled. Please retry after some time.", "Throttled"),
             var m when m.Contains("model not found") => ("Model not found or not accessible.", "ModelNotFound"),
             var m when m.Contains("resource busy") => ("Azure AI resource is busy. Please try again later.", "ResourceBusy"),
-            var m when m.Contains("content filter") => ("Content filtered by Azure policies.", "ContentFiltered"),
+            var m when m.Contains("content Middleware") => ("Content Middlewareed by Azure policies.", "ContentMiddlewareed"),
             _ => (message, "AzureAIInferenceError")
         };
     }

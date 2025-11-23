@@ -136,7 +136,7 @@
 | **ConversationThread** | Container for conversation state, holds Project reference and message history |
 | **Project** | Document container - provides documents to be injected into context |
 | **ChatOptions.AdditionalProperties** | Dictionary carrying context data (Project, ConversationId, Thread) to filters |
-| **PromptFilterContext** | Bridge object that transfers AdditionalProperties to filters via context.Properties |
+| **PromptMiddlewareContext** | Bridge object that transfers AdditionalProperties to filters via context.Properties |
 | **Filter Pipeline** | Chain of filters executing in order, each can modify messages before next filter |
 | **Injection** | Filters prepend system messages containing project docs, memories, or knowledge |
 | **AsyncLocal** | Thread-safe storage that flows across async calls (Agent.CurrentThread, etc.) |
@@ -154,7 +154,7 @@
 ```
 ConversationThread.GetProject()
   → ChatOptions.AdditionalProperties["Project"]
-    → PromptFilterContext.Properties["Project"]
+    → PromptMiddlewareContext.Properties["Project"]
       → context.GetProject() in filters
         → ProjectInjectedMemoryFilter accesses documents
           → Formatted as [PROJECT_DOCUMENT] tags
@@ -191,7 +191,7 @@ Agent.CurrentFunctionContext (AsyncLocal)
 2. StaticMemoryFilter (if WithStaticMemory)
 3. DynamicMemoryFilter (if WithDynamicMemory)
 4. AgentPlanFilter (if WithPlanMode)
-5. Custom filters (WithPromptFilter)
+5. Custom filters (WithPromptMiddleware)
 
 **POST-LLM (reverse order)**:
 6. Each filter's PostInvokeAsync callback (optional)
@@ -225,13 +225,13 @@ Agent.CurrentFunctionContext (AsyncLocal)
 → Use `Agent.CurrentFunctionContext` (AsyncLocal)
 
 **If you need to inject content into the LLM context:**
-→ Create an `IPromptFilter` and register with `builder.WithPromptFilter()`
+→ Create an `IPromptMiddleware` and register with `builder.WithPromptMiddleware()`
 
 **If you need to extract learned information after LLM response:**
-→ Implement `IPromptFilter.PostInvokeAsync()`
+→ Implement `IPromptMiddleware.PostInvokeAsync()`
 
 **If you need to observe completed turns:**
-→ Register `IMessageTurnFilter` with `builder.WithMessageTurnFilter()`
+→ Register `IMessageTurnMiddleware` with `builder.WithMessageTurnMiddleware()`
 
 ---
 
@@ -239,11 +239,11 @@ Agent.CurrentFunctionContext (AsyncLocal)
 
 ### Pattern 1: Accessing Project in a Filter
 ```csharp
-public class MyFilter : IPromptFilter
+public class MyFilter : IPromptMiddleware
 {
     public async Task<IEnumerable<ChatMessage>> InvokeAsync(
-        PromptFilterContext context,
-        Func<PromptFilterContext, Task<IEnumerable<ChatMessage>>> next)
+        PromptMiddlewareContext context,
+        Func<PromptMiddlewareContext, Task<IEnumerable<ChatMessage>>> next)
     {
         var project = context.GetProject();
         if (project != null)
@@ -275,7 +275,7 @@ public class MyFunction
 
 ### Pattern 3: Extracting Memory After LLM
 ```csharp
-public class MyFilter : IPromptFilter
+public class MyFilter : IPromptMiddleware
 {
     public async Task PostInvokeAsync(PostInvokeContext context, CancellationToken cancellationToken)
     {
@@ -296,7 +296,7 @@ public class MyFilter : IPromptFilter
 **Check if:**
 1. Project is in ConversationThread? → `thread.GetProject()` returns non-null?
 2. ChatOptions.AdditionalProperties is populated? → Set at RunStreamingAsync entry?
-3. Filter is registered? → `builder.WithPromptFilter()` called?
+3. Filter is registered? → `builder.WithPromptMiddleware()` called?
 4. Filter reads context.Properties? → Not context.Options?
 5. Filter calls `next(context)` to continue pipeline? → Or pipeline breaks?
 
@@ -318,10 +318,10 @@ public class MyFilter : IPromptFilter
 The HPD-Agent takes user input and wraps it with context before sending to an LLM. The context journey: 
 1. User calls `RunAsync()` with messages and a thread (which has a project)
 2. Entry point extracts project and puts it in `ChatOptions.AdditionalProperties`
-3. `MessageProcessor` creates a `PromptFilterContext` and copies those properties into `context.Properties`
+3. `MessageProcessor` creates a `PromptMiddlewareContext` and copies those properties into `context.Properties`
 4. **Filter pipeline** executes: each filter can inject system messages (project docs, memories, knowledge)
 5. Final prepared messages go to the **LLM via provider's ChatClient**
-6. If LLM calls tools, execution uses **ScopedFilterManager** and **PermissionManager**
+6. If LLM calls tools, execution uses **ScopedFunctionMiddlewareManager** and **PermissionManager**
 7. After response, **PostInvokeFilters** can extract learned information
 8. Final response goes back to user
 

@@ -98,15 +98,15 @@ namespace HPD.Agent;
 - ✅ `AgentBuilder.cs`
 - ✅ `AgentConfig.cs`
 - ✅ `A2A/A2AHandler.cs` (temporarily excluded from build)
-- ✅ `Permissions/PermissionFilter.cs`
-- ✅ `Permissions/AutoApprovePermissionFilter.cs`
+- ✅ `Permissions/PermissionMiddleware.cs`
+- ✅ `Permissions/AutoApprovePermissionMiddleware.cs`
 - ✅ `Permissions/AgentBuilderPermissionExtensions.cs`
 - ✅ `Skills/AgentBuilderSkillExtensions.cs`
 - ✅ `Validation/AgentConfigValidator.cs`
 - ✅ `WebSearch/AgentBuilderWebSearchExtensions.cs`
 - ✅ `AOT/HPDContext.cs`
-- ✅ `Filters/LoggingAiFunctionFilter.cs`
-- ✅ `Filters/ObservabilityAiFunctionFilter.cs`
+- ✅ `Filters/LoggingAIFunctionMiddleware.cs`
+- ✅ `Filters/ObservabilityAIFunctionMiddleware.cs`
 - ✅ `HumanInTheLoop/ClarificationFunction.cs`
 - ✅ `Memory/Agent/PlanMode/AgentPlanPlugin.cs`
 
@@ -114,14 +114,14 @@ namespace HPD.Agent;
 
 **Problem:** Ambiguous `FunctionInvocationContext` reference (exists in both `HPD.Agent` and `Microsoft.Extensions.AI`)
 
-**Solution:** Updated `IAiFunctionFilter` interface to use fully qualified type names:
+**Solution:** Updated `IAIFunctionMiddleware` interface to use fully qualified type names:
 
 ```csharp
 // BEFORE
 using Microsoft.Extensions.AI;
 using HPD.Agent;
 
-public interface IAiFunctionFilter
+public interface IAIFunctionMiddleware
 {
     Task InvokeAsync(
         FunctionInvocationContext context,  // ❌ Ambiguous
@@ -131,7 +131,7 @@ public interface IAiFunctionFilter
 // AFTER
 using Microsoft.Extensions.AI;
 
-public interface IAiFunctionFilter
+public interface IAIFunctionMiddleware
 {
     Task InvokeAsync(
         HPD.Agent.FunctionInvocationContext context,  // ✅ Explicit
@@ -409,10 +409,10 @@ public class A2AHandler
 | `Agent/AgentBuilder.cs` | Added namespace | +1 |
 | `Agent/AgentConfig.cs` | Added namespace | +1 |
 | `Filters/AiFunctionOrchestrationContext.cs` | Fully qualified types | ~3 |
-| `Filters/LoggingAiFunctionFilter.cs` | Added using | +1 |
-| `Filters/ObservabilityAiFunctionFilter.cs` | Added using | +1 |
-| `Permissions/PermissionFilter.cs` | Added using | +1 |
-| `Permissions/AutoApprovePermissionFilter.cs` | Added using | +1 |
+| `Filters/LoggingAIFunctionMiddleware.cs` | Added using | +1 |
+| `Filters/ObservabilityAIFunctionMiddleware.cs` | Added using | +1 |
+| `Permissions/PermissionMiddleware.cs` | Added using | +1 |
+| `Permissions/AutoApprovePermissionMiddleware.cs` | Added using | +1 |
 | `Permissions/AgentBuilderPermissionExtensions.cs` | Added using | +1 |
 | `Skills/AgentBuilderSkillExtensions.cs` | Added using | +1 |
 | `Validation/AgentConfigValidator.cs` | Added using | +1 |

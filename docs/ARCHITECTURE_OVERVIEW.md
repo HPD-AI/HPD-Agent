@@ -424,10 +424,10 @@ public static void Initialize() {
 
 ### 2. Custom Filters
 Implement filter interfaces:
-- `IPromptFilter`
-- `IPermissionFilter`
-- `IAiFunctionFilter`
-- `IMessageTurnFilter`
+- `IPromptMiddleware`
+- `IPermissionMiddleware`
+- `IAIFunctionMiddleware`
+- `IMessageTurnMiddleware`
 
 ### 3. Custom Middleware
 Add via `UseChatClientMiddleware()`:

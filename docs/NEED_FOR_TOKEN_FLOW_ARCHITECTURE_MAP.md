@@ -121,7 +121,7 @@ What they're ACTUALLY spending PER TURN:
    - Adds summary message
    - Token impact: Reduces by 50-90%, adds 200-500 for summary
 
-3. **Prompt Filters** (ApplyPromptFiltersAsync)
+3. **Prompt Filters** (ApplyPromptMiddlewaresAsync)
    - Can add messages (documents, memory)
    - Can modify messages (content transformation)
    - Can remove messages (filtering)
@@ -288,7 +288,7 @@ User Input
 │  │   ├─ Removes: -N messages       │
 │  │   └─ Adds: +200-500 tokens      │
 │  │                                  │
-│  └─ ApplyPromptFiltersAsync        │
+│  └─ ApplyPromptMiddlewaresAsync        │
 │      ├─ RAG injection: +0-50k      │
 │      ├─ Memory injection: +0-10k   │
 │      └─ Document injection: +0-30k │
@@ -334,8 +334,8 @@ Return turnHistory
 | User messages (input) | Input | ✅ | ❌ | ✅ | ❌ | Via user |
 | System instructions | PrependSys | ✅ | ❌ | ✅ | ❌ | No |
 | History summary | Reduction | ✅ | ❌ | ✅ | ❓ | Via user if returned |
-| RAG documents | PromptFilter | ✅ | ❌ | ✅ | ❌ | No |
-| Memory context | PromptFilter | ✅ | ❌ | ✅ | ❌ | No |
+| RAG documents | PromptMiddleware | ✅ | ❌ | ✅ | ❌ | No |
+| Memory context | PromptMiddleware | ✅ | ❌ | ✅ | ❌ | No |
 | Previous assistant | Input | ✅ | ❌ | ✅ | ✅ | Via user |
 | Previous tools | Input | ✅ | ❌ | ✅ | ✅ | Via user |
 | NEW assistant | AgenticLoop | ✅ | ✅ | ✅ | ✅ | Yes |

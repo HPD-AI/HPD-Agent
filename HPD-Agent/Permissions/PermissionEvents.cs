@@ -30,9 +30,6 @@ public sealed record FunctionPermissionRequestEvent : BaseEvent
 
     [JsonPropertyName("options")]
     public string[] Options { get; init; } = ["Allow", "Deny", "Always Allow", "Always Deny"];
-
-    [JsonPropertyName("available_scopes")]
-    public required PermissionScope[] AvailableScopes { get; init; }
 }
 
 /// <summary>
@@ -69,10 +66,9 @@ public class PermissionResponsePayload
     public string Type { get; set; } = string.Empty; // "function" or "continuation"
     public bool Approved { get; set; }
     public bool RememberChoice { get; set; }
-    public PermissionScope Scope { get; set; }
-    
+
     // For continuation responses
     public int? NewMaxIterations { get; set; } // When user chooses "Set New Limit"
-    
+
     public object? AdditionalData { get; set; }
 }

@@ -74,7 +74,7 @@ Detailed code-by-code guide showing exact locations and transformations:
 - 8 critical code locations with line numbers
 - Current code shown for each location
 - Target code shown for each location
-- 2 files to create (ChatOptionsContextExtensions, PromptFilterContextBuilder)
+- 2 files to create (ChatOptionsContextExtensions, PromptMiddlewareContextBuilder)
 - Files to modify with exact insertion points
 - Related code locations for context
 - Implementation order
@@ -230,7 +230,7 @@ foreach (var kvp in options.AdditionalProperties)
     context.Properties[kvp.Key] = kvp.Value;
 
 // AFTER: Centralized builder
-var context = PromptFilterContextBuilder.Create(messages, options, agentName, token);
+var context = PromptMiddlewareContextBuilder.Create(messages, options, agentName, token);
 ```
 
 ---

@@ -50,7 +50,7 @@ Successfully implemented a clarification feature that enables parent/orchestrato
 
 ### Why Function, Not Filter?
 
-| Aspect | Filter (PermissionFilter) | Function (ClarificationFunction) |
+| Aspect | Filter (PermissionMiddleware) | Function (ClarificationFunction) |
 |--------|---------------------------|----------------------------------|
 | Execution | Automatic on every call | LLM decides when to call |
 | Control | Enforced policy | Intelligent choice |

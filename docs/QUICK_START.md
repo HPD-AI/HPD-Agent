@@ -197,11 +197,11 @@ await foreach (var update in agent.RunAsync(messages))
 ### With Filters
 
 ```csharp
-public class LoggingFilter : IPromptFilter
+public class LoggingFilter : IPromptMiddleware
 {
     public async Task<IEnumerable<ChatMessage>> FilterAsync(
-        PromptFilterContext context,
-        Func<PromptFilterContext, Task<IEnumerable<ChatMessage>>> next)
+        PromptMiddlewareContext context,
+        Func<PromptMiddlewareContext, Task<IEnumerable<ChatMessage>>> next)
     {
         Console.WriteLine($"Sending {context.Messages.Count()} messages");
         return await next(context);
@@ -210,7 +210,7 @@ public class LoggingFilter : IPromptFilter
 
 var agent = new AgentBuilder()
     .WithProvider("openai", "gpt-4", apiKey)
-    .WithPromptFilter(new LoggingFilter())
+    .WithPromptMiddleware(new LoggingFilter())
     .Build();
 ```
 
@@ -351,7 +351,7 @@ var agent = new AgentBuilder()
 ### Permissions & Security
 
 ```csharp
-public class PermissionFilter : IPermissionFilter
+public class PermissionMiddleware : IPermissionMiddleware
 {
     public Task<PermissionResult> CheckPermissionAsync(
         PermissionContext context,
@@ -369,7 +369,7 @@ public class PermissionFilter : IPermissionFilter
 
 var agent = new AgentBuilder()
     .WithProvider("openai", "gpt-4", apiKey)
-    .WithPermissionFilter(new PermissionFilter())
+    .WithPermissionMiddleware(new PermissionMiddleware())
     .Build();
 ```
 

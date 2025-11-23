@@ -1,5 +1,5 @@
 using HPD.Agent;
-using HPD.Agent.Internal.Filters;
+using HPD.Agent.Internal.MiddleWare;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using System.Collections.Immutable;
@@ -183,7 +183,7 @@ public class IterationLoggingFilterTests
         await filter.AfterIterationAsync(context, CancellationToken.None);
     }
 
-    private static IterationFilterContext CreateContext(int iteration = 0)
+    private static IterationMiddleWareContext CreateContext(int iteration = 0)
     {
         var state = AgentLoopState.Initial(
             messages: new List<ChatMessage>(),
@@ -191,7 +191,7 @@ public class IterationLoggingFilterTests
             conversationId: "test-conv-id",
             agentName: "TestAgent");
 
-        return new IterationFilterContext
+        return new IterationMiddleWareContext
         {
             Iteration = iteration,
             AgentName = "TestAgent",

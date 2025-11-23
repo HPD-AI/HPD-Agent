@@ -31,7 +31,7 @@ The `BidirectionalEventCoordinator` is the core infrastructure that enables requ
     │ FILTERS         │       │ FUNCTIONS           │
     │ (Middleware)    │       │ (Callable Tools)    │
     ├─────────────────┤       ├─────────────────────┤
-    │ PermissionFilter│       │ ClarificationFunc   │
+    │ PermissionMiddleware│       │ ClarificationFunc   │
     │ ValidationFilter│       │ Custom HITL tools   │
     │ LoggingFilter   │       │ Any bidirectional   │
     │ ...             │       │ function            │
@@ -108,7 +108,7 @@ public void Emit(InternalAgentEvent evt)
 ```
 
 **Used by**:
-- Filters (PermissionFilter, custom filters)
+- Filters (PermissionMiddleware, custom filters)
 - Functions (ClarificationFunction, custom HITL functions)
 - Agent internals (progress, errors, etc.)
 
@@ -208,7 +208,7 @@ while (!executeTask.IsCompleted)
 **Use Case**: Permissions, validation, logging - enforced on ALL function calls
 
 ```csharp
-public class PermissionFilter : IAiFunctionFilter
+public class PermissionMiddleware : IAIFunctionMiddleware
 {
     public async Task InvokeAsync(AiFunctionContext context, Func<AiFunctionContext, Task> next)
     {
@@ -217,7 +217,7 @@ public class PermissionFilter : IAiFunctionFilter
         // Emit request (uses coordinator internally)
         context.Emit(new InternalPermissionRequestEvent(
             requestId,
-            SourceName: "PermissionFilter",
+            SourceName: "PermissionMiddleware",
             context.Function.Name,
             ...));
 

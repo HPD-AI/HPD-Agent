@@ -37,7 +37,7 @@ public class TelemetryEventObserver : IAgentEventObserver, IDisposable
     private readonly Histogram<double> _iterationDuration;
     private readonly Histogram<int> _parallelBatchSize;
     private readonly Histogram<double> _semaphoreWaitDuration;
-    private readonly Histogram<double> _filterPipelineDuration;
+    private readonly Histogram<double> _MiddlewarePipelineDuration;
     private readonly Histogram<double> _checkpointDuration;
     private readonly Histogram<double> _checkpointRestoreDuration;
     private readonly Histogram<double> _documentProcessingDuration;
@@ -106,10 +106,10 @@ public class TelemetryEventObserver : IAgentEventObserver, IDisposable
             unit: "ms",
             description: "Duration of agent iterations");
 
-        _filterPipelineDuration = _meter.CreateHistogram<double>(
-            "agent.filter_pipeline.duration",
+        _MiddlewarePipelineDuration = _meter.CreateHistogram<double>(
+            "agent.Middleware_pipeline.duration",
             unit: "ms",
-            description: "Duration of filter pipeline execution");
+            description: "Duration of Middleware pipeline execution");
 
         _checkpointDuration = _meter.CreateHistogram<double>(
             "agent.checkpoint.duration",
@@ -355,9 +355,9 @@ public class TelemetryEventObserver : IAgentEventObserver, IDisposable
                 }
                 break;
 
-            // Filter pipeline duration
-            case InternalFilterPipelineEndEvent e:
-                _filterPipelineDuration.Record(e.Duration.TotalMilliseconds,
+            // Middleware pipeline duration
+            case InternalMiddlewarePipelineEndEvent e:
+                _MiddlewarePipelineDuration.Record(e.Duration.TotalMilliseconds,
                     new KeyValuePair<string, object?>("function.name", e.FunctionName),
                     new KeyValuePair<string, object?>("success", e.Success));
                 break;

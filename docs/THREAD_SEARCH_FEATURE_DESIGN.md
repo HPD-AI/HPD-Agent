@@ -222,7 +222,7 @@ public async Task<string> SearchThreadsByUser(
 Instead of making the agent explicitly call search, automatically inject relevant context:
 
 ```csharp
-public class ThreadRAGFilter : IPromptFilter
+public class ThreadRAGFilter : IPromptMiddleware
 {
     private readonly Project _project;
 
@@ -248,7 +248,7 @@ public class ThreadRAGFilter : IPromptFilter
 
 // Usage
 var agent = new AgentBuilder()
-    .WithPromptFilter(new ThreadRAGFilter(project))  // Automatic retrieval!
+    .WithPromptMiddleware(new ThreadRAGFilter(project))  // Automatic retrieval!
     .Build();
 ```
 

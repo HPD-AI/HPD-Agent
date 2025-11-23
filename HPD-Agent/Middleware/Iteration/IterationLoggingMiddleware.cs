@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Logging;
 using System.Text;
 
-namespace HPD.Agent.Internal.Filters;
+namespace HPD.Agent.Internal.MiddleWare;
 
 /// <summary>
 /// Logs detailed information about each iteration for observability and debugging.
@@ -12,7 +12,7 @@ namespace HPD.Agent.Internal.Filters;
 /// This filter is automatically registered when a logger is provided to the agent builder.
 /// Similar to PromptLoggingFilter but runs before/after EACH LLM call in the agentic loop.
 /// </remarks>
-internal class IterationLoggingFilter : IIterationFilter
+internal class IterationLoggingFilter : IIterationMiddleWare
 {
     private readonly ILogger? _logger;
     private readonly System.Diagnostics.Stopwatch _stopwatch = new();
@@ -28,7 +28,7 @@ internal class IterationLoggingFilter : IIterationFilter
     /// Logs iteration start and full instructions to console.
     /// </summary>
     public Task BeforeIterationAsync(
-        IterationFilterContext context,
+        IterationMiddleWareContext context,
         CancellationToken cancellationToken)
     {
         _stopwatch.Restart();
@@ -46,7 +46,7 @@ internal class IterationLoggingFilter : IIterationFilter
     /// Logs iteration completion with timing and results.
     /// </summary>
     public Task AfterIterationAsync(
-        IterationFilterContext context,
+        IterationMiddleWareContext context,
         CancellationToken cancellationToken)
     {
         _stopwatch.Stop();
@@ -76,7 +76,7 @@ internal class IterationLoggingFilter : IIterationFilter
         return Task.CompletedTask;
     }
 
-    private void LogInstructionsToConsole(IterationFilterContext context, int iterationNumber)
+    private void LogInstructionsToConsole(IterationMiddleWareContext context, int iterationNumber)
     {
         var sb = new StringBuilder();
         sb.AppendLine();

@@ -350,7 +350,7 @@ var chatOptions = new ChatOptions()
 **Rationale:**
 - Clear intent and discoverability
 - Extension methods bridge typed and untyped worlds
-- Existing PromptFilterContextExtensions.GetProject() pattern remains unchanged
+- Existing PromptMiddlewareContextExtensions.GetProject() pattern remains unchanged
 - Reduces friction for domain-specific customization
 
 ---
@@ -654,7 +654,7 @@ chatOptions
 ## Filter Architecture Evolution
 
 ### Current Challenge
-Filters access context through PromptFilterContext.Properties, which is populated from ChatOptions.AdditionalProperties:
+Filters access context through PromptMiddlewareContext.Properties, which is populated from ChatOptions.AdditionalProperties:
 
 ```csharp
 // Current approach (manual copying)
@@ -671,15 +671,15 @@ if (options?.AdditionalProperties != null)
 
 **Create a FilterContextBuilder:**
 ```csharp
-public class PromptFilterContextBuilder
+public class PromptMiddlewareContextBuilder
 {
-    public static PromptFilterContext Create(
+    public static PromptMiddlewareContext Create(
         IEnumerable<ChatMessage> messages,
         ChatOptions? options,
         string agentName,
         CancellationToken cancellationToken)
     {
-        var context = new PromptFilterContext(messages, options, agentName, cancellationToken);
+        var context = new PromptMiddlewareContext(messages, options, agentName, cancellationToken);
         
         // Populate properties from both Options and AdditionalProperties
         if (options != null)

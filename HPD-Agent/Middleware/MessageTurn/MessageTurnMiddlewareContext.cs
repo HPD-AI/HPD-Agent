@@ -4,7 +4,7 @@ using Microsoft.Extensions.AI;
 /// Context provided to message turn filters containing completed turn information.
 /// Rich context enables applications to make intelligent checkpoint decisions.
 /// </summary>
-public class MessageTurnFilterContext
+public class MessageTurnMiddlewareContext
 {
     // Core data
     public string ConversationId { get; }
@@ -24,7 +24,7 @@ public class MessageTurnFilterContext
     // Extensibility
     public Dictionary<string, object> Properties { get; }
 
-    public MessageTurnFilterContext(
+    public MessageTurnMiddlewareContext(
         string conversationId,
         ChatMessage userMessage,
         ChatResponse agentResponse,

@@ -1,5 +1,5 @@
 using Microsoft.Extensions.Logging;
-using HPD.Agent.Internal.Filters;
+using HPD.Agent.Internal.MiddleWare;
 using Microsoft.Extensions.AI;
 using System;
 using System.Collections.Generic;
@@ -7,25 +7,25 @@ using System.Linq;
 using System.Threading.Tasks;
 
 /// <summary>
-/// Prompt filter that injects agent knowledge documents into system context.
+/// Prompt Middleware that injects agent knowledge documents into system context.
 /// Used with FullTextInjection strategy to make agent knowledge available in every prompt.
 /// </summary>
-internal class StaticMemoryFilter : IPromptFilter
+internal class StaticMemoryMiddleware : IPromptMiddleware
 {
     private readonly StaticMemoryStore _store;
     private readonly string? _knowledgeId;
     private readonly int _maxTokens;
-    private readonly ILogger<StaticMemoryFilter>? _logger;
+    private readonly ILogger<StaticMemoryMiddleware>? _logger;
     private string? _cachedKnowledgeContext;
     private DateTime _lastCacheTime = DateTime.MinValue;
     private readonly TimeSpan _cacheValidTime = TimeSpan.FromMinutes(5); // Longer cache since knowledge is static
     private readonly object _cacheLock = new object();
 
-    public StaticMemoryFilter(
+    public StaticMemoryMiddleware(
         StaticMemoryStore store,
         string? knowledgeId,
         int maxTokens,
-        ILogger<StaticMemoryFilter>? logger = null)
+        ILogger<StaticMemoryMiddleware>? logger = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _knowledgeId = knowledgeId;
@@ -37,8 +37,8 @@ internal class StaticMemoryFilter : IPromptFilter
     }
 
     public async Task<IEnumerable<ChatMessage>> InvokeAsync(
-        PromptFilterContext context,
-        Func<PromptFilterContext, Task<IEnumerable<ChatMessage>>> next)
+        PromptMiddlewareContext context,
+        Func<PromptMiddlewareContext, Task<IEnumerable<ChatMessage>>> next)
     {
         var now = DateTime.UtcNow;
         string knowledgeTag = string.Empty;
@@ -59,7 +59,7 @@ internal class StaticMemoryFilter : IPromptFilter
 
         if (!useCache)
         {
-            // Use knowledge ID from filter (falls back to "default" if not set)
+            // Use knowledge ID from Middleware (falls back to "default" if not set)
             var knowledgeId = _knowledgeId ?? "default";
             knowledgeTag = await _store.GetCombinedKnowledgeTextAsync(knowledgeId, _maxTokens);
 

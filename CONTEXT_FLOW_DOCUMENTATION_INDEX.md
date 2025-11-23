@@ -161,7 +161,7 @@ Detailed analysis with exact code locations:
    ↓
 3. Message Preparation
    System instructions prepended
-   AdditionalProperties transferred to PromptFilterContext.Properties
+   AdditionalProperties transferred to PromptMiddlewareContext.Properties
    ↓
 4. Prompt Filter Pipeline
    5 filters execute in order:
@@ -181,7 +181,7 @@ Detailed analysis with exact code locations:
    ↓
 7. Post-Processing
    PostInvokeFilters extract learned info
-   MessageTurnFilters for observability
+   MessageTurnMiddlewares for observability
    Final response returned to user
 ```
 
@@ -250,14 +250,14 @@ Detailed analysis with exact code locations:
 | ChatOptions.AdditionalProperties | Summary: Mechanisms 1, Full: Section 16.1 |
 | Filter Pipeline Pattern | Summary: Mechanisms 2, Full: Section 4.5 |
 | AsyncLocal Storage | Summary: Mechanisms 3, Full: Section 16.2 |
-| PromptFilterContext.Properties | Summary: Step 3, Full: Section 3.2 |
+| PromptMiddlewareContext.Properties | Summary: Step 3, Full: Section 3.2 |
 | ProjectInjectedMemoryFilter | Summary: Filter Details, Full: Section 4.1 |
 | DynamicMemoryFilter | Summary: Filter Details, Full: Section 4.2 |
 | StaticMemoryFilter | Summary: Filter Details, Full: Section 4.3 |
 | AgentDecisionEngine | Quick Ref: Key Concepts, Full: Section 6 |
 | AgentTurn | Quick Ref: Key Concepts, Full: Section 7 |
 | ToolScheduler | Summary: Step 6, Full: Section 9 |
-| ScopedFilterManager | Summary: Step 6, Full: Section 9.2 |
+| ScopedFunctionMiddlewareManager | Summary: Step 6, Full: Section 9.2 |
 | MessageProcessor | Summary: Step 3, Full: Section 3.1 |
 | ConversationThread | Quick Ref: Key Concepts, Full: Section 1.1 |
 
@@ -272,8 +272,8 @@ Detailed analysis with exact code locations:
 | ProjectInjectedMemoryFilter.cs | All docs describe it, Full Map: Section 4.1 |
 | DynamicMemoryFilter.cs | All docs describe it, Full Map: Section 4.2 |
 | StaticMemoryFilter.cs | All docs describe it, Full Map: Section 4.3 |
-| IPromptFilter.cs | Full Map: Section 4 |
-| PromptFilterContext.cs | Full Map: Section 3.2 |
+| IPromptMiddleware.cs | Full Map: Section 4 |
+| PromptMiddlewareContext.cs | Full Map: Section 3.2 |
 
 ---
 
@@ -289,7 +289,7 @@ For quick lookup of specific implementations in Agent.cs:
 | MessageProcessor.PrepareMessagesAsync | 3456-3515 |
 | Filter context creation | 3658-3667 |
 | Filter pipeline execution | 3671-3672 |
-| ApplyPromptFiltersAsync | 3646-3673 |
+| ApplyPromptMiddlewaresAsync | 3646-3673 |
 | ApplyPostInvokeFiltersAsync | 3684-3729 |
 | AgentTurn.RunAsync | 3783-3801 |
 | LLM call inline execution | 559-656 |
@@ -383,12 +383,12 @@ All context in these documents comes from analysis of:
 
 - `/HPD-Agent/Agent/Agent.cs` (main implementation)
 - `/HPD-Agent/Agent/AgentBuilder.cs` (configuration)
-- `/HPD-Agent/Filters/PromptFiltering/IPromptFilter.cs` (filter interface)
+- `/HPD-Agent/Filters/PromptMiddlewareing/IPromptMiddleware.cs` (filter interface)
 - `/HPD-Agent/Project/DocumentHandling/FullTextInjection/ProjectInjectedMemoryFilter.cs`
 - `/HPD-Agent/Memory/Agent/DynamicMemory/DynamicMemoryFilter.cs`
 - `/HPD-Agent/Memory/Agent/StaticMemory/StaticMemoryFilter.cs`
-- `/HPD-Agent/Filters/PromptFiltering/PromptFilterContext.cs`
-- `/HPD-Agent/Filters/PromptFiltering/PromptFilterContextExtensions.cs`
+- `/HPD-Agent/Filters/PromptMiddlewareing/PromptMiddlewareContext.cs`
+- `/HPD-Agent/Filters/PromptMiddlewareing/PromptMiddlewareContextExtensions.cs`
 
 ---
 

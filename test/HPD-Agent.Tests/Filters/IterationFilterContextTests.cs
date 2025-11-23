@@ -1,5 +1,5 @@
 using HPD.Agent;
-using HPD.Agent.Internal.Filters;
+using HPD.Agent.Internal.MiddleWare;
 using Microsoft.Extensions.AI;
 using System.Collections.Immutable;
 using Xunit;
@@ -7,9 +7,9 @@ using Xunit;
 namespace HPD.Agent.Tests.Filters;
 
 /// <summary>
-/// Tests for IterationFilterContext functionality.
+/// Tests for IterationMiddleWareContext functionality.
 /// </summary>
-public class IterationFilterContextTests
+public class IterationMiddleWareContextTests
 {
     [Fact]
     public void Context_IsFirstIteration_ReturnsTrue_WhenIterationIsZero()
@@ -145,7 +145,7 @@ public class IterationFilterContextTests
         Assert.False(context.SkipLLMCall);
     }
 
-    private static IterationFilterContext CreateContext(int iteration = 0)
+    private static IterationMiddleWareContext CreateContext(int iteration = 0)
     {
         var state = AgentLoopState.Initial(
             messages: new List<ChatMessage>(),
@@ -153,7 +153,7 @@ public class IterationFilterContextTests
             conversationId: "test-conv-id",
             agentName: "TestAgent");
 
-        return new IterationFilterContext
+        return new IterationMiddleWareContext
         {
             Iteration = iteration,
             AgentName = "TestAgent",

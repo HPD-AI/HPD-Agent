@@ -106,14 +106,14 @@ public Agent(
     AgentConfig config,
     IChatClient baseClient,
     ChatOptions? mergedOptions,
-    List<IPromptFilter> promptFilters,
-    ScopedFilterManager scopedFilterManager,
+    List<IPromptMiddleware> PromptMiddlewares,
+    ScopedFunctionMiddlewareManager ScopedFunctionMiddlewareManager,
     HPD.Agent.ErrorHandling.IProviderErrorHandler providerErrorHandler,
     IProviderRegistry providerRegistry,
     HPD_Agent.Skills.SkillScopingManager? skillScopingManager = null,
-    IReadOnlyList<IPermissionFilter>? permissionFilters = null,
-    IReadOnlyList<IAiFunctionFilter>? aiFunctionFilters = null,
-    IReadOnlyList<IMessageTurnFilter>? messageTurnFilters = null)
+    IReadOnlyList<IPermissionMiddleware>? PermissionMiddlewares = null,
+    IReadOnlyList<IAIFunctionMiddleware>? AIFunctionMiddlewares = null,
+    IReadOnlyList<IMessageTurnMiddleware>? MessageTurnMiddlewares = null)
 ```
 
 **Complexity**: 11 parameters, many with complex dependencies
@@ -214,12 +214,12 @@ protected Agent CreateAgent(AgentConfig? config = null, IChatClient? client = nu
 
     // Create minimal dependencies
     var options = new ChatOptions { Tools = tools.ToList() };
-    var promptFilters = new List<IPromptFilter>();
-    var scopedFilterManager = new ScopedFilterManager(/* ... */);
+    var PromptMiddlewares = new List<IPromptMiddleware>();
+    var ScopedFunctionMiddlewareManager = new ScopedFunctionMiddlewareManager(/* ... */);
     var errorHandler = new DefaultProviderErrorHandler();
     var providerRegistry = new DefaultProviderRegistry();
 
-    return new Agent(config, client, options, promptFilters, scopedFilterManager, errorHandler, providerRegistry);
+    return new Agent(config, client, options, PromptMiddlewares, ScopedFunctionMiddlewareManager, errorHandler, providerRegistry);
 }
 ```
 

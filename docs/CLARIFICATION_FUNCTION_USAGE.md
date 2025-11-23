@@ -257,7 +257,7 @@ Turn 2: Orchestrator calls CodingAgent("Build Express auth")
 |---------|------------|----------------|
 | **Purpose** | Gate/approve function execution | Gather additional information |
 | **Trigger** | Before dangerous operations | When information is missing |
-| **Implementation** | PermissionFilter (middleware) | ClarificationFunction (callable tool) |
+| **Implementation** | PermissionMiddleware (middleware) | ClarificationFunction (callable tool) |
 | **Agent calls it?** | No (automatic via filter) | Yes (explicit tool call) |
 | **Bubbling** | ✅ Via AsyncLocal | ✅ Via AsyncLocal |
 | **Event Type** | IPermissionEvent | IClarificationEvent |

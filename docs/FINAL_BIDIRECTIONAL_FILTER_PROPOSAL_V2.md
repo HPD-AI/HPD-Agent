@@ -20,7 +20,7 @@ Extend the filter system to support **bidirectional event emission** using chann
 
 ### Current Situation
 
-`IAiFunctionFilter` execution happens deep in the call stack:
+`IAIFunctionMiddleware` execution happens deep in the call stack:
 
 ```
 RunAgenticLoopInternal()                    ← Emits events via yield return
@@ -31,8 +31,8 @@ RunAgenticLoopInternal()                    ← Emits events via yield return
 ```
 
 **Current workarounds**:
-- `AGUIPermissionFilter`: Uses injected `IPermissionEventEmitter` (custom interface per filter type)
-- `ConsolePermissionFilter`: Blocks on `Console.ReadLine()` (blocking I/O)
+- `AGUIPermissionMiddleware`: Uses injected `IPermissionEventEmitter` (custom interface per filter type)
+- `ConsolePermissionMiddleware`: Blocks on `Console.ReadLine()` (blocking I/O)
 - Permission filters: Run BEFORE the pipeline via `PermissionManager`, not DURING
 - Regular filters: Cannot emit events at all
 
@@ -72,7 +72,7 @@ This is **producer-consumer concurrency** - the filter produces events while blo
 1. **Shared channel at Agent level**: Single channel for all filter events across entire agent lifetime
 2. **Background event draining**: `RunAgenticLoopInternal` drains events concurrently in background task
 3. **Agent-level response coordination**: Store response waiters at Agent level (not context level, which is ephemeral)
-4. **Zero breaking changes to ALL APIs**: `IAiFunctionFilter`, `ProcessFunctionCallsAsync`, `ToolScheduler.ExecuteToolsAsync` all unchanged
+4. **Zero breaking changes to ALL APIs**: `IAIFunctionMiddleware`, `ProcessFunctionCallsAsync`, `ToolScheduler.ExecuteToolsAsync` all unchanged
 5. **Synchronous filter execution**: No Task.Run overhead - filters execute synchronously as they do today
 6. **Real-time event streaming**: Events flow directly from filter to handler, not batched
 
@@ -349,18 +349,18 @@ public class FunctionCallProcessor
 
     public FunctionCallProcessor(
         Agent agent, // NEW: Added parameter
-        ScopedFilterManager? scopedFilterManager,
+        ScopedFunctionMiddlewareManager? ScopedFunctionMiddlewareManager,
         PermissionManager permissionManager,
-        IReadOnlyList<IAiFunctionFilter>? aiFunctionFilters,
+        IReadOnlyList<IAIFunctionMiddleware>? AIFunctionMiddlewares,
         int maxFunctionCalls,
         ErrorHandlingConfig? errorHandlingConfig = null,
         IList<AITool>? serverConfiguredTools = null,
         AgenticLoopConfig? agenticLoopConfig = null)
     {
         _agent = agent ?? throw new ArgumentNullException(nameof(agent));
-        _scopedFilterManager = scopedFilterManager;
+        _ScopedFunctionMiddlewareManager = ScopedFunctionMiddlewareManager;
         _permissionManager = permissionManager ?? throw new ArgumentNullException(nameof(permissionManager));
-        _aiFunctionFilters = aiFunctionFilters ?? new List<IAiFunctionFilter>();
+        _AIFunctionMiddlewares = AIFunctionMiddlewares ?? new List<IAIFunctionMiddleware>();
         _maxFunctionCalls = maxFunctionCalls;
         _errorHandlingConfig = errorHandlingConfig;
         _serverConfiguredTools = serverConfiguredTools;
@@ -451,9 +451,9 @@ public class FunctionCallProcessor
                 await ExecuteWithRetryAsync(ctx, cancellationToken).ConfigureAwait(false);
             };
 
-            var scopedFilters = _scopedFilterManager?.GetApplicableFilters(functionCall.Name)
-                                ?? Enumerable.Empty<IAiFunctionFilter>();
-            var allStandardFilters = _aiFunctionFilters.Concat(scopedFilters);
+            var scopedFilters = _ScopedFunctionMiddlewareManager?.GetApplicableFilters(functionCall.Name)
+                                ?? Enumerable.Empty<IAIFunctionMiddleware>();
+            var allStandardFilters = _AIFunctionMiddlewares.Concat(scopedFilters);
 
             // Build filter pipeline
             var pipeline = FilterChain.BuildAiFunctionPipeline(allStandardFilters, finalInvoke);
@@ -755,7 +755,7 @@ public record InternalFilterErrorEvent(
 ### Example 1: Simple One-Way Event Emission
 
 ```csharp
-public class ProgressLoggingFilter : IAiFunctionFilter
+public class ProgressLoggingFilter : IAIFunctionMiddleware
 {
     public async Task InvokeAsync(AiFunctionContext context, Func<AiFunctionContext, Task> next)
     {
@@ -817,11 +817,11 @@ await foreach (var evt in agent.RunStreamingAsync(thread, options))
 ### Example 2: Bidirectional Permission Filter
 
 ```csharp
-public class UnifiedPermissionFilter : IPermissionFilter
+public class UnifiedPermissionMiddleware : IPermissionMiddleware
 {
     private readonly IPermissionStorage? _storage;
 
-    public UnifiedPermissionFilter(IPermissionStorage? storage = null)
+    public UnifiedPermissionMiddleware(IPermissionStorage? storage = null)
     {
         _storage = storage;
     }
@@ -1084,7 +1084,7 @@ public record DatabaseQueryCompleteEvent(
     TimeSpan ActualDuration) : InternalAgentEvent;
 
 // User creates custom filter
-public class DatabaseObservabilityFilter : IAiFunctionFilter
+public class DatabaseObservabilityFilter : IAIFunctionMiddleware
 {
     public async Task InvokeAsync(AiFunctionContext context, Func<AiFunctionContext, Task> next)
     {
@@ -1304,7 +1304,7 @@ await next(context);
 
 **Breaking changes**:
 - ⚠️ `FunctionCallProcessor` constructor signature change (internal API only)
-- ✅ `IAiFunctionFilter` interface unchanged
+- ✅ `IAIFunctionMiddleware` interface unchanged
 - ✅ `ProcessFunctionCallsAsync` signature unchanged
 - ✅ `ToolScheduler.ExecuteToolsAsync` signature unchanged
 
@@ -1313,10 +1313,10 @@ await next(context);
 - ✅ ALL existing plugins continue working
 - ✅ ALL existing tests should pass (filters just don't emit events)
 
-### Phase 2: Create UnifiedPermissionFilter
+### Phase 2: Create UnifiedPermissionMiddleware
 
 **Implementation**:
-1. Implement `UnifiedPermissionFilter` using `context.Emit()` and `context.WaitForResponseAsync()`
+1. Implement `UnifiedPermissionMiddleware` using `context.Emit()` and `context.WaitForResponseAsync()`
 2. Update AGUI handler to convert permission events
 3. Create console handler for testing
 4. Keep old filters for backwards compatibility (mark deprecated)
@@ -1334,7 +1334,7 @@ await next(context);
 ### Phase 4: Deprecation (v2.0)
 
 **Future breaking changes**:
-1. Remove deprecated filters (`AGUIPermissionFilter`, `ConsolePermissionFilter`)
+1. Remove deprecated filters (`AGUIPermissionMiddleware`, `ConsolePermissionMiddleware`)
 2. Remove `IPermissionEventEmitter` interface (no longer needed)
 3. Bump major version
 
@@ -1346,11 +1346,11 @@ await next(context);
 
 **Before**: Each filter type needs custom solution
 ```csharp
-// AGUIPermissionFilter
+// AGUIPermissionMiddleware
 private readonly IPermissionEventEmitter _emitter;
 await _emitter.EmitAsync(new FunctionPermissionRequestEvent { ... });
 
-// ConsolePermissionFilter
+// ConsolePermissionMiddleware
 Console.WriteLine("[PERMISSION REQUIRED]");
 var response = Console.ReadLine();
 
@@ -1366,15 +1366,15 @@ context.Emit(new InternalPermissionRequestEvent { ... });
 ### 2. Protocol Independence
 
 **Before**: Separate filter implementation per protocol
-- `AGUIPermissionFilter`
-- `ConsolePermissionFilter`
-- `WebPermissionFilter` (doesn't exist yet)
-- `DiscordPermissionFilter` (doesn't exist yet)
+- `AGUIPermissionMiddleware`
+- `ConsolePermissionMiddleware`
+- `WebPermissionMiddleware` (doesn't exist yet)
+- `DiscordPermissionMiddleware` (doesn't exist yet)
 
 **After**: Single filter, protocol adapters handle conversion
 ```csharp
 // One filter
-public class UnifiedPermissionFilter : IPermissionFilter { ... }
+public class UnifiedPermissionMiddleware : IPermissionMiddleware { ... }
 
 // Multiple adapters
 AGUIEventHandler.ConvertToAGUI(InternalPermissionRequestEvent)
@@ -1390,7 +1390,7 @@ WebEventHandler.ConvertToSSE(InternalPermissionRequestEvent)
 ```csharp
 public record MyCustomEvent(...) : InternalAgentEvent;
 
-public class MyCustomFilter : IAiFunctionFilter
+public class MyCustomFilter : IAIFunctionMiddleware
 {
     public async Task InvokeAsync(...)
     {
@@ -1513,7 +1513,7 @@ public async Task Filter_EmitsEvents()
 
 ## Success Criteria
 
-✅ Single `IAiFunctionFilter` interface (unchanged)
+✅ Single `IAIFunctionMiddleware` interface (unchanged)
 ✅ All filters can emit events via `context.Emit()`
 ✅ Bidirectional communication via `context.WaitForResponseAsync()`
 ✅ Users can create custom event types (derive from `InternalAgentEvent`)
@@ -1544,8 +1544,8 @@ public async Task Filter_EmitsEvents()
 - Add event types
 - Write unit tests
 
-**Phase 2** (UnifiedPermissionFilter + handlers): 1-2 days
-- Implement `UnifiedPermissionFilter`
+**Phase 2** (UnifiedPermissionMiddleware + handlers): 1-2 days
+- Implement `UnifiedPermissionMiddleware`
 - Update AGUI handler
 - Create console handler
 - Integration tests
@@ -1569,7 +1569,7 @@ public async Task Filter_EmitsEvents()
 3. **Zero breaking changes**: ProcessFunctionCallsAsync/ToolScheduler signatures unchanged
 4. **Better performance**: 25x less memory overhead vs v1.0 (no Task.Run per call)
 5. **Simpler architecture**: Shared channel is cleaner than per-call channels
-6. **Maintains simplicity**: `IAiFunctionFilter` interface unchanged, existing filters continue working
+6. **Maintains simplicity**: `IAIFunctionMiddleware` interface unchanged, existing filters continue working
 7. **Enables full extensibility**: Users can create custom events and filters without framework changes
 8. **No deadlocks**: Concurrent event draining prevents blocking issues
 9. **Protocol-agnostic**: Single filter implementation works across all protocols

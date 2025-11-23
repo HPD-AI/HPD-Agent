@@ -3,26 +3,26 @@ using System.Text;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 
-namespace HPD.Agent.Internal.Filters;
+namespace HPD.Agent.Internal.MiddleWare;
 
 /// <summary>
-/// Logs the final instructions after all filters have executed.
-/// MUST run LAST in the filter chain to capture the complete final state.
-/// Logs only: final instructions and active filters that modified them.
+/// Logs the final instructions after all Middlewares have executed.
+/// MUST run LAST in the Middleware chain to capture the complete final state.
+/// Logs only: final instructions and active Middlewares that modified them.
 /// </summary>
-internal class PromptLoggingFilter : IPromptFilter
+internal class PromptLoggingMiddleware : IPromptMiddleware
 {
     private readonly ILogger? _logger;
     private static int _callCounter = 0;
 
-    public PromptLoggingFilter(ILogger? logger = null)
+    public PromptLoggingMiddleware(ILogger? logger = null)
     {
         _logger = logger;
     }
 
     public async Task<IEnumerable<ChatMessage>> InvokeAsync(
-        PromptFilterContext context,
-        Func<PromptFilterContext, Task<IEnumerable<ChatMessage>>> next)
+        PromptMiddlewareContext context,
+        Func<PromptMiddlewareContext, Task<IEnumerable<ChatMessage>>> next)
     {
         // Capture full stack trace to understand the call chain
         var stackTrace = new System.Diagnostics.StackTrace(true);
@@ -36,7 +36,7 @@ internal class PromptLoggingFilter : IPromptFilter
             if (method != null)
             {
                 var declaringType = method.DeclaringType?.FullName ?? "Unknown";
-                // Skip async infrastructure and filter our own types
+                // Skip async infrastructure and Middleware our own types
                 if (!declaringType.Contains("AsyncMethodBuilder") &&
                     !declaringType.Contains("TaskAwaiter") &&
                     (declaringType.Contains("HPD.Agent") || declaringType.Contains("MessageProcessor")))
@@ -50,16 +50,16 @@ internal class PromptLoggingFilter : IPromptFilter
             ? string.Join(" → ", relevantFrames.Take(3))
             : "Unknown";
 
-        // Call next filters first (this runs last, so next() completes the pipeline)
+        // Call next Middlewares first (this runs last, so next() completes the pipeline)
         var messages = await next(context);
 
-        // Now log the final instructions after all filters have run
+        // Now log the final instructions after all Middlewares have run
         LogInstructions(context, callChain);
 
         return messages;
     }
 
-    private void LogInstructions(PromptFilterContext context, string callChain)
+    private void LogInstructions(PromptMiddlewareContext context, string callChain)
     {
         var callNumber = System.Threading.Interlocked.Increment(ref _callCounter);
 
@@ -68,7 +68,7 @@ internal class PromptLoggingFilter : IPromptFilter
 
         var sb = new StringBuilder();
         sb.AppendLine("═══════════════════════════════════════════════════════");
-        sb.AppendLine($"📋 FINAL INSTRUCTIONS (After All Filters) - Call #{callNumber}");
+        sb.AppendLine($"📋 FINAL INSTRUCTIONS (After All Middlewares) - Call #{callNumber}");
         sb.AppendLine($"🔍 Call chain: {callChain}");
         sb.AppendLine($"📨 Message count: {context.Messages.Count()}");
         sb.AppendLine($"🆔 ChatOptions hash: {optionsHashCode}");

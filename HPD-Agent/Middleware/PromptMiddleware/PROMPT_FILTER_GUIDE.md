@@ -1,8 +1,8 @@
-# IPromptFilter Guide
+# IPromptMiddleware Guide
 
 ## Overview
 
-`IPromptFilter` provides a powerful middleware pattern for:
+`IPromptMiddleware` provides a powerful middleware pattern for:
 - **Pre-processing**: Modifying messages, options, and context before LLM invocation
 - **Post-processing**: Learning from responses, extracting memories, and analyzing results
 
@@ -18,12 +18,12 @@ This is more flexible than Microsoft's `AIContextProvider` because it offers:
 ## Interface
 
 ```csharp
-public interface IPromptFilter
+public interface IPromptMiddleware
 {
     // Pre-processing: Modify messages/options before LLM
     Task<IEnumerable<ChatMessage>> InvokeAsync(
-        PromptFilterContext context,
-        Func<PromptFilterContext, Task<IEnumerable<ChatMessage>>> next);
+        PromptMiddlewareContext context,
+        Func<PromptMiddlewareContext, Task<IEnumerable<ChatMessage>>> next);
 
     // Post-processing: Learn from responses (optional, default: no-op)
     Task PostInvokeAsync(PostInvokeContext context, CancellationToken cancellationToken);
@@ -37,7 +37,7 @@ public interface IPromptFilter
 ### Context Available
 
 ```csharp
-public class PromptFilterContext
+public class PromptMiddlewareContext
 {
     public IEnumerable<ChatMessage> Messages { get; set; }  // Mutable!
     public ChatOptions? Options { get; }                     // Mutable properties!
@@ -53,8 +53,8 @@ public class PromptFilterContext
 
 ```csharp
 public async Task<IEnumerable<ChatMessage>> InvokeAsync(
-    PromptFilterContext context,
-    Func<PromptFilterContext, Task<IEnumerable<ChatMessage>>> next)
+    PromptMiddlewareContext context,
+    Func<PromptMiddlewareContext, Task<IEnumerable<ChatMessage>>> next)
 {
     if (context.Properties.TryGetValue("Project", out var proj) && proj is Project project)
     {
@@ -78,8 +78,8 @@ public async Task<IEnumerable<ChatMessage>> InvokeAsync(
 
 ```csharp
 public async Task<IEnumerable<ChatMessage>> InvokeAsync(
-    PromptFilterContext context,
-    Func<PromptFilterContext, Task<IEnumerable<ChatMessage>>> next)
+    PromptMiddlewareContext context,
+    Func<PromptMiddlewareContext, Task<IEnumerable<ChatMessage>>> next)
 {
     if (context.Options != null)
     {
@@ -97,8 +97,8 @@ public async Task<IEnumerable<ChatMessage>> InvokeAsync(
 
 ```csharp
 public async Task<IEnumerable<ChatMessage>> InvokeAsync(
-    PromptFilterContext context,
-    Func<PromptFilterContext, Task<IEnumerable<ChatMessage>>> next)
+    PromptMiddlewareContext context,
+    Func<PromptMiddlewareContext, Task<IEnumerable<ChatMessage>>> next)
 {
     if (context.Options != null)
     {
@@ -115,8 +115,8 @@ public async Task<IEnumerable<ChatMessage>> InvokeAsync(
 
 ```csharp
 public async Task<IEnumerable<ChatMessage>> InvokeAsync(
-    PromptFilterContext context,
-    Func<PromptFilterContext, Task<IEnumerable<ChatMessage>>> next)
+    PromptMiddlewareContext context,
+    Func<PromptMiddlewareContext, Task<IEnumerable<ChatMessage>>> next)
 {
     // Remove duplicate messages
     context.Messages = context.Messages
@@ -135,8 +135,8 @@ public async Task<IEnumerable<ChatMessage>> InvokeAsync(
 
 ```csharp
 public async Task<IEnumerable<ChatMessage>> InvokeAsync(
-    PromptFilterContext context,
-    Func<PromptFilterContext, Task<IEnumerable<ChatMessage>>> next)
+    PromptMiddlewareContext context,
+    Func<PromptMiddlewareContext, Task<IEnumerable<ChatMessage>>> next)
 {
     // Check cache first
     var cacheKey = ComputeCacheKey(context.Messages);
@@ -284,7 +284,7 @@ public async Task PostInvokeAsync(PostInvokeContext context, CancellationToken c
 
 ## Comparison with Microsoft's AIContextProvider
 
-| Feature | IPromptFilter | AIContextProvider |
+| Feature | IPromptMiddleware | AIContextProvider |
 |---------|---------------|-------------------|
 | **Add messages** | ✅ `context.Messages = ...` | ✅ `AIContext.Messages` |
 | **Transform messages** | ✅ Full control | ❌ Read-only input |
@@ -296,7 +296,7 @@ public async Task PostInvokeAsync(PostInvokeContext context, CancellationToken c
 | **Execution** | Sequential pipeline | Parallel merge |
 | **Error handling** | ✅ Post-invoke sees exception | ✅ InvokedContext.Exception |
 
-**Your IPromptFilter is strictly more powerful!**
+**Your IPromptMiddleware is strictly more powerful!**
 
 ---
 
@@ -327,7 +327,7 @@ if (context.Properties.TryGetValue("Project", out var proj))
 Default implementation in interface is no-op - only override if needed:
 
 ```csharp
-public class MyFilter : IPromptFilter
+public class MyFilter : IPromptMiddleware
 {
     public async Task<IEnumerable<ChatMessage>> InvokeAsync(...) { /* required */ }
 
@@ -394,10 +394,10 @@ See:
 
 ## Summary
 
-**IPromptFilter gives you everything AIContextProvider has, plus:**
+**IPromptMiddleware gives you everything AIContextProvider has, plus:**
 - Message transformation (not just addition)
 - Short-circuit capability
 - Clean context passing via Properties
 - ChatOptions modification
 
-**Keep using IPromptFilter for everything. It's superior.**
+**Keep using IPromptMiddleware for everything. It's superior.**

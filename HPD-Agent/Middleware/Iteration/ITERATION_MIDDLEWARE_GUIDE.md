@@ -1,4 +1,4 @@
-# Iteration Filter Guide
+# Iteration Middleware Guide
 
 **Status**: Implemented (Lifecycle Pattern)
 **Version**: 2.0
@@ -8,7 +8,7 @@
 
 ## Overview
 
-**Iteration Filters** run **before and after each LLM call** within the agentic loop, providing fine-grained control over agent execution. They complement **Prompt Filters** (which run once per message turn) by enabling dynamic, iteration-aware modifications.
+**Iteration Middlewares** run **before and after each LLM call** within the agentic loop, providing fine-grained control over agent execution. They complement **Prompt Middlewares** (which run once per message turn) by enabling dynamic, iteration-aware modifications.
 
 ### Key Capabilities
 
@@ -21,21 +21,21 @@
 
 ### Architecture Note
 
-**Iteration filters use a lifecycle pattern** (`BeforeIterationAsync`/`AfterIterationAsync`) instead of the middleware pattern used by other filter types. This is because the LLM call uses `yield return` for streaming, which cannot be wrapped in a lambda expression. See [`ITERATION_FILTER_LIFECYCLE_PATTERN.md`](/Proposals/ITERATION_FILTER_LIFECYCLE_PATTERN.md) for technical details.
+**Iteration Middlewares use a lifecycle pattern** (`BeforeIterationAsync`/`AfterIterationAsync`) instead of the middleware pattern used by other Middleware types. This is because the LLM call uses `yield return` for streaming, which cannot be wrapped in a lambda expression. See [`ITERATION_Middleware_LIFECYCLE_PATTERN.md`](/Proposals/ITERATION_Middleware_LIFECYCLE_PATTERN.md) for technical details.
 
 ---
 
-## When to Use Iteration Filters
+## When to Use Iteration Middlewares
 
-| Use Case | Filter Type | Reason |
+| Use Case | Middleware Type | Reason |
 |----------|-------------|--------|
-| Dynamic skill instruction injection | **Iteration Filter** | Skills activated mid-turn need instructions in next LLM call |
-| Iteration-aware guidance | **Iteration Filter** | Different instructions for iteration 0 vs iteration 5 |
-| Tool result context enhancement | **Iteration Filter** | React to tool execution results |
-| Error recovery guidance | **Iteration Filter** | Adjust instructions based on consecutive failures |
-| Observability & logging | **Iteration Filter** | Track each LLM call with timing |
-| Initial RAG/memory retrieval | Prompt Filter | Heavy operations run once per turn |
-| Final result processing | Message Turn Filter | Process completed turns |
+| Dynamic skill instruction injection | **Iteration Middleware** | Skills activated mid-turn need instructions in next LLM call |
+| Iteration-aware guidance | **Iteration Middleware** | Different instructions for iteration 0 vs iteration 5 |
+| Tool result context enhancement | **Iteration Middleware** | React to tool execution results |
+| Error recovery guidance | **Iteration Middleware** | Adjust instructions based on consecutive failures |
+| Observability & logging | **Iteration Middleware** | Track each LLM call with timing |
+| Initial RAG/memory retrieval | Prompt Middleware | Heavy operations run once per turn |
+| Final result processing | Message Turn Middleware | Process completed turns |
 
 ---
 
@@ -45,44 +45,44 @@
 
 ```
 MESSAGE TURN (once per user message)
-├─ IPromptFilter → PrepareTurnAsync
+├─ IPromptMiddleware → PrepareTurnAsync
 │  └─ Heavy operations (RAG, memory retrieval)
 │
 └─ AGENTIC LOOP (multiple iterations)
    ├─ Iteration 0:
-   │  ├─ IIterationFilter.BeforeIterationAsync → Modify context
+   │  ├─ IIterationMiddleWare.BeforeIterationAsync → Modify context
    │  ├─ [LLM Call - Streaming]
-   │  ├─ IIterationFilter.AfterIterationAsync → Inspect response
+   │  ├─ IIterationMiddleWare.AfterIterationAsync → Inspect response
    │  └─ [Tool Execution]
    │
    └─ Iteration 1:
-      ├─ IIterationFilter.BeforeIterationAsync → Modify context
+      ├─ IIterationMiddleWare.BeforeIterationAsync → Modify context
       ├─ [LLM Call - Streaming]
-      ├─ IIterationFilter.AfterIterationAsync → Inspect response
+      ├─ IIterationMiddleWare.AfterIterationAsync → Inspect response
       └─ Done (no tool calls)
 ```
 
 ### Core Interface
 
 ```csharp
-internal interface IIterationFilter
+internal interface IIterationMiddleWare
 {
     /// <summary>
     /// Called BEFORE the LLM call begins.
-    /// Filters can modify messages/options to inject dynamic context.
+    /// Middlewares can modify messages/options to inject dynamic context.
     /// Can skip the LLM call by setting context.SkipLLMCall = true.
     /// </summary>
     Task BeforeIterationAsync(
-        IterationFilterContext context,
+        IterationMiddleWareContext context,
         CancellationToken cancellationToken);
 
     /// <summary>
     /// Called AFTER the LLM call completes (streaming finished).
-    /// Filters can inspect the response and signal state changes.
+    /// Middlewares can inspect the response and signal state changes.
     /// Response, ToolCalls, and Exception properties are populated at this point.
     /// </summary>
     Task AfterIterationAsync(
-        IterationFilterContext context,
+        IterationMiddleWareContext context,
         CancellationToken cancellationToken);
 }
 ```
@@ -92,7 +92,7 @@ internal interface IIterationFilter
 ### Context Object
 
 ```csharp
-public class IterationFilterContext
+public class IterationMiddleWareContext
 {
     // METADATA
     public int Iteration { get; init; }              // Current iteration (0-based)
@@ -113,7 +113,7 @@ public class IterationFilterContext
 
     // CONTROL
     public bool SkipLLMCall { get; set; }           // Skip LLM invocation
-    public Dictionary<string, object> Properties { get; init; }  // Inter-filter communication
+    public Dictionary<string, object> Properties { get; init; }  // Inter-Middleware communication
 
     // HELPERS
     public bool IsFirstIteration => Iteration == 0;
@@ -124,9 +124,9 @@ public class IterationFilterContext
 
 ---
 
-## Built-in Filters
+## Built-in Middlewares
 
-### 1. SkillInstructionIterationFilter
+### 1. SkillInstructionIterationMiddleWare
 
 **Purpose**: Injects active skill instructions before each LLM call.
 
@@ -138,18 +138,18 @@ public class IterationFilterContext
 ```csharp
 Turn 1: "Activate trading skill and buy AAPL"
   Iteration 0:
-    - Filter: No active skills yet
+    - Middleware: No active skills yet
     - LLM: Returns activate_skill("trading")
     - Execute: Skill activated → State.ActiveSkillInstructions += {"trading": "..."}
 
   Iteration 1: 🔥 KEY MOMENT
-    - Filter: Detects State.ActiveSkillInstructions["trading"]
-    - Filter: Injects trading instructions into ChatOptions.Instructions
+    - Middleware: Detects State.ActiveSkillInstructions["trading"]
+    - Middleware: Injects trading instructions into ChatOptions.Instructions
     - LLM: NOW SEES trading instructions, knows how to buy stocks!
     - LLM: Returns buy_stock(symbol="AAPL", quantity=10)
 ```
 
-### 2. IterationLoggingFilter
+### 2. IterationLoggingMiddleware
 
 **Purpose**: Logs detailed information about each iteration for observability.
 
@@ -171,15 +171,15 @@ Turn 1: "Activate trading skill and buy AAPL"
 
 ---
 
-## Writing Custom Filters
+## Writing Custom Middlewares
 
 ### Basic Pattern
 
 ```csharp
-internal class MyIterationFilter : IIterationFilter
+internal class MyIterationMiddleWare : IIterationMiddleWare
 {
     public Task BeforeIterationAsync(
-        IterationFilterContext context,
+        IterationMiddleWareContext context,
         CancellationToken cancellationToken)
     {
         // Modify context before LLM call
@@ -192,7 +192,7 @@ internal class MyIterationFilter : IIterationFilter
     }
 
     public Task AfterIterationAsync(
-        IterationFilterContext context,
+        IterationMiddleWareContext context,
         CancellationToken cancellationToken)
     {
         // React to LLM response
@@ -209,22 +209,22 @@ internal class MyIterationFilter : IIterationFilter
 **Key Points:**
 - `BeforeIterationAsync`: Modify `Messages` and `Options` to influence the LLM call
 - `AfterIterationAsync`: Inspect `Response`, `ToolCalls`, and `Exception` to react to results
-- Both methods run sequentially for all filters (not in a pipeline)
+- Both methods run sequentially for all Middlewares (not in a pipeline)
 
-### Example: Iteration Guidance Filter
+### Example: Iteration Guidance Middleware
 
 ```csharp
-internal class IterationGuidanceFilter : IIterationFilter
+internal class IterationGuidanceMiddleware : IIterationMiddleWare
 {
     private readonly int _maxIterations;
 
-    public IterationGuidanceFilter(int maxIterations = 20)
+    public IterationGuidanceMiddleware(int maxIterations = 20)
     {
         _maxIterations = maxIterations;
     }
 
     public Task BeforeIterationAsync(
-        IterationFilterContext context,
+        IterationMiddleWareContext context,
         CancellationToken cancellationToken)
     {
         if (context.Options == null)
@@ -261,7 +261,7 @@ internal class IterationGuidanceFilter : IIterationFilter
     }
 
     public Task AfterIterationAsync(
-        IterationFilterContext context,
+        IterationMiddleWareContext context,
         CancellationToken cancellationToken)
     {
         // Could track iteration history, emit analytics, etc.
@@ -270,20 +270,20 @@ internal class IterationGuidanceFilter : IIterationFilter
 }
 ```
 
-### Example: Response Caching Filter
+### Example: Response Caching Middleware
 
 ```csharp
-internal class IterationCachingFilter : IIterationFilter
+internal class IterationCachingMiddleware : IIterationMiddleWare
 {
     private readonly IMemoryCache _cache;
 
-    public IterationCachingFilter(IMemoryCache cache)
+    public IterationCachingMiddleware(IMemoryCache cache)
     {
         _cache = cache;
     }
 
     public Task BeforeIterationAsync(
-        IterationFilterContext context,
+        IterationMiddleWareContext context,
         CancellationToken cancellationToken)
     {
         // Generate cache key from messages
@@ -304,7 +304,7 @@ internal class IterationCachingFilter : IIterationFilter
     }
 
     public Task AfterIterationAsync(
-        IterationFilterContext context,
+        IterationMiddleWareContext context,
         CancellationToken cancellationToken)
     {
         // Cache the response (if successful and not from cache)
@@ -338,19 +338,19 @@ internal class IterationCachingFilter : IIterationFilter
 
 ### Automatic Registration
 
-Built-in filters are automatically registered in `AgentBuilder.BuildCoreAgent()`:
+Built-in Middlewares are automatically registered in `AgentBuilder.BuildCoreAgent()`:
 
 ```csharp
-// Logging filter (if logger available)
+// Logging Middleware (if logger available)
 if (_logger != null)
 {
-    _iterationFilters.Add(new IterationLoggingFilter(iterationLogger));
+    _IterationMiddleWares.Add(new IterationLoggingMiddleware(iterationLogger));
 }
 
-// Skill instruction filter (if skills registered)
+// Skill instruction Middleware (if skills registered)
 if (_pluginManager.GetPluginRegistrations().Any())
 {
-    _iterationFilters.Add(new SkillInstructionIterationFilter());
+    _IterationMiddleWares.Add(new SkillInstructionIterationMiddleWare());
 }
 ```
 
@@ -359,7 +359,7 @@ if (_pluginManager.GetPluginRegistrations().Any())
 ```csharp
 var agent = new AgentBuilder()
     .WithProvider("openai", "gpt-4", apiKey)
-    .WithIterationFilter(new MyCustomFilter())  // Internal API
+    .WithIterationMiddleWare(new MyCustomMiddleware())  // Internal API
     .Build();
 ```
 
@@ -367,10 +367,10 @@ var agent = new AgentBuilder()
 
 ## Signal-Based Communication
 
-Filters can signal actions to the agent loop via the `Properties` dictionary:
+Middlewares can signal actions to the agent loop via the `Properties` dictionary:
 
 ```csharp
-// Filter signals intent
+// Middleware signals intent
 context.Properties["ShouldClearActiveSkills"] = true;
 
 // Agent loop processes signal
@@ -388,14 +388,14 @@ if (context.Properties.TryGetValue("ShouldClearActiveSkills", out var clear))
 
 ## Bidirectional Event Communication
 
-Iteration filters support **bidirectional event communication** for interactive patterns like permission requests, user confirmations, and clarifications. This allows filters to pause execution, emit events to external handlers, and wait for responses.
+Iteration Middlewares support **bidirectional event communication** for interactive patterns like permission requests, user confirmations, and clarifications. This allows Middlewares to pause execution, emit events to external handlers, and wait for responses.
 
 ### Event Coordination API
 
-The `IterationFilterContext` provides two methods for bidirectional communication:
+The `IterationMiddleWareContext` provides two methods for bidirectional communication:
 
 ```csharp
-public class IterationFilterContext
+public class IterationMiddleWareContext
 {
     /// <summary>
     /// Emits an event to the agent's event stream for external handling.
@@ -411,18 +411,18 @@ public class IterationFilterContext
 }
 ```
 
-### Example: Continuation Permission Filter
+### Example: Continuation Permission Middleware
 
-The `ContinuationPermissionIterationFilter` uses bidirectional events to request permission when the iteration limit is reached:
+The `ContinuationPermissionIterationMiddleWare` uses bidirectional events to request permission when the iteration limit is reached:
 
 ```csharp
-internal class ContinuationPermissionIterationFilter : IIterationFilter
+internal class ContinuationPermissionIterationMiddleWare : IIterationMiddleWare
 {
     private readonly int _maxIterations;
     private readonly int _extensionAmount;
     private int _currentExtendedLimit;
 
-    public ContinuationPermissionIterationFilter(int maxIterations, int extensionAmount = 3)
+    public ContinuationPermissionIterationMiddleWare(int maxIterations, int extensionAmount = 3)
     {
         _maxIterations = maxIterations;
         _extensionAmount = extensionAmount;
@@ -430,7 +430,7 @@ internal class ContinuationPermissionIterationFilter : IIterationFilter
     }
 
     public async Task BeforeIterationAsync(
-        IterationFilterContext context,
+        IterationMiddleWareContext context,
         CancellationToken cancellationToken)
     {
         // Check if we've hit the iteration limit
@@ -453,20 +453,20 @@ internal class ContinuationPermissionIterationFilter : IIterationFilter
     }
 
     public Task AfterIterationAsync(
-        IterationFilterContext context,
+        IterationMiddleWareContext context,
         CancellationToken cancellationToken)
     {
         return Task.CompletedTask;
     }
 
-    private async Task<bool> RequestContinuationPermissionAsync(IterationFilterContext context)
+    private async Task<bool> RequestContinuationPermissionAsync(IterationMiddleWareContext context)
     {
         var continuationId = Guid.NewGuid().ToString();
 
         // Emit request event to external handler (UI, console, web, etc.)
         context.Emit(new InternalContinuationRequestEvent(
             continuationId,
-            "ContinuationPermissionFilter",
+            "ContinuationPermissionMiddleware",
             context.Iteration + 1,  // Display as 1-based
             _currentExtendedLimit));
 
@@ -509,7 +509,7 @@ internal class ContinuationPermissionIterationFilter : IIterationFilter
 1. **Generate unique ID**: Each request needs a unique identifier for matching responses
 2. **Emit request event**: Send event to external handlers via `context.Emit()`
 3. **Wait for response**: Block execution with `context.WaitForResponseAsync<T>()`
-4. **Handle response**: Process the response and adjust filter behavior
+4. **Handle response**: Process the response and adjust Middleware behavior
 
 **Event Types**:
 - Events must inherit from `InternalAgentEvent`
@@ -556,7 +556,7 @@ await foreach (var evt in agent.RunAsync("Do something complex"))
         // Show prompt to user
         var approved = await PromptUserForContinuation(request);
 
-        // Send response back to filter
+        // Send response back to Middleware
         agent.EventCoordinator.Emit(new InternalContinuationResponseEvent(
             request.RequestId,
             approved,
@@ -570,25 +570,25 @@ await foreach (var evt in agent.RunAsync("Do something complex"))
 ## Performance Guidelines
 
 ### DO ✅
-- Keep filters fast (< 1ms per filter)
+- Keep Middlewares fast (< 1ms per Middleware)
 - Inspect state (cheap, immutable)
 - Modify strings (cheap)
 - Add simple conditionals
 - Use early returns to skip unnecessary work
 
 ### DON'T ❌
-- Make API calls (use prompt filters for that)
-- Query databases (use prompt filters for that)
+- Make API calls (use prompt Middlewares for that)
+- Query databases (use prompt Middlewares for that)
 - Perform heavy computations
 - Block on I/O
 
-**Rule of Thumb**: If an operation is "heavy," it belongs in a prompt filter (once per message turn), not an iteration filter (multiple times per turn).
+**Rule of Thumb**: If an operation is "heavy," it belongs in a prompt Middleware (once per message turn), not an Iteration Middleware (multiple times per turn).
 
 ---
 
-## Comparison: Prompt Filters vs Iteration Filters
+## Comparison: Prompt Middlewares vs Iteration Middlewares
 
-| Aspect | IPromptFilter | IIterationFilter |
+| Aspect | IPromptMiddleware | IIterationMiddleWare |
 |--------|---------------|------------------|
 | **Execution Frequency** | Once per message turn | Every LLM call (multiple per turn) |
 | **Runs In** | `PrepareTurnAsync` | `RunAgenticLoopInternal` |
@@ -607,15 +607,15 @@ await foreach (var evt in agent.RunAsync("Do something complex"))
 
 ## Troubleshooting
 
-### Filter Not Running
+### Middleware Not Running
 
-**Problem**: Filter registered but not executing.
+**Problem**: Middleware registered but not executing.
 
 **Solution**: Check that:
-1. Filter is added to `_iterationFilters` list in AgentBuilder
-2. AgentCore constructor receives the filters
+1. Middleware is added to `_IterationMiddleWares` list in AgentBuilder
+2. AgentCore constructor receives the Middlewares
 3. Both `BeforeIterationAsync()` and `AfterIterationAsync()` are implemented
-4. Filters are being called in `RunAgenticLoopInternal` (lines 985-997, 1166-1171)
+4. Middlewares are being called in `RunAgenticLoopInternal` (lines 985-997, 1166-1171)
 
 ### State Changes Not Persisting
 
@@ -635,8 +635,8 @@ context.Properties["ShouldClearActiveSkills"] = true;
 **Problem**: Agent execution is slow.
 
 **Solution**:
-1. Profile your filters - they should be < 1ms each
-2. Move heavy operations to prompt filters
+1. Profile your Middlewares - they should be < 1ms each
+2. Move heavy operations to prompt Middlewares
 3. Use conditional execution to skip unnecessary work
 4. Cache computed values
 
@@ -646,21 +646,21 @@ context.Properties["ShouldClearActiveSkills"] = true;
 
 ### Potential Extensions (Not Implemented)
 
-1. **Filter Scoping**:
+1. **Middleware Scoping**:
    ```csharp
-   builder.WithIterationFilter(new MyFilter(), scope: filter =>
-       filter.Iteration > 0); // Only iterations 1+
+   builder.WithIterationMiddleWare(new MyMiddleware(), scope: Middleware =>
+       Middleware.Iteration > 0); // Only iterations 1+
    ```
 
-2. **Filter Priority**:
+2. **Middleware Priority**:
    ```csharp
-   builder.WithIterationFilter(new Filter1(), priority: 100);
-   builder.WithIterationFilter(new Filter2(), priority: 50); // Runs first
+   builder.WithIterationMiddleWare(new Middleware1(), priority: 100);
+   builder.WithIterationMiddleWare(new Middleware2(), priority: 50); // Runs first
    ```
 
 3. **Lifecycle Hooks**:
    ```csharp
-   interface IIterationFilter
+   interface IIterationMiddleWare
    {
        Task OnMessageTurnStartAsync();  // Before first iteration
        Task InvokeAsync(context, next); // Each iteration
@@ -672,7 +672,7 @@ context.Properties["ShouldClearActiveSkills"] = true;
 
 ## Why Lifecycle Pattern Instead of Middleware?
 
-Iteration filters use a **lifecycle pattern** (`BeforeIterationAsync`/`AfterIterationAsync`) instead of the middleware pattern used by other filter types. Here's why:
+Iteration Middlewares use a **lifecycle pattern** (`BeforeIterationAsync`/`AfterIterationAsync`) instead of the middleware pattern used by other Middleware types. Here's why:
 
 ### The Technical Constraint
 
@@ -690,7 +690,7 @@ await foreach (var update in _agentTurn.RunAsync(messages, options, ct))
 
 ```csharp
 // ❌ DOESN'T COMPILE - yield return in lambda forbidden
-await filter.InvokeAsync(context, async ctx => {
+await Middleware.InvokeAsync(context, async ctx => {
     await foreach (var update in _agentTurn.RunAsync(...))
     {
         yield return new TextDeltaEvent(...);  // ❌ Compiler error!
@@ -704,14 +704,14 @@ The lifecycle pattern provides **explicit before/after hooks** that are called o
 
 ```csharp
 // ✅ WORKS - No yield return in lambdas
-await filter.BeforeIterationAsync(context, ct);  // Modify context
+await Middleware.BeforeIterationAsync(context, ct);  // Modify context
 
 await foreach (var update in _agentTurn.RunAsync(...))  // Stream events
 {
     yield return new TextDeltaEvent(...);  // ✅ OK in iterator method
 }
 
-await filter.AfterIterationAsync(context, ct);  // Inspect response
+await Middleware.AfterIterationAsync(context, ct);  // Inspect response
 ```
 
 ### Benefits
@@ -722,14 +722,14 @@ await filter.AfterIterationAsync(context, ct);  // Inspect response
 - ✅ **Streaming preserved** - Real-time event emission unchanged
 - ✅ **Same capabilities** - All the functionality of middleware pattern
 
-For full technical details, see [`ITERATION_FILTER_LIFECYCLE_PATTERN.md`](/Proposals/ITERATION_FILTER_LIFECYCLE_PATTERN.md).
+For full technical details, see [`ITERATION_Middleware_LIFECYCLE_PATTERN.md`](/Proposals/ITERATION_Middleware_LIFECYCLE_PATTERN.md).
 
 ---
 
 ## References
 
-- **Lifecycle Pattern Proposal**: `/Proposals/ITERATION_FILTER_LIFECYCLE_PATTERN.md`
-- **Architecture Proposal**: `/Proposals/ITERATION_FILTER_ARCHITECTURE.md`
-- **Implementation**: `/HPD-Agent/Filters/Iteration/`
-- **Related Filters**: `/HPD-Agent/Filters/PromptFiltering/`
+- **Lifecycle Pattern Proposal**: `/Proposals/ITERATION_Middleware_LIFECYCLE_PATTERN.md`
+- **Architecture Proposal**: `/Proposals/ITERATION_Middleware_ARCHITECTURE.md`
+- **Implementation**: `/HPD-Agent/Middlewares/Iteration/`
+- **Related Middlewares**: `/HPD-Agent/Middlewares/PromptMiddlewareing/`
 - **AgentCore Integration**: `/HPD-Agent/Agent/AgentCore.cs` (lines 967-1177)

@@ -223,17 +223,17 @@ Total tests: 20
 **Problem**: Inconsistent denial messages - sometimes empty, sometimes had fallback text.
 
 **Root Cause**: Dual fallback layers:
-- `PermissionFilter.cs`: Had fallback message
+- `PermissionMiddleware.cs`: Had fallback message
 - `Agent.cs`: Had another fallback message
 
 **Solution**:
 - Added `PermissionDeniedDefault` to `AgentMessagesConfig` (configurable default)
-- Modified `PermissionFilter.cs` to use priority: user reason > configured default > hardcoded fallback
+- Modified `PermissionMiddleware.cs` to use priority: user reason > configured default > hardcoded fallback
 - User's custom reason always takes priority
 
 **Files Modified**:
 - [HPD-Agent/Agent/AgentMessagesConfig.cs](../../HPD-Agent/Agent/AgentMessagesConfig.cs) - Added `PermissionDeniedDefault` property
-- [HPD-Agent/Permissions/PermissionFilter.cs](../../HPD-Agent/Permissions/PermissionFilter.cs) - Updated denial reason logic
+- [HPD-Agent/Permissions/PermissionMiddleware.cs](../../HPD-Agent/Permissions/PermissionMiddleware.cs) - Updated denial reason logic
 
 **Result**: Consistent, predictable denial message behavior
 

@@ -22,7 +22,7 @@ public class PostInvokeContext
     public Exception? Exception { get; }
 
     /// <summary>
-    /// Additional properties shared across filters (same as PromptFilterContext.Properties).
+    /// Additional properties shared across filters (same as PromptMiddlewareContext.Properties).
     /// Contains context like Project, ConversationId, etc.
     /// </summary>
     public IReadOnlyDictionary<string, object> Properties { get; }

@@ -1,6 +1,6 @@
 using Microsoft.Extensions.AI;
 
-namespace HPD.Agent.Internal.Filters;
+namespace HPD.Agent.Internal.MiddleWare;
 
 /// <summary>
 /// Internal filter interface for function invocation pipeline.
@@ -8,7 +8,7 @@ namespace HPD.Agent.Internal.Filters;
 /// including bidirectional communication, event emission, and filter pipeline control.
 /// NOT exposed to users - implementation detail for HPD-Agent internals.
 /// </summary>
-internal interface IAiFunctionFilter
+internal interface IAIFunctionMiddleware
 {
     Task InvokeAsync(
         HPD.Agent.FunctionInvocationContext context,

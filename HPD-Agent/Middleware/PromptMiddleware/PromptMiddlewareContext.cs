@@ -4,7 +4,7 @@ using Microsoft.Extensions.AI;
 /// <summary>
 /// Context provided to prompt filters
 /// </summary>
-public class PromptFilterContext
+public class PromptMiddlewareContext
 {
     public IEnumerable<ChatMessage> Messages { get; set; }
     public ChatOptions? Options { get; }
@@ -12,7 +12,7 @@ public class PromptFilterContext
     public CancellationToken CancellationToken { get; }
     public Dictionary<string, object> Properties { get; }
 
-    public PromptFilterContext(
+    public PromptMiddlewareContext(
         IEnumerable<ChatMessage> messages,
         ChatOptions? options,
         string agentName,

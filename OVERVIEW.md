@@ -82,7 +82,7 @@ var agent = new AgentBuilder()
     })
 
     // Human-in-the-loop for dangerous operations
-    .WithPermissionFilter<ConsolePermissionFilter>()
+    .WithPermissionMiddleware<ConsolePermissionMiddleware>()
 
     // Plugin with filesystem access
     .WithPlugin<FileSystemPlugin>()
@@ -286,9 +286,9 @@ The filter system provides hooks at every stage of agent execution, enabling fin
 Prompt filters intercept messages before they're sent to the LLM. This is where memory systems inject context - dynamic memories, static knowledge, and current plans are all added via prompt filters. You can also use prompt filters for custom preprocessing, context enrichment, or prompt engineering.
 
 ```csharp
-.WithPromptFilter<DynamicMemoryFilter>()   // Inject memories
-.WithPromptFilter<StaticMemoryFilter>()    // Inject knowledge
-.WithPromptFilter<AgentPlanFilter>()       // Inject current plan
+.WithPromptMiddleware<DynamicMemoryFilter>()   // Inject memories
+.WithPromptMiddleware<StaticMemoryFilter>()    // Inject knowledge
+.WithPromptMiddleware<AgentPlanFilter>()       // Inject current plan
 ```
 
 #### Function Invocation Filters - Wrap tool calls
@@ -296,8 +296,8 @@ Prompt filters intercept messages before they're sent to the LLM. This is where 
 Function invocation filters wrap around tool execution, providing pre/post hooks for every function call. This enables observability (tracing, metrics), logging, performance monitoring, and custom function orchestration. Filters can be scoped to specific plugins or functions for granular control.
 
 ```csharp
-.WithFilter<ObservabilityAiFunctionFilter>()  // OpenTelemetry traces/metrics
-.WithFilter<LoggingAiFunctionFilter>()        // Comprehensive logging
+.WithFilter<ObservabilityAIFunctionMiddleware>()  // OpenTelemetry traces/metrics
+.WithFilter<LoggingAIFunctionMiddleware>()        // Comprehensive logging
 ```
 
 #### Permission Filters - Human-in-the-loop
@@ -305,8 +305,8 @@ Function invocation filters wrap around tool execution, providing pre/post hooks
 Permission filters implement human-in-the-loop patterns by intercepting function calls that require approval. When a function marked with `[RequiresPermission]` is called, the permission filter presents the request to the user (console, web UI, etc.) and waits for approval. Permission decisions can be stored (AlwaysAllow, AlwaysDeny) at conversation, project, or global scope.
 
 ```csharp
-.WithPermissionFilter<ConsolePermissionFilter>()  // Console approval
-.WithPermissionFilter<AGUIPermissionFilter>()     // Web UI approval
+.WithPermissionMiddleware<ConsolePermissionMiddleware>()  // Console approval
+.WithPermissionMiddleware<AGUIPermissionMiddleware>()     // Web UI approval
 ```
 
 #### Message Turn Filters - Post-turn processing
@@ -314,8 +314,8 @@ Permission filters implement human-in-the-loop patterns by intercepting function
 Message turn filters process completed agentic turns, enabling cost tracking, audit logging, analytics, and custom post-processing. These filters receive the complete turn context including messages, token usage, and execution time.
 
 ```csharp
-.WithMessageTurnFilter<CostTrackingFilter>()
-.WithMessageTurnFilter<AuditLogFilter>()
+.WithMessageTurnMiddleware<CostTrackingFilter>()
+.WithMessageTurnMiddleware<AuditLogFilter>()
 ```
 
 ---
@@ -1010,7 +1010,7 @@ var fileAgent = new AgentBuilder()
     .WithProvider("anthropic", "claude-3-5-sonnet-20241022", apiKey)
 
     .WithPlugin<FileSystemPlugin>()
-    .WithPermissionFilter<ConsolePermissionFilter>()
+    .WithPermissionMiddleware<ConsolePermissionMiddleware>()
 
     .WithMaxFunctionCallTurns(10)
 

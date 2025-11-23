@@ -73,7 +73,7 @@ User Message: "What's my favorite color?"
 │    Instructions: "Be friendly and helpful"                          │
 │  }                                                                  │
 │         ↓                                                           │
-│  Action: Merge into PromptFilterContext                            │
+│  Action: Merge into PromptMiddlewareContext                            │
 │    ├─ Prepend messages                                             │
 │    ├─ Add tools to Options.Tools                                   │
 │    ├─ Append to Options.Instructions                               │
@@ -222,8 +222,8 @@ Final Response to User: "Blue is your favorite color!..."
 │  Code:                                                                        │
 │    var agent = new AgentBuilder()                                            │
 │        .WithContextProvider(new MyMemoryProvider())                          │
-│        .WithPromptFilter(new SafetyFilter())                                 │
-│        .WithPromptFilter(new PersonalizationFilter())                        │
+│        .WithPromptMiddleware(new SafetyFilter())                                 │
+│        .WithPromptMiddleware(new PersonalizationFilter())                        │
 │        .Build();                                                             │
 │                                                                               │
 │  Pipeline: [PreFilter] → [Safety] → [Personalization] → [PostFilter] → LLM  │
@@ -246,17 +246,17 @@ Final Response to User: "Blue is your favorite color!..."
 │                                                                               │
 │  Code:                                                                        │
 │    var agent = new AgentBuilder()                                            │
-│        .WithPromptFilter(new MemoryFilter())                                 │
-│        .WithPromptFilter(new RAGFilter())                                    │
-│        .WithPromptFilter(new SafetyFilter())                                 │
-│        .WithPromptFilter(new ToolSelectorFilter())                           │
+│        .WithPromptMiddleware(new MemoryFilter())                                 │
+│        .WithPromptMiddleware(new RAGFilter())                                    │
+│        .WithPromptMiddleware(new SafetyFilter())                                 │
+│        .WithPromptMiddleware(new ToolSelectorFilter())                           │
 │        .Build();                                                             │
 │                                                                               │
 │  Pipeline: [Memory] → [RAG] → [Safety] → [ToolSelector] → LLM              │
 │                                                                               │
 │  Knowledge Required:                                                         │
-│    ✓ Full IPromptFilter interface                                           │
-│    ✓ PromptFilterContext details                                            │
+│    ✓ Full IPromptMiddleware interface                                           │
+│    ✓ PromptMiddlewareContext details                                            │
 │    ✓ Pipeline execution model                                               │
 │    ✓ Short-circuit patterns                                                 │
 │    ✓ PostInvokeAsync lifecycle                                              │
@@ -465,7 +465,7 @@ VERDICT: HPD-Agent's approach is MORE POWERFUL while maintaining compatibility
 │    var agent = new AgentBuilder()                                            │
 │        .WithName("MyAgent")                                                  │
 │        .WithContextProvider(new SimpleMemoryProvider())                      │
-│        .WithPromptFilter(new ComplianceFilter())  ← New!                     │
+│        .WithPromptMiddleware(new ComplianceFilter())  ← New!                     │
 │        .Build();                                                             │
 │                                                                               │
 │  ✓ Learns about filters gradually                                           │
@@ -483,8 +483,8 @@ VERDICT: HPD-Agent's approach is MORE POWERFUL while maintaining compatibility
 │    var agent = new AgentBuilder()                                            │
 │        .WithName("MyAgent")                                                  │
 │        .WithContextProvider(new SimpleMemoryProvider())                      │
-│        .WithPromptFilter(new ComplianceFilter())                             │
-│        .WithPromptFilter(new CustomTransformFilter())  ← Custom logic        │
+│        .WithPromptMiddleware(new ComplianceFilter())                             │
+│        .WithPromptMiddleware(new CustomTransformFilter())  ← Custom logic        │
 │        .Build();                                                             │
 │                                                                               │
 │  ✓ Building custom filters                                                  │
@@ -502,10 +502,10 @@ VERDICT: HPD-Agent's approach is MORE POWERFUL while maintaining compatibility
 │    // No context provider - full manual control                              │
 │    var agent = new AgentBuilder()                                            │
 │        .WithName("MyAgent")                                                  │
-│        .WithPromptFilter(new CustomMemoryFilter())                           │
-│        .WithPromptFilter(new AdvancedRAGFilter())                            │
-│        .WithPromptFilter(new SecurityFilter())                               │
-│        .WithPromptFilter(new ContextWindowOptimizer())                       │
+│        .WithPromptMiddleware(new CustomMemoryFilter())                           │
+│        .WithPromptMiddleware(new AdvancedRAGFilter())                            │
+│        .WithPromptMiddleware(new SecurityFilter())                               │
+│        .WithPromptMiddleware(new ContextWindowOptimizer())                       │
 │        .Build();                                                             │
 │                                                                               │
 │  ✓ Complete mastery of filter architecture                                  │
@@ -545,7 +545,7 @@ KEY INSIGHT: Users never hit a "wall" where they need to rewrite everything.
 │                          │                                                  │
 ├──────────────────────────┼──────────────────────────────────────────────────┤
 │                          │                                                  │
-│  Expert Users            │  ✓ Full control via IPromptFilter                │
+│  Expert Users            │  ✓ Full control via IPromptMiddleware                │
 │  (1% of users)           │  ✓ No limitations or "walls"                     │
 │                          │  ✓ Can build frameworks on HPD-Agent             │
 │                          │  ✓ Performance optimization possible             │

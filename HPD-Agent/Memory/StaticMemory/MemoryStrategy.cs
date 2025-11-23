@@ -15,5 +15,11 @@ public enum MemoryStrategy
     /// The full text of all memory/knowledge is automatically injected into every prompt.
     /// Best for small, critical content (under 10K tokens) that should always be available.
     /// </summary>
-    FullTextInjection
+    FullTextInjection,
+
+    /// <summary>
+    /// Agent memory/knowledge is indexed but retrieval is augmented with agentic reasoning.
+    /// The agent decides when and what to retrieve based on the current context.
+    /// </summary>
+    AgenticIndexedRetrieval
 }

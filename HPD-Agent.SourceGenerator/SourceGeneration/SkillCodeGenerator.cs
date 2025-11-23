@@ -144,7 +144,7 @@ internal static class SkillCodeGenerator
         var sb = new StringBuilder();
 
         // Simple activation message for function result
-        // The prompt filter will build the complete context from metadata
+        // The prompt Middleware will build the complete context from metadata
         var functionList = string.Join(", ", skill.ResolvedFunctionReferences);
         var returnMessage = $"{skill.Name} skill activated. Available functions: {functionList}";
 
@@ -235,8 +235,8 @@ internal static class SkillCodeGenerator
         sb.AppendLine($"                        [\"ReferencedFunctions\"] = new string[] {{ {string.Join(", ", skill.ResolvedFunctionReferences.Select(f => $"\"{f}\""))} }},");
         sb.AppendLine($"                        [\"ReferencedPlugins\"] = new string[] {{ {string.Join(", ", skill.ResolvedPluginTypes.Select(p => $"\"{p}\""))} }},");
 
-        // Store instructions separately for prompt filter to use
-        // Filter will build complete context from metadata (functions + documents + instructions)
+        // Store instructions separately for prompt Middleware to use
+        // Middleware will build complete context from metadata (functions + documents + instructions)
         if (!string.IsNullOrEmpty(skill.Instructions))
         {
             var escapedInstructions = skill.Instructions.Replace("\"", "\"\"");

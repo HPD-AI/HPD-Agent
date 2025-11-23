@@ -1,5 +1,5 @@
 using Microsoft.Extensions.AI;
-using HPD.Agent.Internal.Filters;
+using HPD.Agent.Internal.MiddleWare;
 using Microsoft.Agents.AI;
 using System.Threading.Channels;
 using System.Runtime.CompilerServices;
@@ -42,13 +42,13 @@ public sealed class Agent : AIAgent
         AgentConfig config,
         IChatClient baseClient,
         ChatOptions? mergedOptions,
-        List<IPromptFilter> promptFilters,
-        ScopedFilterManager scopedFilterManager,
+        List<IPromptMiddleware> PromptMiddlewares,
+        ScopedFunctionMiddlewareManager ScopedFunctionMiddlewareManager,
         ErrorHandling.IProviderErrorHandler providerErrorHandler,
-        IReadOnlyList<IPermissionFilter>? permissionFilters = null,
-        IReadOnlyList<IAiFunctionFilter>? aiFunctionFilters = null,
-        IReadOnlyList<IMessageTurnFilter>? messageTurnFilters = null,
-        IReadOnlyList<IIterationFilter>? iterationFilters = null,
+        IReadOnlyList<IPermissionMiddleware>? PermissionMiddlewares = null,
+        IReadOnlyList<IAIFunctionMiddleware>? AIFunctionMiddlewares = null,
+        IReadOnlyList<IMessageTurnMiddleware>? MessageTurnMiddlewares = null,
+        IReadOnlyList<IIterationMiddleWare>? IterationMiddleWares = null,
         IServiceProvider? serviceProvider = null,
         IEnumerable<IAgentEventObserver>? observers = null,
         Func<AIContextProviderFactoryContext, AIContextProvider>? contextProviderFactory = null)
@@ -57,13 +57,13 @@ public sealed class Agent : AIAgent
             config,
             baseClient,
             mergedOptions,
-            promptFilters,
-            scopedFilterManager,
+            PromptMiddlewares,
+            ScopedFunctionMiddlewareManager,
             providerErrorHandler,
-            permissionFilters,
-            aiFunctionFilters,
-            messageTurnFilters,
-            iterationFilters,
+            PermissionMiddlewares,
+            AIFunctionMiddlewares,
+            MessageTurnMiddlewares,
+            IterationMiddleWares,
             serviceProvider,
             observers);
 

@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using HPD.Agent.Internal.Filters;
+using HPD.Agent.Internal.MiddleWare;
 using System.Diagnostics.Metrics;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
@@ -9,14 +9,14 @@ using HPD.Agent;
 /// Creates detailed OpenTelemetry spans (Activities) and metrics for each AI function call.
 /// This provides both qualitative traces and quantitative metrics for the agent's tool execution process.
 /// </summary>
-internal class ObservabilityAiFunctionFilter : IAiFunctionFilter
+internal class ObservabilityAIFunctionMiddleware : IAIFunctionMiddleware
 {
     private readonly ActivitySource _activitySource;
     private readonly Counter<long> _toolCallCounter;
     private readonly Histogram<double> _toolCallDuration;
     private readonly Counter<long> _toolCallErrorCounter;
 
-    public ObservabilityAiFunctionFilter(ActivitySource activitySource, Meter meter)
+    public ObservabilityAIFunctionMiddleware(ActivitySource activitySource, Meter meter)
     {
         _activitySource = activitySource ?? throw new ArgumentNullException(nameof(activitySource));
 

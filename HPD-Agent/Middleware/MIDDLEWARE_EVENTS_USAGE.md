@@ -1,22 +1,22 @@
-# Filter Event System Usage Guide
+# Middleware Event System Usage Guide
 
-This guide shows how to use the new bidirectional filter event system.
+This guide shows how to use the new bidirectional Middleware event system.
 
 ## Table of Contents
 
 - [Overview](#overview)
-- [Event Interfaces](#event-interfaces) - `IFilterEvent` and `IPermissionEvent`
+- [Event Interfaces](#event-interfaces) - `IMiddlewareEvent` and `IPermissionEvent`
 - [Quick Start](#quick-start) - Get up and running in 5 minutes
 - [Handling Events at Different Levels](#handling-events-at-different-levels) - Infrastructure, Domain, Specific
-- [When to Create Custom Permission Filters](#when-to-create-custom-permission-filters) - **Start here if you need advanced permissions**
-- [Custom Event Types](#custom-event-types) - Create your own filter and permission events
+- [When to Create Custom Permission Middlewares](#when-to-create-custom-permission-Middlewares) - **Start here if you need advanced permissions**
+- [Custom Event Types](#custom-event-types) - Create your own Middleware and permission events
 - [Key Features](#key-features) - Real-time streaming, protocol agnostic, thread-safe
 - [Best Practices](#best-practices)
 - [Examples](#examples)
 
 ## Overview
 
-The filter event system allows filters to:
+The Middleware event system allows Middlewares to:
 - **Emit one-way events** (progress, errors, custom data)
 - **Request/wait for responses** (permissions, approvals, user input)
 - **Work with any protocol** (AGUI, Console, Web, etc.)
@@ -25,24 +25,24 @@ All events flow through a **shared channel** and are **streamed in real-time** t
 
 ### Quick Decision Guide
 
-**Use the default permission filter if:**
+**Use the default permission Middleware if:**
 - ✅ You need simple approve/deny decisions
 - ✅ You're building a console app or simple UI
 - ✅ You don't need to modify function arguments
 - ✅ Binary permissions are enough
 
-**Create a custom permission filter if:**
+**Create a custom permission Middleware if:**
 - 🔧 You need richer decision states (approved with changes, deferred, requires preview)
 - 🔧 You need to modify function arguments before execution
 - 🔧 You have multi-stage approval workflows
 - 🔧 You need enterprise metadata (cost, risk, compliance)
 - 🔧 You want risk-based or cost-based auto-decisions
 
-See [When to Create Custom Permission Filters](#when-to-create-custom-permission-filters) for details.
+See [When to Create Custom Permission Middlewares](#when-to-create-custom-permission-Middlewares) for details.
 
 ## Event Interfaces
 
-The system provides two marker interfaces for categorizing filter events:
+The system provides two marker interfaces for categorizing Middleware events:
 
 ### `IBidirectionalEvent`
 Marker interface for all events supporting bidirectional communication. Allows applications to handle events uniformly for monitoring, logging, and UI routing.
@@ -71,8 +71,8 @@ InternalAgentEvent (base)
 IBidirectionalEvent (all bidirectional events)
 │   - SourceName: string
 │
-├── InternalFilterProgressEvent
-├── InternalFilterErrorEvent
+├── InternalMiddlewareProgressEvent
+├── InternalMiddlewareErrorEvent
 ├── Custom events (user-defined, implement IBidirectionalEvent)
 │
 └── IPermissionEvent (permission-specific)
@@ -91,37 +91,37 @@ IBidirectionalEvent (all bidirectional events)
 
 ## Quick Start
 
-### 1. Create a Simple Progress Filter
+### 1. Create a Simple Progress Middleware
 
 ```csharp
-public class MyProgressFilter : IAIFunctionMiddleware
+public class MyProgressMiddleware : IAIFunctionMiddleware
 {
     public async Task InvokeAsync(AiFunctionContext context, Func<AiFunctionContext, Task> next)
     {
         // Emit start event
-        context.Emit(new InternalFilterProgressEvent(
-            "MyProgressFilter",
+        context.Emit(new InternalMiddlewareProgressEvent(
+            "MyProgressMiddleware",
             $"Starting {context.ToolCallRequest.FunctionName}",
             PercentComplete: 0));
 
         await next(context);
 
         // Emit completion event
-        context.Emit(new InternalFilterProgressEvent(
-            "MyProgressFilter",
+        context.Emit(new InternalMiddlewareProgressEvent(
+            "MyProgressMiddleware",
             "Done!",
             PercentComplete: 100));
     }
 }
 ```
 
-### 2. Add Filter to Agent
+### 2. Add Middleware to Agent
 
 ```csharp
 var agent = new AgentBuilder()
     .WithProvider("openai", "gpt-4", apiKey)
     .WithPlugin<FileSystemPlugin>()
-    .WithFilter(new MyProgressFilter())  // Add your filter!
+    .WithMiddleware(new MyProgressMiddleware())  // Add your Middleware!
     .Build();
 ```
 
@@ -133,7 +133,7 @@ await foreach (var evt in agent.RunStreamingAsync(thread, options))
     // Option A: Handle specific event types
     switch (evt)
     {
-        case InternalFilterProgressEvent progress:
+        case InternalMiddlewareProgressEvent progress:
             Console.WriteLine($"[{progress.SourceName}] {progress.Message}");
             break;
 
@@ -142,10 +142,10 @@ await foreach (var evt in agent.RunStreamingAsync(thread, options))
             break;
     }
 
-    // Option B: Handle all filter events uniformly
+    // Option B: Handle all Middleware events uniformly
     if (evt is IBidirectionalEvent bidirEvt)
     {
-        _filterMonitor.Track(bidirEvt.SourceName);
+        _MiddlewareMonitor.Track(bidirEvt.SourceName);
     }
 
     // Option C: Handle permission events uniformly
@@ -156,24 +156,24 @@ await foreach (var evt in agent.RunStreamingAsync(thread, options))
 }
 ```
 
-That's it! Events automatically flow from filters to handlers.
+That's it! Events automatically flow from Middlewares to handlers.
 
 ## Handling Events at Different Levels
 
 The event system supports three levels of handling:
 
-### Level 1: Infrastructure - All Filter Events (`IFilterEvent`)
+### Level 1: Infrastructure - All Middleware Events (`IMiddlewareEvent`)
 
-Handle all filter events uniformly for monitoring, logging, or UI routing:
+Handle all Middleware events uniformly for monitoring, logging, or UI routing:
 
 ```csharp
 await foreach (var evt in agent.RunStreamingAsync(...))
 {
-    if (evt is IFilterEvent filterEvt)
+    if (evt is IMiddlewareEvent MiddlewareEvt)
     {
-        // Works for ALL filter events (progress, errors, permissions, custom)
-        await _filterMonitor.TrackAsync(filterEvt.FilterName);
-        await _filterLogger.LogAsync($"[{filterEvt.FilterName}] {evt.GetType().Name}");
+        // Works for ALL Middleware events (progress, errors, permissions, custom)
+        await _MiddlewareMonitor.TrackAsync(MiddlewareEvt.MiddlewareName);
+        await _MiddlewareLogger.LogAsync($"[{MiddlewareEvt.MiddlewareName}] {evt.GetType().Name}");
     }
 }
 ```
@@ -188,7 +188,7 @@ await foreach (var evt in agent.RunStreamingAsync(...))
     if (evt is IPermissionEvent permEvt)
     {
         // Works for ALL permission events (requests, responses, approvals, denials)
-        await _auditLog.RecordAsync(permEvt.PermissionId, permEvt.FilterName, evt);
+        await _auditLog.RecordAsync(permEvt.PermissionId, permEvt.MiddlewareName, evt);
         await _permissionPipeline.ProcessAsync(permEvt);
     }
 }
@@ -208,7 +208,7 @@ await foreach (var evt in agent.RunStreamingAsync(...))
             await PromptUserAsync(req);
             break;
 
-        case InternalFilterProgressEvent progress:
+        case InternalMiddlewareProgressEvent progress:
             // Specific handling for progress
             UpdateProgressBar(progress.PercentComplete);
             break;
@@ -221,10 +221,10 @@ await foreach (var evt in agent.RunStreamingAsync(...))
 ```csharp
 await foreach (var evt in agent.RunStreamingAsync(...))
 {
-    // Level 1: Infrastructure (all filters)
-    if (evt is IFilterEvent filterEvt)
+    // Level 1: Infrastructure (all Middlewares)
+    if (evt is IMiddlewareEvent MiddlewareEvt)
     {
-        await _filterMonitor.TrackAsync(filterEvt.FilterName);
+        await _MiddlewareMonitor.TrackAsync(MiddlewareEvt.MiddlewareName);
     }
 
     // Level 2: Domain (permissions)
@@ -254,16 +254,16 @@ await foreach (var evt in agent.RunStreamingAsync(...))
 
 #### Progress Events
 ```csharp
-context.Emit(new InternalFilterProgressEvent(
-    "MyFilter",
+context.Emit(new InternalMiddlewareProgressEvent(
+    "MyMiddleware",
     "Processing...",
     PercentComplete: 50));
 ```
 
 #### Error Events
 ```csharp
-context.Emit(new InternalFilterErrorEvent(
-    "MyFilter",
+context.Emit(new InternalMiddlewareErrorEvent(
+    "MyMiddleware",
     "Something went wrong",
     exception));
 ```
@@ -279,7 +279,7 @@ public record MyCustomEvent(
 
 // Emit it
 context.Emit(new MyCustomEvent(
-    "MyFilter",
+    "MyMiddleware",
     "value",
     42));
 ```
@@ -299,7 +299,7 @@ context.Emit(new InternalPermissionRequestEvent(
     callId: "...",
     arguments: context.ToolCallRequest.Arguments));
 
-// 2. Wait for response (blocks filter, but events still flow!)
+// 2. Wait for response (blocks Middleware, but events still flow!)
 var response = await context.WaitForResponseAsync<InternalPermissionResponseEvent>(
     permissionId,
     timeout: TimeSpan.FromMinutes(5));
@@ -317,18 +317,18 @@ else
 
 ---
 
-## Complete Example: Permission Filter
+## Complete Example: Permission Middleware
 
-### Filter Code
+### Middleware Code
 
 ```csharp
 public class SimplePermissionMiddleware : IAIFunctionMiddleware
 {
-    private readonly string _filterName;
+    private readonly string _MiddlewareName;
 
-    public SimplePermissionMiddleware(string filterName = "SimplePermissionMiddleware")
+    public SimplePermissionMiddleware(string MiddlewareName = "SimplePermissionMiddleware")
     {
-        _filterName = filterName;
+        _MiddlewareName = MiddlewareName;
     }
 
     public async Task InvokeAsync(AiFunctionContext context, Func<AiFunctionContext, Task> next)
@@ -338,7 +338,7 @@ public class SimplePermissionMiddleware : IAIFunctionMiddleware
         // Emit request
         context.Emit(new InternalPermissionRequestEvent(
             permissionId,
-            _filterName,
+            _MiddlewareName,
             context.ToolCallRequest.FunctionName,
             "Permission required",
             callId: "...",
@@ -352,12 +352,12 @@ public class SimplePermissionMiddleware : IAIFunctionMiddleware
 
             if (response.Approved)
             {
-                context.Emit(new InternalPermissionApprovedEvent(permissionId, _filterName));
+                context.Emit(new InternalPermissionApprovedEvent(permissionId, _MiddlewareName));
                 await next(context);
             }
             else
             {
-                context.Emit(new InternalPermissionDeniedEvent(permissionId, _filterName, "User denied"));
+                context.Emit(new InternalPermissionDeniedEvent(permissionId, _MiddlewareName, "User denied"));
                 context.Result = "Permission denied";
                 context.IsTerminated = true;
             }
@@ -389,11 +389,11 @@ public async Task RunWithPermissionsAsync(Agent agent)
                     var input = Console.ReadLine();
                     var approved = input?.ToLower() == "y";
 
-                    // Send response back to waiting filter
-                    agent.SendFilterResponse(permReq.PermissionId,
+                    // Send response back to waiting Middleware
+                    agent.SendMiddlewareResponse(permReq.PermissionId,
                         new InternalPermissionResponseEvent(
                             permReq.PermissionId,
-                            permReq.FilterName,
+                            permReq.MiddlewareName,
                             approved,
                             approved ? null : "User denied",
                             PermissionChoice.Ask));
@@ -414,27 +414,27 @@ public async Task RunWithPermissionsAsync(Agent agent)
 
 You can create your own event types and implement the marker interfaces for automatic categorization:
 
-### Custom Filter Events
+### Custom Middleware Events
 
 ```csharp
-// 1. Define custom event that implements IFilterEvent
+// 1. Define custom event that implements IMiddlewareEvent
 public record DatabaseQueryStartEvent(
     string SourceName,
     string QueryId,
     string Query,
-    TimeSpan EstimatedDuration) : InternalAgentEvent, IFilterEvent;
+    TimeSpan EstimatedDuration) : InternalAgentEvent, IMiddlewareEvent;
 
-// 2. Emit in filter
-public class DatabaseFilter : IAIFunctionMiddleware
+// 2. Emit in Middleware
+public class DatabaseMiddleware : IAIFunctionMiddleware
 {
-    private readonly string _filterName = "DatabaseFilter";
+    private readonly string _MiddlewareName = "DatabaseMiddleware";
 
     public async Task InvokeAsync(AiFunctionContext context, Func<AiFunctionContext, Task> next)
     {
         var queryId = Guid.NewGuid().ToString();
 
         context.Emit(new DatabaseQueryStartEvent(
-            _filterName,
+            _MiddlewareName,
             queryId,
             query: "SELECT * FROM users",
             EstimatedDuration: TimeSpan.FromSeconds(2)));
@@ -446,17 +446,17 @@ public class DatabaseFilter : IAIFunctionMiddleware
 // 3. Handle in event loop
 await foreach (var evt in agent.RunStreamingAsync(...))
 {
-    // Option A: Handle generically as a filter event
-    if (evt is IFilterEvent filterEvt)
+    // Option A: Handle generically as a Middleware event
+    if (evt is IMiddlewareEvent MiddlewareEvt)
     {
-        _filterMonitor.Track(filterEvt.FilterName);  // Works automatically!
+        _MiddlewareMonitor.Track(MiddlewareEvt.MiddlewareName);  // Works automatically!
     }
 
     // Option B: Handle specifically
     switch (evt)
     {
         case DatabaseQueryStartEvent dbEvt:
-            Console.WriteLine($"[{dbEvt.FilterName}] Query starting: {dbEvt.Query}");
+            Console.WriteLine($"[{dbEvt.MiddlewareName}] Query starting: {dbEvt.Query}");
             break;
     }
 }
@@ -488,10 +488,10 @@ public record EnterprisePermissionResponseEvent(
     string[] ApproverChain
 ) : InternalAgentEvent, IPermissionEvent;
 
-// Use in custom filter
+// Use in custom Middleware
 public class EnterprisePermissionMiddleware : IPermissionMiddleware
 {
-    private readonly string _filterName = "EnterprisePermissionMiddleware";
+    private readonly string _MiddlewareName = "EnterprisePermissionMiddleware";
 
     public async Task InvokeAsync(AiFunctionContext context, Func<AiFunctionContext, Task> next)
     {
@@ -500,7 +500,7 @@ public class EnterprisePermissionMiddleware : IPermissionMiddleware
         // Emit rich custom event
         context.Emit(new EnterprisePermissionRequestEvent(
             permissionId,
-            _filterName,
+            _MiddlewareName,
             context.ToolCallRequest.FunctionName,
             context.ToolCallRequest.Arguments,
             EstimatedCost: CalculateCost(context),
@@ -523,7 +523,7 @@ await foreach (var evt in agent.RunStreamingAsync(...))
     // Infrastructure: ALL permission events (built-in AND custom)
     if (evt is IPermissionEvent permEvt)
     {
-        await _auditLog.RecordAsync(permEvt.PermissionId, permEvt.FilterName, evt);
+        await _auditLog.RecordAsync(permEvt.PermissionId, permEvt.MiddlewareName, evt);
     }
 
     // Specific: Handle your custom event
@@ -539,9 +539,9 @@ await foreach (var evt in agent.RunStreamingAsync(...))
 
 ---
 
-## When to Create Custom Permission Filters
+## When to Create Custom Permission Middlewares
 
-### Default Permission Filter: Good for Most Use Cases
+### Default Permission Middleware: Good for Most Use Cases
 
 The built-in `PermissionMiddleware` is perfect for 90% of applications:
 
@@ -553,10 +553,10 @@ var agent = new AgentBuilder()
 // Simple binary decisions: Allow or Deny
 case InternalPermissionRequestEvent req:
     var approved = Console.ReadLine()?.ToLower() == "y";
-    agent.SendFilterResponse(req.PermissionId,
+    agent.SendMiddlewareResponse(req.PermissionId,
         new InternalPermissionResponseEvent(
             req.PermissionId,
-            req.FilterName,
+            req.MiddlewareName,
             approved));
 ```
 
@@ -566,9 +566,9 @@ case InternalPermissionRequestEvent req:
 - ✅ Console or simple UI prompts
 - ✅ Low complexity permission logic
 
-### Custom Permission Filters: For Advanced Scenarios
+### Custom Permission Middlewares: For Advanced Scenarios
 
-Create a custom permission filter when you need:
+Create a custom permission Middleware when you need:
 
 #### **1. Richer Decision States**
 
@@ -595,7 +595,7 @@ User wants: "Yes, but move to trash instead of permanent delete"
 // Custom response event with modified arguments
 new RichPermissionResponseEvent(
     permissionId,
-    filterName,
+    MiddlewareName,
     Decision: RichDecisionType.ApprovedWithChanges,
     ModifiedArguments: new Dictionary<string, object?>
     {
@@ -603,7 +603,7 @@ new RichPermissionResponseEvent(
         ["permanent"] = false  // Changed from true
     });
 
-// Filter applies changes before execution
+// Middleware applies changes before execution
 if (response.Decision == RichDecisionType.ApprovedWithChanges)
 {
     foreach (var (key, value) in response.ModifiedArguments ?? new Dictionary<string, object?>())
@@ -620,7 +620,7 @@ if (response.Decision == RichDecisionType.ApprovedWithChanges)
 // Stage 1: Request permission
 context.Emit(new WorkflowPermissionRequestEvent(
     permissionId,
-    filterName,
+    MiddlewareName,
     functionName,
     RequiredApprovers: new[] { "manager@company.com" },
     WorkflowType: WorkflowType.ManagerApproval));
@@ -689,7 +689,7 @@ public class RiskBasedPermissionMiddleware : IPermissionMiddleware
 }
 ```
 
-### Benefits of `IPermissionEvent` for Custom Filters
+### Benefits of `IPermissionEvent` for Custom Middlewares
 
 When you create custom permission events that implement `IPermissionEvent`, you **automatically benefit** from application infrastructure:
 
@@ -701,13 +701,13 @@ await foreach (var evt in agent.RunStreamingAsync(...))
     if (evt is IPermissionEvent permEvt)
     {
         // Audit logging
-        await _auditLog.RecordAsync(permEvt.PermissionId, permEvt.FilterName, evt);
+        await _auditLog.RecordAsync(permEvt.PermissionId, permEvt.MiddlewareName, evt);
 
         // Compliance validation
         await _complianceChecker.ValidateAsync(permEvt);
 
         // Metrics tracking
-        await _metrics.TrackPermissionAsync(permEvt.FilterName);
+        await _metrics.TrackPermissionAsync(permEvt.MiddlewareName);
     }
 
     // Then handle your specific custom event
@@ -720,9 +720,9 @@ await foreach (var evt in agent.RunStreamingAsync(...))
 }
 ```
 
-**No need to duplicate infrastructure for each custom filter!**
+**No need to duplicate infrastructure for each custom Middleware!**
 
-### Complete Custom Permission Filter Example
+### Complete Custom Permission Middleware Example
 
 See the [Custom Permission Events](#custom-permission-events) section for a full working example.
 
@@ -731,24 +731,24 @@ See the [Custom Permission Events](#custom-permission-events) section for a full
 ## Key Features
 
 ### ✅ Real-Time Streaming
-Events are visible to handlers **WHILE** filters are executing (not after):
+Events are visible to handlers **WHILE** Middlewares are executing (not after):
 
 ```
 Timeline:
-T0: Filter emits permission request → Shared channel
+T0: Middleware emits permission request → Shared channel
 T1: Background drainer reads → Event queue
 T2: Main loop yields → Handler receives event
-T3: Filter still blocked waiting ← HANDLER CAN RESPOND!
+T3: Middleware still blocked waiting ← HANDLER CAN RESPOND!
 T4: Handler sends response
-T5: Filter receives response and unblocks
+T5: Middleware receives response and unblocks
 ```
 
 ### ✅ Zero Dependencies
-Filters don't need dependency injection:
+Middlewares don't need dependency injection:
 
 ```csharp
 // No constructor parameters needed!
-public class MyFilter : IAIFunctionMiddleware
+public class MyMiddleware : IAIFunctionMiddleware
 {
     public async Task InvokeAsync(AiFunctionContext context, ...)
     {
@@ -758,10 +758,10 @@ public class MyFilter : IAIFunctionMiddleware
 ```
 
 ### ✅ Protocol Agnostic
-One filter works with **all** protocols:
+One Middleware works with **all** protocols:
 
 ```csharp
-// Same filter used by:
+// Same Middleware used by:
 // - AGUI (web UI)
 // - Console app
 // - Discord bot
@@ -770,13 +770,13 @@ One filter works with **all** protocols:
 ```
 
 ### ✅ Thread-Safe
-Multiple filters can emit events concurrently:
+Multiple Middlewares can emit events concurrently:
 
 ```csharp
-// Filter pipeline:
-Filter1.Emit(Event1)
-  → calls Filter2
-     → Filter2.Emit(Event2)  // Concurrent!
+// Middleware pipeline:
+Middleware1.Emit(Event1)
+  → calls Middleware2
+     → Middleware2.Emit(Event2)  // Concurrent!
 
 // Both events flow through shared channel safely
 ```
@@ -787,9 +787,9 @@ Filter1.Emit(Event1)
 
 ### 1. Always Emit Observability Events
 ```csharp
-context.Emit(new InternalFilterProgressEvent("MyFilter", "Starting"));
+context.Emit(new InternalMiddlewareProgressEvent("MyMiddleware", "Starting"));
 await next(context);
-context.Emit(new InternalFilterProgressEvent("MyFilter", "Done"));
+context.Emit(new InternalMiddlewareProgressEvent("MyMiddleware", "Done"));
 ```
 
 ### 2. Handle Timeouts
@@ -836,11 +836,11 @@ else
 
 ### Old Way (Custom Interfaces)
 ```csharp
-public class OldFilter
+public class OldMiddleware
 {
     private readonly IPermissionEventEmitter _emitter;
 
-    public OldFilter(IPermissionEventEmitter emitter)  // Requires DI!
+    public OldMiddleware(IPermissionEventEmitter emitter)  // Requires DI!
     {
         _emitter = emitter;
     }
@@ -849,7 +849,7 @@ public class OldFilter
 
 ### New Way (Standardized)
 ```csharp
-public class NewFilter : IAIFunctionMiddleware
+public class NewMiddleware : IAIFunctionMiddleware
 {
     // No dependencies!
 
@@ -865,10 +865,10 @@ public class NewFilter : IAIFunctionMiddleware
 
 ## Examples
 
-See `ExampleFilters.cs` for:
-- `ProgressLoggingFilter` - Simple one-way events
-- `CostTrackingFilter` - Custom event types
+See `ExampleMiddlewares.cs` for:
+- `ProgressLoggingMiddleware` - Simple one-way events
+- `CostTrackingMiddleware` - Custom event types
 - `SimplePermissionMiddleware` - Bidirectional request/response
 
-Happy filtering! 🎉
+Happy Middlewareing! 🎉
 ß

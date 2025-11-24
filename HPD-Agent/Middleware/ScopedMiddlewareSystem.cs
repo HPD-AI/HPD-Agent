@@ -31,7 +31,7 @@ internal class ScopedMiddleware
     
     public ScopedMiddleware(IAIFunctionMiddleware Middleware, MiddlewareScope scope, string? target = null)
     {
-        Middleware = Middleware ?? throw new ArgumentNullException(nameof(Middleware));
+        this.Middleware = Middleware ?? throw new ArgumentNullException(nameof(Middleware));
         Scope = scope;
         Target = target;
     }
@@ -76,6 +76,10 @@ internal class ScopedFunctionMiddlewareManager
     /// </summary>
     public void AddMiddleware(IAIFunctionMiddleware Middleware, MiddlewareScope scope, string? target = null)
     {
+        if (Middleware == null)
+        {
+            return;
+        }
         _scopedMiddlewares.Add(new ScopedMiddleware(Middleware, scope, target));
     }
     
@@ -145,10 +149,12 @@ internal class ScopedFunctionMiddlewareManager
     /// </summary>
     public List<IAIFunctionMiddleware> GetGlobalMiddlewares()
     {
-        return _scopedMiddlewares
+        var globalMiddlewares = _scopedMiddlewares
             .Where(sf => sf.Scope == MiddlewareScope.Global)
             .Select(sf => sf.Middleware)
             .ToList();
+
+        return globalMiddlewares;
     }
 }
 

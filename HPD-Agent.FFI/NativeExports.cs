@@ -722,7 +722,7 @@ public static partial class NativeExports
             };
 
             // Send response back to the agent
-            agent.SendFilterResponse(
+            agent.SendMiddlewareResponse(
                 permissionId,
                 new InternalPermissionResponseEvent(
                     permissionId,
@@ -936,7 +936,7 @@ public static partial class NativeExports
             if (response == null) return 0;
 
             // Send response to agent
-            aguiAgent.SendFilterResponse(filterId, response);
+            aguiAgent.SendMiddlewareResponse(filterId, response);
 
             return 1;
         }

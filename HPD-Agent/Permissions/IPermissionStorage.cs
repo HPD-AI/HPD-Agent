@@ -4,30 +4,27 @@ using System.Threading.Tasks;
 /// Interface for storing and retrieving permission preferences.
 /// Implementations can use in-memory, file-based, or database storage.
 /// Scoping is implicit based on which parameters are provided:
-/// - functionName only: Global permission
-/// - functionName + conversationId: Conversation-scoped permission
-/// - functionName + conversationId + threadId: Thread-scoped permission
+/// - functionName only: Global permission (applies to all conversations)
+/// - functionName + conversationId: Conversation-scoped permission (applies to specific conversation only)
 /// </summary>
 public interface IPermissionStorage
 {
     /// <summary>
     /// Gets a stored permission preference for a specific function.
-    /// Pass conversationId and/or threadId to scope the lookup.
+    /// Pass conversationId to scope the lookup to a specific conversation, or omit for global lookup.
     /// Returns null if no stored permission exists.
     /// </summary>
     Task<PermissionChoice?> GetStoredPermissionAsync(
         string functionName,
-        string? conversationId = null,
-        string? threadId = null);
+        string? conversationId = null);
 
     /// <summary>
     /// Saves a permission preference for a specific function.
-    /// Pass conversationId and/or threadId to scope the storage.
-    /// Scope is implicit: no IDs = global, conversationId = conversation-scoped, both = thread-scoped.
+    /// Pass conversationId to scope to a specific conversation, or omit for global scope.
+    /// Scope is implicit: no conversationId = global (all conversations), conversationId = conversation-scoped.
     /// </summary>
     Task SavePermissionAsync(
         string functionName,
         PermissionChoice choice,
-        string? conversationId = null,
-        string? threadId = null);
+        string? conversationId = null);
 }

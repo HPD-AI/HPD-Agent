@@ -1,0 +1,45 @@
+using System.Collections.Generic;
+using System.Linq;
+
+/// <summary>
+/// Shared helper for generating scope container descriptions and metadata.
+/// Used by both HPDPluginSourceGenerator and SkillCodeGenerator to avoid code duplication.
+/// </summary>
+internal static class ScopeContainerHelper
+{
+    /// <summary>
+    /// Generates a Mermaid flowchart showing the invocation flow for a scoped container.
+    /// Format: A[Invoke PluginName] --> B{Access Granted} B --> C[Function1] & D[Function2] & ...
+    /// </summary>
+    public static string GenerateMermaidFlow(string pluginName, List<string> capabilities)
+    {
+        var functionNodes = string.Join(" & ", capabilities.Select((name, index) => $"{(char)('C' + index)}[{name}]"));
+        return $"A[Invoke {pluginName}] --> B{{{{Access Granted}}}} B --> {functionNodes}";
+    }
+
+    /// <summary>
+    /// Generates the full container description including user description and Mermaid flow.
+    /// </summary>
+    public static string GenerateContainerDescription(string? userDescription, string pluginName, List<string> capabilities)
+    {
+        var description = userDescription ?? string.Empty;
+        var mermaidFlow = GenerateMermaidFlow(pluginName, capabilities);
+        return $"{description}. {mermaidFlow}";
+    }
+
+    /// <summary>
+    /// Generates the return message shown after container expansion.
+    /// </summary>
+    public static string GenerateReturnMessage(string pluginName, List<string> capabilities, string? postExpansionInstructions)
+    {
+        var capabilitiesList = string.Join(", ", capabilities);
+        var returnMessage = $"{pluginName} expanded. Available functions: {capabilitiesList}";
+
+        if (!string.IsNullOrEmpty(postExpansionInstructions))
+        {
+            returnMessage += $"\n\n{postExpansionInstructions}";
+        }
+
+        return returnMessage;
+    }
+}

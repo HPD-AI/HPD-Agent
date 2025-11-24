@@ -13,6 +13,7 @@ internal class PermissionMiddleware : IPermissionMiddleware
     private readonly IPermissionStorage? _storage;
     private readonly AgentConfig? _config;
     private readonly string _MiddlewareName;
+    private readonly HPD_Agent.Permissions.PermissionOverrideRegistry? _overrideRegistry;
 
     /// <summary>
     /// Creates a new unified permission Middleware.
@@ -20,36 +21,56 @@ internal class PermissionMiddleware : IPermissionMiddleware
     /// <param name="storage">Optional permission storage for persistent decisions</param>
     /// <param name="config">Optional agent configuration for continuation settings</param>
     /// <param name="MiddlewareName">Optional name for this Middleware instance (defaults to "PermissionMiddleware")</param>
-    public PermissionMiddleware(IPermissionStorage? storage = null, AgentConfig? config = null, string? MiddlewareName = null)
+    /// <param name="overrideRegistry">Optional registry for runtime permission overrides</param>
+    public PermissionMiddleware(IPermissionStorage? storage = null, AgentConfig? config = null, string? MiddlewareName = null, HPD_Agent.Permissions.PermissionOverrideRegistry? overrideRegistry = null)
     {
         _storage = storage;
         _config = config;
         _MiddlewareName = MiddlewareName ?? "PermissionMiddleware";
+        _overrideRegistry = overrideRegistry;
     }
 
     public async Task InvokeAsync(FunctionInvocationContext context, Func<FunctionInvocationContext, Task> next)
     {
+        var functionName = context.ToolCallRequest?.FunctionName ?? "Unknown";
+
+        // Get the attribute value for RequiresPermission
+        var attributeRequiresPermission = context.Function is HPDAIFunctionFactory.HPDAIFunction hpdFunction
+            && hpdFunction.HPDOptions.RequiresPermission;
+
+        // Apply override if present, otherwise use attribute value
+        var effectiveRequiresPermission = _overrideRegistry?.GetEffectivePermissionRequirement(functionName, attributeRequiresPermission)
+            ?? attributeRequiresPermission;
+
         // Check: Function-level permission (if required)
-        if (context.Function is not HPDAIFunctionFactory.HPDAIFunction hpdFunction ||
-            !hpdFunction.HPDOptions.RequiresPermission)
+        if (!effectiveRequiresPermission)
         {
             await next(context);
             return;
         }
 
-        var functionName = context.ToolCallRequest?.FunctionName ?? "Unknown";
-        var conversationId = context.State?.ConversationId ?? string.Empty;
+        var conversationId = context.State?.ConversationId;
 
         // Get the unique call ID for this specific tool invocation
         var callId = context.Metadata.TryGetValue("CallId", out var idObj)
             ? idObj?.ToString()
             : null;
 
-        // Check storage if available
-        if (_storage != null && !string.IsNullOrEmpty(conversationId))
+        // Hierarchical permission lookup: conversation-scoped → global → ask user
+        if (_storage != null)
         {
-            var storedChoice = await _storage.GetStoredPermissionAsync(functionName, conversationId);
+            PermissionChoice? storedChoice = null;
 
+            // 1. Try conversation-scoped permission first (if we have a conversationId)
+            if (!string.IsNullOrEmpty(conversationId))
+            {
+                storedChoice = await _storage.GetStoredPermissionAsync(functionName, conversationId);
+            }
+
+            // 2. Fallback to global permission if no conversation-specific permission found
+            storedChoice ??= await _storage.GetStoredPermissionAsync(functionName, conversationId: null);
+
+            // 3. Apply stored choice if found
             if (storedChoice == PermissionChoice.AlwaysAllow)
             {
                 await next(context);

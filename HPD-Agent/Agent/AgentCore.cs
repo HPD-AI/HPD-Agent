@@ -4352,7 +4352,6 @@ internal class FunctionCallProcessor
 
             // ✅ PHASE 2: Track AIFunction Middleware pipeline execution
             var Middlewarestopwatch = System.Diagnostics.Stopwatch.StartNew();
-            var MiddlewareCount = allStandardMiddlewares.Count();
 
             // Build and execute the Middleware pipeline using MiddlewareChain
             var pipeline = MiddlewareChain.BuildAiFunctionPipeline(allStandardMiddlewares, finalInvoke);

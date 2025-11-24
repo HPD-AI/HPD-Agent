@@ -25,7 +25,7 @@ public static class AgentBuilderPermissionExtensions
         IPermissionStorage? permissionStorage = null)
     {
         var storage = permissionStorage ?? new InMemoryPermissionStorage();
-        var Middleware = new PermissionMiddleware(storage, builder.Config);
+        var Middleware = new PermissionMiddleware(storage, builder.Config, overrideRegistry: builder._permissionOverrides);
         return builder.WithPermissionMiddleware(Middleware);
     }
 
@@ -36,6 +36,56 @@ public static class AgentBuilderPermissionExtensions
     {
         var Middleware = new AutoApprovePermissionMiddleware();
         return builder.WithPermissionMiddleware(Middleware);
+    }
+
+    /// <summary>
+    /// Forces a specific function to require permission, overriding the [RequiresPermission] attribute.
+    /// Useful when using third-party plugins that don't have permission checks on sensitive functions.
+    /// </summary>
+    /// <param name="builder">The agent builder</param>
+    /// <param name="functionName">The name of the function to require permission for</param>
+    /// <returns>The agent builder for chaining</returns>
+    /// <example>
+    /// var agent = new AgentBuilder()
+    ///     .WithPlugin&lt;ThirdPartyDatabasePlugin&gt;()
+    ///     .RequirePermissionFor("DeleteAllData")  // Force permission even if attribute says no
+    ///     .Build();
+    /// </example>
+    public static AgentBuilder RequirePermissionFor(this AgentBuilder builder, string functionName)
+    {
+        builder._permissionOverrides.RequirePermission(functionName);
+        return builder;
+    }
+
+    /// <summary>
+    /// Disables permission requirement for a specific function, overriding the [RequiresPermission] attribute.
+    /// Useful when you trust a function and don't want to be prompted.
+    /// </summary>
+    /// <param name="builder">The agent builder</param>
+    /// <param name="functionName">The name of the function to disable permission for</param>
+    /// <returns>The agent builder for chaining</returns>
+    /// <example>
+    /// var agent = new AgentBuilder()
+    ///     .WithPlugin&lt;FileSystemPlugin&gt;()
+    ///     .DisablePermissionFor("ReadFile")  // Remove permission requirement
+    ///     .Build();
+    /// </example>
+    public static AgentBuilder DisablePermissionFor(this AgentBuilder builder, string functionName)
+    {
+        builder._permissionOverrides.DisablePermission(functionName);
+        return builder;
+    }
+
+    /// <summary>
+    /// Clears any permission override for a function, restoring attribute-based behavior.
+    /// </summary>
+    /// <param name="builder">The agent builder</param>
+    /// <param name="functionName">The name of the function to clear override for</param>
+    /// <returns>The agent builder for chaining</returns>
+    public static AgentBuilder ClearPermissionOverride(this AgentBuilder builder, string functionName)
+    {
+        builder._permissionOverrides.ClearOverride(functionName);
+        return builder;
     }
 }
 
@@ -49,10 +99,9 @@ public class InMemoryPermissionStorage : IPermissionStorage
 
     public Task<PermissionChoice?> GetStoredPermissionAsync(
         string functionName,
-        string? conversationId = null,
-        string? threadId = null)
+        string? conversationId = null)
     {
-        var key = BuildKey(functionName, conversationId, threadId);
+        var key = BuildKey(functionName, conversationId);
         _permissions.TryGetValue(key, out var choice);
         return Task.FromResult((PermissionChoice?)choice);
     }
@@ -60,12 +109,11 @@ public class InMemoryPermissionStorage : IPermissionStorage
     public Task SavePermissionAsync(
         string functionName,
         PermissionChoice choice,
-        string? conversationId = null,
-        string? threadId = null)
+        string? conversationId = null)
     {
         if (choice != PermissionChoice.Ask)
         {
-            var key = BuildKey(functionName, conversationId, threadId);
+            var key = BuildKey(functionName, conversationId);
             _permissions[key] = choice;
         }
         return Task.CompletedTask;
@@ -74,14 +122,11 @@ public class InMemoryPermissionStorage : IPermissionStorage
     /// <summary>
     /// Builds a storage key with implicit scoping based on provided parameters.
     /// </summary>
-    private static string BuildKey(string functionName, string? conversationId, string? threadId)
+    private static string BuildKey(string functionName, string? conversationId)
     {
         // Scoping is implicit in the key structure:
-        // - thread-scoped: "conv:thread:function"
-        // - conversation-scoped: "conv:function"
-        // - global: "function"
-        if (!string.IsNullOrEmpty(threadId) && !string.IsNullOrEmpty(conversationId))
-            return $"{conversationId}:{threadId}:{functionName}";
+        // - conversation-scoped: "conversationId:functionName"
+        // - global: "functionName"
         if (!string.IsNullOrEmpty(conversationId))
             return $"{conversationId}:{functionName}";
         return functionName;

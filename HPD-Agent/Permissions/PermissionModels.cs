@@ -11,7 +11,8 @@ public class PermissionDecision
     /// <summary>
     /// Optional: Remember this choice for future invocations.
     /// If set, the permission will be stored according to the scope implied by
-    /// the conversationId/threadId parameters passed to SavePermissionAsync.
+    /// the conversationId parameter passed to SavePermissionAsync.
+    /// Pass conversationId to scope to the current conversation, or omit for global scope.
     /// </summary>
     public PermissionChoice? RememberAs { get; set; }
 }
@@ -21,12 +22,12 @@ public class PermissionDecision
 /// </summary>
 public enum PermissionChoice
 {
+    /// <summary>Ask for permission each time (safe default)</summary>
+    Ask = 0,
+
     /// <summary>Always allow this function without asking</summary>
-    AlwaysAllow,
+    AlwaysAllow = 1,
 
     /// <summary>Always deny this function without asking</summary>
-    AlwaysDeny,
-
-    /// <summary>Ask for permission each time</summary>
-    Ask
+    AlwaysDeny = 2
 }

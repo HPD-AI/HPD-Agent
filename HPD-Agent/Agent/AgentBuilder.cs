@@ -48,13 +48,13 @@ public class AgentBuilder
     internal HPD_Agent.Skills.DocumentStore.IInstructionDocumentStore? _documentStore;
     // Track explicitly registered plugins (for scoping manager)
     internal readonly HashSet<string> _explicitlyRegisteredPlugins = new(StringComparer.OrdinalIgnoreCase);
-    private readonly List<IAIFunctionMiddleware> _globalMiddlewares = new();
     internal readonly ScopedFunctionMiddlewareManager _ScopedFunctionMiddlewareManager = new();
     internal readonly BuilderScopeContext _scopeContext = new();
     internal readonly List<IPromptMiddleware> _PromptMiddlewares = new();
     internal readonly List<IPermissionMiddleware> _PermissionMiddlewares = new(); // Permission Middlewares
     internal readonly List<IMessageTurnMiddleware> _MessageTurnMiddlewares = new(); // Message turn Middlewares
     internal readonly List<IIterationMiddleWare> _IterationMiddleWares = new(); // Iteration Middlewares
+    internal readonly HPD_Agent.Permissions.PermissionOverrideRegistry _permissionOverrides = new(); // Permission overrides
 
     // Internal observers for agent-level observability (developer-only, hidden from users)
     private readonly List<IAgentEventObserver> _observers = new();
@@ -681,6 +681,9 @@ public class AgentBuilder
     {
         var buildData = await BuildDependenciesAsync(cancellationToken).ConfigureAwait(false);
 
+        // Get global middlewares from scoped middleware manager
+        var globalMiddlewares = _ScopedFunctionMiddlewareManager.GetGlobalMiddlewares();
+
         // Create protocol-agnostic core agent
         return new AgentCore(
             _config!,
@@ -690,7 +693,7 @@ public class AgentBuilder
             _ScopedFunctionMiddlewareManager!,
             buildData.ErrorHandler,
             _PermissionMiddlewares,
-            _globalMiddlewares,
+            globalMiddlewares,
             _MessageTurnMiddlewares,
             _IterationMiddleWares,
             _serviceProvider,
@@ -750,6 +753,9 @@ public class AgentBuilder
                 extensionAmount: _config.ContinuationExtensionAmount));
         }
 
+        // Get global middlewares from scoped middleware manager
+        var globalMiddlewares = _ScopedFunctionMiddlewareManager.GetGlobalMiddlewares();
+
         // Create protocol-agnostic core agent
         return new AgentCore(
             _config!,
@@ -759,7 +765,7 @@ public class AgentBuilder
             _ScopedFunctionMiddlewareManager!,
             buildData.ErrorHandler,
             _PermissionMiddlewares,
-            _globalMiddlewares,
+            globalMiddlewares,
             _MessageTurnMiddlewares,
             _IterationMiddleWares,
             _serviceProvider,
@@ -780,6 +786,9 @@ public class AgentBuilder
         _config.ExplicitlyRegisteredPlugins = _explicitlyRegisteredPlugins
             .ToImmutableHashSet(StringComparer.OrdinalIgnoreCase);
 
+        // Get global middlewares from scoped middleware manager
+        var globalMiddlewares = _ScopedFunctionMiddlewareManager.GetGlobalMiddlewares();
+
         // Wrap in AGUI protocol adapter
         return new AGUI.Agent(
             _config!,
@@ -789,7 +798,7 @@ public class AgentBuilder
             _ScopedFunctionMiddlewareManager!,
             buildData.ErrorHandler,
             _PermissionMiddlewares,
-            _globalMiddlewares,
+            globalMiddlewares,
             _MessageTurnMiddlewares,
             _IterationMiddleWares,
             _serviceProvider,
@@ -809,6 +818,9 @@ public class AgentBuilder
         _config.ExplicitlyRegisteredPlugins = _explicitlyRegisteredPlugins
             .ToImmutableHashSet(StringComparer.OrdinalIgnoreCase);
 
+        // Get global middlewares from scoped middleware manager
+        var globalMiddlewares = _ScopedFunctionMiddlewareManager.GetGlobalMiddlewares();
+
         // Wrap in AGUI protocol adapter
         return new AGUI.Agent(
             _config!,
@@ -818,7 +830,7 @@ public class AgentBuilder
             _ScopedFunctionMiddlewareManager!,
             buildData.ErrorHandler,
             _PermissionMiddlewares,
-            _globalMiddlewares,
+            globalMiddlewares,
             _MessageTurnMiddlewares,
             _IterationMiddleWares,
             _serviceProvider,
@@ -837,6 +849,9 @@ public class AgentBuilder
         _config.ExplicitlyRegisteredPlugins = _explicitlyRegisteredPlugins
             .ToImmutableHashSet(StringComparer.OrdinalIgnoreCase);
 
+        // Get global middlewares from scoped middleware manager
+        var globalMiddlewares = _ScopedFunctionMiddlewareManager.GetGlobalMiddlewares();
+
         // Create agent using the new, cleaner constructor with AgentConfig
         var agent = new AgentCore(
             _config,
@@ -846,7 +861,7 @@ public class AgentBuilder
             _ScopedFunctionMiddlewareManager,
             buildData.ErrorHandler,
             _PermissionMiddlewares,
-            _globalMiddlewares,
+            globalMiddlewares,
             _MessageTurnMiddlewares,
             _IterationMiddleWares,
             _serviceProvider,

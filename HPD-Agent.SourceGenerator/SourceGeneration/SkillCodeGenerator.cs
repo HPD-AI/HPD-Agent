@@ -290,15 +290,11 @@ internal static class SkillCodeGenerator
 
         var description = !string.IsNullOrEmpty(plugin.ScopeDescription)
             ? plugin.ScopeDescription
-            : plugin.Description;
-        var fullDescription = $"{description}. Contains {totalCount} functions: {capabilitiesList}";
+            : plugin.Description ?? string.Empty;
 
-        // Build the return message with optional post-expansion instructions
-        var returnMessage = $"{plugin.Name} expanded. Available functions: {capabilitiesList}";
-        if (!string.IsNullOrEmpty(plugin.PostExpansionInstructions))
-        {
-            returnMessage += $"\n\n{plugin.PostExpansionInstructions}";
-        }
+        // Use shared helper to generate description and return message
+        var fullDescription = ScopeContainerHelper.GenerateContainerDescription(description, plugin.Name, allCapabilities);
+        var returnMessage = ScopeContainerHelper.GenerateReturnMessage(plugin.Name, allCapabilities, plugin.PostExpansionInstructions);
 
         // Escape the return message for C# verbatim string literal (@"...")
         var escapedReturnMessage = returnMessage.Replace("\"", "\"\"");

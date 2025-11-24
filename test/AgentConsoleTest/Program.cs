@@ -43,11 +43,12 @@ static Task<(ConversationThread, AgentCore)> CreateAIAssistant(ILoggerFactory lo
     var agentConfig = new AgentConfig
     {
         Name = "AI Assistant",
+        SystemInstructions = "You are a helpful AI assistant. When you see a Plugin, call it and do not put a paramter inside of it",
         MaxAgenticIterations = 50,  // Set to 2 to test continuation Middleware
         Provider = new ProviderConfig
         {
-            ProviderKey = "openai",
-            ModelName = "gpt-4.1-2025-04-14", // 🧠 Reasoning model - FREE on OpenRouter!
+            ProviderKey = "openrouter",
+            ModelName = "openai/gpt-5.1", // 🧠 Reasoning model - FREE on OpenRouter!
         },
         DynamicMemory = new DynamicMemoryConfig
         {
@@ -79,7 +80,12 @@ static Task<(ConversationThread, AgentCore)> CreateAIAssistant(ILoggerFactory lo
         // 💭 Reasoning Token Preservation: Controls whether reasoning from models like o1/Gemini is saved in history
         // Default: false (reasoning shown in UI but excluded from history to save tokens/cost)
         // Set to true: Reasoning preserved in conversation history for complex multi-turn scenarios
-        PreserveReasoningInHistory = true  // 🧪 Try setting to true to preserve reasoning tokens!
+        PreserveReasoningInHistory = true,  // 🧪 Try setting to true to preserve reasoning tokens!
+        // 🐛 Error Handling: Enable detailed error messages for debugging
+        ErrorHandling = new ErrorHandlingConfig
+        {
+            IncludeDetailedErrorsInChat = true  // Show full exception details to help debug permission system issue
+        }
     };
 
     // ✨ BUILD CORE AGENT - Direct access to internal Agent class

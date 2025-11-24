@@ -1423,7 +1423,7 @@ private static string GenerateContextResolutionMethods(PluginInfo plugin)
         var sb = new StringBuilder();
         var type = param.Type.TrimEnd('?');
         var isNullable = param.Type.EndsWith("?");
-        
+
         // Handle null values for nullable types
         if (isNullable)
         {
@@ -1434,51 +1434,106 @@ private static string GenerateContextResolutionMethods(PluginInfo plugin)
             sb.AppendLine($"                else");
             sb.AppendLine($"                {{");
         }
-        
+
         var indent = isNullable ? "    " : "";
-        
+
         switch (type)
         {
             case "string":
-                sb.AppendLine($"{indent}                {targetVar} = {jsonPropertyVar}.GetString(){(isNullable ? "" : " ?? string.Empty")};");
+                // String can come as String, Number, or Boolean
+                sb.AppendLine($"{indent}                {targetVar} = {jsonPropertyVar}.ValueKind switch");
+                sb.AppendLine($"{indent}                {{");
+                sb.AppendLine($"{indent}                    JsonValueKind.String => {jsonPropertyVar}.GetString(){(isNullable ? "" : " ?? string.Empty")},");
+                sb.AppendLine($"{indent}                    JsonValueKind.Number => {jsonPropertyVar}.GetRawText(), // Convert number to string");
+                sb.AppendLine($"{indent}                    JsonValueKind.True => \"true\",");
+                sb.AppendLine($"{indent}                    JsonValueKind.False => \"false\",");
+                sb.AppendLine($"{indent}                    _ => {jsonPropertyVar}.GetRawText()");
+                sb.AppendLine($"{indent}                }};");
                 break;
-                
+
             case "int" or "Int32":
-                sb.AppendLine($"{indent}                {targetVar} = {jsonPropertyVar}.GetInt32();");
+                // Handle both Number and String (for model compatibility)
+                sb.AppendLine($"{indent}                {targetVar} = {jsonPropertyVar}.ValueKind switch");
+                sb.AppendLine($"{indent}                {{");
+                sb.AppendLine($"{indent}                    JsonValueKind.Number => {jsonPropertyVar}.GetInt32(),");
+                sb.AppendLine($"{indent}                    JsonValueKind.String => int.Parse({jsonPropertyVar}.GetString() ?? \"0\"),");
+                sb.AppendLine($"{indent}                    _ => throw new JsonException($\"Cannot convert {{{{{jsonPropertyVar}.ValueKind}}}} to int\")");
+                sb.AppendLine($"{indent}                }};");
                 break;
-                
+
             case "long" or "Int64":
-                sb.AppendLine($"{indent}                {targetVar} = {jsonPropertyVar}.GetInt64();");
+                sb.AppendLine($"{indent}                {targetVar} = {jsonPropertyVar}.ValueKind switch");
+                sb.AppendLine($"{indent}                {{");
+                sb.AppendLine($"{indent}                    JsonValueKind.Number => {jsonPropertyVar}.GetInt64(),");
+                sb.AppendLine($"{indent}                    JsonValueKind.String => long.Parse({jsonPropertyVar}.GetString() ?? \"0\"),");
+                sb.AppendLine($"{indent}                    _ => throw new JsonException($\"Cannot convert {{{{{jsonPropertyVar}.ValueKind}}}} to long\")");
+                sb.AppendLine($"{indent}                }};");
                 break;
-                
+
             case "double" or "Double":
-                sb.AppendLine($"{indent}                {targetVar} = {jsonPropertyVar}.GetDouble();");
+                sb.AppendLine($"{indent}                {targetVar} = {jsonPropertyVar}.ValueKind switch");
+                sb.AppendLine($"{indent}                {{");
+                sb.AppendLine($"{indent}                    JsonValueKind.Number => {jsonPropertyVar}.GetDouble(),");
+                sb.AppendLine($"{indent}                    JsonValueKind.String => double.Parse({jsonPropertyVar}.GetString() ?? \"0\"),");
+                sb.AppendLine($"{indent}                    _ => throw new JsonException($\"Cannot convert {{{{{jsonPropertyVar}.ValueKind}}}} to double\")");
+                sb.AppendLine($"{indent}                }};");
                 break;
-                
+
             case "float" or "Single":
-                sb.AppendLine($"{indent}                {targetVar} = (float){jsonPropertyVar}.GetDouble();");
+                sb.AppendLine($"{indent}                {targetVar} = {jsonPropertyVar}.ValueKind switch");
+                sb.AppendLine($"{indent}                {{");
+                sb.AppendLine($"{indent}                    JsonValueKind.Number => (float){jsonPropertyVar}.GetDouble(),");
+                sb.AppendLine($"{indent}                    JsonValueKind.String => float.Parse({jsonPropertyVar}.GetString() ?? \"0\"),");
+                sb.AppendLine($"{indent}                    _ => throw new JsonException($\"Cannot convert {{{{{jsonPropertyVar}.ValueKind}}}} to float\")");
+                sb.AppendLine($"{indent}                }};");
                 break;
-                
+
             case "bool" or "Boolean":
-                sb.AppendLine($"{indent}                {targetVar} = {jsonPropertyVar}.GetBoolean();");
+                sb.AppendLine($"{indent}                {targetVar} = {jsonPropertyVar}.ValueKind switch");
+                sb.AppendLine($"{indent}                {{");
+                sb.AppendLine($"{indent}                    JsonValueKind.True => true,");
+                sb.AppendLine($"{indent}                    JsonValueKind.False => false,");
+                sb.AppendLine($"{indent}                    JsonValueKind.String => bool.Parse({jsonPropertyVar}.GetString() ?? \"false\"),");
+                sb.AppendLine($"{indent}                    _ => throw new JsonException($\"Cannot convert {{{{{jsonPropertyVar}.ValueKind}}}} to bool\")");
+                sb.AppendLine($"{indent}                }};");
                 break;
-                
+
             case "decimal" or "Decimal":
-                sb.AppendLine($"{indent}                {targetVar} = {jsonPropertyVar}.GetDecimal();");
+                sb.AppendLine($"{indent}                {targetVar} = {jsonPropertyVar}.ValueKind switch");
+                sb.AppendLine($"{indent}                {{");
+                sb.AppendLine($"{indent}                    JsonValueKind.Number => {jsonPropertyVar}.GetDecimal(),");
+                sb.AppendLine($"{indent}                    JsonValueKind.String => decimal.Parse({jsonPropertyVar}.GetString() ?? \"0\"),");
+                sb.AppendLine($"{indent}                    _ => throw new JsonException($\"Cannot convert {{{{{jsonPropertyVar}.ValueKind}}}} to decimal\")");
+                sb.AppendLine($"{indent}                }};");
                 break;
-                
+
             case "DateTime":
-                sb.AppendLine($"{indent}                {targetVar} = {jsonPropertyVar}.GetDateTime();");
+                // Handle both proper DateTime JSON and string representations
+                sb.AppendLine($"{indent}                {targetVar} = {jsonPropertyVar}.ValueKind switch");
+                sb.AppendLine($"{indent}                {{");
+                sb.AppendLine($"{indent}                    JsonValueKind.String => DateTime.Parse({jsonPropertyVar}.GetString()!),");
+                sb.AppendLine($"{indent}                    _ => {jsonPropertyVar}.GetDateTime()");
+                sb.AppendLine($"{indent}                }};");
                 break;
-                
+
             case "DateTimeOffset":
-                sb.AppendLine($"{indent}                {targetVar} = {jsonPropertyVar}.GetDateTimeOffset();");
+                // Handle both proper DateTimeOffset JSON and string representations
+                sb.AppendLine($"{indent}                {targetVar} = {jsonPropertyVar}.ValueKind switch");
+                sb.AppendLine($"{indent}                {{");
+                sb.AppendLine($"{indent}                    JsonValueKind.String => DateTimeOffset.Parse({jsonPropertyVar}.GetString()!),");
+                sb.AppendLine($"{indent}                    _ => {jsonPropertyVar}.GetDateTimeOffset()");
+                sb.AppendLine($"{indent}                }};");
                 break;
-                
+
             case "Guid":
-                sb.AppendLine($"{indent}                {targetVar} = {jsonPropertyVar}.GetGuid();");
+                // Handle both proper Guid JSON and string representations
+                sb.AppendLine($"{indent}                {targetVar} = {jsonPropertyVar}.ValueKind switch");
+                sb.AppendLine($"{indent}                {{");
+                sb.AppendLine($"{indent}                    JsonValueKind.String => Guid.Parse({jsonPropertyVar}.GetString()!),");
+                sb.AppendLine($"{indent}                    _ => {jsonPropertyVar}.GetGuid()");
+                sb.AppendLine($"{indent}                }};");
                 break;
-                
+
             default:
                 // For complex types, arrays, or unknown types, fall back to ToString or throw
                 if (type.StartsWith("List<") || type.StartsWith("IList<") || type.EndsWith("[]"))
@@ -1494,12 +1549,12 @@ private static string GenerateContextResolutionMethods(PluginInfo plugin)
                 }
                 break;
         }
-        
+
         if (isNullable)
         {
             sb.AppendLine($"                }}");
         }
-        
+
         return sb.ToString();
     }
 
@@ -1562,15 +1617,11 @@ private static string GenerateContextResolutionMethods(PluginInfo plugin)
 
         var description = !string.IsNullOrEmpty(plugin.ScopeDescription)
             ? plugin.ScopeDescription
-            : plugin.Description;
-        var fullDescription = $"Call this function with no parameters to unlock {totalCount} math operations: {capabilitiesList}. After calling this, you can use those functions. {description}";
+            : plugin.Description ?? string.Empty;
 
-        // Build the return message with optional post-expansion instructions
-        var returnMessage = $"{plugin.Name} expanded. Available functions: {capabilitiesList}";
-        if (!string.IsNullOrEmpty(plugin.PostExpansionInstructions))
-        {
-            returnMessage += $"\n\n{plugin.PostExpansionInstructions}";
-        }
+        // Use shared helper to generate description and return message
+        var fullDescription = ScopeContainerHelper.GenerateContainerDescription(description, plugin.Name, allCapabilities);
+        var returnMessage = ScopeContainerHelper.GenerateReturnMessage(plugin.Name, allCapabilities, plugin.PostExpansionInstructions);
 
         // Escape the return message for C# verbatim string literal (@"...")
         // In verbatim strings, quotes are escaped by doubling them

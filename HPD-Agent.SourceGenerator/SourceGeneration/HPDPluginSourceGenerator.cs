@@ -341,8 +341,6 @@ namespace HPD_Agent.Diagnostics {{
         sb.AppendLine("using Microsoft.Extensions.AI;");
         sb.AppendLine("using System.Linq;");
         sb.AppendLine("using System.Text;");
-        sb.AppendLine("using Json.Schema;");
-        sb.AppendLine("using Json.Schema.Generation;");
         sb.AppendLine("using HPD_Agent.Skills.DocumentStore;");
 
         // Add using directive for the plugin's namespace if it's not empty
@@ -545,29 +543,27 @@ $@"    /// <summary>
         string schemaProviderCode = "() => { ";
         if (relevantParams.Any())
         {
+            // Use AIJsonUtilities to generate schema from the method signature
+            // This is AOT-compatible and uses the method's actual parameters with their [Description] attributes
             schemaProviderCode += $@"
-    var schema = new Json.Schema.JsonSchemaBuilder().FromType<{dtoName}>().Build();
-    var schemaJson = JsonSerializer.Serialize(schema, HPDJsonContext.Default.JsonSchema);
-    var node = JsonNode.Parse(schemaJson);
-    if (node is JsonObject root && root[""properties""] is JsonObject properties)
-    {{
-";
-            foreach (var param in relevantParams.Where(p => !string.IsNullOrEmpty(p.Description)))
-            {
-                var escapedDescription = SymbolDisplay.FormatLiteral(param.Description, true);
-                schemaProviderCode += $@"
-        if (properties[""{param.Name}""] is JsonObject {param.Name}Obj)
-        {{
-            {param.Name}Obj[""description""] = {escapedDescription};
-        }}
-";
-            }
-            schemaProviderCode += "    }\n";
-            schemaProviderCode += "    return JsonSerializer.SerializeToElement(node ?? JsonNode.Parse(\"{}\"), HPDJsonContext.Default.JsonNode);\n";
+    var method = typeof({plugin.Name}).GetMethod(nameof({plugin.Name}.{function.Name}));
+    var options = new global::Microsoft.Extensions.AI.AIJsonSchemaCreateOptions {{ IncludeSchemaKeyword = false }};
+    return global::Microsoft.Extensions.AI.AIJsonUtilities.CreateFunctionJsonSchema(
+        method!,
+        serializerOptions: global::Microsoft.Extensions.AI.AIJsonUtilities.DefaultOptions,
+        inferenceOptions: options
+    );";
         }
         else
         {
-            schemaProviderCode += "return JsonSerializer.SerializeToElement(new Json.Schema.JsonSchemaBuilder().Type(Json.Schema.SchemaValueType.Object).Build(), HPDJsonContext.Default.JsonSchema);";
+            // Empty schema for functions with no parameters
+            schemaProviderCode += @"
+    var options = new global::Microsoft.Extensions.AI.AIJsonSchemaCreateOptions { IncludeSchemaKeyword = false };
+    return global::Microsoft.Extensions.AI.AIJsonUtilities.CreateJsonSchema(
+        null,
+        serializerOptions: global::Microsoft.Extensions.AI.AIJsonUtilities.DefaultOptions,
+        inferenceOptions: options
+    );";
         }
         schemaProviderCode += " }";
 
@@ -1667,11 +1663,12 @@ private static string GenerateContextResolutionMethods(PluginInfo plugin)
         sb.AppendLine("        /// </summary>");
         sb.AppendLine("        private static JsonElement CreateEmptyContainerSchema()");
         sb.AppendLine("        {");
-        sb.AppendLine("            var schema = new JsonSchemaBuilder()");
-        sb.AppendLine("                .Type(SchemaValueType.Object)");
-        sb.AppendLine("                .Properties(new Dictionary<string, JsonSchema>())");
-        sb.AppendLine("                .Build();");
-        sb.AppendLine("            return JsonSerializer.SerializeToElement(schema, HPDJsonContext.Default.JsonSchema);");
+        sb.AppendLine("            var options = new global::Microsoft.Extensions.AI.AIJsonSchemaCreateOptions { IncludeSchemaKeyword = false };");
+        sb.AppendLine("            return global::Microsoft.Extensions.AI.AIJsonUtilities.CreateJsonSchema(");
+        sb.AppendLine("                null,");
+        sb.AppendLine("                serializerOptions: HPDJsonContext.Default.Options,");
+        sb.AppendLine("                inferenceOptions: options");
+        sb.AppendLine("            );");
         sb.AppendLine("        }");
 
         return sb.ToString();

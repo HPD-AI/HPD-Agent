@@ -48,7 +48,7 @@ static Task<(ConversationThread, AgentCore)> CreateAIAssistant(ILoggerFactory lo
         Provider = new ProviderConfig
         {
             ProviderKey = "openrouter",
-            ModelName = "openai/gpt-5.1", // 🧠 Reasoning model - FREE on OpenRouter!
+            ModelName = "google/gemini-2.5-flash", // 🧠 Reasoning model - FREE on OpenRouter!
         },
         DynamicMemory = new DynamicMemoryConfig
         {

@@ -39,8 +39,7 @@ using HPD.Agent;
 [JsonSerializable(typeof(List<double>))]
 [JsonSerializable(typeof(List<object>))]
 
-// --- Schema library types for AOT compatibility ---
-[JsonSerializable(typeof(Json.Schema.JsonSchema))]
+// --- JSON Node types for AOT compatibility ---
 [JsonSerializable(typeof(System.Text.Json.Nodes.JsonNode))]
 [JsonSerializable(typeof(System.Text.Json.Nodes.JsonObject))]
 [JsonSerializable(typeof(System.Text.Json.Nodes.JsonArray))]

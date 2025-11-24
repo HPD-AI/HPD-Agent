@@ -1,7 +1,5 @@
 using Microsoft.Extensions.AI;
 using System.Text.Json;
-using Json.Schema;
-using Json.Schema.Generation;
 
 /// <summary>
 /// Wraps external tools (MCP, Frontend) with plugin scoping metadata at runtime.
@@ -205,10 +203,13 @@ public static class ExternalToolScopingWrapper
     /// </summary>
     private static JsonElement CreateEmptyContainerSchema()
     {
-        var schema = new JsonSchemaBuilder()
-            .Type(SchemaValueType.Object)
-            .Properties(new Dictionary<string, JsonSchema>())
-            .Build();
-        return JsonSerializer.SerializeToElement(schema, HPDJsonContext.Default.JsonSchema);
+        return global::Microsoft.Extensions.AI.AIJsonUtilities.CreateJsonSchema(
+            null,
+            serializerOptions: HPDJsonContext.Default.Options,
+            inferenceOptions: new global::Microsoft.Extensions.AI.AIJsonSchemaCreateOptions
+            {
+                IncludeSchemaKeyword = false
+            }
+        );
     }
 }

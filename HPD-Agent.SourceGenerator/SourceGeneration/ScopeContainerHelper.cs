@@ -14,7 +14,7 @@ internal static class ScopeContainerHelper
     public static string GenerateMermaidFlow(string pluginName, List<string> capabilities)
     {
         var functionNodes = string.Join(" & ", capabilities.Select((name, index) => $"{(char)('C' + index)}[{name}]"));
-        return $"A[Invoke {pluginName}] --> B{{{{Access Granted}}}} B --> {functionNodes}";
+        return $"A[Invoke {pluginName}] --> B{{{{Access Granted}}}} B -->|direct callable functions* after an initial invocation| {functionNodes}";
     }
 
     /// <summary>

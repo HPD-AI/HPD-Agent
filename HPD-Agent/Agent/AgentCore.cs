@@ -89,7 +89,6 @@ internal sealed class AgentCore
     private readonly UnifiedScopingManager _scopingManager;
     private readonly PermissionManager _permissionManager;
     private readonly BidirectionalEventCoordinator _eventCoordinator;
-    private readonly IReadOnlyList<IAIFunctionMiddleware> _AIFunctionMiddlewares;
     private readonly IReadOnlyList<IMessageTurnMiddleware> _MessageTurnMiddlewares;
     private readonly IReadOnlyList<IIterationMiddleWare> _IterationMiddleWares;
     private readonly ErrorHandling.IProviderErrorHandler _providerErrorHandler;
@@ -109,6 +108,12 @@ internal sealed class AgentCore
     /// Agent configuration object containing all settings
     /// </summary>
     public AgentConfig? Config { get; private set; }
+
+    /// <summary>
+    /// Gets the base chat client used by this agent.
+    /// This can be used by SubAgents to inherit the parent's client when no provider is specified.
+    /// </summary>
+    public IChatClient BaseClient => _baseClient;
 
     /// <summary>
     /// Gets the current function invocation context (if a function is currently being invoked).
@@ -142,8 +147,11 @@ internal sealed class AgentCore
     /// Returns null if no root agent is set (single-agent execution).
     /// </summary>
     /// <remarks>
-    /// This property enables event bubbling from nested agents to their orchestrator.
-    /// When an agent calls another agent (via AsAIFunction), this tracks the top-level orchestrator.
+    /// This property tracks the top-level orchestrator in nested agent scenarios.
+    /// When an agent calls another agent (via AsAIFunction), this tracks the root orchestrator.
+    ///
+    /// NOTE: This is used for metadata/debugging purposes only.
+    /// Event bubbling uses explicit parent-child linking via SetParent().
     ///
     /// Flow example:
     /// <code>
@@ -152,14 +160,15 @@ internal sealed class AgentCore
     ///   ↓
     ///   Orchestrator calls: CodingAgent(query)
     ///     Agent.RootAgent is still orchestrator ✓ (AsyncLocal flows!)
+    ///     SubAgent generator calls: SetParent(orchestrator.EventCoordinator)
     ///     ↓
     ///     CodingAgent.Emit(event)
     ///       → Writes to CodingAgent's channel
-    ///       → ALSO writes to orchestrator's channel (bubbling!)
+    ///       → Bubbles to orchestrator via _parentCoordinator chain
     /// </code>
     ///
-    /// This is set automatically by RunAgenticLoopInternal when starting execution
-    /// and is used by BidirectionalEventCoordinator for event bubbling.
+    /// This is set automatically by RunAgenticLoopInternal when starting execution.
+    /// The SubAgent source generator uses this to establish parent-child relationships via SetParent().
     /// </remarks>
     public static AgentCore? RootAgent
     {
@@ -201,6 +210,12 @@ internal sealed class AgentCore
     /// Error handling policy for normalizing provider errors
     /// </summary>
     public ErrorHandlingPolicy ErrorPolicy => _errorPolicy;
+
+    /// <summary>
+    /// Execution context for this agent (agent name, ID, hierarchy).
+    /// Set during agent initialization to enable event attribution in multi-agent systems.
+    /// </summary>
+    public AgentExecutionContext? ExecutionContext { get; internal set; }
 
     /// <summary>
     /// Internal access to event coordinator for context setup and nested agent configuration.
@@ -264,7 +279,6 @@ internal sealed class AgentCore
         ScopedFunctionMiddlewareManager ScopedFunctionMiddlewareManager,
         ErrorHandling.IProviderErrorHandler providerErrorHandler,
         IReadOnlyList<IPermissionMiddleware>? PermissionMiddlewares = null,
-        IReadOnlyList<IAIFunctionMiddleware>? AIFunctionMiddlewares = null,
         IReadOnlyList<IMessageTurnMiddleware>? MessageTurnMiddlewares = null,
         IReadOnlyList<IIterationMiddleWare>? IterationMiddleWares = null,
         IServiceProvider? serviceProvider = null,
@@ -303,13 +317,13 @@ internal sealed class AgentCore
             MaxRetries = config.ErrorHandling?.MaxRetries ?? 3
         };
 
-        // Fix: Store and use AI function Middlewares
-        _AIFunctionMiddlewares = AIFunctionMiddlewares ?? new List<IAIFunctionMiddleware>();
+        // Store middleware lists
         _MessageTurnMiddlewares = MessageTurnMiddlewares ?? new List<IMessageTurnMiddleware>();
         _IterationMiddleWares = IterationMiddleWares ?? new List<IIterationMiddleWare>();
 
         // Create bidirectional event coordinator for Middleware events and human-in-the-loop
-        _eventCoordinator = new BidirectionalEventCoordinator();
+        // Pass 'this' to enable automatic ExecutionContext attachment to events
+        _eventCoordinator = new BidirectionalEventCoordinator(this);
 
         // Create permission manager
         _permissionManager = new PermissionManager(PermissionMiddlewares);
@@ -330,7 +344,6 @@ internal sealed class AgentCore
             this, // NEW: Pass agent reference for Middleware event coordination
             ScopedFunctionMiddlewareManager,
             _permissionManager,
-            _AIFunctionMiddlewares,
             config.MaxAgenticIterations,
             config.ErrorHandling,
             config.ServerConfiguredTools,
@@ -410,7 +423,8 @@ internal sealed class AgentCore
     /// <summary>
     /// AIFuncton Middlewares applied to tool calls in conversations (via ScopedFunctionMiddlewareManager)
     /// </summary>
-    public IReadOnlyList<IAIFunctionMiddleware> AIFunctionMiddlewares => _AIFunctionMiddlewares;
+    public IReadOnlyList<IAIFunctionMiddleware> AIFunctionMiddlewares =>
+        _ScopedFunctionMiddlewareManager?.GetGlobalMiddlewares() ?? new List<IAIFunctionMiddleware>();
 
     /// <summary>
     /// Maximum number of function calls allowed in a single conversation turn
@@ -516,6 +530,20 @@ internal sealed class AgentCore
         // Track root agent for event bubbling across nested agent calls
         var previousRootAgent = RootAgent;
         RootAgent ??= this;
+
+        // Initialize root orchestrator execution context if this is the root agent
+        if (RootAgent == this && ExecutionContext == null)
+        {
+            var randomId = Guid.NewGuid().ToString("N")[..8];
+            ExecutionContext = new AgentExecutionContext
+            {
+                AgentName = _name,
+                AgentId = $"{_name}-{randomId}",
+                ParentAgentId = null,
+                AgentChain = new[] { _name },
+                Depth = 0
+            };
+        }
 
         // ═══════════════════════════════════════════════════════
         // EXTRACT PREPARED STATE (Option 2 Pattern)
@@ -3923,7 +3951,6 @@ internal class FunctionCallProcessor
     private readonly AgentCore _agent; // NEW: Reference to agent for Middleware event coordination
     private readonly ScopedFunctionMiddlewareManager? _ScopedFunctionMiddlewareManager;
     private readonly PermissionManager _permissionManager;
-    private readonly IReadOnlyList<IAIFunctionMiddleware> _AIFunctionMiddlewares;
     private readonly int _maxFunctionCalls;
     private readonly ErrorHandlingConfig? _errorHandlingConfig;
     private readonly IList<AITool>? _serverConfiguredTools;
@@ -3933,7 +3960,6 @@ internal class FunctionCallProcessor
         AgentCore agent, // NEW: Added parameter
         ScopedFunctionMiddlewareManager? ScopedFunctionMiddlewareManager,
         PermissionManager permissionManager,
-        IReadOnlyList<IAIFunctionMiddleware>? AIFunctionMiddlewares,
         int maxFunctionCalls,
         ErrorHandlingConfig? errorHandlingConfig = null,
         IList<AITool>? serverConfiguredTools = null,
@@ -3942,7 +3968,6 @@ internal class FunctionCallProcessor
         _agent = agent ?? throw new ArgumentNullException(nameof(agent));
         _ScopedFunctionMiddlewareManager = ScopedFunctionMiddlewareManager;
         _permissionManager = permissionManager ?? throw new ArgumentNullException(nameof(permissionManager));
-        _AIFunctionMiddlewares = AIFunctionMiddlewares ?? new List<IAIFunctionMiddleware>();
         _maxFunctionCalls = maxFunctionCalls;
         _errorHandlingConfig = errorHandlingConfig;
         _serverConfiguredTools = serverConfiguredTools;
@@ -4347,8 +4372,8 @@ internal class FunctionCallProcessor
                 isSkillContainer)
                                 ?? Enumerable.Empty<IAIFunctionMiddleware>();
 
-            // Combine scoped Middlewares with general AI function Middlewares
-            var allStandardMiddlewares = _AIFunctionMiddlewares.Concat(scopedMiddlewares);
+            // Use scoped middlewares directly (already includes global middlewares via ScopedFunctionMiddlewareManager)
+            var allStandardMiddlewares = scopedMiddlewares;
 
             // ✅ PHASE 2: Track AIFunction Middleware pipeline execution
             var Middlewarestopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -5669,10 +5694,18 @@ internal class BidirectionalEventCoordinator : IDisposable
     private BidirectionalEventCoordinator? _parentCoordinator;
 
     /// <summary>
+    /// Owning agent for automatic ExecutionContext attachment.
+    /// Used to attach ExecutionContext to events that don't already have it.
+    /// </summary>
+    private readonly AgentCore? _owningAgent;
+
+    /// <summary>
     /// Creates a new bidirectional event coordinator.
     /// </summary>
-    public BidirectionalEventCoordinator()
+    /// <param name="owningAgent">The agent that owns this coordinator (for ExecutionContext attachment)</param>
+    public BidirectionalEventCoordinator(AgentCore? owningAgent = null)
     {
+        _owningAgent = owningAgent;
         _eventChannel = Channel.CreateUnbounded<InternalAgentEvent>(new UnboundedChannelOptions
         {
             SingleWriter = false,  // Multiple Middlewares can emit concurrently
@@ -5762,25 +5795,35 @@ internal class BidirectionalEventCoordinator : IDisposable
     /// This is the preferred way to emit events as it handles parent bubbling automatically.
     ///
     /// Event flow:
-    /// 1. Event is written to local channel (visible to this agent's background drainer)
-    /// 2. If parent coordinator is set, event is recursively emitted to parent (bubbling)
+    /// 1. Auto-attach ExecutionContext if not already set (for event attribution)
+    /// 2. Event is written to local channel (visible to this agent's background drainer)
+    /// 3. If parent coordinator is set, event is recursively emitted to parent (bubbling)
     ///
     /// For nested agents:
     /// - Events bubble up the chain until reaching the root orchestrator
     /// - Each level's event loop sees the event
     /// - Handlers at any level can process the event
+    /// - ExecutionContext enables filtering/routing by agent name, depth, or hierarchy
     /// </remarks>
     public void Emit(InternalAgentEvent evt)
     {
         if (evt == null)
             throw new ArgumentNullException(nameof(evt));
 
+        // Auto-attach execution context if not already set
+        // This enables event attribution in multi-agent systems
+        var eventToEmit = evt;
+        if (evt.ExecutionContext == null && _owningAgent?.ExecutionContext != null)
+        {
+            eventToEmit = evt with { ExecutionContext = _owningAgent.ExecutionContext };
+        }
+
         // Emit to local channel
-        _eventChannel.Writer.TryWrite(evt);
+        _eventChannel.Writer.TryWrite(eventToEmit);
 
         // Bubble to parent coordinator (if nested agent)
         // This creates a chain: NestedAgent -> Orchestrator -> RootOrchestrator
-        _parentCoordinator?.Emit(evt);
+        _parentCoordinator?.Emit(eventToEmit);
     }
 
     /// <summary>
@@ -6271,6 +6314,45 @@ internal static class MiddlewareChain
 
 #region Internal Events
 /// <summary>
+/// Provides hierarchical context about which agent emitted an event.
+/// Enables event attribution and filtering in multi-agent systems.
+/// </summary>
+public record AgentExecutionContext
+{
+    /// <summary>
+    /// The immediate agent that emitted this event (e.g., "WeatherExpert")
+    /// </summary>
+    public required string AgentName { get; init; }
+
+    /// <summary>
+    /// Hierarchical agent ID showing full execution path.
+    /// Format: "parent-abc12345-weatherExpert-def67890"
+    /// </summary>
+    public required string AgentId { get; init; }
+
+    /// <summary>
+    /// Parent agent ID (null if this is root orchestrator)
+    /// </summary>
+    public string? ParentAgentId { get; init; }
+
+    /// <summary>
+    /// Full agent chain from root to current.
+    /// Example: ["Orchestrator", "DomainExpert", "WeatherExpert"]
+    /// </summary>
+    public IReadOnlyList<string> AgentChain { get; init; } = Array.Empty<string>();
+
+    /// <summary>
+    /// Depth in the agent hierarchy (0 = root, 1 = direct SubAgent, etc.)
+    /// </summary>
+    public int Depth { get; init; }
+
+    /// <summary>
+    /// Is this event from a SubAgent (vs root orchestrator)?
+    /// </summary>
+    public bool IsSubAgent => Depth > 0;
+}
+
+/// <summary>
 /// Protocol-agnostic internal events emitted by the agent core.
 /// These events represent what actually happened during agent execution,
 /// independent of any specific protocol.
@@ -6283,7 +6365,14 @@ internal static class MiddlewareChain
 ///
 /// Adapters convert these to protocol-specific formats as needed.
 /// </summary>
-public abstract record InternalAgentEvent;
+public abstract record InternalAgentEvent
+{
+    /// <summary>
+    /// Context about which agent emitted this event (optional for backwards compatibility).
+    /// Automatically attached by BidirectionalEventCoordinator.Emit() if not already set.
+    /// </summary>
+    public AgentExecutionContext? ExecutionContext { get; init; }
+}
 
 #region Message Turn Events (Entire User Interaction)
 
@@ -7013,7 +7102,7 @@ internal class FunctionInvocationContext
     /// Performance: Non-blocking write (unbounded channel).
     /// Event ordering: Guaranteed FIFO per Middleware, interleaved across Middlewares.
     /// Real-time visibility: Handler sees event WHILE Middleware is executing (not after).
-    /// Event bubbling: If Agent.RootAgent is set, events bubble to orchestrator.
+    /// Event bubbling: Events bubble via BidirectionalEventCoordinator._parentCoordinator chain.
     /// </summary>
     /// <param name="evt">The event to emit</param>
     /// <exception cref="ArgumentNullException">If event is null</exception>
@@ -7027,15 +7116,8 @@ internal class FunctionInvocationContext
             throw new InvalidOperationException("Agent reference not configured for this context");
 
         // Emit to local agent's coordinator
+        // BidirectionalEventCoordinator handles bubbling via _parentCoordinator chain
         Agent.EventCoordinator.Emit(evt);
-
-        // If we're a nested agent (RootAgent is set and different from us), bubble to root
-        // RootAgent is a static property on the Agent class
-        var rootAgent = HPD.Agent.AgentCore.RootAgent;
-        if (rootAgent != null && rootAgent != Agent)
-        {
-            rootAgent.EventCoordinator.Emit(evt);
-        }
     }
 
     /// <summary>

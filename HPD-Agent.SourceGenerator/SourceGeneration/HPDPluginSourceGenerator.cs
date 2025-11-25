@@ -378,6 +378,12 @@ namespace HPD_Agent.Diagnostics {{
         sb.AppendLine("using System.Text;");
         sb.AppendLine("using HPD_Agent.Skills.DocumentStore;");
 
+        // Add HPD.Agent namespace for AgentBuilder, ConversationThread, etc.
+        sb.AppendLine("using HPD.Agent;");
+
+        // Add HPD_Agent namespace for SubAgent types
+        sb.AppendLine("using HPD_Agent;");
+
         // Add using directive for the plugin's namespace if it's not empty
         if (!string.IsNullOrEmpty(plugin.Namespace))
         {
@@ -465,6 +471,23 @@ namespace HPD_Agent.Diagnostics {{
     {
         var sb = new StringBuilder();
         var contextSerializableTypes = new List<string>();
+
+        // Generate SubAgentQueryArgs if there are sub-agents
+        if (plugin.SubAgents.Any())
+        {
+            sb.AppendLine(
+$@"    /// <summary>
+    /// Represents the arguments for sub-agent invocations, generated at compile-time.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCodeAttribute(""HPDPluginSourceGenerator"", ""1.0.0.0"")]
+    public class SubAgentQueryArgs
+    {{
+        [System.Text.Json.Serialization.JsonPropertyName(""query"")]
+        [System.ComponentModel.Description(""Query for the sub-agent"")]
+        public string Query {{ get; set; }} = string.Empty;
+    }}
+");
+        }
 
         foreach (var function in plugin.Functions)
         {

@@ -213,7 +213,7 @@ public class SubAgentSourceGeneratorTests
 
         // Assert
         Assert.NotNull(subAgent.SharedThread);
-l    }
+    }
 
     // ===== P0: Complex Scenarios =====
 
@@ -398,5 +398,4 @@ public class TestSubAgentPlugin
                     }
                 });
         }
-    }
 }

@@ -95,6 +95,7 @@ static Task<(ConversationThread, AgentCore)> CreateAIAssistant(ILoggerFactory lo
         .WithPlanMode()  // ✨ Financial analysis plugin (explicitly registered)  // ✨ Financial analysis skills (that reference the plugin)
         .WithPlugin<FinancialAnalysisSkills>()  // ✨ Math plugin (basic math functions
         .WithPlugin<MathPlugin>()  // ✨ MCP tool integration (auto-loads tools from MCP.json manifest)
+        .WithPlugin<SpecializedAgents>()  // ✨ Frontend tools plugin (web search, browser, calculator)
         .WithPermissions() // ✨ NEW: Unified permission Middleware - events handled in streaming loop
         .BuildCoreAgent();  // ✨ Build CORE agent (internal access via InternalsVisibleTo)
 

@@ -7,45 +7,37 @@ namespace HPD_Agent.Tests.Infrastructure;
 /// <summary>
 /// In-memory implementation of IPermissionStorage for testing.
 /// Stores permission preferences in memory without any persistence.
-/// Uses implicit scoping based on whether conversationId is provided.
 /// </summary>
 public class InMemoryPermissionStorage : IPermissionStorage
 {
     private readonly ConcurrentDictionary<string, PermissionChoice> _permissions = new();
+    private readonly object _lock = new();
 
     /// <summary>
     /// Gets a stored permission preference for a specific function.
-    /// Respects permission scoping (Conversation > Project > Global).
+    /// Returns null if no stored permission exists.
     /// </summary>
     public Task<PermissionChoice?> GetStoredPermissionAsync(
         string functionName,
-        string conversationId,
-        string? projectId)
+        string? conversationId = null)
     {
         lock (_lock)
         {
-            // Try conversation-scoped first (most specific)
-            var conversationKey = GetKey(functionName, PermissionScope.Conversation, conversationId, projectId);
-            if (_permissions.TryGetValue(conversationKey, out var conversationPerm))
+            // Try conversation-scoped first (if conversationId provided)
+            if (!string.IsNullOrEmpty(conversationId))
             {
-                return Task.FromResult<PermissionChoice?>(conversationPerm.Choice);
-            }
-
-            // Try project-scoped next
-            if (!string.IsNullOrEmpty(projectId))
-            {
-                var projectKey = GetKey(functionName, PermissionScope.Project, conversationId, projectId);
-                if (_permissions.TryGetValue(projectKey, out var projectPerm))
+                var conversationKey = $"conv:{conversationId}:{functionName}";
+                if (_permissions.TryGetValue(conversationKey, out var conversationPerm))
                 {
-                    return Task.FromResult<PermissionChoice?>(projectPerm.Choice);
+                    return Task.FromResult<PermissionChoice?>(conversationPerm);
                 }
             }
 
-            // Try global-scoped last (least specific)
-            var globalKey = GetKey(functionName, PermissionScope.Global, conversationId, projectId);
+            // Try global-scoped (no conversationId in key)
+            var globalKey = $"global:{functionName}";
             if (_permissions.TryGetValue(globalKey, out var globalPerm))
             {
-                return Task.FromResult<PermissionChoice?>(globalPerm.Choice);
+                return Task.FromResult<PermissionChoice?>(globalPerm);
             }
 
             // No stored permission found
@@ -54,20 +46,22 @@ public class InMemoryPermissionStorage : IPermissionStorage
     }
 
     /// <summary>
-    /// Saves a permission preference for a specific function with the specified scope.
+    /// Saves a permission preference for a specific function.
     /// </summary>
     public Task SavePermissionAsync(
         string functionName,
         PermissionChoice choice,
-        PermissionScope scope,
-        string conversationId,
-        string? projectId)
+        string? conversationId = null)
     {
         lock (_lock)
         {
-            var key = GetKey(functionName, scope, conversationId, projectId);
-            var permission = new StoredPermission(functionName, choice, scope, conversationId, projectId);
-            _permissions[key] = permission;
+            if (choice != PermissionChoice.Ask)
+            {
+                var key = string.IsNullOrEmpty(conversationId)
+                    ? $"global:{functionName}"
+                    : $"conv:{conversationId}:{functionName}";
+                _permissions[key] = choice;
+            }
         }
 
         return Task.CompletedTask;
@@ -76,11 +70,11 @@ public class InMemoryPermissionStorage : IPermissionStorage
     /// <summary>
     /// Gets all stored permissions (for testing/debugging).
     /// </summary>
-    public IReadOnlyList<StoredPermission> GetAll()
+    public IReadOnlyList<(string Key, PermissionChoice Value)> GetAll()
     {
         lock (_lock)
         {
-            return _permissions.Values.ToList();
+            return _permissions.Select(kvp => (kvp.Key, kvp.Value)).ToList();
         }
     }
 
@@ -107,23 +101,5 @@ public class InMemoryPermissionStorage : IPermissionStorage
                 return _permissions.Count;
             }
         }
-    }
-
-    /// <summary>
-    /// Generates a unique key for a permission based on scope.
-    /// </summary>
-    private static string GetKey(
-        string functionName,
-        PermissionScope scope,
-        string conversationId,
-        string? projectId)
-    {
-        return scope switch
-        {
-            PermissionScope.Conversation => $"conv:{conversationId}:func:{functionName}",
-            PermissionScope.Project => $"proj:{projectId}:func:{functionName}",
-            PermissionScope.Global => $"global:func:{functionName}",
-            _ => throw new System.ArgumentException($"Unknown permission scope: {scope}")
-        };
     }
 }

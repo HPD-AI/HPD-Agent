@@ -634,6 +634,24 @@ public class AgentBuilder
     }
 
     /// <summary>
+    /// Sets an existing chat client to use instead of creating one from a provider.
+    /// This is useful for SubAgents that want to inherit the parent's chat client.
+    /// </summary>
+    /// <param name="client">The chat client to use</param>
+    /// <returns>The builder for method chaining</returns>
+    /// <remarks>
+    /// When this is set, the agent will use this client instead of creating a new one
+    /// from the Provider configuration. The Provider configuration will still be validated
+    /// but won't be used to create a client.
+    /// </remarks>
+    public AgentBuilder WithChatClient(IChatClient client)
+    {
+        ArgumentNullException.ThrowIfNull(client);
+        _baseClient = client;
+        return this;
+    }
+
+    /// <summary>
     /// Sets the agent name
     /// </summary>
     public AgentBuilder WithName(string name)
@@ -681,9 +699,6 @@ public class AgentBuilder
     {
         var buildData = await BuildDependenciesAsync(cancellationToken).ConfigureAwait(false);
 
-        // Get global middlewares from scoped middleware manager
-        var globalMiddlewares = _ScopedFunctionMiddlewareManager.GetGlobalMiddlewares();
-
         // Create protocol-agnostic core agent
         return new AgentCore(
             _config!,
@@ -693,7 +708,6 @@ public class AgentBuilder
             _ScopedFunctionMiddlewareManager!,
             buildData.ErrorHandler,
             _PermissionMiddlewares,
-            globalMiddlewares,
             _MessageTurnMiddlewares,
             _IterationMiddleWares,
             _serviceProvider,
@@ -753,9 +767,6 @@ public class AgentBuilder
                 extensionAmount: _config.ContinuationExtensionAmount));
         }
 
-        // Get global middlewares from scoped middleware manager
-        var globalMiddlewares = _ScopedFunctionMiddlewareManager.GetGlobalMiddlewares();
-
         // Create protocol-agnostic core agent
         return new AgentCore(
             _config!,
@@ -765,7 +776,6 @@ public class AgentBuilder
             _ScopedFunctionMiddlewareManager!,
             buildData.ErrorHandler,
             _PermissionMiddlewares,
-            globalMiddlewares,
             _MessageTurnMiddlewares,
             _IterationMiddleWares,
             _serviceProvider,
@@ -784,9 +794,6 @@ public class AgentBuilder
         _config.ExplicitlyRegisteredPlugins = _explicitlyRegisteredPlugins
             .ToImmutableHashSet(StringComparer.OrdinalIgnoreCase);
 
-        // Get global middlewares from scoped middleware manager
-        var globalMiddlewares = _ScopedFunctionMiddlewareManager.GetGlobalMiddlewares();
-
         // Create agent using the new, cleaner constructor with AgentConfig
         var agent = new AgentCore(
             _config,
@@ -796,7 +803,6 @@ public class AgentBuilder
             _ScopedFunctionMiddlewareManager,
             buildData.ErrorHandler,
             _PermissionMiddlewares,
-            globalMiddlewares,
             _MessageTurnMiddlewares,
             _IterationMiddleWares,
             _serviceProvider,
@@ -1011,11 +1017,16 @@ public class AgentBuilder
         }
 
         // Create chat client and error handler via provider factories
-        _baseClient = providerFeatures.CreateChatClient(_config.Provider, _serviceProvider);
-        var errorHandler = providerFeatures.CreateErrorHandler();
-
+        // Skip client creation if WithChatClient() was used (e.g., SubAgent inheriting parent's client)
         if (_baseClient == null)
-            throw new InvalidOperationException($"The factory for provider '{providerKey}' returned a null chat client.");
+        {
+            _baseClient = providerFeatures.CreateChatClient(_config.Provider, _serviceProvider);
+
+            if (_baseClient == null)
+                throw new InvalidOperationException($"The factory for provider '{providerKey}' returned a null chat client.");
+        }
+
+        var errorHandler = providerFeatures.CreateErrorHandler();
         if (errorHandler == null)
             throw new InvalidOperationException($"The factory for provider '{providerKey}' returned a null error handler.");
 

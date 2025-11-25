@@ -1,4 +1,6 @@
 using HPD.Agent;
+using HPD_Agent.Tests.Infrastructure;
+using Microsoft.Extensions.AI;
 using Xunit;
 
 namespace HPD_Agent.Tests.Core;
@@ -116,4 +118,282 @@ public class BidirectionalEventCoordinatorTests
         var ex = Assert.Throws<InvalidOperationException>(() => coordinatorD.SetParent(coordinatorB));
         Assert.Contains("Cycle detected", ex.Message);
     }
+
+    [Fact]
+    public void EventBubbling_WithSetParent_BubblesCorrectly()
+    {
+        // Arrange
+        var root = new BidirectionalEventCoordinator();
+        var middle = new BidirectionalEventCoordinator();
+        var leaf = new BidirectionalEventCoordinator();
+
+        middle.SetParent(root);
+        leaf.SetParent(middle);
+
+        var testEvent = new TestAgentEvent { Message = "Test event" };
+
+        // Act
+        leaf.Emit(testEvent);
+
+        // Assert - Event should appear in all three channels (CRITICAL: including middle!)
+        Assert.True(leaf.EventReader.TryRead(out var leafEvt));
+        Assert.IsType<TestAgentEvent>(leafEvt);
+        Assert.Equal("Test event", ((TestAgentEvent)leafEvt).Message);
+
+        Assert.True(middle.EventReader.TryRead(out var middleEvt));
+        Assert.IsType<TestAgentEvent>(middleEvt);
+        Assert.Equal("Test event", ((TestAgentEvent)middleEvt).Message);  // ✅ THIS IS THE KEY TEST - middle sees it!
+
+        Assert.True(root.EventReader.TryRead(out var rootEvt));
+        Assert.IsType<TestAgentEvent>(rootEvt);
+        Assert.Equal("Test event", ((TestAgentEvent)rootEvt).Message);
+    }
+
+    [Fact]
+    public void EventBubbling_MultiLevel_AllAgentsReceiveEvents()
+    {
+        // Arrange - Create 3-level hierarchy
+        var orchestrator = new BidirectionalEventCoordinator();
+        var middle = new BidirectionalEventCoordinator();
+        var worker = new BidirectionalEventCoordinator();
+
+        middle.SetParent(orchestrator);
+        worker.SetParent(middle);
+
+        var testEvent = new TestAgentEvent { Message = "Multi-level test" };
+
+        var receivedEvents = new List<(string agent, InternalAgentEvent evt)>();
+
+        // Act - Worker emits event
+        worker.Emit(testEvent);
+
+        // Assert - Verify event reached all three levels
+        if (worker.EventReader.TryRead(out var workerEvt))
+            receivedEvents.Add(("Worker", workerEvt));
+
+        if (middle.EventReader.TryRead(out var middleEvt))
+            receivedEvents.Add(("Middle", middleEvt));
+
+        if (orchestrator.EventReader.TryRead(out var orchEvt))
+            receivedEvents.Add(("Orchestrator", orchEvt));
+
+        // All three should have received the event
+        Assert.Equal(3, receivedEvents.Count);
+        Assert.Contains(receivedEvents, e => e.agent == "Worker");
+        Assert.Contains(receivedEvents, e => e.agent == "Middle");  // 🔥 KEY: Middle sees it!
+        Assert.Contains(receivedEvents, e => e.agent == "Orchestrator");
+    }
+
+    [Fact]
+    public void EventBubbling_WithoutSetParent_DoesNotBubble()
+    {
+        // Arrange - Create coordinators WITHOUT linking them
+        var coordinator1 = new BidirectionalEventCoordinator();
+        var coordinator2 = new BidirectionalEventCoordinator();
+
+        var testEvent = new TestAgentEvent { Message = "No bubbling test" };
+
+        // Act - Emit on coordinator1
+        coordinator1.Emit(testEvent);
+
+        // Assert - Only coordinator1 should receive the event
+        Assert.True(coordinator1.EventReader.TryRead(out var evt1));
+        Assert.IsType<TestAgentEvent>(evt1);
+
+        // coordinator2 should NOT receive the event (no parent relationship)
+        Assert.False(coordinator2.EventReader.TryRead(out _));
+    }
+
+    // ===== P0: ExecutionContext Auto-Attachment =====
+
+    [Fact]
+    public void Emit_AutoAttachesExecutionContext_WhenEventHasNone()
+    {
+        // Arrange
+        var agent = TestAgentFactory.Create();
+
+        // Set ExecutionContext on agent
+        agent.ExecutionContext = new AgentExecutionContext
+        {
+            AgentName = "TestAgent",
+            AgentId = "test-abc123",
+            Depth = 0
+        };
+
+        // Act - Emit event without ExecutionContext
+        var evt = new TestAgentEvent { Message = "Test" };
+        Assert.Null(evt.ExecutionContext); // Verify it starts null
+
+        agent.EventCoordinator.Emit(evt);
+
+        // Read emitted event from channel
+        agent.EventCoordinator.EventReader.TryRead(out var emittedEvent);
+
+        // Assert - ExecutionContext should be auto-attached
+        Assert.NotNull(emittedEvent);
+        Assert.NotNull(emittedEvent.ExecutionContext);
+        Assert.Equal("TestAgent", emittedEvent.ExecutionContext!.AgentName);
+        Assert.Equal("test-abc123", emittedEvent.ExecutionContext.AgentId);
+    }
+
+    [Fact]
+    public void Emit_PreservesExecutionContext_WhenEventAlreadyHasOne()
+    {
+        // Arrange
+        var agent = TestAgentFactory.Create();
+
+        agent.ExecutionContext = new AgentExecutionContext
+        {
+            AgentName = "TestAgent",
+            AgentId = "test-abc123",
+            Depth = 0
+        };
+
+        // Act - Emit event WITH ExecutionContext already set
+        var customContext = new AgentExecutionContext
+        {
+            AgentName = "CustomAgent",
+            AgentId = "custom-xyz789",
+            Depth = 5
+        };
+
+        var evt = new TestAgentEvent { Message = "Test", ExecutionContext = customContext };
+        agent.EventCoordinator.Emit(evt);
+
+        // Read emitted event
+        agent.EventCoordinator.EventReader.TryRead(out var emittedEvent);
+
+        // Assert - Original ExecutionContext should be preserved
+        Assert.NotNull(emittedEvent!.ExecutionContext);
+        Assert.Equal("CustomAgent", emittedEvent.ExecutionContext!.AgentName);
+        Assert.Equal("custom-xyz789", emittedEvent.ExecutionContext.AgentId);
+        Assert.Equal(5, emittedEvent.ExecutionContext.Depth);
+    }
+
+    [Fact]
+    public void Emit_BubblesEventWithContext_ToParentCoordinator()
+    {
+        // Arrange - Create parent and child agents
+        var parentAgent = TestAgentFactory.Create(new AgentConfig
+        {
+            Name = "ParentAgent",
+            Provider = new ProviderConfig { ProviderKey = "test", ModelName = "test-model" }
+        });
+        var childAgent = TestAgentFactory.Create(new AgentConfig
+        {
+            Name = "ChildAgent",
+            Provider = new ProviderConfig { ProviderKey = "test", ModelName = "test-model" }
+        });
+
+        // Set ExecutionContexts
+        parentAgent.ExecutionContext = new AgentExecutionContext
+        {
+            AgentName = "ParentAgent",
+            AgentId = "parent-abc123",
+            Depth = 0
+        };
+
+        childAgent.ExecutionContext = new AgentExecutionContext
+        {
+            AgentName = "ChildAgent",
+            AgentId = "parent-abc123-child-def456",
+            ParentAgentId = "parent-abc123",
+            AgentChain = new[] { "ParentAgent", "ChildAgent" },
+            Depth = 1
+        };
+
+        // Link child to parent
+        childAgent.EventCoordinator.SetParent(parentAgent.EventCoordinator);
+
+        // Act - Child emits event
+        var evt = new TestAgentEvent { Message = "Child event" };
+        childAgent.EventCoordinator.Emit(evt);
+
+        // Assert - Event should appear in both child and parent channels with context
+        // Child channel
+        Assert.True(childAgent.EventCoordinator.EventReader.TryRead(out var childEvent));
+        Assert.NotNull(childEvent!.ExecutionContext);
+        Assert.Equal("ChildAgent", childEvent.ExecutionContext!.AgentName);
+
+        // Parent channel (bubbled event)
+        Assert.True(parentAgent.EventCoordinator.EventReader.TryRead(out var parentEvent));
+        Assert.NotNull(parentEvent!.ExecutionContext);
+        Assert.Equal("ChildAgent", parentEvent.ExecutionContext!.AgentName); // Context preserved during bubbling
+        Assert.Equal(1, parentEvent.ExecutionContext.Depth);
+    }
+
+    [Fact]
+    public void Emit_MultipleChildrenEvents_BubbleWithCorrectContexts()
+    {
+        // Arrange - Parent with two children
+        var parent = TestAgentFactory.Create(new AgentConfig
+        {
+            Name = "Orchestrator",
+            Provider = new ProviderConfig { ProviderKey = "test", ModelName = "test-model" }
+        });
+        var child1 = TestAgentFactory.Create(new AgentConfig
+        {
+            Name = "WeatherExpert",
+            Provider = new ProviderConfig { ProviderKey = "test", ModelName = "test-model" }
+        });
+        var child2 = TestAgentFactory.Create(new AgentConfig
+        {
+            Name = "MathExpert",
+            Provider = new ProviderConfig { ProviderKey = "test", ModelName = "test-model" }
+        });
+
+        parent.ExecutionContext = new AgentExecutionContext
+        {
+            AgentName = "Orchestrator",
+            AgentId = "orch-123",
+            Depth = 0
+        };
+
+        child1.ExecutionContext = new AgentExecutionContext
+        {
+            AgentName = "WeatherExpert",
+            AgentId = "orch-123-weather-456",
+            ParentAgentId = "orch-123",
+            Depth = 1
+        };
+
+        child2.ExecutionContext = new AgentExecutionContext
+        {
+            AgentName = "MathExpert",
+            AgentId = "orch-123-math-789",
+            ParentAgentId = "orch-123",
+            Depth = 1
+        };
+
+        // Link children to parent
+        child1.EventCoordinator.SetParent(parent.EventCoordinator);
+        child2.EventCoordinator.SetParent(parent.EventCoordinator);
+
+        // Act - Both children emit events
+        child1.EventCoordinator.Emit(new TestAgentEvent { Message = "Weather event" });
+        child2.EventCoordinator.Emit(new TestAgentEvent { Message = "Math event" });
+
+        // Assert - Parent should receive both events with correct contexts
+        var parentEvents = new List<InternalAgentEvent>();
+        while (parent.EventCoordinator.EventReader.TryRead(out var evt))
+        {
+            parentEvents.Add(evt);
+        }
+
+        Assert.Equal(2, parentEvents.Count);
+
+        // Verify contexts are preserved
+        var weatherEvent = parentEvents.FirstOrDefault(e => e.ExecutionContext?.AgentName == "WeatherExpert");
+        var mathEvent = parentEvents.FirstOrDefault(e => e.ExecutionContext?.AgentName == "MathExpert");
+
+        Assert.NotNull(weatherEvent);
+        Assert.NotNull(mathEvent);
+        Assert.Equal("orch-123-weather-456", weatherEvent!.ExecutionContext!.AgentId);
+        Assert.Equal("orch-123-math-789", mathEvent!.ExecutionContext!.AgentId);
+    }
 }
+
+/// <summary>
+/// Test event record for event bubbling tests
+/// </summary>
+internal sealed record TestAgentEvent(string Message = "") : InternalAgentEvent;

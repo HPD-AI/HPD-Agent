@@ -35,6 +35,15 @@ internal static class SubAgentCodeGenerator
         sb.AppendLine($"                // Build agent from config");
         sb.AppendLine($"                var agentBuilder = new AgentBuilder(subAgentDef.AgentConfig);");
         sb.AppendLine();
+        sb.AppendLine($"                // Get the current agent (parent) from AsyncLocal context");
+        sb.AppendLine($"                var currentAgent = HPD.Agent.AgentCore.RootAgent;");
+        sb.AppendLine();
+        sb.AppendLine($"                // If no provider specified in SubAgent config, inherit parent's chat client");
+        sb.AppendLine($"                if (subAgentDef.AgentConfig.Provider == null && currentAgent != null)");
+        sb.AppendLine($"                {{");
+        sb.AppendLine($"                    agentBuilder.WithChatClient(currentAgent.BaseClient);");
+        sb.AppendLine($"                }}");
+        sb.AppendLine();
         sb.AppendLine($"                // Register plugins if any are specified");
         sb.AppendLine($"                if (subAgentDef.PluginTypes != null && subAgentDef.PluginTypes.Length > 0)");
         sb.AppendLine($"                {{");
@@ -45,6 +54,49 @@ internal static class SubAgentCodeGenerator
         sb.AppendLine($"                }}");
         sb.AppendLine();
         sb.AppendLine($"                var agent = agentBuilder.BuildCoreAgent();");
+        sb.AppendLine();
+
+        // Set up event bubbling via parent-child linking
+        sb.AppendLine($"                // ═══════════════════════════════════════════════════════════════");
+        sb.AppendLine($"                // SET UP EVENT BUBBLING (Parent-Child Linking)");
+        sb.AppendLine($"                // ═══════════════════════════════════════════════════════════════");
+        sb.AppendLine($"                // currentAgent was already retrieved above for client inheritance");
+        sb.AppendLine($"                if (currentAgent != null)");
+        sb.AppendLine($"                {{");
+        sb.AppendLine($"                    // Establish explicit parent-child relationship");
+        sb.AppendLine($"                    // Events from this sub-agent will bubble to parent via _parentCoordinator");
+        sb.AppendLine($"                    agent.EventCoordinator.SetParent(currentAgent.EventCoordinator);");
+        sb.AppendLine($"                }}");
+        sb.AppendLine();
+
+        // Build execution context for event attribution
+        sb.AppendLine($"                // ═══════════════════════════════════════════════════════════════");
+        sb.AppendLine($"                // BUILD EXECUTION CONTEXT (Event Attribution)");
+        sb.AppendLine($"                // ═══════════════════════════════════════════════════════════════");
+        sb.AppendLine($"                // Build hierarchical execution context for event attribution");
+        sb.AppendLine($"                var parentContext = currentAgent?.ExecutionContext;");
+        sb.AppendLine($"                var randomId = System.Guid.NewGuid().ToString(\"N\")[..8];");
+        sb.AppendLine($"                var sanitizedAgentName = System.Text.RegularExpressions.Regex.Replace(");
+        sb.AppendLine($"                    \"{subAgent.SubAgentName}\",");
+        sb.AppendLine($"                    @\"[^a-zA-Z0-9]\",");
+        sb.AppendLine($"                    \"_\");");
+        sb.AppendLine();
+        sb.AppendLine($"                var agentId = parentContext != null");
+        sb.AppendLine($"                    ? $\"{{parentContext.AgentId}}-{{sanitizedAgentName}}-{{randomId}}\"");
+        sb.AppendLine($"                    : $\"{{sanitizedAgentName}}-{{randomId}}\";");
+        sb.AppendLine();
+        sb.AppendLine($"                var agentChain = parentContext != null");
+        sb.AppendLine($"                    ? new System.Collections.Generic.List<string>(parentContext.AgentChain) {{ \"{subAgent.SubAgentName}\" }}");
+        sb.AppendLine($"                    : new System.Collections.Generic.List<string> {{ \"{subAgent.SubAgentName}\" }};");
+        sb.AppendLine();
+        sb.AppendLine($"                agent.ExecutionContext = new HPD.Agent.AgentExecutionContext");
+        sb.AppendLine($"                {{");
+        sb.AppendLine($"                    AgentName = \"{subAgent.SubAgentName}\",");
+        sb.AppendLine($"                    AgentId = agentId,");
+        sb.AppendLine($"                    ParentAgentId = parentContext?.AgentId,");
+        sb.AppendLine($"                    AgentChain = agentChain,");
+        sb.AppendLine($"                    Depth = (parentContext?.Depth ?? -1) + 1");
+        sb.AppendLine($"                }};");
         sb.AppendLine();
 
         // Handle thread mode
@@ -69,29 +121,54 @@ internal static class SubAgentCodeGenerator
 
         // Invoke agent
         sb.AppendLine($"                // Create user message and run agent");
-        sb.AppendLine($"                var message = new ChatMessage(ChatMessageRole.User, query);");
-        sb.AppendLine($"                var response = await agent.RunAsync(");
-        sb.AppendLine($"                    thread,");
+        sb.AppendLine($"                var message = new ChatMessage(ChatRole.User, query);");
+        sb.AppendLine($"                var responseMessages = new System.Collections.Generic.List<ChatMessage>();");
+        sb.AppendLine($"                await foreach (var evt in agent.RunAsync(");
         sb.AppendLine($"                    new[] {{ message }},");
-        sb.AppendLine($"                    cancellationToken: cancellationToken);");
+        sb.AppendLine($"                    options: null,");
+        sb.AppendLine($"                    thread: thread,");
+        sb.AppendLine($"                    cancellationToken: cancellationToken))");
+        sb.AppendLine($"                {{");
+        sb.AppendLine($"                    // We don't need to process events here, just let it run");
+        sb.AppendLine($"                }}");
         sb.AppendLine();
 
         // Return response
-        sb.AppendLine($"                // Return last assistant message");
-        sb.AppendLine($"                return response.Messages");
-        sb.AppendLine($"                    .LastOrDefault(m => m.Role == ChatMessageRole.Assistant)");
-        sb.AppendLine($"                    ?.Content ?? string.Empty;");
+        sb.AppendLine($"                // Return last assistant message from thread");
+        sb.AppendLine($"                var messages = await thread.GetMessagesAsync(cancellationToken);");
+        sb.AppendLine($"                return messages");
+        sb.AppendLine($"                    .LastOrDefault(m => m.Role == ChatRole.Assistant)");
+        sb.AppendLine($"                    ?.Text ?? string.Empty;");
         sb.AppendLine($"            }}");
         sb.AppendLine();
 
         // Create AIFunction with metadata
         sb.AppendLine($"            var subAgentFunction = HPDAIFunctionFactory.Create(");
-        sb.AppendLine($"                invocation: InvokeSubAgentAsync,");
-        sb.AppendLine($"                options: new HPDAIFunctionFactoryOptions");
+        sb.AppendLine($"                (async (arguments, cancellationToken) =>");
+        sb.AppendLine($"                {{");
+        sb.AppendLine($"                    var jsonArgs = arguments.GetJson();");
+        sb.AppendLine($"                    var query = jsonArgs.TryGetProperty(\"query\", out var queryProp)");
+        sb.AppendLine($"                        ? queryProp.GetString() ?? string.Empty");
+        sb.AppendLine($"                        : string.Empty;");
+        sb.AppendLine($"                    return await InvokeSubAgentAsync(query, cancellationToken);");
+        sb.AppendLine($"                }}),");
+        sb.AppendLine($"                new HPDAIFunctionFactoryOptions");
         sb.AppendLine($"                {{");
         sb.AppendLine($"                    Name = \"{subAgent.SubAgentName}\",");
         sb.AppendLine($"                    Description = \"{EscapeString(subAgent.Description)}\",");
         sb.AppendLine($"                    RequiresPermission = true, // Sub-agent invocations require permission");
+        sb.AppendLine($"                    SchemaProvider = () =>");
+        sb.AppendLine($"                    {{");
+        sb.AppendLine($"                        var options = new global::Microsoft.Extensions.AI.AIJsonSchemaCreateOptions {{ IncludeSchemaKeyword = false }};");
+        sb.AppendLine($"                        var method = typeof({subAgent.ClassName}).GetMethod(\"{subAgent.MethodName}\")");
+        sb.AppendLine($"                            ?.GetCustomAttributes(typeof(SubAgentAttribute), false)");
+        sb.AppendLine($"                            ?.FirstOrDefault();");
+        sb.AppendLine($"                        return global::Microsoft.Extensions.AI.AIJsonUtilities.CreateJsonSchema(");
+        sb.AppendLine($"                            typeof(SubAgentQueryArgs),");
+        sb.AppendLine($"                            serializerOptions: global::Microsoft.Extensions.AI.AIJsonUtilities.DefaultOptions,");
+        sb.AppendLine($"                            inferenceOptions: options");
+        sb.AppendLine($"                        );");
+        sb.AppendLine($"                    }},");
         sb.AppendLine($"                    AdditionalProperties = new System.Collections.Generic.Dictionary<string, object>");
         sb.AppendLine($"                    {{");
         sb.AppendLine($"                        [\"IsSubAgent\"] = true,");

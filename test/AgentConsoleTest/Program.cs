@@ -88,16 +88,22 @@ static Task<(ConversationThread, AgentCore)> CreateAIAssistant(ILoggerFactory lo
         }
     };
 
-    // ✨ BUILD CORE AGENT - Direct access to internal Agent class
-    // Auto-loads from appsettings.json, environment variables, and user secrets
+    // ✨ CREATE OBSERVER FIRST (without agent reference)
+    var eventHandler = new ConsoleEventHandler();
+
+    // ✨ BUILD CORE AGENT WITH OBSERVER - Clean builder pattern!
     var agent = new AgentBuilder(agentConfig)
         .WithLogging()
         .WithPlanMode()  // ✨ Financial analysis plugin (explicitly registered)  // ✨ Financial analysis skills (that reference the plugin)
         .WithPlugin<FinancialAnalysisSkills>()  // ✨ Math plugin (basic math functions
         .WithPlugin<MathPlugin>()  // ✨ MCP tool integration (auto-loads tools from MCP.json manifest)
         .WithPlugin<SpecializedAgents>()  // ✨ Frontend tools plugin (web search, browser, calculator)
-        .WithPermissions() // ✨ NEW: Unified permission Middleware - events handled in streaming loop
+        .WithPermissions() // ✨ NEW: Unified permission Middleware - events handled in observer
+        .WithObserver(eventHandler)  // ✨ NEW: Register observer via builder API!
         .BuildCoreAgent();  // ✨ Build CORE agent (internal access via InternalsVisibleTo)
+
+    // ✨ SET AGENT REFERENCE (needed for bidirectional events like permissions)
+    eventHandler.SetAgent(agent);
 
     // 💬 Create thread using agent directly
     var thread = agent.CreateThread();
@@ -107,15 +113,17 @@ static Task<(ConversationThread, AgentCore)> CreateAIAssistant(ILoggerFactory lo
     Console.WriteLine($"📋 Config: {agentConfig.Name} - {agentConfig.Provider?.ModelName}");
     Console.WriteLine($"🧠 Memory: {agentConfig.DynamicMemory?.StorageDirectory}");
     Console.WriteLine($"🔧 Max Function Call Turns: {agentConfig.MaxAgenticIterations}");
+    Console.WriteLine($"🎭 Observer Pattern: ConsoleEventHandler registered (handles all events automatically)");
 
     return Task.FromResult((thread, agent));
 }
 
-// 🎯 Interactive Chat Loop using CORE agent.RunAsync with InternalAgentEvent stream
+// 🎯 Interactive Chat Loop - SIMPLIFIED with Observer Pattern!
+// All event handling is now done by ConsoleEventHandler observer
 static async Task RunInteractiveChat(AgentCore agent, ConversationThread thread)
 {
     Console.WriteLine("==========================================");
-    Console.WriteLine("🤖 Interactive Chat Mode (Core Agent)");
+    Console.WriteLine("🤖 Interactive Chat Mode (Observer Pattern)");
     Console.WriteLine("==========================================");
     Console.WriteLine("Commands:");
     Console.WriteLine("  • Type your message and press Enter");
@@ -164,235 +172,21 @@ static async Task RunInteractiveChat(AgentCore agent, ConversationThread thread)
                 }
             });
 
-            // Track state for better display
-            bool isFirstReasoningChunk = true;
-            bool isFirstTextChunk = true;
-            string? currentMessageId = null;
-
             try
             {
-                // ✨ Use CORE agent.RunAsync - returns InternalAgentEvent stream
+                // ✨ OBSERVER PATTERN - Just run the agent, NO event loop needed!
+                // All events are handled automatically by ConsoleEventHandler observer
                 var userMessage = new ChatMessage(ChatRole.User, input);
-                await foreach (var evt in agent.RunAsync(
+
+                // Consume the event stream (observer handles everything)
+                await foreach (var _ in agent.RunAsync(
                     new[] { userMessage },
                     options: null,
                     thread: thread,
                     cancellationToken: cts.Token))
                 {
-                    // ✨ Handle INTERNAL permission events from the unified Middleware
-                    if (evt is InternalPermissionRequestEvent permReq)
-                    {
-                        // Close any open sections
-                        if (!isFirstReasoningChunk || !isFirstTextChunk)
-                        {
-                            Console.WriteLine(); // End section
-                            Console.ResetColor();
-                            isFirstReasoningChunk = true;
-                            isFirstTextChunk = true;
-                        }
-
-                        Console.ForegroundColor = ConsoleColor.Cyan;
-                        Console.WriteLine($"\n🔐 Permission Request");
-                        Console.WriteLine($"   Function: {permReq.FunctionName}");
-                        if (!string.IsNullOrEmpty(permReq.Description))
-                            Console.WriteLine($"   Purpose: {permReq.Description}");
-                        Console.WriteLine($"   Options: [A]llow once, Allow [F]orever, [D]eny once, Deny F[o]rever");
-                        Console.Write("   Your choice (press Enter): ");
-                        Console.ResetColor();
-
-                        // Read user's permission choice (first character of input line)
-                        var userInput = Console.ReadLine();
-                        var choice = string.IsNullOrEmpty(userInput) ? 'd' : char.ToLower(userInput[0]);
-
-                        bool approved;
-                        PermissionChoice permChoice;
-
-                        switch (choice)
-                        {
-                            case 'A' or 'a':
-                                approved = true;
-                                permChoice = PermissionChoice.Ask;
-                                break;
-                            case 'F' or 'f':
-                                approved = true;
-                                permChoice = PermissionChoice.AlwaysAllow;
-                                break;
-                            case 'D' or 'd':
-                                approved = false;
-                                permChoice = PermissionChoice.Ask;
-                                break;
-                            case 'O' or 'o':
-                                approved = false;
-                                permChoice = PermissionChoice.AlwaysDeny;
-                                break;
-                            default:
-                                approved = false;
-                                permChoice = PermissionChoice.Ask;
-                                break;
-                        }
-
-                        // Send response back to the Middleware via agent
-                        agent.SendMiddlewareResponse(
-                            permReq.PermissionId,
-                            new InternalPermissionResponseEvent(
-                                permReq.PermissionId,
-                                "Console", // SourceName
-                                approved,
-                                approved ? null : "User denied permission",
-                                permChoice
-                            )
-                        );
-
-                        Console.ForegroundColor = approved ? ConsoleColor.Green : ConsoleColor.Red;
-                        Console.WriteLine($"   {(approved ? "✓ Approved" : "✗ Denied")}");
-                        Console.ResetColor();
-                    }
-
-                    // ✨ Handle continuation request events
-                    else if (evt is InternalContinuationRequestEvent contReq)
-                    {
-                        // Close any open sections
-                        if (!isFirstReasoningChunk || !isFirstTextChunk)
-                        {
-                            Console.WriteLine();
-                            Console.ResetColor();
-                            isFirstReasoningChunk = true;
-                            isFirstTextChunk = true;
-                        }
-
-                        Console.ForegroundColor = ConsoleColor.Yellow;
-                        Console.WriteLine($"\n⏱️  Continuation Request");
-                        Console.WriteLine($"   Iteration: {contReq.CurrentIteration} / {contReq.MaxIterations}");
-                        Console.WriteLine($"   Continue for more iterations?");
-                        Console.WriteLine($"   Options: [Y]es, [N]o");
-                        Console.Write("   Your choice: ");
-                        Console.ResetColor();
-
-                        var userInput = Console.ReadLine();
-                        var approved = !string.IsNullOrEmpty(userInput) && char.ToLower(userInput[0]) == 'y';
-
-                        // Send response back to the Middleware
-                        agent.SendMiddlewareResponse(
-                            contReq.ContinuationId,
-                            new InternalContinuationResponseEvent(
-                                contReq.ContinuationId,
-                                "Console",
-                                approved,
-                                approved ? 3 : 0  // Default 3 iterations if approved
-                            )
-                        );
-
-                        Console.ForegroundColor = approved ? ConsoleColor.Green : ConsoleColor.Red;
-                        Console.WriteLine($"{(approved ? "✓ Continuing" : "✗ Stopping")}");
-                        Console.ResetColor();
-
-                    }
-
-                    // ✨ Handle text content events (reasoning and regular text)
-                    // REASONING EVENTS (consolidated)
-                    else if (evt is InternalReasoningEvent reasoning)
-                    {
-                        switch (reasoning.Phase)
-                        {
-                            case ReasoningPhase.MessageStart:
-                                // If transitioning from text to reasoning, close text section
-                                if (!isFirstTextChunk)
-                                {
-                                    Console.WriteLine(); // End text section
-                                    Console.ResetColor();
-                                    isFirstTextChunk = true;
-                                }
-
-                                // Show header when starting new reasoning section
-                                if (isFirstReasoningChunk)
-                                {
-                                    Console.WriteLine(); // Add spacing
-                                    Console.ForegroundColor = ConsoleColor.DarkGray;
-                                    Console.Write("💭 Thinking: ");
-                                    isFirstReasoningChunk = false;
-                                }
-                                currentMessageId = reasoning.MessageId;
-                                break;
-
-                            case ReasoningPhase.Delta:
-                                Console.ForegroundColor = ConsoleColor.DarkGray;
-                                Console.Write(reasoning.Text);
-                                break;
-
-                            case ReasoningPhase.MessageEnd:
-                                // Reasoning section ended - will transition to text if any
-                                if (!isFirstReasoningChunk)
-                                {
-                                    Console.WriteLine(); // End reasoning section
-                                    Console.ResetColor();
-                                    isFirstReasoningChunk = true;
-                                }
-                                break;
-                        }
-                    }
-
-                    // TEXT CONTENT EVENTS
-                    else if (evt is InternalTextMessageStartEvent textStart)
-                    {
-                        // If transitioning from reasoning to text, ensure reasoning is closed
-                        if (!isFirstReasoningChunk)
-                        {
-                            Console.WriteLine();
-                            Console.ResetColor();
-                            isFirstReasoningChunk = true;
-                        }
-
-                        // Show text header on first text chunk
-                        if (isFirstTextChunk)
-                        {
-                            Console.WriteLine(); // Add spacing
-                            Console.Write("📝 Response: ");
-                            isFirstTextChunk = false;
-                        }
-                        currentMessageId = textStart.MessageId;
-                    }
-                    else if (evt is InternalTextDeltaEvent textDelta)
-                    {
-                        Console.Write(textDelta.Text);
-                    }
-                    else if (evt is InternalTextMessageEndEvent)
-                    {
-                        // Text message ended
-                    }
-
-                    // TOOL CALL EVENTS
-                    else if (evt is InternalToolCallStartEvent toolStart)
-                    {
-                        // Close any open sections
-                        if (!isFirstReasoningChunk || !isFirstTextChunk)
-                        {
-                            Console.WriteLine(); // End section
-                            Console.ResetColor();
-                            isFirstReasoningChunk = true;
-                            isFirstTextChunk = true;
-                        }
-
-                        Console.ForegroundColor = ConsoleColor.Yellow;
-                        Console.Write($"\n🔧 Using tool: {toolStart.Name}");
-                        Console.ResetColor();
-                    }
-                    else if (evt is InternalToolCallResultEvent toolResult)
-                    {
-                        Console.ForegroundColor = ConsoleColor.Green;
-                        Console.Write($" ✓");
-                        Console.ResetColor();
-                    }
-
-                    // AGENT TURN EVENTS (optional - for debugging)
-                    else if (evt is InternalAgentTurnStartedEvent turnStart)
-                    {
-                        if (turnStart.Iteration > 1)  // Don't show for first iteration
-                        {
-                            Console.ForegroundColor = ConsoleColor.DarkYellow;
-                            Console.WriteLine($"\n🔄 Agent iteration {turnStart.Iteration}");
-                            Console.ResetColor();
-                        }
-                    }
+                    // Observer handles ALL events - we don't need to do anything here!
+                    // This loop just needs to exist to consume the IAsyncEnumerable
                 }
             }
             catch (OperationCanceledException)

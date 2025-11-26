@@ -6,7 +6,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
-using System.IO;
 using System.Collections.Immutable;
 using FluentValidation;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -498,6 +497,73 @@ public class AgentBuilder
             this.WithMiddleware(functionMiddleware);
         }
 
+        return this;
+    }
+
+    /// <summary>
+    /// Registers a custom event observer to handle agent events.
+    /// Observers receive all internal agent events (InternalAgentEvent) and can process them asynchronously.
+    /// Use this to implement custom event handling, logging, metrics collection, or UI updates.
+    /// </summary>
+    /// <param name="observer">The observer to register. Can use <see cref="IEventHandler"/> or <see cref="IAgentEventObserver"/> - both are equivalent.</param>
+    /// <returns>The builder for chaining</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Observer Pattern Benefits:</b>
+    /// </para>
+    /// <list type="bullet">
+    /// <item><description>Reusable event handling logic across multiple agents</description></item>
+    /// <item><description>Fire-and-forget async processing (doesn't block agent execution)</description></item>
+    /// <item><description>Automatic circuit breaker protection (failing observers auto-disabled after 10 failures)</description></item>
+    /// <item><description>Selective filtering via <c>ShouldProcess()</c> method</description></item>
+    /// </list>
+    /// <para>
+    /// <b>Example - Custom Event Handler:</b>
+    /// <code>
+    /// public class MyEventHandler : IEventHandler
+    /// {
+    ///     public bool ShouldProcess(InternalAgentEvent evt)
+    ///     {
+    ///         // Filter events you care about
+    ///         return evt is InternalPermissionRequestEvent or InternalTextDeltaEvent;
+    ///     }
+    ///
+    ///     public async Task OnEventAsync(InternalAgentEvent evt, CancellationToken ct)
+    ///     {
+    ///         switch (evt)
+    ///         {
+    ///             case InternalPermissionRequestEvent permReq:
+    ///                 await HandlePermissionAsync(permReq, ct);
+    ///                 break;
+    ///             case InternalTextDeltaEvent textDelta:
+    ///                 Console.Write(textDelta.Text);
+    ///                 break;
+    ///         }
+    ///     }
+    /// }
+    ///
+    /// // Register with agent
+    /// var agent = new AgentBuilder(config)
+    ///     .WithObserver(new MyEventHandler())
+    ///     .BuildCoreAgent();
+    /// </code>
+    /// </para>
+    /// <para>
+    /// <b>Multiple Observers:</b> Call <c>WithObserver()</c> multiple times to register multiple observers.
+    /// All observers run in parallel via fire-and-forget pattern.
+    /// </para>
+    /// <para>
+    /// <b>Built-in Observers:</b> The framework automatically registers:
+    /// - <c>LoggingEventObserver</c> (when you call <c>WithLogging()</c>)
+    /// - <c>TelemetryEventObserver</c> (when you call <c>WithTelemetry()</c>)
+    /// </para>
+    /// </remarks>
+    public AgentBuilder WithObserver(IAgentEventObserver observer)
+    {
+        if (observer == null)
+            throw new ArgumentNullException(nameof(observer));
+
+        _observers.Add(observer);
         return this;
     }
 

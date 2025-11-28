@@ -89,7 +89,7 @@ internal class PermissionMiddleware : IPermissionMiddleware
         var permissionId = Guid.NewGuid().ToString();
 
         // Emit permission request event (standardized, protocol-agnostic)
-        context.Emit(new InternalPermissionRequestEvent(
+        context.Emit(new PermissionRequestEvent(
             permissionId,
             _MiddlewareName,
             functionName,
@@ -98,17 +98,17 @@ internal class PermissionMiddleware : IPermissionMiddleware
             context.ToolCallRequest?.Arguments ?? new Dictionary<string, object?>()));
 
         // Wait for response from external handler (BLOCKS HERE while event is processed)
-        InternalPermissionResponseEvent response;
+        PermissionResponseEvent response;
         try
         {
-            response = await context.WaitForResponseAsync<InternalPermissionResponseEvent>(
+            response = await context.WaitForResponseAsync<PermissionResponseEvent>(
                 permissionId,
                 timeout: TimeSpan.FromMinutes(5));
         }
         catch (TimeoutException)
         {
             // Emit denial event for observability
-            context.Emit(new InternalPermissionDeniedEvent(
+            context.Emit(new PermissionDeniedEvent(
                 permissionId,
                 _MiddlewareName,
                 "Permission request timed out after 5 minutes"));
@@ -120,7 +120,7 @@ internal class PermissionMiddleware : IPermissionMiddleware
         catch (OperationCanceledException)
         {
             // Emit denial event for observability
-            context.Emit(new InternalPermissionDeniedEvent(
+            context.Emit(new PermissionDeniedEvent(
                 permissionId,
                 _MiddlewareName,
                 "Permission request was cancelled"));
@@ -134,7 +134,7 @@ internal class PermissionMiddleware : IPermissionMiddleware
         if (response.Approved)
         {
             // Emit approval event for observability
-            context.Emit(new InternalPermissionApprovedEvent(permissionId, _MiddlewareName));
+            context.Emit(new PermissionApprovedEvent(permissionId, _MiddlewareName));
 
             // Store persistent choice if user requested it
             if (_storage != null && response.Choice != PermissionChoice.Ask)
@@ -158,7 +158,7 @@ internal class PermissionMiddleware : IPermissionMiddleware
                 ?? "Permission denied by user.";
 
             // Emit denial event for observability
-            context.Emit(new InternalPermissionDeniedEvent(
+            context.Emit(new PermissionDeniedEvent(
                 permissionId,
                 _MiddlewareName,
                 denialReason));

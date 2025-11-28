@@ -209,7 +209,7 @@ public partial class Agent
 {
     private readonly string? _baseSystemInstructions;
     
-    public async IAsyncEnumerable<InternalAgentEvent> RunAgenticLoopInternal(...)
+    public async IAsyncEnumerable<AgentEvent> RunAgenticLoopInternal(...)
     {
         // Build effective options with Instructions for supplements
         var effectiveOptions = BuildOptionsWithInstructions(
@@ -275,7 +275,7 @@ public Agent(AgentConfig config, ...)
 }
 
 // Agent.cs - RunAgenticLoopInternal
-private async IAsyncEnumerable<InternalAgentEvent> RunAgenticLoopInternal(
+private async IAsyncEnumerable<AgentEvent> RunAgenticLoopInternal(
     IEnumerable<ChatMessage> messages,
     ChatOptions? options,
     ...)

@@ -197,10 +197,10 @@ public class ExecutionContextTests
         Assert.Empty(context.AgentChain);
     }
 
-    // ===== P0: InternalAgentEvent ExecutionContext Integration =====
+    // ===== P0: AgentEvent ExecutionContext Integration =====
 
     [Fact]
-    public void InternalAgentEvent_CanHaveNullExecutionContext()
+    public void AgentEvent_CanHaveNullExecutionContext()
     {
         // Arrange & Act - Create a test event
         var evt = new TestAgentEvent();
@@ -210,7 +210,7 @@ public class ExecutionContextTests
     }
 
     [Fact]
-    public void InternalAgentEvent_CanAttachExecutionContext()
+    public void AgentEvent_CanAttachExecutionContext()
     {
         // Arrange
         var context = new AgentExecutionContext
@@ -234,7 +234,7 @@ public class ExecutionContextTests
     }
 
     [Fact]
-    public void InternalAgentEvent_ExecutionContext_SupportsRecordWithSyntax()
+    public void AgentEvent_ExecutionContext_SupportsRecordWithSyntax()
     {
         // Arrange
         var originalContext = new AgentExecutionContext
@@ -267,7 +267,7 @@ public class ExecutionContextTests
     public void Events_CanBeFiltered_ByAgentName()
     {
         // Arrange
-        var events = new List<InternalAgentEvent>
+        var events = new List<AgentEvent>
         {
             new TestAgentEvent { ExecutionContext = new AgentExecutionContext { AgentName = "WeatherExpert", AgentId = "w-1" } },
             new TestAgentEvent { ExecutionContext = new AgentExecutionContext { AgentName = "MathExpert", AgentId = "m-1" } },
@@ -286,7 +286,7 @@ public class ExecutionContextTests
     public void Events_CanBeFiltered_ByDepth()
     {
         // Arrange
-        var events = new List<InternalAgentEvent>
+        var events = new List<AgentEvent>
         {
             new TestAgentEvent { ExecutionContext = new AgentExecutionContext { AgentName = "Root", AgentId = "r-1", Depth = 0 } },
             new TestAgentEvent { ExecutionContext = new AgentExecutionContext { AgentName = "Sub1", AgentId = "s1-1", Depth = 1 } },
@@ -306,7 +306,7 @@ public class ExecutionContextTests
     public void Events_CanBeFiltered_ByIsSubAgent()
     {
         // Arrange
-        var events = new List<InternalAgentEvent>
+        var events = new List<AgentEvent>
         {
             new TestAgentEvent { ExecutionContext = new AgentExecutionContext { AgentName = "Root", AgentId = "r-1", Depth = 0 } },
             new TestAgentEvent { ExecutionContext = new AgentExecutionContext { AgentName = "Sub1", AgentId = "s1-1", Depth = 1 } },
@@ -325,7 +325,7 @@ public class ExecutionContextTests
     public void Events_CanBeFiltered_ByAgentChainContains()
     {
         // Arrange
-        var events = new List<InternalAgentEvent>
+        var events = new List<AgentEvent>
         {
             new TestAgentEvent
             {
@@ -404,5 +404,5 @@ public class ExecutionContextTests
 
     // ===== Helper Test Event =====
 
-    private record TestAgentEvent : InternalAgentEvent;
+    private record TestAgentEvent : AgentEvent;
 }

@@ -66,7 +66,7 @@ public static class ClarificationFunction
 
             // Emit clarification request event (will bubble to root agent/orchestrator)
             // Include the agent name so UI can show which agent is asking
-            context.Emit(new InternalClarificationRequestEvent(
+            context.Emit(new ClarificationRequestEvent(
                 requestId,
                 SourceName: "ClarificationFunction",
                 question,
@@ -74,11 +74,11 @@ public static class ClarificationFunction
                 Options: null));
 
             // Wait for user's response (blocks here while event is processed)
-            InternalClarificationResponseEvent response;
+            ClarificationResponseEvent response;
             var effectiveTimeout = timeout ?? TimeSpan.FromMinutes(5);
             try
             {
-                response = await context.WaitForResponseAsync<InternalClarificationResponseEvent>(
+                response = await context.WaitForResponseAsync<ClarificationResponseEvent>(
                     requestId,
                     timeout: effectiveTimeout,
                     cancellationToken);

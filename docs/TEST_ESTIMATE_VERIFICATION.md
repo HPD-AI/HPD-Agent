@@ -136,7 +136,7 @@ Based on comprehensive codebase analysis:
    - Thread-safe response delivery
 
 3. **Internal Event Streaming**
-   - InternalAgentEvent hierarchy
+   - AgentEvent hierarchy
    - MessageTurnStarted/Completed
    - FunctionCall/Result events
    - Error events
@@ -327,7 +327,7 @@ Based on comprehensive codebase analysis:
 
 ### 3.2 Channel-Based Coordination
 **Channel Usage**: BidirectionalEventCoordinator
-- Channel<InternalAgentEvent> for event streaming
+- Channel<AgentEvent> for event streaming
 - ConcurrentDictionary for request/response matching
 - Timeout handling with CancellationTokenSource
 

@@ -171,7 +171,7 @@ HPD.Agent/                          ← Protocol-agnostic core
 ├── AgentBuilder.cs                 ← Builder for core agent
 ├── AgentConfig.cs                  ← Configuration
 ├── FunctionInvocationContext.cs    ← Shared context
-├── InternalAgentEvent.cs           ← Internal event types
+├── AgentEvent.cs           ← Internal event types
 └── ... (all core components)
 
 HPD.Agent.Microsoft/                ← Microsoft protocol adapter

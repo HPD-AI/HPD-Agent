@@ -25,7 +25,7 @@ public class SimpleTextResponseTest : AgentTestBase
         var agent = CreateAgent(client: fakeLLM);
         var messages = CreateSimpleConversation("Hello");
 
-        var capturedEvents = new List<InternalAgentEvent>();
+        var capturedEvents = new List<AgentEvent>();
 
         // Act
         await foreach (var evt in agent.RunAgenticLoopAsync(messages, cancellationToken: TestCancellationToken))
@@ -45,19 +45,19 @@ public class SimpleTextResponseTest : AgentTestBase
         var eventTypes = capturedEvents.Select(e => e.GetType().Name).ToList();
 
         eventTypes.Should().ContainInOrder(
-            nameof(InternalMessageTurnStartedEvent),
-            nameof(InternalAgentTurnStartedEvent),
-            nameof(InternalTextMessageStartEvent));
+            nameof(MessageTurnStartedEvent),
+            nameof(AgentTurnStartedEvent),
+            nameof(TextMessageStartEvent));
 
         // Should have multiple text deltas
-        capturedEvents.OfType<InternalTextDeltaEvent>().Should().HaveCountGreaterOrEqualTo(1);
+        capturedEvents.OfType<TextDeltaEvent>().Should().HaveCountGreaterOrEqualTo(1);
 
         // Current implementation: TextMessageEnd comes BEFORE AgentTurnFinished
         // This documents the current behavior for comparison after refactoring
         eventTypes.Should().ContainInOrder(
-            nameof(InternalTextMessageEndEvent),
-            nameof(InternalAgentTurnFinishedEvent),
-            nameof(InternalMessageTurnFinishedEvent));
+            nameof(TextMessageEndEvent),
+            nameof(AgentTurnFinishedEvent),
+            nameof(MessageTurnFinishedEvent));
 
         // Verify FakeLLM was called
         fakeLLM.CapturedRequests.Should().HaveCount(1);

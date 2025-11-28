@@ -54,7 +54,7 @@ chatOptions.AdditionalProperties["Thread"] = conversationThread;
 
 **Function signature**:
 ```csharp
-private async IAsyncEnumerable<InternalAgentEvent> RunAgenticLoopInternal(
+private async IAsyncEnumerable<AgentEvent> RunAgenticLoopInternal(
     IEnumerable<ChatMessage> messages,
     ChatOptions? options,
     string[]? documentPaths,
@@ -311,11 +311,11 @@ As LLM streams response:
   → FunctionCallContent yielded
   
 Events emitted immediately:
-  - InternalReasoningStartEvent
-  - InternalTextMessageStartEvent
-  - InternalTextDeltaEvent
-  - InternalToolCallStartEvent
-  - InternalToolCallArgsEvent
+  - ReasoningStartEvent
+  - TextMessageStartEvent
+  - TextDeltaEvent
+  - ToolCallStartEvent
+  - ToolCallArgsEvent
 ```
 
 ### 8.2 Filter Event Polling (Lines 636-640, 772-782)
@@ -345,7 +345,7 @@ ExecuteToolsAsync(messages, toolRequests, options, state, cancellationToken)
   4. Apply IAIFunctionMiddleware pipeline
   5. Invoke actual function
   6. Collect results
-  7. Emit InternalToolResultEvent
+  7. Emit ToolResultEvent
 ```
 
 ### 9.2 ScopedFunctionMiddlewareManager
@@ -359,7 +359,7 @@ PermissionManager.CheckPermissionAsync()
   ↓
   Applies IPermissionMiddleware pipeline
   ↓
-  May yield: InternalPermissionRequestEvent (human-in-the-loop)
+  May yield: PermissionRequestEvent (human-in-the-loop)
 ```
 
 ---
@@ -504,11 +504,11 @@ AgentTurn.RunAsync()
       └─ Stream response with events
       ↓
       Emit Events (real-time):
-      ├─ InternalTextMessageStartEvent
-      ├─ InternalTextDeltaEvent
-      ├─ InternalToolCallStartEvent
-      ├─ InternalToolCallArgsEvent
-      └─ InternalTextMessageEndEvent
+      ├─ TextMessageStartEvent
+      ├─ TextDeltaEvent
+      ├─ ToolCallStartEvent
+      ├─ ToolCallArgsEvent
+      └─ TextMessageEndEvent
   ↓
 Tool Request Detection
   ├─ Create FunctionInvocationContext

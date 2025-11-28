@@ -66,25 +66,25 @@ public interface IPermissionEvent : IBidirectionalEvent
 
 **Event Hierarchy:**
 ```
-InternalAgentEvent (base)
+AgentEvent (base)
     ↓
 IBidirectionalEvent (all bidirectional events)
 │   - SourceName: string
 │
-├── InternalMiddlewareProgressEvent
-├── InternalMiddlewareErrorEvent
+├── MiddlewareProgressEvent
+├── MiddlewareErrorEvent
 ├── Custom events (user-defined, implement IBidirectionalEvent)
 │
 └── IPermissionEvent (permission-specific)
     │   - SourceName: string (inherited)
     │   - PermissionId: string
     │
-    ├── InternalPermissionRequestEvent
-    ├── InternalPermissionResponseEvent
-    ├── InternalPermissionApprovedEvent
-    ├── InternalPermissionDeniedEvent
-    ├── InternalContinuationRequestEvent
-    └── InternalContinuationResponseEvent
+    ├── PermissionRequestEvent
+    ├── PermissionResponseEvent
+    ├── PermissionApprovedEvent
+    ├── PermissionDeniedEvent
+    ├── ContinuationRequestEvent
+    └── ContinuationResponseEvent
 ```
 
 ---
@@ -99,7 +99,7 @@ public class MyProgressMiddleware : IAIFunctionMiddleware
     public async Task InvokeAsync(AiFunctionContext context, Func<AiFunctionContext, Task> next)
     {
         // Emit start event
-        context.Emit(new InternalMiddlewareProgressEvent(
+        context.Emit(new MiddlewareProgressEvent(
             "MyProgressMiddleware",
             $"Starting {context.ToolCallRequest.FunctionName}",
             PercentComplete: 0));
@@ -107,7 +107,7 @@ public class MyProgressMiddleware : IAIFunctionMiddleware
         await next(context);
 
         // Emit completion event
-        context.Emit(new InternalMiddlewareProgressEvent(
+        context.Emit(new MiddlewareProgressEvent(
             "MyProgressMiddleware",
             "Done!",
             PercentComplete: 100));
@@ -133,11 +133,11 @@ await foreach (var evt in agent.RunStreamingAsync(thread, options))
     // Option A: Handle specific event types
     switch (evt)
     {
-        case InternalMiddlewareProgressEvent progress:
+        case MiddlewareProgressEvent progress:
             Console.WriteLine($"[{progress.SourceName}] {progress.Message}");
             break;
 
-        case InternalTextDeltaEvent text:
+        case TextDeltaEvent text:
             Console.Write(text.Text);
             break;
     }
@@ -203,12 +203,12 @@ await foreach (var evt in agent.RunStreamingAsync(...))
 {
     switch (evt)
     {
-        case InternalPermissionRequestEvent req:
+        case PermissionRequestEvent req:
             // Specific handling for permission requests
             await PromptUserAsync(req);
             break;
 
-        case InternalMiddlewareProgressEvent progress:
+        case MiddlewareProgressEvent progress:
             // Specific handling for progress
             UpdateProgressBar(progress.PercentComplete);
             break;
@@ -236,10 +236,10 @@ await foreach (var evt in agent.RunStreamingAsync(...))
     // Level 3: Specific (individual events)
     switch (evt)
     {
-        case InternalPermissionRequestEvent req:
+        case PermissionRequestEvent req:
             await PromptUserAsync(req);
             break;
-        case InternalTextDeltaEvent text:
+        case TextDeltaEvent text:
             Console.Write(text.Text);
             break;
     }
@@ -254,7 +254,7 @@ await foreach (var evt in agent.RunStreamingAsync(...))
 
 #### Progress Events
 ```csharp
-context.Emit(new InternalMiddlewareProgressEvent(
+context.Emit(new MiddlewareProgressEvent(
     "MyMiddleware",
     "Processing...",
     PercentComplete: 50));
@@ -262,7 +262,7 @@ context.Emit(new InternalMiddlewareProgressEvent(
 
 #### Error Events
 ```csharp
-context.Emit(new InternalMiddlewareErrorEvent(
+context.Emit(new MiddlewareErrorEvent(
     "MyMiddleware",
     "Something went wrong",
     exception));
@@ -275,7 +275,7 @@ public record MyCustomEvent(
     string SourceName,
     string CustomData,
     int Count
-) : InternalAgentEvent, IBidirectionalEvent;
+) : AgentEvent, IBidirectionalEvent;
 
 // Emit it
 context.Emit(new MyCustomEvent(
@@ -291,7 +291,7 @@ context.Emit(new MyCustomEvent(
 var permissionId = Guid.NewGuid().ToString();
 
 // 1. Emit request
-context.Emit(new InternalPermissionRequestEvent(
+context.Emit(new PermissionRequestEvent(
     permissionId,
     sourceName: "MyPermissionMiddleware",
     functionName: "DeleteFile",
@@ -300,7 +300,7 @@ context.Emit(new InternalPermissionRequestEvent(
     arguments: context.ToolCallRequest.Arguments));
 
 // 2. Wait for response (blocks Middleware, but events still flow!)
-var response = await context.WaitForResponseAsync<InternalPermissionResponseEvent>(
+var response = await context.WaitForResponseAsync<PermissionResponseEvent>(
     permissionId,
     timeout: TimeSpan.FromMinutes(5));
 
@@ -336,7 +336,7 @@ public class SimplePermissionMiddleware : IAIFunctionMiddleware
         var permissionId = Guid.NewGuid().ToString();
 
         // Emit request
-        context.Emit(new InternalPermissionRequestEvent(
+        context.Emit(new PermissionRequestEvent(
             permissionId,
             _MiddlewareName,
             context.ToolCallRequest.FunctionName,
@@ -347,17 +347,17 @@ public class SimplePermissionMiddleware : IAIFunctionMiddleware
         // Wait for user response
         try
         {
-            var response = await context.WaitForResponseAsync<InternalPermissionResponseEvent>(
+            var response = await context.WaitForResponseAsync<PermissionResponseEvent>(
                 permissionId);
 
             if (response.Approved)
             {
-                context.Emit(new InternalPermissionApprovedEvent(permissionId, _MiddlewareName));
+                context.Emit(new PermissionApprovedEvent(permissionId, _MiddlewareName));
                 await next(context);
             }
             else
             {
-                context.Emit(new InternalPermissionDeniedEvent(permissionId, _MiddlewareName, "User denied"));
+                context.Emit(new PermissionDeniedEvent(permissionId, _MiddlewareName, "User denied"));
                 context.Result = "Permission denied";
                 context.IsTerminated = true;
             }
@@ -380,7 +380,7 @@ public async Task RunWithPermissionsAsync(Agent agent)
     {
         switch (evt)
         {
-            case InternalPermissionRequestEvent permReq:
+            case PermissionRequestEvent permReq:
                 // Prompt user in background thread
                 _ = Task.Run(async () =>
                 {
@@ -391,7 +391,7 @@ public async Task RunWithPermissionsAsync(Agent agent)
 
                     // Send response back to waiting Middleware
                     agent.SendMiddlewareResponse(permReq.PermissionId,
-                        new InternalPermissionResponseEvent(
+                        new PermissionResponseEvent(
                             permReq.PermissionId,
                             permReq.MiddlewareName,
                             approved,
@@ -400,7 +400,7 @@ public async Task RunWithPermissionsAsync(Agent agent)
                 });
                 break;
 
-            case InternalTextDeltaEvent text:
+            case TextDeltaEvent text:
                 Console.Write(text.Text);
                 break;
         }
@@ -422,7 +422,7 @@ public record DatabaseQueryStartEvent(
     string SourceName,
     string QueryId,
     string Query,
-    TimeSpan EstimatedDuration) : InternalAgentEvent, IMiddlewareEvent;
+    TimeSpan EstimatedDuration) : AgentEvent, IMiddlewareEvent;
 
 // 2. Emit in Middleware
 public class DatabaseMiddleware : IAIFunctionMiddleware
@@ -476,7 +476,7 @@ public record EnterprisePermissionRequestEvent(
     decimal EstimatedCost,
     SecurityLevel SecurityLevel,
     string[] RequiredApprovers
-) : InternalAgentEvent, IPermissionEvent;  // ← Implements IPermissionEvent
+) : AgentEvent, IPermissionEvent;  // ← Implements IPermissionEvent
 
 public record EnterprisePermissionResponseEvent(
     string PermissionId,
@@ -486,7 +486,7 @@ public record EnterprisePermissionResponseEvent(
     // Custom enterprise fields
     Guid WorkflowInstanceId,
     string[] ApproverChain
-) : InternalAgentEvent, IPermissionEvent;
+) : AgentEvent, IPermissionEvent;
 
 // Use in custom Middleware
 public class EnterprisePermissionMiddleware : IPermissionMiddleware
@@ -551,10 +551,10 @@ var agent = new AgentBuilder()
     .Build();
 
 // Simple binary decisions: Allow or Deny
-case InternalPermissionRequestEvent req:
+case PermissionRequestEvent req:
     var approved = Console.ReadLine()?.ToLower() == "y";
     agent.SendMiddlewareResponse(req.PermissionId,
-        new InternalPermissionResponseEvent(
+        new PermissionResponseEvent(
             req.PermissionId,
             req.MiddlewareName,
             approved));
@@ -654,7 +654,7 @@ public record EnterprisePermissionRequestEvent(
     ComplianceRequirement[] ComplianceFlags,
     string DepartmentId,
     string ProjectId
-) : InternalAgentEvent, IPermissionEvent;
+) : AgentEvent, IPermissionEvent;
 ```
 
 #### **5. Cost-Based or Risk-Based Auto-Decisions**
@@ -787,9 +787,9 @@ Middleware1.Emit(Event1)
 
 ### 1. Always Emit Observability Events
 ```csharp
-context.Emit(new InternalMiddlewareProgressEvent("MyMiddleware", "Starting"));
+context.Emit(new MiddlewareProgressEvent("MyMiddleware", "Starting"));
 await next(context);
-context.Emit(new InternalMiddlewareProgressEvent("MyMiddleware", "Done"));
+context.Emit(new MiddlewareProgressEvent("MyMiddleware", "Done"));
 ```
 
 ### 2. Handle Timeouts
@@ -814,11 +814,11 @@ var requestId = Guid.NewGuid().ToString();  // Always unique!
 ```csharp
 if (response.Approved)
 {
-    context.Emit(new InternalPermissionApprovedEvent(permissionId));
+    context.Emit(new PermissionApprovedEvent(permissionId));
 }
 else
 {
-    context.Emit(new InternalPermissionDeniedEvent(permissionId, reason));
+    context.Emit(new PermissionDeniedEvent(permissionId, reason));
 }
 ```
 
@@ -855,7 +855,7 @@ public class NewMiddleware : IAIFunctionMiddleware
 
     public async Task InvokeAsync(AiFunctionContext context, ...)
     {
-        context.Emit(new InternalPermissionRequestEvent(...));
+        context.Emit(new PermissionRequestEvent(...));
         var response = await context.WaitForResponseAsync<T>(...);
     }
 }

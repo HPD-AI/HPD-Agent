@@ -71,7 +71,7 @@ public class ContainerExpansionTests : AgentTestBase
 
         var messages = CreateSimpleConversation("Use math operations");
 
-        var capturedEvents = new List<InternalAgentEvent>();
+        var capturedEvents = new List<AgentEvent>();
 
         // Act
         await foreach (var evt in agent.RunAgenticLoopAsync(messages, cancellationToken: TestCancellationToken))
@@ -81,11 +81,11 @@ public class ContainerExpansionTests : AgentTestBase
 
         // Assert - CURRENT behavior
         // Should have multiple iterations (container call + member function call + final response)
-        var agentTurnStarts = capturedEvents.OfType<InternalAgentTurnStartedEvent>().ToList();
+        var agentTurnStarts = capturedEvents.OfType<AgentTurnStartedEvent>().ToList();
         agentTurnStarts.Should().HaveCountGreaterOrEqualTo(2, "should have at least 2 iterations for two-turn expansion");
 
         // Should have tool call events for both container and member
-        var toolCalls = capturedEvents.OfType<InternalToolCallStartEvent>().ToList();
+        var toolCalls = capturedEvents.OfType<ToolCallStartEvent>().ToList();
         toolCalls.Should().HaveCountGreaterOrEqualTo(2, "should call container and at least one member function");
 
         // Container should be called
@@ -95,11 +95,11 @@ public class ContainerExpansionTests : AgentTestBase
         toolCalls.Should().Contain(e => e.Name == "Add", "member function should be invoked after expansion");
 
         // Tool results should exist
-        var toolResults = capturedEvents.OfType<InternalToolCallResultEvent>().ToList();
+        var toolResults = capturedEvents.OfType<ToolCallResultEvent>().ToList();
         toolResults.Should().HaveCountGreaterOrEqualTo(2, "should have results for both tool calls");
 
         // Final text response
-        var textDeltas = capturedEvents.OfType<InternalTextDeltaEvent>().ToList();
+        var textDeltas = capturedEvents.OfType<TextDeltaEvent>().ToList();
         var finalText = string.Concat(textDeltas.Select(e => e.Text));
         finalText.Should().NotBeEmpty("should have final text response");
     }
@@ -157,7 +157,7 @@ public class ContainerExpansionTests : AgentTestBase
 
         var messages = CreateSimpleConversation("Transform text");
 
-        var capturedEvents = new List<InternalAgentEvent>();
+        var capturedEvents = new List<AgentEvent>();
 
         // Act
         await foreach (var evt in agent.RunAgenticLoopAsync(messages, cancellationToken: TestCancellationToken))
@@ -166,7 +166,7 @@ public class ContainerExpansionTests : AgentTestBase
         }
 
         // Assert - Multiple member calls after single expansion
-        var toolCalls = capturedEvents.OfType<InternalToolCallStartEvent>().ToList();
+        var toolCalls = capturedEvents.OfType<ToolCallStartEvent>().ToList();
         toolCalls.Should().HaveCountGreaterOrEqualTo(3, "container + 2 member functions");
 
         // Container called once
@@ -236,7 +236,7 @@ public class ContainerExpansionTests : AgentTestBase
 
         var messages = CreateSimpleConversation("Use utilities");
 
-        var capturedEvents = new List<InternalAgentEvent>();
+        var capturedEvents = new List<AgentEvent>();
 
         // Act
         await foreach (var evt in agent.RunAgenticLoopAsync(messages, cancellationToken: TestCancellationToken))
@@ -245,7 +245,7 @@ public class ContainerExpansionTests : AgentTestBase
         }
 
         // Assert - All three tools should be called
-        var toolCalls = capturedEvents.OfType<InternalToolCallStartEvent>().ToList();
+        var toolCalls = capturedEvents.OfType<ToolCallStartEvent>().ToList();
         toolCalls.Should().HaveCountGreaterOrEqualTo(3, "non-scoped + container + member");
 
         toolCalls.Should().Contain(e => e.Name == "GetTime", "non-scoped function should be callable");

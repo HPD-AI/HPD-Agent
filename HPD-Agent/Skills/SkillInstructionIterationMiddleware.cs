@@ -80,6 +80,18 @@ internal class SkillInstructionIterationMiddleWare : IIterationMiddleWare
     }
 
     /// <summary>
+    /// Called AFTER LLM returns tool calls but BEFORE tools execute.
+    /// No action needed in this filter (skill injection happens in BeforeIterationAsync).
+    /// </summary>
+    public Task BeforeToolExecutionAsync(
+        IterationMiddleWareContext context,
+        CancellationToken cancellationToken)
+    {
+        // Nothing to do before tool execution for skill injection
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
     /// Called AFTER the LLM call completes.
     /// Detects final iteration and signals cleanup.
     /// </summary>

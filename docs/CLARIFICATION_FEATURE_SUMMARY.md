@@ -10,8 +10,8 @@ Successfully implemented a clarification feature that enables parent/orchestrato
 **File**: `Agent.cs` (lines 5024-5061)
 
 - `IClarificationEvent` - Marker interface for clarification events
-- `InternalClarificationRequestEvent` - Request with question, requestId, agentName, options
-- `InternalClarificationResponseEvent` - Response with answer
+- `ClarificationRequestEvent` - Request with question, requestId, agentName, options
+- `ClarificationResponseEvent` - Response with answer
 
 ### 2. Event Data for UI Handlers
 **File**: `Agent.cs` (lines 5346-5389)
@@ -126,13 +126,13 @@ await foreach (var evt in orchestrator.RunAsync(query))
 {
     switch (evt)
     {
-        case InternalClarificationRequestEvent clarification:
+        case ClarificationRequestEvent clarification:
             var agentLabel = clarification.AgentName ?? "Agent";
             Console.WriteLine($"\n[{agentLabel}] {clarification.Question}");
             var answer = Console.ReadLine();
 
             orchestrator.SendFilterResponse(clarification.RequestId,
-                new InternalClarificationResponseEvent(
+                new ClarificationResponseEvent(
                     clarification.RequestId,
                     clarification.SourceName,
                     clarification.Question,

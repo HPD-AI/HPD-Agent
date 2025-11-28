@@ -66,11 +66,45 @@ internal interface IIterationMiddleWare
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// Called AFTER the LLM call completes (streaming finished).
-    /// Middlewares can inspect the response and signal state changes.
-    /// Response, ToolCalls, and Exception properties are populated at this point.
+    /// Called AFTER LLM returns tool calls but BEFORE any tools execute.
+    /// Middlewares can inspect pending tool calls and prevent execution if needed.
+    /// Response and ToolCalls are populated; ToolResults is empty.
     /// </summary>
+    /// <remarks>
+    /// Use this hook for:
+    /// - Circuit breaker: Check if tools would exceed call thresholds
+    /// - Batch validation: Validate all pending tool calls before execution
+    /// - Pre-execution logging: Log what tools will be called
+    /// - Termination: Set SkipToolExecution = true to prevent ALL tools from running
+    ///
+    /// Key difference from BeforeIterationAsync:
+    /// - BeforeIterationAsync: Before LLM call, ToolCalls is empty
+    /// - BeforeToolExecutionAsync: After LLM call, ToolCalls is populated
+    ///
+    /// Key difference from AfterIterationAsync:
+    /// - BeforeToolExecutionAsync: Tools haven't run yet, can prevent execution
+    /// - AfterIterationAsync: Tools have run, can only react to results
+    /// </remarks>
     /// <param name="context">Iteration context with populated Response and ToolCalls</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Task that completes when pre-tool-execution processing is done</returns>
+    Task BeforeToolExecutionAsync(
+        IterationMiddleWareContext context,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Called AFTER tool execution completes (all tools have been executed).
+    /// Middlewares can inspect both LLM response and tool results to make decisions.
+    /// Response, ToolCalls, ToolResults, and Exception properties are populated at this point.
+    /// </summary>
+    /// <remarks>
+    /// Use this hook for:
+    /// - Error tracking: Analyze ToolResults for failures
+    /// - Logging: Record tool execution outcomes
+    /// - State signaling: Set Properties to communicate with agent loop
+    /// - Termination: Set SkipLLMCall and provide Response to stop execution
+    /// </remarks>
+    /// <param name="context">Iteration context with populated Response, ToolCalls, and ToolResults</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Task that completes when post-processing is done</returns>
     Task AfterIterationAsync(

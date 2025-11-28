@@ -36,17 +36,17 @@ await foreach (var _ in agent.RunAsync(messages, thread: thread))
 ```csharp
 public class MyHandler : IEventHandler
 {
-    public bool ShouldProcess(InternalAgentEvent evt)
-        => evt is InternalTextDeltaEvent or InternalToolCallStartEvent;
+    public bool ShouldProcess(AgentEvent evt)
+        => evt is TextDeltaEvent or ToolCallStartEvent;
 
-    public async Task OnEventAsync(InternalAgentEvent evt, CancellationToken ct)
+    public async Task OnEventAsync(AgentEvent evt, CancellationToken ct)
     {
         switch (evt)
         {
-            case InternalTextDeltaEvent textDelta:
+            case TextDeltaEvent textDelta:
                 Console.Write(textDelta.Text);
                 break;
-            case InternalToolCallStartEvent toolStart:
+            case ToolCallStartEvent toolStart:
                 Console.WriteLine($"\n🔧 {toolStart.Name}");
                 break;
         }
@@ -138,14 +138,14 @@ public class WebSocketHandler : IEventHandler
 {
     private readonly IHubContext<AgentHub> _hubContext;
 
-    public async Task OnEventAsync(InternalAgentEvent evt, CancellationToken ct)
+    public async Task OnEventAsync(AgentEvent evt, CancellationToken ct)
     {
         switch (evt)
         {
-            case InternalTextDeltaEvent textDelta:
+            case TextDeltaEvent textDelta:
                 await _hubContext.Clients.All.SendAsync("TextChunk", textDelta.Text, ct);
                 break;
-            case InternalToolCallStartEvent toolStart:
+            case ToolCallStartEvent toolStart:
                 await _hubContext.Clients.All.SendAsync("ToolStarted", toolStart.Name, ct);
                 break;
         }
@@ -253,8 +253,8 @@ var agent = new AgentBuilder(config)
 **A**: Implement `ShouldProcess()` to return `false` for events you don't want:
 
 ```csharp
-public bool ShouldProcess(InternalAgentEvent evt)
-    => evt is InternalTextDeltaEvent or InternalToolCallStartEvent;
+public bool ShouldProcess(AgentEvent evt)
+    => evt is TextDeltaEvent or ToolCallStartEvent;
 ```
 
 ### Q: Do events from SubAgents automatically bubble to the orchestrator?

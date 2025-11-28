@@ -82,6 +82,18 @@ internal class ContinuationPermissionIterationMiddleWare : IIterationMiddleWare
     }
 
     /// <summary>
+    /// Called AFTER LLM returns tool calls but BEFORE tools execute.
+    /// No action needed in this filter (all logic is in BeforeIterationAsync).
+    /// </summary>
+    public Task BeforeToolExecutionAsync(
+        IterationMiddleWareContext context,
+        CancellationToken cancellationToken)
+    {
+        // Nothing to do before tool execution for continuation permission
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
     /// Called AFTER the LLM call completes.
     /// No action needed in this filter (all logic is in before phase).
     /// </summary>
@@ -103,10 +115,10 @@ internal class ContinuationPermissionIterationMiddleWare : IIterationMiddleWare
 
         try
         {
-            if (context.Agent == null)
+            if (context.EventCoordinator == null)
                 return false;
             
-            var evt = new InternalContinuationRequestEvent(
+            var evt = new ContinuationRequestEvent(
                 continuationId,
                 _filterName,
                 context.Iteration + 1,  // Display as 1-based for user
@@ -116,7 +128,7 @@ internal class ContinuationPermissionIterationMiddleWare : IIterationMiddleWare
             context.Emit(evt);
 
             // Wait for response from external handler (BLOCKS during user interaction)
-            var response = await context.WaitForResponseAsync<InternalContinuationResponseEvent>(
+            var response = await context.WaitForResponseAsync<ContinuationResponseEvent>(
                 continuationId,
                 TimeSpan.FromMinutes(2));
 

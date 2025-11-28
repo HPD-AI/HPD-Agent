@@ -84,11 +84,11 @@ public class PermissionTests : AgentTestBase
         permissionRequest.FunctionName.Should().Be("SensitiveTool", "correct function should request permission");
 
         // Permission denied event should be emitted
-        var permissionDenied = capturedEvents.OfType<InternalPermissionDeniedEvent>().ToList();
+        var permissionDenied = capturedEvents.OfType<PermissionDeniedEvent>().ToList();
         permissionDenied.Should().ContainSingle("permission denial should be recorded");
 
         // CURRENT BEHAVIOR: Check what actually happens with tool execution
-        var toolResults = capturedEvents.OfType<InternalToolCallResultEvent>().ToList();
+        var toolResults = capturedEvents.OfType<ToolCallResultEvent>().ToList();
 
         // The permission system may or may not generate a tool result event
         // Document what actually happens
@@ -102,7 +102,7 @@ public class PermissionTests : AgentTestBase
         }
 
         // Final response should exist
-        var textDeltas = capturedEvents.OfType<InternalTextDeltaEvent>().ToList();
+        var textDeltas = capturedEvents.OfType<TextDeltaEvent>().ToList();
         var finalText = string.Concat(textDeltas.Select(e => e.Text));
         finalText.Should().NotBeEmpty("agent should respond after permission denial");
     }
@@ -157,16 +157,16 @@ public class PermissionTests : AgentTestBase
         permissionHandler.CapturedRequests.Should().ContainSingle("permission should be requested once");
 
         // Permission approved event should be emitted
-        var permissionApproved = capturedEvents.OfType<InternalPermissionApprovedEvent>().ToList();
+        var permissionApproved = capturedEvents.OfType<PermissionApprovedEvent>().ToList();
         permissionApproved.Should().ContainSingle("permission approval should be recorded");
 
         // Tool SHOULD be executed successfully
-        var toolResults = capturedEvents.OfType<InternalToolCallResultEvent>().ToList();
+        var toolResults = capturedEvents.OfType<ToolCallResultEvent>().ToList();
         toolResults.Should().ContainSingle("tool should execute after approval");
         toolResults[0].Result.Should().Contain("Successfully", "tool should return successful result");
 
         // Final response should acknowledge success
-        var textDeltas = capturedEvents.OfType<InternalTextDeltaEvent>().ToList();
+        var textDeltas = capturedEvents.OfType<TextDeltaEvent>().ToList();
         var finalText = string.Concat(textDeltas.Select(e => e.Text));
         finalText.Should().Contain("successfully", "agent should acknowledge successful execution");
     }
@@ -227,11 +227,11 @@ public class PermissionTests : AgentTestBase
         permissionHandler.CapturedRequests.Should().HaveCount(2, "both tools should request permission");
 
         // One approval, one denial
-        capturedEvents.OfType<InternalPermissionApprovedEvent>().Should().ContainSingle("one approval");
-        capturedEvents.OfType<InternalPermissionDeniedEvent>().Should().ContainSingle("one denial");
+        capturedEvents.OfType<PermissionApprovedEvent>().Should().ContainSingle("one approval");
+        capturedEvents.OfType<PermissionDeniedEvent>().Should().ContainSingle("one denial");
 
         // Tool results should reflect approval/denial
-        var toolResults = capturedEvents.OfType<InternalToolCallResultEvent>().ToList();
+        var toolResults = capturedEvents.OfType<ToolCallResultEvent>().ToList();
         toolResults.Should().HaveCountGreaterOrEqualTo(1, "at least approved tool should have result");
     }
 }

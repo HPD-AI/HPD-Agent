@@ -12,7 +12,7 @@ namespace HPD.Agent.A2A;
 
 /// <summary>
 /// A2A protocol handler that works directly with the CORE agent (no Microsoft adapter needed).
-/// Uses InternalAgentEvent streaming to collect responses for A2A protocol.
+/// Uses AgentEvent streaming to collect responses for A2A protocol.
 /// Internal since it uses internal Agent type.
 /// </summary>
 internal class A2AHandler
@@ -88,7 +88,7 @@ internal class A2AHandler
             // 3. Add the new message to the thread history before calling the agent
             await thread.AddMessageAsync(hpdMessage, cancellationToken);
 
-            // 4. ✨ Use CORE agent RunAsync and collect response text from InternalAgentEvent stream
+            // 4. ✨ Use CORE agent RunAsync and collect response text from AgentEvent stream
             string responseText = "";
             await foreach (var evt in _agent.RunAsync(
                 new[] { hpdMessage },
@@ -96,8 +96,8 @@ internal class A2AHandler
                 thread: thread,
                 cancellationToken: cancellationToken))
             {
-                // Collect text content from InternalTextDeltaEvent
-                if (evt is InternalTextDeltaEvent textDelta)
+                // Collect text content from TextDeltaEvent
+                if (evt is TextDeltaEvent textDelta)
                 {
                     responseText += textDelta.Text;
                 }

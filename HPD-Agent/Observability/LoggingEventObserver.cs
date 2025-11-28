@@ -17,12 +17,12 @@ public class LoggingEventObserver : IAgentEventObserver
         _enableSensitiveData = enableSensitiveData;
     }
 
-    public Task OnEventAsync(InternalAgentEvent evt, CancellationToken ct = default)
+    public Task OnEventAsync(AgentEvent evt, CancellationToken ct = default)
     {
         switch (evt)
         {
             // Scoping
-            case InternalScopedToolsVisibleEvent e:
+            case ScopedToolsVisibleEvent e:
                 if (_logger.IsEnabled(LogLevel.Trace))
                 {
                     _logger.LogTrace(
@@ -33,7 +33,7 @@ public class LoggingEventObserver : IAgentEventObserver
                 break;
 
             // Container expansion
-            case InternalContainerExpandedEvent e:
+            case ContainerExpandedEvent e:
                 if (_logger.IsEnabled(LogLevel.Trace))
                 {
                     _logger.LogTrace(
@@ -44,7 +44,7 @@ public class LoggingEventObserver : IAgentEventObserver
                 break;
 
             // Permission checks
-            case InternalPermissionCheckEvent e:
+            case PermissionCheckEvent e:
                 if (!e.IsApproved)
                 {
                     _logger.LogWarning(
@@ -60,7 +60,7 @@ public class LoggingEventObserver : IAgentEventObserver
                 break;
 
             // Middleware pipeline
-            case InternalMiddlewarePipelineStartEvent e:
+            case MiddlewarePipelineStartEvent e:
                 if (_logger.IsEnabled(LogLevel.Trace))
                 {
                     _logger.LogTrace(
@@ -69,7 +69,7 @@ public class LoggingEventObserver : IAgentEventObserver
                 }
                 break;
 
-            case InternalMiddlewarePipelineEndEvent e:
+            case MiddlewarePipelineEndEvent e:
                 if (_logger.IsEnabled(LogLevel.Trace))
                 {
                     _logger.LogTrace(
@@ -85,14 +85,14 @@ public class LoggingEventObserver : IAgentEventObserver
                 break;
 
             // Circuit breaker
-            case InternalCircuitBreakerTriggeredEvent e:
+            case CircuitBreakerTriggeredEvent e:
                 _logger.LogWarning(
                     "Agent '{AgentName}' iteration {Iteration}: Circuit breaker triggered for '{Function}' ({Count} consecutive calls)",
                     e.AgentName, e.Iteration, e.FunctionName, e.ConsecutiveCount);
                 break;
 
             // Iteration tracking
-            case InternalIterationStartEvent e:
+            case IterationStartEvent e:
                 if (_logger.IsEnabled(LogLevel.Debug))
                 {
                     _logger.LogDebug(
@@ -106,7 +106,7 @@ public class LoggingEventObserver : IAgentEventObserver
                 break;
 
             // Turn boundaries
-            case InternalMessageTurnStartedEvent e:
+            case MessageTurnStartedEvent e:
                 if (_logger.IsEnabled(LogLevel.Debug))
                 {
                     _logger.LogDebug(
@@ -115,7 +115,7 @@ public class LoggingEventObserver : IAgentEventObserver
                 }
                 break;
 
-            case InternalMessageTurnFinishedEvent e:
+            case MessageTurnFinishedEvent e:
                 if (_logger.IsEnabled(LogLevel.Debug))
                 {
                     _logger.LogDebug(
@@ -125,14 +125,14 @@ public class LoggingEventObserver : IAgentEventObserver
                 break;
 
             // Agent turn boundaries (skip - already logged by Microsoft's LoggingChatClient)
-            case InternalAgentTurnStartedEvent:
-            case InternalAgentTurnFinishedEvent:
+            case AgentTurnStartedEvent:
+            case AgentTurnFinishedEvent:
                 // Already logged by Microsoft's LoggingChatClient at API level
                 // Skip to avoid duplication
                 break;
 
             // History reduction cache
-            case InternalHistoryReductionCacheEvent e:
+            case HistoryReductionCacheEvent e:
                 if (_logger.IsEnabled(LogLevel.Debug))
                 {
                     if (e.IsHit)
@@ -152,7 +152,7 @@ public class LoggingEventObserver : IAgentEventObserver
                 break;
 
             // Checkpoint operations (consolidated)
-            case InternalCheckpointEvent e:
+            case CheckpointEvent e:
                 switch (e.Operation)
                 {
                     case CheckpointOperation.Saved:
@@ -243,7 +243,7 @@ public class LoggingEventObserver : IAgentEventObserver
                 break;
 
             // Agent decisions
-            case InternalAgentDecisionEvent e:
+            case AgentDecisionEvent e:
                 if (_logger.IsEnabled(LogLevel.Debug))
                 {
                     _logger.LogDebug(
@@ -255,7 +255,7 @@ public class LoggingEventObserver : IAgentEventObserver
                 break;
 
             // Document processing
-            case InternalDocumentProcessedEvent e:
+            case DocumentProcessedEvent e:
                 if (_logger.IsEnabled(LogLevel.Information))
                 {
                     _logger.LogInformation(
@@ -275,7 +275,7 @@ public class LoggingEventObserver : IAgentEventObserver
                 break;
 
             // Delta sending activation
-            case InternalDeltaSendingActivatedEvent e:
+            case DeltaSendingActivatedEvent e:
                 if (_logger.IsEnabled(LogLevel.Debug))
                 {
                     _logger.LogDebug(
@@ -285,7 +285,7 @@ public class LoggingEventObserver : IAgentEventObserver
                 break;
 
             // Plan mode activation
-            case InternalPlanModeActivatedEvent e:
+            case PlanModeActivatedEvent e:
                 if (_logger.IsEnabled(LogLevel.Debug))
                 {
                     _logger.LogDebug(
@@ -295,7 +295,7 @@ public class LoggingEventObserver : IAgentEventObserver
                 break;
 
             // Nested agent invocation
-            case InternalNestedAgentInvokedEvent e:
+            case NestedAgentInvokedEvent e:
                 if (_logger.IsEnabled(LogLevel.Information))
                 {
                     _logger.LogInformation(
@@ -305,7 +305,7 @@ public class LoggingEventObserver : IAgentEventObserver
                 break;
 
             // Bidirectional event processing
-            case InternalBidirectionalEventProcessedEvent e:
+            case BidirectionalEventProcessedEvent e:
                 if (_logger.IsEnabled(LogLevel.Trace))
                 {
                     _logger.LogTrace(
@@ -315,14 +315,14 @@ public class LoggingEventObserver : IAgentEventObserver
                 break;
 
             // Completion
-            case InternalAgentCompletionEvent e:
+            case AgentCompletionEvent e:
                 _logger.LogInformation(
                     "Agent '{AgentName}' completed after {Iterations} iterations in {Duration}ms",
                     e.AgentName, e.TotalIterations, e.Duration.TotalMilliseconds);
                 break;
 
             // Iteration messages
-            case InternalIterationMessagesEvent e:
+            case IterationMessagesEvent e:
                 if (_logger.IsEnabled(LogLevel.Trace))
                 {
                     _logger.LogTrace(
@@ -333,7 +333,7 @@ public class LoggingEventObserver : IAgentEventObserver
 
 
             // State snapshot
-            case InternalStateSnapshotEvent e:
+            case StateSnapshotEvent e:
                 if (_logger.IsEnabled(LogLevel.Trace))
                 {
                     _logger.LogTrace(
@@ -346,7 +346,7 @@ public class LoggingEventObserver : IAgentEventObserver
 
 
             // Errors
-            case InternalMessageTurnErrorEvent e:
+            case MessageTurnErrorEvent e:
                 _logger.LogError(e.Exception, "Agent error: {Message}", e.Message);
                 break;
         }

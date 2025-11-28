@@ -221,12 +221,12 @@ public class TelemetryEventObserver : IAgentEventObserver, IDisposable
             description: "Distribution of checkpoint sizes");
     }
 
-    public Task OnEventAsync(InternalAgentEvent evt, CancellationToken ct = default)
+    public Task OnEventAsync(AgentEvent evt, CancellationToken ct = default)
     {
         switch (evt)
         {
             // Iteration tracking
-            case InternalIterationStartEvent e:
+            case IterationStartEvent e:
                 _iterations.Add(1,
                     new KeyValuePair<string, object?>("agent.name", e.AgentName),
                     new KeyValuePair<string, object?>("iteration", e.Iteration));
@@ -241,14 +241,14 @@ public class TelemetryEventObserver : IAgentEventObserver, IDisposable
                 break;
 
             // Decisions
-            case InternalAgentDecisionEvent e:
+            case AgentDecisionEvent e:
                 _decisions.Add(1,
                     new KeyValuePair<string, object?>("agent.name", e.AgentName),
                     new KeyValuePair<string, object?>("decision.type", e.DecisionType));
                 break;
 
             // Circuit breaker
-            case InternalCircuitBreakerTriggeredEvent e:
+            case CircuitBreakerTriggeredEvent e:
                 _circuitBreakerTriggers.Add(1,
                     new KeyValuePair<string, object?>("agent.name", e.AgentName),
                     new KeyValuePair<string, object?>("function.name", e.FunctionName),
@@ -256,7 +256,7 @@ public class TelemetryEventObserver : IAgentEventObserver, IDisposable
                 break;
 
             // Permission checks
-            case InternalPermissionCheckEvent e:
+            case PermissionCheckEvent e:
                 _permissionChecks.Add(1,
                     new KeyValuePair<string, object?>("agent.name", e.AgentName),
                     new KeyValuePair<string, object?>("function.name", e.FunctionName),
@@ -277,7 +277,7 @@ public class TelemetryEventObserver : IAgentEventObserver, IDisposable
                 break;
 
             // Container expansions
-            case InternalContainerExpandedEvent e:
+            case ContainerExpandedEvent e:
                 _containerExpansions.Add(1,
                     new KeyValuePair<string, object?>("container.name", e.ContainerName),
                     new KeyValuePair<string, object?>("container.type", e.Type.ToString()),
@@ -335,7 +335,7 @@ public class TelemetryEventObserver : IAgentEventObserver, IDisposable
                 break;
 
             // Cache tracking
-            case InternalHistoryReductionCacheEvent e:
+            case HistoryReductionCacheEvent e:
                 if (e.IsHit)
                 {
                     _reductionCacheHits.Add(1,
@@ -356,14 +356,14 @@ public class TelemetryEventObserver : IAgentEventObserver, IDisposable
                 break;
 
             // Middleware pipeline duration
-            case InternalMiddlewarePipelineEndEvent e:
+            case MiddlewarePipelineEndEvent e:
                 _MiddlewarePipelineDuration.Record(e.Duration.TotalMilliseconds,
                     new KeyValuePair<string, object?>("function.name", e.FunctionName),
                     new KeyValuePair<string, object?>("success", e.Success));
                 break;
 
             // Checkpoint operations (consolidated)
-            case InternalCheckpointEvent e:
+            case CheckpointEvent e:
                 switch (e.Operation)
                 {
                     case CheckpointOperation.Saved:
@@ -420,7 +420,7 @@ public class TelemetryEventObserver : IAgentEventObserver, IDisposable
                 break;
 
             // Document processing
-            case InternalDocumentProcessedEvent e:
+            case DocumentProcessedEvent e:
                 _documentProcessing.Add(1,
                     new KeyValuePair<string, object?>("agent.name", e.AgentName));
                 _documentProcessingDuration.Record(e.Duration.TotalMilliseconds,
@@ -429,7 +429,7 @@ public class TelemetryEventObserver : IAgentEventObserver, IDisposable
                 break;
 
             // Nested agent calls
-            case InternalNestedAgentInvokedEvent e:
+            case NestedAgentInvokedEvent e:
                 _nestedAgentCalls.Add(1,
                     new KeyValuePair<string, object?>("orchestrator.name", e.OrchestratorName),
                     new KeyValuePair<string, object?>("child.name", e.ChildAgentName));
@@ -440,7 +440,7 @@ public class TelemetryEventObserver : IAgentEventObserver, IDisposable
                 break;
 
             // Completion
-            case InternalAgentCompletionEvent e:
+            case AgentCompletionEvent e:
                 _completions.Add(1,
                     new KeyValuePair<string, object?>("agent.name", e.AgentName),
                     new KeyValuePair<string, object?>("iterations", e.TotalIterations));
@@ -449,19 +449,19 @@ public class TelemetryEventObserver : IAgentEventObserver, IDisposable
                 break;
 
             // Message turn tracking
-            case InternalMessageTurnFinishedEvent e:
+            case MessageTurnFinishedEvent e:
                 _messageTurnDuration.Record(e.Duration.TotalMilliseconds,
                     new KeyValuePair<string, object?>("agent.name", e.AgentName));
                 break;
 
             // Delta sending activation
-            case InternalDeltaSendingActivatedEvent e:
+            case DeltaSendingActivatedEvent e:
                 _deltaMessageCountHistogram.Record(e.MessageCountSent,
                     new KeyValuePair<string, object?>("agent.name", e.AgentName));
                 break;
 
             // State snapshots
-            case InternalStateSnapshotEvent e:
+            case StateSnapshotEvent e:
                 _stateSnapshots.Add(1,
                     new KeyValuePair<string, object?>("agent.name", e.AgentName),
                     new KeyValuePair<string, object?>("iteration", e.CurrentIteration),

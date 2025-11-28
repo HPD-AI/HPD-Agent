@@ -36,11 +36,11 @@ This gives the parent agent the **option** to:
 
 3. **Parent agent's LLM** sees the question and decides to call `AskUserForClarification`
 
-4. **Clarification request** emits an `InternalClarificationRequestEvent` that bubbles to the root agent
+4. **Clarification request** emits an `ClarificationRequestEvent` that bubbles to the root agent
 
 5. **User** receives the question via their UI (AGUI, Console, etc.)
 
-6. **User's answer** flows back via `InternalClarificationResponseEvent`
+6. **User's answer** flows back via `ClarificationResponseEvent`
 
 7. **Parent agent** receives the answer and continues execution in the same turn
 
@@ -222,7 +222,7 @@ Turn 2: Orchestrator calls CodingAgent("Build Express auth")
                     ↓
 ┌─────────────────────────────────────────┐
 │ Orchestrator.EventCoordinator           │
-│ - Receives InternalClarificationRequest │
+│ - Receives ClarificationRequest │
 │ - Yields to event handler (AGUI/Console)│
 └──────┬──────────────────────────────────┘
        │
@@ -235,7 +235,7 @@ Turn 2: Orchestrator calls CodingAgent("Build Express auth")
        ↓
 ┌─────────────────────────────────────────┐
 │ Event Handler sends Response            │
-│ InternalClarificationResponseEvent      │
+│ ClarificationResponseEvent      │
 └──────┬──────────────────────────────────┘
        │
        ↓
@@ -264,14 +264,14 @@ Turn 2: Orchestrator calls CodingAgent("Build Express auth")
 
 ## Handler Implementation
 
-UI handlers need to process `InternalClarificationRequestEvent`:
+UI handlers need to process `ClarificationRequestEvent`:
 
 ```csharp
 await foreach (var evt in agent.RunAsync(query))
 {
     switch (evt)
     {
-        case InternalClarificationRequestEvent clarification:
+        case ClarificationRequestEvent clarification:
             // Show question to user with agent name (important for parallel sub-agents!)
             var agentLabel = clarification.AgentName ?? "Agent";
             Console.WriteLine($"\n[{agentLabel}] needs clarification:");
@@ -281,7 +281,7 @@ await foreach (var evt in agent.RunAsync(query))
 
             // Send response back using existing SendFilterResponse method
             agent.SendFilterResponse(clarification.RequestId,
-                new InternalClarificationResponseEvent(
+                new ClarificationResponseEvent(
                     clarification.RequestId,
                     clarification.SourceName,
                     clarification.Question,

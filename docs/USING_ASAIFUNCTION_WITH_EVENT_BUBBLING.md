@@ -58,18 +58,18 @@ await foreach (var evt in orchestratorConv.RunStreamingAsync("Build an auth syst
     switch (evt)
     {
         // Permission events from NESTED CodingAgent bubble up automatically!
-        case InternalPermissionRequestEvent permReq:
+        case PermissionRequestEvent permReq:
             Console.WriteLine($"🔐 {permReq.FunctionName} needs permission");
             var approved = GetUserApproval();
             orchestrator.SendFilterResponse(permReq.PermissionId,
-                new InternalPermissionResponseEvent(permReq.PermissionId, "PermissionMiddleware", approved));
+                new PermissionResponseEvent(permReq.PermissionId, "PermissionMiddleware", approved));
             break;
 
-        case InternalTextDeltaEvent text:
+        case TextDeltaEvent text:
             Console.Write(text.Text);
             break;
 
-        case InternalToolCallStartEvent tool:
+        case ToolCallStartEvent tool:
             Console.WriteLine($"\n🔧 Calling: {tool.Name}");
             break;
     }
@@ -85,22 +85,22 @@ All filter events from nested agents automatically bubble to the orchestrator:
 ### ✅ Permission Events
 ```csharp
 // From PermissionMiddleware in nested agent
-- InternalPermissionRequestEvent
-- InternalPermissionResponseEvent
-- InternalPermissionApprovedEvent
-- InternalPermissionDeniedEvent
+- PermissionRequestEvent
+- PermissionResponseEvent
+- PermissionApprovedEvent
+- PermissionDeniedEvent
 ```
 
 ### ✅ Progress Events
 ```csharp
 // From custom filters in nested agent
-- InternalFilterProgressEvent
+- FilterProgressEvent
 ```
 
 ### ✅ Error Events
 ```csharp
 // From filters in nested agent
-- InternalFilterErrorEvent
+- FilterErrorEvent
 ```
 
 ### ✅ Custom Filter Events
@@ -112,8 +112,8 @@ All filter events from nested agents automatically bubble to the orchestrator:
 ### ✅ Continuation Events
 ```csharp
 // From continuation filters
-- InternalContinuationRequestEvent
-- InternalContinuationResponseEvent
+- ContinuationRequestEvent
+- ContinuationResponseEvent
 ```
 
 ---
@@ -129,7 +129,7 @@ Orchestrator Turn 0:
     CodingAgent Turn 0 (nested):
       LLM calls: WriteFile()
         ↓
-        PermissionMiddleware emits: InternalPermissionRequestEvent
+        PermissionMiddleware emits: PermissionRequestEvent
           ↓
           Event written to CodingAgent.EventCoordinator ✅
           Event ALSO written to Orchestrator.EventCoordinator ✅ (BUBBLING!)
@@ -140,7 +140,7 @@ Orchestrator Turn 0:
 
     Orchestrator's polling loop (every 10ms):
       Drains: Orchestrator's filterEventQueue
-      Yields: InternalPermissionRequestEvent ✅
+      Yields: PermissionRequestEvent ✅
 
 Handler receives event:
   User approves/denies
@@ -192,7 +192,7 @@ When a filter emits an event in the nested agent:
 
 ```csharp
 // In AiFunctionContext.Emit() (automatic)
-public void Emit(InternalAgentEvent evt)
+public void Emit(AgentEvent evt)
 {
     // 1. Emit to local agent's coordinator
     Agent.EventCoordinator.Emit(evt);
@@ -376,7 +376,7 @@ class Program
         {
             switch (evt)
             {
-                case InternalPermissionRequestEvent permReq:
+                case PermissionRequestEvent permReq:
                     // Permission from NESTED agent!
                     Console.WriteLine($"\n🔐 Permission Request:");
                     Console.WriteLine($"   Function: {permReq.FunctionName}");
@@ -387,7 +387,7 @@ class Program
 
                     orchestrator.SendFilterResponse(
                         permReq.PermissionId,
-                        new InternalPermissionResponseEvent(
+                        new PermissionResponseEvent(
                             permReq.PermissionId,
                             "PermissionMiddleware",
                             approved,
@@ -396,11 +396,11 @@ class Program
                     );
                     break;
 
-                case InternalTextDeltaEvent text:
+                case TextDeltaEvent text:
                     Console.Write(text.Text);
                     break;
 
-                case InternalToolCallStartEvent tool:
+                case ToolCallStartEvent tool:
                     Console.WriteLine($"\n🔧 Using tool: {tool.Name}");
                     break;
             }
@@ -447,7 +447,7 @@ var orchestrator = new AgentBuilder(new AgentConfig
 // Events bubble ALL THE WAY UP!
 await foreach (var evt in orchestrator.RunStreamingAsync("Build full-stack app"))
 {
-    case InternalPermissionRequestEvent permReq:
+    case PermissionRequestEvent permReq:
         // Could be from FileAgent OR BackendAgent!
         Console.WriteLine($"Permission needed: {permReq.FunctionName}");
         // Handle...
@@ -588,7 +588,7 @@ var tool = conversation.AsAIFunction();
 
 3. **Handle all permission events from nested agents**
    ```csharp
-   case InternalPermissionRequestEvent permReq:
+   case PermissionRequestEvent permReq:
        // Always handle these!
    ```
 
@@ -609,7 +609,7 @@ var tool = conversation.AsAIFunction();
 2. **Don't ignore permission events**
    ```csharp
    // ❌ BAD: Agent will hang waiting for response
-   case InternalPermissionRequestEvent permReq:
+   case PermissionRequestEvent permReq:
        // Ignored - agent hangs forever!
        break;
    ```
@@ -639,7 +639,7 @@ var tool = conversation.AsAIFunction();
 
 2. Verify filter is emitting events:
    ```csharp
-   context.Emit(new InternalPermissionRequestEvent(...));  // ✅ Correct
+   context.Emit(new PermissionRequestEvent(...));  // ✅ Correct
    ```
 
 ---
@@ -661,7 +661,7 @@ var tool = conversation.AsAIFunction();
 
 2. Ensure handler isn't swallowing events:
    ```csharp
-   case InternalPermissionRequestEvent permReq:
+   case PermissionRequestEvent permReq:
        // MUST send response!
        orchestrator.SendFilterResponse(...);
        break;

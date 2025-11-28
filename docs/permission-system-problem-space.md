@@ -394,7 +394,7 @@ The permission system uses a different architectural pattern than the Agent clas
 ```
 Internal Events → Protocol Adapters → External Formats
 
-InternalAgentEvent (source of truth)
+AgentEvent (source of truth)
   ↓
 EventStreamAdapter.ToAGUI()     → BaseEvent (AGUI protocol)
 EventStreamAdapter.ToIChatClient() → ChatResponseUpdate (IChatClient protocol)
@@ -410,7 +410,7 @@ await foreach (var update in EventStreamAdapter.ToIChatClient(internalStream, ca
 ```
 
 **Pattern Characteristics:**
-- One source of truth: `InternalAgentEvent`
+- One source of truth: `AgentEvent`
 - Multiple adapters translate to different protocols
 - Adding new protocol = new adapter (no duplication)
 - Logic in core, presentation in adapters

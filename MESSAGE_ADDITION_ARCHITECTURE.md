@@ -23,7 +23,7 @@ Microsoft.Agent.RunAsync()
     ├─ STEP 2: Checkpoint loading & validation
     ├─ STEP 3: Call core agent
     │   └─ _core.RunAsync(messages, chatOptions, conversationThread, cancellationToken)
-    │       └─ Returns: IAsyncEnumerable<InternalAgentEvent>
+    │       └─ Returns: IAsyncEnumerable<AgentEvent>
     ├─ Build messages from events
     ├─ Add messages to thread via AddMessageAsync()  ← **MESSAGE ADDITION HAPPENS HERE**
     ├─ STEP 4: AIContextProvider.InvokedAsync() [post-processing]
@@ -49,7 +49,7 @@ Microsoft.Agent.RunStreamingAsync()
     ├─ STEP 1: AIContextProvider.InvokingAsync() [pre-processing]
     ├─ STEP 2: Core agent call
     │   └─ _core.RunAsync(messages, chatOptions, conversationThread, cancellationToken)
-    │       └─ Returns: IAsyncEnumerable<InternalAgentEvent>
+    │       └─ Returns: IAsyncEnumerable<AgentEvent>
     ├─ Convert to Microsoft protocol via EventStreamAdapter
     ├─ Yield events to caller (STREAMING OCCURS HERE)
     │   └─ Caller receives events in real-time
@@ -100,7 +100,7 @@ Core Agent Internal Loop (RunAgenticLoopInternal)
     │       └─ Emit events for each step (streamed to protocol adapter)
     │
     └─ STEP 4: Finalize and return
-        └─ Emit InternalMessageTurnFinishedEvent
+        └─ Emit MessageTurnFinishedEvent
             └─ Contains final turn history
 ```
 
@@ -174,15 +174,15 @@ ConversationThread
    │   ├─ Iteration 1: Calls LLM
    │   │   └─ LLM returns: "Hi there!"
    │   │   └─ Emits events:
-   │   │       - InternalAgentTurnStartedEvent
-   │   │       - InternalTextDeltaEvent("Hi ")
-   │   │       - InternalTextDeltaEvent("there!")
-   │   │       - InternalTextMessageEndEvent
+   │   │       - AgentTurnStartedEvent
+   │   │       - TextDeltaEvent("Hi ")
+   │   │       - TextDeltaEvent("there!")
+   │   │       - TextMessageEndEvent
    │   │   └─ NO message added to thread yet (only events emitted)
    │   │
    │   └─ Loop finishes (no tool calls needed)
    │
-   ├─ Emits InternalMessageTurnFinishedEvent
+   ├─ Emits MessageTurnFinishedEvent
    └─ Yields final events and returns
         ↓
 4. MICROSOFT PROTOCOL ADAPTER (Streaming Loop)

@@ -42,6 +42,27 @@ internal class IterationLoggingFilter : IIterationMiddleWare
     }
 
     /// <summary>
+    /// Called AFTER LLM returns tool calls but BEFORE tools execute.
+    /// Logs pending tool calls for visibility.
+    /// </summary>
+    public Task BeforeToolExecutionAsync(
+        IterationMiddleWareContext context,
+        CancellationToken cancellationToken)
+    {
+        if (context.ToolCalls.Count > 0)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine($"🔨 Executing {context.ToolCalls.Count} tool(s):");
+            foreach (var toolCall in context.ToolCalls)
+            {
+                sb.AppendLine($"   • {toolCall.Name}");
+            }
+            LogMessage(sb.ToString());
+        }
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
     /// Called AFTER the LLM call completes.
     /// Logs iteration completion with timing and results.
     /// </summary>

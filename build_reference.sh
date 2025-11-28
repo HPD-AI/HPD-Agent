@@ -23,6 +23,7 @@ REPOS=(
     "https://github.com/praeclarum/CrossIntelligence.git"
     "https://github.com/anthropics/skills.git"
     "https://github.com/OpenRouterTeam/typescript-sdk.git"
+    "https://github.com/pydantic/pydantic.git"
     
 
     # Add more repo URLs as needed

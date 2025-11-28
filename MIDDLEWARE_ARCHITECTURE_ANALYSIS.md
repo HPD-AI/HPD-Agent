@@ -167,8 +167,8 @@ internal interface IAIFunctionMiddleware
 **Flow**:
 1. Checks continuation permission if approaching iteration limits
 2. Checks function-level permission requirement
-3. If required: Emits `InternalPermissionRequestEvent`
-4. Waits for `InternalPermissionResponseEvent`
+3. If required: Emits `PermissionRequestEvent`
+4. Waits for `PermissionResponseEvent`
 5. Handles timeout/cancellation gracefully
 6. Stores preference if user requested persistence
 
@@ -375,7 +375,7 @@ internal class FunctionInvocationContext
     public object? Result { get; set; }
     
     // Communication Channels
-    internal ChannelWriter<InternalAgentEvent>? OutboundEvents { get; set; }
+    internal ChannelWriter<AgentEvent>? OutboundEvents { get; set; }
     internal Agent? Agent { get; set; }
 }
 ```
@@ -385,10 +385,10 @@ internal class FunctionInvocationContext
 **Event Emission**:
 ```csharp
 // Synchronous emit
-public void Emit(InternalAgentEvent evt)
+public void Emit(AgentEvent evt)
 
 // Asynchronous emit (for bounded channels)
-public async Task EmitAsync(InternalAgentEvent evt, CancellationToken cancellationToken = default)
+public async Task EmitAsync(AgentEvent evt, CancellationToken cancellationToken = default)
 ```
 
 **Response Waiting (Request/Response Pattern)**:
@@ -396,7 +396,7 @@ public async Task EmitAsync(InternalAgentEvent evt, CancellationToken cancellati
 public async Task<T> WaitForResponseAsync<T>(
     string requestId,
     TimeSpan? timeout = null,
-    CancellationToken cancellationToken = default) where T : InternalAgentEvent
+    CancellationToken cancellationToken = default) where T : AgentEvent
 ```
 
 ---
@@ -408,7 +408,7 @@ Complete execution from user message to response:
 ```
 1. User Message Arrives
    ↓
-2. Message Turn Starts (InternalMessageTurnStartedEvent)
+2. Message Turn Starts (MessageTurnStartedEvent)
    ↓
 3. Prompt Filters Execute
    a. Filters modify messages (InvokeAsync)
@@ -428,7 +428,7 @@ Complete execution from user message to response:
    ↓
 6. Message Turn Filters Execute (read-only observation)
    ↓
-7. Message Turn Ends (InternalMessageTurnFinishedEvent)
+7. Message Turn Ends (MessageTurnFinishedEvent)
    ↓
 8. Continue Loop or Finish
 ```
@@ -443,7 +443,7 @@ Events emitted through channels in real-time:
 
 ```csharp
 // Filter emits event
-context.Emit(new InternalPermissionRequestEvent(...));
+context.Emit(new PermissionRequestEvent(...));
 
 // Handler receives event
 while (_eventCoordinator.EventReader.TryRead(out var evt))
@@ -455,33 +455,33 @@ while (_eventCoordinator.EventReader.TryRead(out var evt))
 ### Event Categories
 
 **Permission Events**:
-- `InternalPermissionRequestEvent`: Request user approval
-- `InternalPermissionResponseEvent`: User responds
-- `InternalPermissionApprovedEvent`: Permission granted
-- `InternalPermissionDeniedEvent`: Permission denied
+- `PermissionRequestEvent`: Request user approval
+- `PermissionResponseEvent`: User responds
+- `PermissionApprovedEvent`: Permission granted
+- `PermissionDeniedEvent`: Permission denied
 
 **Continuation Events**:
-- `InternalContinuationRequestEvent`: Request to continue beyond limit
-- `InternalContinuationResponseEvent`: User responds
+- `ContinuationRequestEvent`: Request to continue beyond limit
+- `ContinuationResponseEvent`: User responds
 
 **Message Turn Events**:
-- `InternalMessageTurnStartedEvent`: Turn begins
-- `InternalMessageTurnFinishedEvent`: Turn ends
-- `InternalMessageTurnErrorEvent`: Error occurred
+- `MessageTurnStartedEvent`: Turn begins
+- `MessageTurnFinishedEvent`: Turn ends
+- `MessageTurnErrorEvent`: Error occurred
 
 **Agent Turn Events**:
-- `InternalAgentTurnStartedEvent`: LLM call begins
-- `InternalAgentTurnFinishedEvent`: LLM call ends
-- `InternalStateSnapshotEvent`: Debug state info
+- `AgentTurnStartedEvent`: LLM call begins
+- `AgentTurnFinishedEvent`: LLM call ends
+- `StateSnapshotEvent`: Debug state info
 
 **Content Events**:
-- `InternalTextMessageStartEvent`: Text streaming starts
-- `InternalTextDeltaEvent`: Text chunk received
-- `InternalTextMessageEndEvent`: Text streaming ends
-- `InternalToolCallEvent`: Tool invocation detected
+- `TextMessageStartEvent`: Text streaming starts
+- `TextDeltaEvent`: Text chunk received
+- `TextMessageEndEvent`: Text streaming ends
+- `ToolCallEvent`: Tool invocation detected
 
 **Error Events**:
-- `InternalFilterErrorEvent`: Filter pipeline error
+- `FilterErrorEvent`: Filter pipeline error
 - `InternalProviderErrorEvent`: LLM provider error
 
 ---

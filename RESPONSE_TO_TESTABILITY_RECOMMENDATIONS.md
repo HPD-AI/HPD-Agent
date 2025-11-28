@@ -163,7 +163,7 @@ public record AgentLoopState
 **Recommendation:** Refactor `RunAgenticLoopInternal()`:
 
 ```csharp
-public async IAsyncEnumerable<InternalAgentEvent> RunAgenticLoopInternal(...)
+public async IAsyncEnumerable<AgentEvent> RunAgenticLoopInternal(...)
 {
     var state = AgentLoopState.Initial(userMessages);
     var config = BuildConfiguration();
@@ -235,7 +235,7 @@ public async Task Agent_ProcessesToolCall_UpdatesState()
 
     var snapshot = agent.CreateSnapshot();
     Assert.Equal(1, snapshot.State.Iteration);
-    Assert.Contains(snapshot.EventLog, e => e is InternalToolCallStartEvent);
+    Assert.Contains(snapshot.EventLog, e => e is ToolCallStartEvent);
 }
 ```
 
@@ -462,14 +462,14 @@ Your `BidirectionalEventCoordinator` ([Agent.cs:4192-4473](Agent.cs#L4192-L4473)
 
 1. **Bidirectional Request/Response** (Permission.cs:97-111)
    ```csharp
-   context.Emit(new InternalPermissionRequestEvent(...));
-   var response = await context.WaitForResponseAsync<InternalPermissionResponseEvent>(
+   context.Emit(new PermissionRequestEvent(...));
+   var response = await context.WaitForResponseAsync<PermissionResponseEvent>(
        permissionId, timeout: TimeSpan.FromMinutes(5));
    ```
 
 2. **Event Bubbling** (Agent.cs:4287-4298)
    ```csharp
-   public void Emit(InternalAgentEvent evt)
+   public void Emit(AgentEvent evt)
    {
        _eventChannel.Writer.TryWrite(evt);  // Local
        _parentCoordinator?.Emit(evt);       // Bubble to parent
@@ -504,15 +504,15 @@ Your `BidirectionalEventCoordinator` ([Agent.cs:4192-4473](Agent.cs#L4192-L4473)
 ```csharp
 public class TestBidirectionalCoordinator : BidirectionalEventCoordinator
 {
-    public List<InternalAgentEvent> CapturedEvents { get; } = new();
+    public List<AgentEvent> CapturedEvents { get; } = new();
 
-    public override void Emit(InternalAgentEvent evt)
+    public override void Emit(AgentEvent evt)
     {
         CapturedEvents.Add(evt);
         base.Emit(evt);
     }
 
-    public void EnqueueMockResponse<TRequest>(InternalAgentEvent response)
+    public void EnqueueMockResponse<TRequest>(AgentEvent response)
     {
         // Auto-respond to requests
     }

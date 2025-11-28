@@ -36,7 +36,7 @@ public class CharacterizationTests : AgentTestBase
         var agent = CreateAgent(client: fakeLLM);
         var messages = CreateSimpleConversation("Hello");
 
-        var capturedEvents = new List<InternalAgentEvent>();
+        var capturedEvents = new List<AgentEvent>();
 
         // Act
         await foreach (var evt in agent.RunAgenticLoopAsync(messages, cancellationToken: TestCancellationToken))
@@ -56,17 +56,17 @@ public class CharacterizationTests : AgentTestBase
         var eventTypes = capturedEvents.Select(e => e.GetType().Name).ToList();
 
         eventTypes.Should().ContainInOrder(
-            nameof(InternalMessageTurnStartedEvent),
-            nameof(InternalAgentTurnStartedEvent),
-            nameof(InternalTextMessageStartEvent));
+            nameof(MessageTurnStartedEvent),
+            nameof(AgentTurnStartedEvent),
+            nameof(TextMessageStartEvent));
 
         // Should have multiple text deltas
-        capturedEvents.OfType<InternalTextDeltaEvent>().Should().HaveCountGreaterOrEqualTo(1);
+        capturedEvents.OfType<TextDeltaEvent>().Should().HaveCountGreaterOrEqualTo(1);
 
         eventTypes.Should().ContainInOrder(
-            nameof(InternalTextMessageEndEvent),
-            nameof(InternalAgentTurnFinishedEvent),
-            nameof(InternalMessageTurnFinishedEvent));
+            nameof(TextMessageEndEvent),
+            nameof(AgentTurnFinishedEvent),
+            nameof(MessageTurnFinishedEvent));
 
         // Verify FakeLLM was called
         fakeLLM.CapturedRequests.Should().HaveCount(1);
@@ -104,7 +104,7 @@ public class CharacterizationTests : AgentTestBase
 
         var messages = CreateSimpleConversation("What is 2+2?");
 
-        var capturedEvents = new List<InternalAgentEvent>();
+        var capturedEvents = new List<AgentEvent>();
 
         // Act
         await foreach (var evt in agent.RunAsync(messages, cancellationToken: TestCancellationToken))
@@ -114,16 +114,16 @@ public class CharacterizationTests : AgentTestBase
 
         // Assert
         // Should have 2 iterations (tool call + final response)
-        var agentTurnStarts = capturedEvents.OfType<InternalAgentTurnStartedEvent>().ToList();
+        var agentTurnStarts = capturedEvents.OfType<AgentTurnStartedEvent>().ToList();
         agentTurnStarts.Should().HaveCount(2);
 
         // Should have tool call events
-        capturedEvents.OfType<InternalToolCallStartEvent>().Should().ContainSingle();
-        capturedEvents.OfType<InternalToolCallEndEvent>().Should().ContainSingle();
-        capturedEvents.OfType<InternalToolCallResultEvent>().Should().ContainSingle();
+        capturedEvents.OfType<ToolCallStartEvent>().Should().ContainSingle();
+        capturedEvents.OfType<ToolCallEndEvent>().Should().ContainSingle();
+        capturedEvents.OfType<ToolCallResultEvent>().Should().ContainSingle();
 
         // Should have final text response
-        var textDeltas = capturedEvents.OfType<InternalTextDeltaEvent>().ToList();
+        var textDeltas = capturedEvents.OfType<TextDeltaEvent>().ToList();
         var finalText = string.Concat(textDeltas.Select(e => e.Text));
         finalText.Should().Contain("4");
 
@@ -166,7 +166,7 @@ public class CharacterizationTests : AgentTestBase
 
         var messages = CreateSimpleConversation("Use the failing tool");
 
-        var capturedEvents = new List<InternalAgentEvent>();
+        var capturedEvents = new List<AgentEvent>();
 
         // Act
         await foreach (var evt in agent.RunAsync(messages, cancellationToken: TestCancellationToken))
@@ -176,11 +176,11 @@ public class CharacterizationTests : AgentTestBase
 
         // Assert
         // Should terminate after 3 iterations (circuit breaker)
-        var agentTurnStarts = capturedEvents.OfType<InternalAgentTurnStartedEvent>().ToList();
+        var agentTurnStarts = capturedEvents.OfType<AgentTurnStartedEvent>().ToList();
         agentTurnStarts.Should().HaveCountLessOrEqualTo(4); // Initial + 3 retries
 
         // Should have circuit breaker message
-        var textDeltas = capturedEvents.OfType<InternalTextDeltaEvent>().ToList();
+        var textDeltas = capturedEvents.OfType<TextDeltaEvent>().ToList();
         var allText = string.Concat(textDeltas.Select(e => e.Text));
         allText.Should().Contain("Circuit breaker");
     }
@@ -218,7 +218,7 @@ public class CharacterizationTests : AgentTestBase
 
         var messages = CreateSimpleConversation("Use the tool repeatedly");
 
-        var capturedEvents = new List<InternalAgentEvent>();
+        var capturedEvents = new List<AgentEvent>();
 
         // Act
         await foreach (var evt in agent.RunAsync(messages, cancellationToken: TestCancellationToken))
@@ -227,11 +227,11 @@ public class CharacterizationTests : AgentTestBase
         }
 
         // Assert
-        var agentTurnStarts = capturedEvents.OfType<InternalAgentTurnStartedEvent>().ToList();
+        var agentTurnStarts = capturedEvents.OfType<AgentTurnStartedEvent>().ToList();
         agentTurnStarts.Should().HaveCountLessOrEqualTo(5);
 
         // Should terminate due to max iterations
-        var textDeltas = capturedEvents.OfType<InternalTextDeltaEvent>().ToList();
+        var textDeltas = capturedEvents.OfType<TextDeltaEvent>().ToList();
         var allText = string.Concat(textDeltas.Select(e => e.Text));
         allText.Should().ContainAny("Maximum iterations", "iteration", "limit");
     }
@@ -264,7 +264,7 @@ public class CharacterizationTests : AgentTestBase
 
         var messages = CreateSimpleConversation("Use all three tools");
 
-        var capturedEvents = new List<InternalAgentEvent>();
+        var capturedEvents = new List<AgentEvent>();
 
         // Act
         await foreach (var evt in agent.RunAsync(messages, cancellationToken: TestCancellationToken))
@@ -274,12 +274,12 @@ public class CharacterizationTests : AgentTestBase
 
         // Assert
         // Should have 3 tool call executions
-        capturedEvents.OfType<InternalToolCallStartEvent>().Should().HaveCount(3);
-        capturedEvents.OfType<InternalToolCallEndEvent>().Should().HaveCount(3);
-        capturedEvents.OfType<InternalToolCallResultEvent>().Should().HaveCount(3);
+        capturedEvents.OfType<ToolCallStartEvent>().Should().HaveCount(3);
+        capturedEvents.OfType<ToolCallEndEvent>().Should().HaveCount(3);
+        capturedEvents.OfType<ToolCallResultEvent>().Should().HaveCount(3);
 
         // All tools should have unique call IDs
-        var callIds = capturedEvents.OfType<InternalToolCallStartEvent>()
+        var callIds = capturedEvents.OfType<ToolCallStartEvent>()
             .Select(e => e.CallId)
             .ToList();
         callIds.Should().OnlyHaveUniqueItems();

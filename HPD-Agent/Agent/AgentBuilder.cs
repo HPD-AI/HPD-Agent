@@ -502,7 +502,7 @@ public class AgentBuilder
 
     /// <summary>
     /// Registers a custom event observer to handle agent events.
-    /// Observers receive all internal agent events (InternalAgentEvent) and can process them asynchronously.
+    /// Observers receive all internal agent events (AgentEvent) and can process them asynchronously.
     /// Use this to implement custom event handling, logging, metrics collection, or UI updates.
     /// </summary>
     /// <param name="observer">The observer to register. Can use <see cref="IEventHandler"/> or <see cref="IAgentEventObserver"/> - both are equivalent.</param>
@@ -522,20 +522,20 @@ public class AgentBuilder
     /// <code>
     /// public class MyEventHandler : IEventHandler
     /// {
-    ///     public bool ShouldProcess(InternalAgentEvent evt)
+    ///     public bool ShouldProcess(AgentEvent evt)
     ///     {
     ///         // Filter events you care about
-    ///         return evt is InternalPermissionRequestEvent or InternalTextDeltaEvent;
+    ///         return evt is PermissionRequestEvent or TextDeltaEvent;
     ///     }
     ///
-    ///     public async Task OnEventAsync(InternalAgentEvent evt, CancellationToken ct)
+    ///     public async Task OnEventAsync(AgentEvent evt, CancellationToken ct)
     ///     {
     ///         switch (evt)
     ///         {
-    ///             case InternalPermissionRequestEvent permReq:
+    ///             case PermissionRequestEvent permReq:
     ///                 await HandlePermissionAsync(permReq, ct);
     ///                 break;
-    ///             case InternalTextDeltaEvent textDelta:
+    ///             case TextDeltaEvent textDelta:
     ///                 Console.Write(textDelta.Text);
     ///                 break;
     ///         }
@@ -2009,6 +2009,191 @@ internal static class AgentBuilderMiddlewareExtensions
     internal static AgentBuilder WithIterationMiddleWare<T>(this AgentBuilder builder) where T : IIterationMiddleWare, new()
     {
         builder._IterationMiddleWares.Add(new T());
+        return builder;
+    }
+
+    /// <summary>
+    /// Adds circuit breaker middleware to prevent infinite loops from repeated identical tool calls.
+    /// </summary>
+    /// <param name="builder">The agent builder</param>
+    /// <param name="maxConsecutiveCalls">Maximum consecutive identical calls before triggering (default: 3)</param>
+    /// <returns>The builder for chaining</returns>
+    /// <remarks>
+    /// The circuit breaker detects when the same tool is called with identical arguments
+    /// multiple times consecutively, which typically indicates the agent is stuck in a loop.
+    /// When triggered, execution terminates with a descriptive message.
+    ///
+    /// Note: This middleware-based circuit breaker is independent of the config-based
+    /// MaxConsecutiveFunctionCalls setting. Use one or the other, not both.
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// var agent = new AgentBuilder()
+    ///     .WithCircuitBreaker(maxConsecutiveCalls: 3)
+    ///     .Build();
+    /// </code>
+    /// </example>
+    public static AgentBuilder WithCircuitBreaker(this AgentBuilder builder, int maxConsecutiveCalls = 3)
+    {
+        var middleware = new CircuitBreakerIterationMiddleware
+        {
+            MaxConsecutiveCalls = maxConsecutiveCalls
+        };
+        builder._IterationMiddleWares.Add(middleware);
+        return builder;
+    }
+
+    /// <summary>
+    /// Adds circuit breaker middleware with custom configuration.
+    /// </summary>
+    /// <param name="builder">The agent builder</param>
+    /// <param name="configure">Action to configure the circuit breaker middleware</param>
+    /// <returns>The builder for chaining</returns>
+    /// <example>
+    /// <code>
+    /// var agent = new AgentBuilder()
+    ///     .WithCircuitBreaker(config =>
+    ///     {
+    ///         config.MaxConsecutiveCalls = 5;
+    ///         config.TerminationMessageTemplate = "Loop detected for {toolName}. Stopping.";
+    ///     })
+    ///     .Build();
+    /// </code>
+    /// </example>
+    public static AgentBuilder WithCircuitBreaker(this AgentBuilder builder, Action<CircuitBreakerIterationMiddleware> configure)
+    {
+        var middleware = new CircuitBreakerIterationMiddleware();
+        configure(middleware);
+        builder._IterationMiddleWares.Add(middleware);
+        return builder;
+    }
+
+    /// <summary>
+    /// Adds error tracking middleware to detect and handle consecutive tool execution errors.
+    /// Terminates execution when errors exceed the specified threshold.
+    /// </summary>
+    /// <param name="builder">The agent builder</param>
+    /// <param name="maxConsecutiveErrors">Maximum consecutive errors before termination (default: 3)</param>
+    /// <returns>The builder for chaining</returns>
+    /// <example>
+    /// <code>
+    /// var agent = new AgentBuilder()
+    ///     .WithErrorTracking(maxConsecutiveErrors: 5)
+    ///     .Build();
+    /// </code>
+    /// </example>
+    public static AgentBuilder WithErrorTracking(this AgentBuilder builder, int maxConsecutiveErrors = 3)
+    {
+        var middleware = new ErrorTrackingIterationMiddleware
+        {
+            MaxConsecutiveErrors = maxConsecutiveErrors
+        };
+        builder._IterationMiddleWares.Add(middleware);
+        return builder;
+    }
+
+    /// <summary>
+    /// Adds error tracking middleware with custom configuration.
+    /// </summary>
+    /// <param name="builder">The agent builder</param>
+    /// <param name="configure">Action to configure the error tracking middleware</param>
+    /// <returns>The builder for chaining</returns>
+    /// <example>
+    /// <code>
+    /// var agent = new AgentBuilder()
+    ///     .WithErrorTracking(config =>
+    ///     {
+    ///         config.MaxConsecutiveErrors = 5;
+    ///         config.CustomErrorDetector = result =>
+    ///             result.Exception != null ||
+    ///             result.Result?.ToString()?.Contains("FATAL") == true;
+    ///     })
+    ///     .Build();
+    /// </code>
+    /// </example>
+    public static AgentBuilder WithErrorTracking(this AgentBuilder builder, Action<ErrorTrackingIterationMiddleware> configure)
+    {
+        var middleware = new ErrorTrackingIterationMiddleware();
+        configure(middleware);
+        builder._IterationMiddleWares.Add(middleware);
+        return builder;
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // PII PROTECTION
+    // ═══════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Adds PII (Personally Identifiable Information) protection middleware
+    /// with default settings. Detects and handles email, credit cards, SSN,
+    /// phone numbers, and IP addresses.
+    /// </summary>
+    /// <param name="builder">The agent builder</param>
+    /// <returns>The builder for chaining</returns>
+    /// <remarks>
+    /// Default strategies:
+    /// - Email: Redact → [EMAIL_REDACTED]
+    /// - Credit Card: Block (throws PIIBlockedException)
+    /// - SSN: Block (throws PIIBlockedException)
+    /// - Phone: Mask → ***-***-1234
+    /// - IP Address: Hash → &lt;ip_hash:a1b2c3d4&gt;
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// var agent = new AgentBuilder()
+    ///     .WithPIIProtection()
+    ///     .Build();
+    /// </code>
+    /// </example>
+    public static AgentBuilder WithPIIProtection(this AgentBuilder builder)
+    {
+        var middleware = new PIIPromptMiddleware
+        {
+            AgentName = builder.AgentName
+        };
+        builder._PromptMiddlewares.Insert(0, middleware); // Run first to sanitize input early
+        return builder;
+    }
+
+    /// <summary>
+    /// Adds PII protection middleware with custom configuration.
+    /// Allows per-type strategy configuration and custom detectors.
+    /// </summary>
+    /// <param name="builder">The agent builder</param>
+    /// <param name="configure">Action to configure the PII middleware</param>
+    /// <returns>The builder for chaining</returns>
+    /// <example>
+    /// <code>
+    /// var agent = new AgentBuilder()
+    ///     .WithPIIProtection(config =>
+    ///     {
+    ///         // Configure strategies per PII type
+    ///         config.EmailStrategy = PIIStrategy.Redact;
+    ///         config.CreditCardStrategy = PIIStrategy.Block;
+    ///         config.SSNStrategy = PIIStrategy.Block;
+    ///         config.PhoneStrategy = PIIStrategy.Mask;
+    ///         config.IPAddressStrategy = PIIStrategy.Hash;
+    ///
+    ///         // Also scan LLM output (in case it echoes PII)
+    ///         config.ApplyToOutput = true;
+    ///
+    ///         // Add custom detector for employee IDs
+    ///         config.AddCustomDetector(
+    ///             name: "EmployeeId",
+    ///             pattern: @"EMP-\d{6}",
+    ///             strategy: PIIStrategy.Redact);
+    ///     })
+    ///     .Build();
+    /// </code>
+    /// </example>
+    public static AgentBuilder WithPIIProtection(this AgentBuilder builder, Action<PIIPromptMiddleware> configure)
+    {
+        var middleware = new PIIPromptMiddleware
+        {
+            AgentName = builder.AgentName
+        };
+        configure(middleware);
+        builder._PromptMiddlewares.Insert(0, middleware); // Run first to sanitize input early
         return builder;
     }
 }

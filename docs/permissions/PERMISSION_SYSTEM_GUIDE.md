@@ -74,7 +74,7 @@ var agent = new AgentBuilder()
 
 ```csharp
 // Subscribe to permission request events
-agent.OnEvent<InternalPermissionRequestEvent>(async (e) =>
+agent.OnEvent<PermissionRequestEvent>(async (e) =>
 {
     // Show UI prompt to user
     Console.WriteLine($"⚠️  Agent wants to call: {e.FunctionName}");
@@ -84,7 +84,7 @@ agent.OnEvent<InternalPermissionRequestEvent>(async (e) =>
     var response = Console.ReadLine()?.ToLower() == "y";
 
     // Send response back
-    await agent.RespondToEventAsync(e.RequestId, new InternalPermissionResponseEvent(
+    await agent.RespondToEventAsync(e.RequestId, new PermissionResponseEvent(
         e.RequestId,
         Approved: response,
         Choice: response ? PermissionChoice.AlwaysAllow : PermissionChoice.Ask
@@ -303,7 +303,7 @@ The permission system uses an event-based architecture, making it UI-agnostic.
 When permission is needed, the agent emits:
 
 ```csharp
-public record InternalPermissionRequestEvent(
+public record PermissionRequestEvent(
     string RequestId,           // Unique ID for this request
     string MiddlewareName,      // "PermissionMiddleware"
     string FunctionName,        // e.g., "DeleteFile"
@@ -318,7 +318,7 @@ public record InternalPermissionRequestEvent(
 Your event handler must respond with:
 
 ```csharp
-public record InternalPermissionResponseEvent(
+public record PermissionResponseEvent(
     string RequestId,      // Must match RequestId from request
     bool Approved,         // true = allow, false = deny
     PermissionChoice Choice,  // Ask/AlwaysAllow/AlwaysDeny
@@ -329,7 +329,7 @@ public record InternalPermissionResponseEvent(
 ### Complete Event Handler Example
 
 ```csharp
-agent.OnEvent<InternalPermissionRequestEvent>(async (e) =>
+agent.OnEvent<PermissionRequestEvent>(async (e) =>
 {
     // Build UI prompt
     var prompt = $@"
@@ -374,7 +374,7 @@ Your choice: ";
     }
 
     await agent.RespondToEventAsync(e.RequestId,
-        new InternalPermissionResponseEvent(
+        new PermissionResponseEvent(
             e.RequestId,
             Approved: approved,
             Choice: choice,
@@ -389,13 +389,13 @@ The system also emits events for monitoring:
 
 ```csharp
 // Permission was approved
-agent.OnEvent<InternalPermissionApprovedEvent>((e) =>
+agent.OnEvent<PermissionApprovedEvent>((e) =>
 {
     logger.LogInformation("Permission approved: {RequestId}", e.RequestId);
 });
 
 // Permission was denied
-agent.OnEvent<InternalPermissionDeniedEvent>((e) =>
+agent.OnEvent<PermissionDeniedEvent>((e) =>
 {
     logger.LogWarning("Permission denied: {RequestId}, Reason: {Reason}",
         e.RequestId, e.Reason);
@@ -594,7 +594,7 @@ public class RoleBasedPermissionMiddleware : IPermissionMiddleware
         {
             // Emit permission request event
             var requestId = Guid.NewGuid().ToString();
-            context.Emit(new InternalPermissionRequestEvent(
+            context.Emit(new PermissionRequestEvent(
                 requestId,
                 "RoleBasedPermissionMiddleware",
                 functionName,
@@ -604,7 +604,7 @@ public class RoleBasedPermissionMiddleware : IPermissionMiddleware
             ));
 
             // Wait for admin approval
-            var response = await context.WaitForResponseAsync<InternalPermissionResponseEvent>(
+            var response = await context.WaitForResponseAsync<PermissionResponseEvent>(
                 requestId,
                 timeout: TimeSpan.FromMinutes(5)
             );
@@ -718,7 +718,7 @@ var agent = new AgentBuilder()
 Always provide clear UI and handle timeouts:
 
 ```csharp
-agent.OnEvent<InternalPermissionRequestEvent>(async (e) =>
+agent.OnEvent<PermissionRequestEvent>(async (e) =>
 {
     try
     {
@@ -726,13 +726,13 @@ agent.OnEvent<InternalPermissionRequestEvent>(async (e) =>
         var approved = await ShowPermissionPromptAsync(e, timeout: TimeSpan.FromMinutes(2));
 
         await agent.RespondToEventAsync(e.RequestId,
-            new InternalPermissionResponseEvent(e.RequestId, approved, ...));
+            new PermissionResponseEvent(e.RequestId, approved, ...));
     }
     catch (TimeoutException)
     {
         // Auto-deny on timeout
         await agent.RespondToEventAsync(e.RequestId,
-            new InternalPermissionResponseEvent(e.RequestId, false, PermissionChoice.Ask));
+            new PermissionResponseEvent(e.RequestId, false, PermissionChoice.Ask));
     }
 });
 ```
@@ -768,12 +768,12 @@ var agent = new AgentBuilder()
 Track what users approve/deny:
 
 ```csharp
-agent.OnEvent<InternalPermissionApprovedEvent>((e) =>
+agent.OnEvent<PermissionApprovedEvent>((e) =>
 {
     logger.LogInformation("User approved: {Function}", e.FunctionName);
 });
 
-agent.OnEvent<InternalPermissionDeniedEvent>((e) =>
+agent.OnEvent<PermissionDeniedEvent>((e) =>
 {
     logger.LogWarning("User denied: {Function}, Reason: {Reason}",
         e.FunctionName, e.Reason);

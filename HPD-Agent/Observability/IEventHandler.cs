@@ -15,19 +15,19 @@ namespace HPD.Agent;
 /// <code>
 /// public class MyEventHandler : IEventHandler
 /// {
-///     public bool ShouldProcess(InternalAgentEvent evt)
+///     public bool ShouldProcess(AgentEvent evt)
 ///     {
-///         return evt is InternalPermissionRequestEvent or InternalTextDeltaEvent;
+///         return evt is PermissionRequestEvent or TextDeltaEvent;
 ///     }
 ///
-///     public async Task OnEventAsync(InternalAgentEvent evt, CancellationToken ct)
+///     public async Task OnEventAsync(AgentEvent evt, CancellationToken ct)
 ///     {
 ///         switch (evt)
 ///         {
-///             case InternalPermissionRequestEvent permReq:
+///             case PermissionRequestEvent permReq:
 ///                 await HandlePermissionAsync(permReq, ct);
 ///                 break;
-///             case InternalTextDeltaEvent textDelta:
+///             case TextDeltaEvent textDelta:
 ///                 Console.Write(textDelta.Text);
 ///                 break;
 ///         }

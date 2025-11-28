@@ -13,11 +13,11 @@ public interface IAgentEventObserver
     /// </summary>
     /// <param name="evt">The event to potentially process</param>
     /// <returns>True if OnEventAsync should be called, false to skip</returns>
-    bool ShouldProcess(InternalAgentEvent evt) => true;
+    bool ShouldProcess(AgentEvent evt) => true;
 
     /// <summary>
     /// Called when an agent emits an event.
     /// Observers should handle events asynchronously without blocking the agent.
     /// </summary>
-    Task OnEventAsync(InternalAgentEvent evt, CancellationToken cancellationToken = default);
+    Task OnEventAsync(AgentEvent evt, CancellationToken cancellationToken = default);
 }

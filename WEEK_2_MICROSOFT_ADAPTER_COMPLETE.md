@@ -150,7 +150,7 @@ The adapter contains a complete `EventStreamAdapter.ToAgentsAI` method that conv
 
 **Event Conversion Example:**
 ```csharp
-InternalTextDeltaEvent text => new ExtendedAgentRunResponseUpdate
+TextDeltaEvent text => new ExtendedAgentRunResponseUpdate
 {
     AgentId = threadId,
     AuthorName = agentName,

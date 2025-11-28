@@ -347,13 +347,13 @@ Console.WriteLine(subContext.IsSubAgent);  // True
 
 ---
 
-### `InternalAgentEvent.ExecutionContext`
+### `AgentEvent.ExecutionContext`
 
 All internal agent events now include optional `ExecutionContext` property.
 
 **Property:**
 ```csharp
-public abstract record InternalAgentEvent
+public abstract record AgentEvent
 {
     public AgentExecutionContext? ExecutionContext { get; init; }
 }
@@ -396,7 +396,7 @@ orchestrator.OnEventAsync(evt =>
 **BidirectionalEventCoordinator** automatically attaches ExecutionContext to events:
 
 ```csharp
-public void Emit(InternalAgentEvent evt)
+public void Emit(AgentEvent evt)
 {
     // Auto-attach if not already set
     var eventToEmit = evt;
@@ -638,7 +638,7 @@ var response = await orchestrator.RunAsync(
 | `[SubAgent]` | Mark method for source generation | Category, Priority |
 | `SubAgentThreadMode` | Thread handling mode enum | Stateless, SharedThread, PerSession |
 | `AgentExecutionContext` | Event attribution context | AgentName, AgentId, Depth, AgentChain |
-| `InternalAgentEvent.ExecutionContext` | Context property on events | ExecutionContext? (nullable) |
+| `AgentEvent.ExecutionContext` | Context property on events | ExecutionContext? (nullable) |
 
 ---
 

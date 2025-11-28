@@ -53,9 +53,9 @@ public static class AssertExtensions
     /// Asserts that an event of type T exists in the event list, optionally matching a predicate.
     /// </summary>
     public static void ContainsEvent<T>(
-        IEnumerable<InternalAgentEvent> events,
+        IEnumerable<AgentEvent> events,
         Func<T, bool>? predicate = null)
-        where T : InternalAgentEvent
+        where T : AgentEvent
     {
         var matchingEvents = events.OfType<T>();
 
@@ -75,7 +75,7 @@ public static class AssertExtensions
     /// </summary>
     public static void EventSequenceMatches(
         IEnumerable<Type> expectedTypes,
-        IEnumerable<InternalAgentEvent> actualEvents)
+        IEnumerable<AgentEvent> actualEvents)
     {
         var expectedList = expectedTypes.ToList();
         var actualList = actualEvents.Select(e => e.GetType()).ToList();
@@ -96,7 +96,7 @@ public static class AssertExtensions
     /// </summary>
     public static void EventSequenceStartsWith(
         IEnumerable<Type> expectedTypes,
-        IEnumerable<InternalAgentEvent> actualEvents)
+        IEnumerable<AgentEvent> actualEvents)
     {
         var expectedList = expectedTypes.ToList();
         var actualList = actualEvents.Select(e => e.GetType()).Take(expectedList.Count).ToList();
@@ -118,7 +118,7 @@ public static class AssertExtensions
     /// </summary>
     public static void EventSequenceContains(
         IEnumerable<Type> expectedTypes,
-        IEnumerable<InternalAgentEvent> actualEvents)
+        IEnumerable<AgentEvent> actualEvents)
     {
         var expectedList = expectedTypes.ToList();
         var actualList = actualEvents.Select(e => e.GetType()).ToList();
@@ -144,10 +144,10 @@ public static class AssertExtensions
     /// Asserts that exactly N events of type T exist in the event list.
     /// </summary>
     public static void ContainsEventCount<T>(
-        IEnumerable<InternalAgentEvent> events,
+        IEnumerable<AgentEvent> events,
         int expectedCount,
         Func<T, bool>? predicate = null)
-        where T : InternalAgentEvent
+        where T : AgentEvent
     {
         var matchingEvents = events.OfType<T>();
 
@@ -166,9 +166,9 @@ public static class AssertExtensions
     /// Asserts that no events of type T exist in the event list.
     /// </summary>
     public static void DoesNotContainEvent<T>(
-        IEnumerable<InternalAgentEvent> events,
+        IEnumerable<AgentEvent> events,
         Func<T, bool>? predicate = null)
-        where T : InternalAgentEvent
+        where T : AgentEvent
     {
         var matchingEvents = events.OfType<T>();
 

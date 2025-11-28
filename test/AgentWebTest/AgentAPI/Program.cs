@@ -77,7 +77,7 @@ conversationsApi.MapDelete("/{conversationId}", (string conversationId, Conversa
 // 🎯 CLEAN AGENT API
 var agentApi = app.MapGroup("/agent").WithTags("Agent");
 
-// ✨ SIMPLIFIED: Context-aware chat using CORE agent with InternalAgentEvent
+// ✨ SIMPLIFIED: Context-aware chat using CORE agent with AgentEvent
 agentApi.MapPost("/conversations/{conversationId}/chat",
     async (string conversationId, ChatRequest request, ConversationManager cm) =>
 {
@@ -96,8 +96,8 @@ agentApi.MapPost("/conversations/{conversationId}/chat",
         options: null,
         thread: thread))
     {
-        // Collect text content from InternalTextDeltaEvent
-        if (evt is InternalTextDeltaEvent textDelta)
+        // Collect text content from TextDeltaEvent
+        if (evt is TextDeltaEvent textDelta)
         {
             responseText += textDelta.Text;
         }
@@ -112,7 +112,7 @@ agentApi.MapPost("/conversations/{conversationId}/chat",
     return Results.Ok(chatResponse);
 });
 
-// ✨ STREAMING: Server-Sent Events endpoint using CORE agent InternalAgentEvent stream
+// ✨ STREAMING: Server-Sent Events endpoint using CORE agent AgentEvent stream
 agentApi.MapPost("/conversations/{conversationId}/stream",
     async (string conversationId, StreamRequest streamRequest, ConversationManager cm, HttpContext context) =>
 {
@@ -141,46 +141,46 @@ agentApi.MapPost("/conversations/{conversationId}/stream",
             new ChatMessage(ChatRole.User, m.Content)
         ).ToList();
 
-        // ✅ Use CORE agent RunAsync - stream InternalAgentEvent
+        // ✅ Use CORE agent RunAsync - stream AgentEvent
         await foreach (var evt in agent.RunAsync(chatMessages, options: null, thread: thread, cancellationToken: context.RequestAborted))
         {
-            // Convert InternalAgentEvent to SSE format
+            // Convert AgentEvent to SSE format
             string? eventType = null;
             object? eventData = null;
 
             switch (evt)
             {
-                case InternalTextDeltaEvent textDelta:
+                case TextDeltaEvent textDelta:
                     eventType = "text_delta";
                     eventData = new { text = textDelta.Text };
                     break;
 
-                case InternalReasoningEvent reasoning when reasoning.Phase == ReasoningPhase.Delta:
+                case Reasoning reasoning when reasoning.Phase == ReasoningPhase.Delta:
                     eventType = "reasoning_delta";
                     eventData = new { text = reasoning.Text };
                     break;
 
-                case InternalToolCallStartEvent toolStart:
+                case ToolCallStartEvent toolStart:
                     eventType = "tool_call_start";
                     eventData = new { name = toolStart.Name, call_id = toolStart.CallId };
                     break;
 
-                case InternalToolCallResultEvent toolResult:
+                case ToolCallResultEvent toolResult:
                     eventType = "tool_call_result";
                     eventData = new { call_id = toolResult.CallId };
                     break;
 
-                case InternalAgentTurnStartedEvent turnStart:
+                case AgentTurnStartedEvent turnStart:
                     eventType = "agent_turn_started";
                     eventData = new { iteration = turnStart.Iteration };
                     break;
 
-                case InternalAgentTurnFinishedEvent turnFinished:
+                case AgentTurnFinishedEvent turnFinished:
                     eventType = "agent_turn_finished";
                     eventData = new { iteration = turnFinished.Iteration };
                     break;
 
-                case InternalMessageTurnFinishedEvent:
+                case MessageTurnFinishedEvent:
                     eventType = "message_turn_finished";
                     eventData = new { };
                     break;
@@ -242,11 +242,11 @@ agentApi.MapGet("/conversations/{conversationId}/ws",
             // Use CORE agent.RunAsync directly with thread
             var chatMessage = new ChatMessage(ChatRole.User, userMessage);
 
-            // Stream InternalAgentEvent to WebSocket
+            // Stream AgentEvent to WebSocket
             await foreach (var evt in agent.RunAsync(new[] { chatMessage }, options: null, thread: thread, cancellationToken: CancellationToken.None))
             {
                 // Extract text content and send via WebSocket
-                if (evt is InternalTextDeltaEvent textDelta)
+                if (evt is TextDeltaEvent textDelta)
                 {
                     var response = new StreamContentResponse(textDelta.Text);
                     var message = JsonSerializer.Serialize(response, AppJsonSerializerContext.Default.StreamContentResponse);
@@ -257,7 +257,7 @@ agentApi.MapGet("/conversations/{conversationId}/ws",
                         true,
                         CancellationToken.None);
                 }
-                else if (evt is InternalMessageTurnFinishedEvent)
+                else if (evt is MessageTurnFinishedEvent)
                 {
                     // Send finish event when turn completes
                     var response = new StreamFinishResponse(true, "Stop");

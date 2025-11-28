@@ -217,6 +217,14 @@ public class IterationMiddleWarePipelineTests
             return Task.CompletedTask;
         }
 
+        public Task BeforeToolExecutionAsync(
+            IterationMiddleWareContext context,
+            CancellationToken cancellationToken)
+        {
+            _log.Add($"{_name}-beforeTool");
+            return Task.CompletedTask;
+        }
+
         public Task AfterIterationAsync(
             IterationMiddleWareContext context,
             CancellationToken cancellationToken)
@@ -246,6 +254,13 @@ public class IterationMiddleWarePipelineTests
             return Task.CompletedTask;
         }
 
+        public Task BeforeToolExecutionAsync(
+            IterationMiddleWareContext context,
+            CancellationToken cancellationToken)
+        {
+            return Task.CompletedTask;
+        }
+
         public Task AfterIterationAsync(
             IterationMiddleWareContext context,
             CancellationToken cancellationToken)
@@ -264,6 +279,13 @@ public class IterationMiddleWarePipelineTests
             context.SkipLLMCall = true;
             context.Response = new ChatMessage(ChatRole.Assistant, "Cached response");
             context.ToolCalls = Array.Empty<FunctionCallContent>();
+            return Task.CompletedTask;
+        }
+
+        public Task BeforeToolExecutionAsync(
+            IterationMiddleWareContext context,
+            CancellationToken cancellationToken)
+        {
             return Task.CompletedTask;
         }
 
@@ -294,6 +316,13 @@ public class IterationMiddleWarePipelineTests
             return Task.CompletedTask;
         }
 
+        public Task BeforeToolExecutionAsync(
+            IterationMiddleWareContext context,
+            CancellationToken cancellationToken)
+        {
+            return Task.CompletedTask;
+        }
+
         public Task AfterIterationAsync(
             IterationMiddleWareContext context,
             CancellationToken cancellationToken)
@@ -317,6 +346,13 @@ public class IterationMiddleWarePipelineTests
         }
 
         public Task BeforeIterationAsync(
+            IterationMiddleWareContext context,
+            CancellationToken cancellationToken)
+        {
+            return Task.CompletedTask;
+        }
+
+        public Task BeforeToolExecutionAsync(
             IterationMiddleWareContext context,
             CancellationToken cancellationToken)
         {

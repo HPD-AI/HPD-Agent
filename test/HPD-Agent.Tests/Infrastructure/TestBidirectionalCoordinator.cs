@@ -10,14 +10,14 @@ namespace HPD_Agent.Tests.Infrastructure;
 /// </summary>
 public sealed class TestBidirectionalCoordinator
 {
-    private readonly Channel<InternalAgentEvent> _eventChannel;
-    private readonly Dictionary<string, TaskCompletionSource<InternalAgentEvent>> _pendingResponses = new();
-    private readonly List<InternalAgentEvent> _capturedEvents = new();
+    private readonly Channel<AgentEvent> _eventChannel;
+    private readonly Dictionary<string, TaskCompletionSource<AgentEvent>> _pendingResponses = new();
+    private readonly List<AgentEvent> _capturedEvents = new();
     private readonly object _lock = new();
 
     public TestBidirectionalCoordinator()
     {
-        _eventChannel = Channel.CreateUnbounded<InternalAgentEvent>(new UnboundedChannelOptions
+        _eventChannel = Channel.CreateUnbounded<AgentEvent>(new UnboundedChannelOptions
         {
             SingleReader = false,
             SingleWriter = false
@@ -28,7 +28,7 @@ public sealed class TestBidirectionalCoordinator
     /// Gets all events that have been captured.
     /// Thread-safe snapshot of events.
     /// </summary>
-    public IReadOnlyList<InternalAgentEvent> CapturedEvents
+    public IReadOnlyList<AgentEvent> CapturedEvents
     {
         get
         {
@@ -42,18 +42,18 @@ public sealed class TestBidirectionalCoordinator
     /// <summary>
     /// Event reader for agent to consume events.
     /// </summary>
-    public ChannelReader<InternalAgentEvent> EventReader => _eventChannel.Reader;
+    public ChannelReader<AgentEvent> EventReader => _eventChannel.Reader;
 
     /// <summary>
     /// Event writer for Middlewares to emit events.
     /// </summary>
-    public ChannelWriter<InternalAgentEvent> EventWriter => _eventChannel.Writer;
+    public ChannelWriter<AgentEvent> EventWriter => _eventChannel.Writer;
 
     /// <summary>
     /// Captures an event for test verification.
     /// Automatically captures events written to the channel.
     /// </summary>
-    public void CaptureEvent(InternalAgentEvent evt)
+    public void CaptureEvent(AgentEvent evt)
     {
         lock (_lock)
         {
@@ -68,7 +68,7 @@ public sealed class TestBidirectionalCoordinator
     /// Enqueues a Middleware event to be read by the agent.
     /// Useful for simulating permission responses, progress updates, etc.
     /// </summary>
-    public void EnqueueEvent(InternalAgentEvent evt)
+    public void EnqueueEvent(AgentEvent evt)
     {
         _eventChannel.Writer.TryWrite(evt);
     }
@@ -77,7 +77,7 @@ public sealed class TestBidirectionalCoordinator
     /// Sends a response to a waiting Middleware request.
     /// Simulates user responding to permission prompt, etc.
     /// </summary>
-    public void SendResponse(string requestId, InternalAgentEvent response)
+    public void SendResponse(string requestId, AgentEvent response)
     {
         lock (_lock)
         {
@@ -100,9 +100,9 @@ public sealed class TestBidirectionalCoordinator
     public async Task<T> WaitForResponseAsync<T>(
         string requestId,
         TimeSpan timeout,
-        CancellationToken cancellationToken) where T : InternalAgentEvent
+        CancellationToken cancellationToken) where T : AgentEvent
     {
-        var tcs = new TaskCompletionSource<InternalAgentEvent>();
+        var tcs = new TaskCompletionSource<AgentEvent>();
 
         lock (_lock)
         {
@@ -139,7 +139,7 @@ public sealed class TestBidirectionalCoordinator
     /// <summary>
     /// Gets all events of a specific type.
     /// </summary>
-    public IReadOnlyList<T> GetEvents<T>() where T : InternalAgentEvent
+    public IReadOnlyList<T> GetEvents<T>() where T : AgentEvent
     {
         lock (_lock)
         {
@@ -162,7 +162,7 @@ public sealed class TestBidirectionalCoordinator
     /// <summary>
     /// Checks if an event of type T exists.
     /// </summary>
-    public bool ContainsEvent<T>() where T : InternalAgentEvent
+    public bool ContainsEvent<T>() where T : AgentEvent
     {
         lock (_lock)
         {
@@ -176,7 +176,7 @@ public sealed class TestBidirectionalCoordinator
     /// </summary>
     public async Task<T> WaitForEventAsync<T>(
         TimeSpan timeout,
-        CancellationToken cancellationToken = default) where T : InternalAgentEvent
+        CancellationToken cancellationToken = default) where T : AgentEvent
     {
         var deadline = DateTime.UtcNow.Add(timeout);
 

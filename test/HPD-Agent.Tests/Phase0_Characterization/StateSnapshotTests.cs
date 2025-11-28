@@ -9,7 +9,7 @@ namespace HPD_Agent.Tests.Phase0_Characterization;
 /// Phase 0: State Snapshot Tests
 ///
 /// These tests verify internal agent state at various points during execution.
-/// They use InternalStateSnapshotEvent to expose state without modifying the Agent's public API.
+/// They use StateSnapshotEvent to expose state without modifying the Agent's public API.
 /// These tests document how state evolves during the agentic loop.
 /// </summary>
 public class StateSnapshotTests : AgentTestBase
@@ -28,7 +28,7 @@ public class StateSnapshotTests : AgentTestBase
         var agent = CreateAgent(client: fakeLLM);
         var messages = CreateSimpleConversation("Hello");
 
-        var capturedEvents = new List<InternalAgentEvent>();
+        var capturedEvents = new List<AgentEvent>();
 
         // Act
         await foreach (var evt in agent.RunAgenticLoopAsync(messages, cancellationToken: TestCancellationToken))
@@ -37,7 +37,7 @@ public class StateSnapshotTests : AgentTestBase
         }
 
         // Assert - Initial state snapshot
-        var snapshots = capturedEvents.OfType<InternalStateSnapshotEvent>().ToList();
+        var snapshots = capturedEvents.OfType<StateSnapshotEvent>().ToList();
         snapshots.Should().NotBeEmpty("state snapshots should be emitted");
 
         var initialSnapshot = snapshots.First();
@@ -76,7 +76,7 @@ public class StateSnapshotTests : AgentTestBase
         var agent = CreateAgent(client: fakeLLM, tools: [testTool]);
         var messages = CreateSimpleConversation("Use the test tool");
 
-        var capturedEvents = new List<InternalAgentEvent>();
+        var capturedEvents = new List<AgentEvent>();
 
         // Act
         await foreach (var evt in agent.RunAgenticLoopAsync(messages, cancellationToken: TestCancellationToken))
@@ -85,7 +85,7 @@ public class StateSnapshotTests : AgentTestBase
         }
 
         // Assert - State after first iteration
-        var snapshots = capturedEvents.OfType<InternalStateSnapshotEvent>().ToList();
+        var snapshots = capturedEvents.OfType<StateSnapshotEvent>().ToList();
         snapshots.Should().HaveCountGreaterOrEqualTo(2, "should have snapshots for both iterations");
 
         // First iteration (index 0): iteration 0, no completed functions yet
@@ -140,7 +140,7 @@ public class StateSnapshotTests : AgentTestBase
 
         var messages = CreateSimpleConversation("Use the failing tool");
 
-        var capturedEvents = new List<InternalAgentEvent>();
+        var capturedEvents = new List<AgentEvent>();
 
         // Act
         await foreach (var evt in agent.RunAgenticLoopAsync(messages, cancellationToken: TestCancellationToken))
@@ -149,7 +149,7 @@ public class StateSnapshotTests : AgentTestBase
         }
 
         // Assert - State after circuit breaker
-        var snapshots = capturedEvents.OfType<InternalStateSnapshotEvent>().ToList();
+        var snapshots = capturedEvents.OfType<StateSnapshotEvent>().ToList();
         snapshots.Should().NotBeEmpty("state snapshots should be emitted");
 
         // Find the last snapshot - should show termination
@@ -201,7 +201,7 @@ public class StateSnapshotTests : AgentTestBase
 
         var messages = CreateSimpleConversation("Use the tool repeatedly");
 
-        var capturedEvents = new List<InternalAgentEvent>();
+        var capturedEvents = new List<AgentEvent>();
 
         // Act
         await foreach (var evt in agent.RunAgenticLoopAsync(messages, cancellationToken: TestCancellationToken))
@@ -211,7 +211,7 @@ public class StateSnapshotTests : AgentTestBase
 
         // Assert - State snapshots show progression to max
         // Loop condition uses <=, so MaxAgenticIterations=5 means iterations 0-5 (6 snapshots)
-        var snapshots = capturedEvents.OfType<InternalStateSnapshotEvent>().ToList();
+        var snapshots = capturedEvents.OfType<StateSnapshotEvent>().ToList();
         snapshots.Should().HaveCountLessOrEqualTo(6, "should not exceed max iterations (loop uses <=)");
 
         // Verify iteration counter increases
@@ -256,7 +256,7 @@ public class StateSnapshotTests : AgentTestBase
         var agent = CreateAgent(client: fakeLLM, tools: [successfulTool]);
         var messages = CreateSimpleConversation("Use the tool multiple times");
 
-        var capturedEvents = new List<InternalAgentEvent>();
+        var capturedEvents = new List<AgentEvent>();
 
         // Act
         await foreach (var evt in agent.RunAgenticLoopAsync(messages, cancellationToken: TestCancellationToken))
@@ -265,7 +265,7 @@ public class StateSnapshotTests : AgentTestBase
         }
 
         // Assert - All snapshots should show 0 consecutive errors
-        var snapshots = capturedEvents.OfType<InternalStateSnapshotEvent>().ToList();
+        var snapshots = capturedEvents.OfType<StateSnapshotEvent>().ToList();
         snapshots.Should().HaveCountGreaterOrEqualTo(3, "should have snapshots for multiple iterations");
 
         foreach (var snapshot in snapshots)

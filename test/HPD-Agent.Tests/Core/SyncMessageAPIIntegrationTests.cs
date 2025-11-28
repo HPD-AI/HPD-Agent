@@ -30,7 +30,7 @@ public class SyncMessageAPIIntegrationTests : AgentTestBase
         Assert.Single(thread.Messages);
 
         // Run agent (async for LLM)
-        var events = new List<InternalAgentEvent>();
+        var events = new List<AgentEvent>();
         await foreach (var evt in agent.RunAsync(Array.Empty<ChatMessage>(), null, thread, cancellationToken: TestCancellationToken))
         {
             events.Add(evt);

@@ -162,7 +162,7 @@ public class BidirectionalEventCoordinatorTests
 
         var testEvent = new TestAgentEvent { Message = "Multi-level test" };
 
-        var receivedEvents = new List<(string agent, InternalAgentEvent evt)>();
+        var receivedEvents = new List<(string agent, AgentEvent evt)>();
 
         // Act - Worker emits event
         worker.Emit(testEvent);
@@ -374,7 +374,7 @@ public class BidirectionalEventCoordinatorTests
         child2.EventCoordinator.Emit(new TestAgentEvent { Message = "Math event" });
 
         // Assert - Parent should receive both events with correct contexts
-        var parentEvents = new List<InternalAgentEvent>();
+        var parentEvents = new List<AgentEvent>();
         while (parent.EventCoordinator.EventReader.TryRead(out var evt))
         {
             parentEvents.Add(evt);
@@ -396,4 +396,4 @@ public class BidirectionalEventCoordinatorTests
 /// <summary>
 /// Test event record for event bubbling tests
 /// </summary>
-internal sealed record TestAgentEvent(string Message = "") : InternalAgentEvent;
+internal sealed record TestAgentEvent(string Message = "") : AgentEvent;

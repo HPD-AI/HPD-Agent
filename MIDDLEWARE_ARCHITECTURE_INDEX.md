@@ -143,7 +143,7 @@ This document serves as an index to comprehensive documentation of the HPD-Agent
 
 **Primary Implementation**: `PermissionMiddleware`
 - Checks function permission requirements
-- Emits `InternalPermissionRequestEvent`
+- Emits `PermissionRequestEvent`
 - Waits for user response
 - Stores preferences persistently
 - Handles timeouts gracefully
@@ -227,13 +227,13 @@ Each filter can:
 ### 1. Event Emission
 Filter emits event for external handlers:
 ```csharp
-context.Emit(new InternalPermissionRequestEvent(...));
+context.Emit(new PermissionRequestEvent(...));
 ```
 
 ### 2. Request/Response Pattern
 Interactive filters wait for responses:
 ```csharp
-var response = await context.WaitForResponseAsync<InternalPermissionResponseEvent>(
+var response = await context.WaitForResponseAsync<PermissionResponseEvent>(
     requestId,
     timeout: TimeSpan.FromMinutes(5));
 ```
@@ -257,33 +257,33 @@ context.IsTerminated = true;
 ### Event Categories
 
 **Permission Events**:
-- `InternalPermissionRequestEvent`
-- `InternalPermissionResponseEvent`
-- `InternalPermissionApprovedEvent`
-- `InternalPermissionDeniedEvent`
+- `PermissionRequestEvent`
+- `PermissionResponseEvent`
+- `PermissionApprovedEvent`
+- `PermissionDeniedEvent`
 
 **Continuation Events**:
-- `InternalContinuationRequestEvent`
-- `InternalContinuationResponseEvent`
+- `ContinuationRequestEvent`
+- `ContinuationResponseEvent`
 
 **Message Turn Events**:
-- `InternalMessageTurnStartedEvent`
-- `InternalMessageTurnFinishedEvent`
-- `InternalMessageTurnErrorEvent`
+- `MessageTurnStartedEvent`
+- `MessageTurnFinishedEvent`
+- `MessageTurnErrorEvent`
 
 **Agent Turn Events**:
-- `InternalAgentTurnStartedEvent`
-- `InternalAgentTurnFinishedEvent`
-- `InternalStateSnapshotEvent`
+- `AgentTurnStartedEvent`
+- `AgentTurnFinishedEvent`
+- `StateSnapshotEvent`
 
 **Content Events**:
-- `InternalTextMessageStartEvent`
-- `InternalTextDeltaEvent`
-- `InternalTextMessageEndEvent`
-- `InternalToolCallEvent`
+- `TextMessageStartEvent`
+- `TextDeltaEvent`
+- `TextMessageEndEvent`
+- `ToolCallEvent`
 
 **Error Events**:
-- `InternalFilterErrorEvent`
+- `FilterErrorEvent`
 - `InternalProviderErrorEvent`
 
 ### Event Flow

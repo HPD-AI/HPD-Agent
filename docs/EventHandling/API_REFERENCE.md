@@ -29,8 +29,8 @@ public interface IEventHandler : IAgentEventObserver
 ```
 
 **Inherited Methods:**
-- `bool ShouldProcess(InternalAgentEvent evt)` - Filter events before processing
-- `Task OnEventAsync(InternalAgentEvent evt, CancellationToken ct)` - Handle filtered events
+- `bool ShouldProcess(AgentEvent evt)` - Filter events before processing
+- `Task OnEventAsync(AgentEvent evt, CancellationToken ct)` - Handle filtered events
 
 ### `IAgentEventObserver`
 
@@ -43,13 +43,13 @@ public interface IAgentEventObserver
     /// Determines if this observer should process the given event.
     /// Return false to skip processing (improves performance).
     /// </summary>
-    bool ShouldProcess(InternalAgentEvent evt);
+    bool ShouldProcess(AgentEvent evt);
 
     /// <summary>
     /// Process the event asynchronously.
     /// Called in a fire-and-forget pattern (doesn't block agent execution).
     /// </summary>
-    Task OnEventAsync(InternalAgentEvent evt, CancellationToken ct = default);
+    Task OnEventAsync(AgentEvent evt, CancellationToken ct = default);
 }
 ```
 
@@ -82,17 +82,17 @@ HPD-Agent emits **58 different event types** organized into 7 categories:
 
 **Definition**: A **Message Turn** represents the entire user interaction from when they send a message until the agent finishes responding. May contain multiple agent turns if tools are called.
 
-### `InternalMessageTurnStartedEvent`
+### `MessageTurnStartedEvent`
 
 Emitted when a message turn starts (user sends message, agent begins processing).
 
 ```csharp
-public record InternalMessageTurnStartedEvent(
+public record MessageTurnStartedEvent(
     string MessageTurnId,
     string ConversationId,
     string AgentName,
     DateTimeOffset Timestamp
-) : InternalAgentEvent;
+) : AgentEvent;
 ```
 
 **Properties:**
@@ -103,47 +103,47 @@ public record InternalMessageTurnStartedEvent(
 
 **Example:**
 ```csharp
-case InternalMessageTurnStartedEvent turnStart:
+case MessageTurnStartedEvent turnStart:
     Console.WriteLine($"[{turnStart.Timestamp:HH:mm:ss}] Turn started: {turnStart.MessageTurnId}");
     _metrics.IncrementCounter($"{turnStart.AgentName}.turns.started");
     break;
 ```
 
-### `InternalMessageTurnFinishedEvent`
+### `MessageTurnFinishedEvent`
 
 Emitted when a message turn completes successfully.
 
 ```csharp
-public record InternalMessageTurnFinishedEvent(
+public record MessageTurnFinishedEvent(
     string MessageTurnId,
     string ConversationId,
     string AgentName,
     TimeSpan Duration,
     DateTimeOffset Timestamp
-) : InternalAgentEvent;
+) : AgentEvent;
 ```
 
 **Properties:**
 - `Duration` - Total time spent on this turn
-- All other properties same as `InternalMessageTurnStartedEvent`
+- All other properties same as `MessageTurnStartedEvent`
 
 **Example:**
 ```csharp
-case InternalMessageTurnFinishedEvent turnEnd:
+case MessageTurnFinishedEvent turnEnd:
     Console.WriteLine($"Turn finished in {turnEnd.Duration.TotalSeconds:F2}s");
     _metrics.RecordDuration($"{turnEnd.AgentName}.turn.duration", turnEnd.Duration);
     break;
 ```
 
-### `InternalMessageTurnErrorEvent`
+### `MessageTurnErrorEvent`
 
 Emitted when an error occurs during message turn execution.
 
 ```csharp
-public record InternalMessageTurnErrorEvent(
+public record MessageTurnErrorEvent(
     string Message,
     Exception? Exception = null
-) : InternalAgentEvent;
+) : AgentEvent;
 ```
 
 **Properties:**
@@ -152,7 +152,7 @@ public record InternalMessageTurnErrorEvent(
 
 **Example:**
 ```csharp
-case InternalMessageTurnErrorEvent error:
+case MessageTurnErrorEvent error:
     _logger.LogError(error.Exception, "Turn failed: {Message}", error.Message);
     await NotifyUserOfErrorAsync(error.Message);
     break;
@@ -164,14 +164,14 @@ case InternalMessageTurnErrorEvent error:
 
 **Definition**: An **Agent Turn** represents a single call to the LLM (one iteration in the agentic loop). Multiple agent turns may occur within one message turn when tools are called.
 
-### `InternalAgentTurnStartedEvent`
+### `AgentTurnStartedEvent`
 
 Emitted when an agent turn starts (single LLM call within the agentic loop).
 
 ```csharp
-public record InternalAgentTurnStartedEvent(
+public record AgentTurnStartedEvent(
     int Iteration
-) : InternalAgentEvent;
+) : AgentEvent;
 ```
 
 **Properties:**
@@ -179,7 +179,7 @@ public record InternalAgentTurnStartedEvent(
 
 **Example:**
 ```csharp
-case InternalAgentTurnStartedEvent turnStart:
+case AgentTurnStartedEvent turnStart:
     if (turnStart.Iteration > 1)
     {
         Console.WriteLine($"\n🔄 Agent iteration {turnStart.Iteration}");
@@ -187,29 +187,29 @@ case InternalAgentTurnStartedEvent turnStart:
     break;
 ```
 
-### `InternalAgentTurnFinishedEvent`
+### `AgentTurnFinishedEvent`
 
 Emitted when an agent turn completes.
 
 ```csharp
-public record InternalAgentTurnFinishedEvent(
+public record AgentTurnFinishedEvent(
     int Iteration
-) : InternalAgentEvent;
+) : AgentEvent;
 ```
 
 **Example:**
 ```csharp
-case InternalAgentTurnFinishedEvent turnEnd:
+case AgentTurnFinishedEvent turnEnd:
     _logger.LogDebug("Iteration {Iteration} completed", turnEnd.Iteration);
     break;
 ```
 
-### `InternalStateSnapshotEvent`
+### `StateSnapshotEvent`
 
 Emitted during agent execution to expose internal state for testing/debugging. **NOT intended for production use**.
 
 ```csharp
-public record InternalStateSnapshotEvent(
+public record StateSnapshotEvent(
     int CurrentIteration,
     int MaxIterations,
     bool IsTerminated,
@@ -218,7 +218,7 @@ public record InternalStateSnapshotEvent(
     List<string> CompletedFunctions,
     string AgentName,
     DateTimeOffset Timestamp
-) : InternalAgentEvent;
+) : AgentEvent;
 ```
 
 **Use Case**: Characterization tests, debugging agentic loops.
@@ -229,15 +229,15 @@ public record InternalStateSnapshotEvent(
 
 Events related to streaming text content from the agent.
 
-### `InternalTextMessageStartEvent`
+### `TextMessageStartEvent`
 
 Emitted when the agent starts producing text content.
 
 ```csharp
-public record InternalTextMessageStartEvent(
+public record TextMessageStartEvent(
     string MessageId,
     string Role
-) : InternalAgentEvent;
+) : AgentEvent;
 ```
 
 **Properties:**
@@ -246,21 +246,21 @@ public record InternalTextMessageStartEvent(
 
 **Example:**
 ```csharp
-case InternalTextMessageStartEvent textStart:
+case TextMessageStartEvent textStart:
     Console.WriteLine("\n📝 Response: ");
     _currentMessageId = textStart.MessageId;
     break;
 ```
 
-### `InternalTextDeltaEvent`
+### `TextDeltaEvent`
 
 Emitted when the agent produces text content (streaming delta). **Most frequent event** during streaming responses.
 
 ```csharp
-public record InternalTextDeltaEvent(
+public record TextDeltaEvent(
     string Text,
     string MessageId
-) : InternalAgentEvent;
+) : AgentEvent;
 ```
 
 **Properties:**
@@ -269,25 +269,25 @@ public record InternalTextDeltaEvent(
 
 **Example:**
 ```csharp
-case InternalTextDeltaEvent textDelta:
+case TextDeltaEvent textDelta:
     Console.Write(textDelta.Text);
     _textBuffer.Append(textDelta.Text);
     break;
 ```
 
-### `InternalTextMessageEndEvent`
+### `TextMessageEndEvent`
 
 Emitted when the agent finishes producing text content.
 
 ```csharp
-public record InternalTextMessageEndEvent(
+public record TextMessageEndEvent(
     string MessageId
-) : InternalAgentEvent;
+) : AgentEvent;
 ```
 
 **Example:**
 ```csharp
-case InternalTextMessageEndEvent textEnd:
+case TextMessageEndEvent textEnd:
     Console.WriteLine(); // New line after text
     Console.ResetColor();
     break;
@@ -312,17 +312,17 @@ public enum ReasoningPhase
 }
 ```
 
-### `InternalReasoningEvent`
+### `Reasoning`
 
 Emitted for all reasoning-related events during agent execution.
 
 ```csharp
-public record InternalReasoningEvent(
+public record Reasoning(
     ReasoningPhase Phase,
     string MessageId,
     string? Role = null,
     string? Text = null
-) : InternalAgentEvent;
+) : AgentEvent;
 ```
 
 **Properties:**
@@ -333,7 +333,7 @@ public record InternalReasoningEvent(
 
 **Example:**
 ```csharp
-case InternalReasoningEvent reasoning:
+case Reasoning reasoning:
     switch (reasoning.Phase)
     {
         case ReasoningPhase.MessageStart:
@@ -361,16 +361,16 @@ case InternalReasoningEvent reasoning:
 
 Events tracking the tool call lifecycle.
 
-### `InternalToolCallStartEvent`
+### `ToolCallStartEvent`
 
 Emitted when the agent requests a tool call.
 
 ```csharp
-public record InternalToolCallStartEvent(
+public record ToolCallStartEvent(
     string CallId,
     string Name,
     string MessageId
-) : InternalAgentEvent;
+) : AgentEvent;
 ```
 
 **Properties:**
@@ -380,22 +380,22 @@ public record InternalToolCallStartEvent(
 
 **Example:**
 ```csharp
-case InternalToolCallStartEvent toolStart:
+case ToolCallStartEvent toolStart:
     Console.ForegroundColor = ConsoleColor.Yellow;
     Console.Write($"\n🔧 Using tool: {toolStart.Name}");
     _toolStartTimes[toolStart.CallId] = DateTime.Now;
     break;
 ```
 
-### `InternalToolCallArgsEvent`
+### `ToolCallArgsEvent`
 
 Emitted when a tool call's arguments are fully available.
 
 ```csharp
-public record InternalToolCallArgsEvent(
+public record ToolCallArgsEvent(
     string CallId,
     string ArgsJson
-) : InternalAgentEvent;
+) : AgentEvent;
 ```
 
 **Properties:**
@@ -404,31 +404,31 @@ public record InternalToolCallArgsEvent(
 
 **Example:**
 ```csharp
-case InternalToolCallArgsEvent argsEvent:
+case ToolCallArgsEvent argsEvent:
     _logger.LogDebug("Tool args for {CallId}: {Args}",
         argsEvent.CallId, argsEvent.ArgsJson);
     break;
 ```
 
-### `InternalToolCallEndEvent`
+### `ToolCallEndEvent`
 
 Emitted when a tool call completes execution.
 
 ```csharp
-public record InternalToolCallEndEvent(
+public record ToolCallEndEvent(
     string CallId
-) : InternalAgentEvent;
+) : AgentEvent;
 ```
 
-### `InternalToolCallResultEvent`
+### `ToolCallResultEvent`
 
 Emitted when a tool call result is available.
 
 ```csharp
-public record InternalToolCallResultEvent(
+public record ToolCallResultEvent(
     string CallId,
     string Result
-) : InternalAgentEvent;
+) : AgentEvent;
 ```
 
 **Properties:**
@@ -438,7 +438,7 @@ public record InternalToolCallResultEvent(
 
 **Example:**
 ```csharp
-case InternalToolCallResultEvent toolResult:
+case ToolCallResultEvent toolResult:
     Console.ForegroundColor = toolResult.IsError ? ConsoleColor.Red : ConsoleColor.Green;
     Console.Write(toolResult.IsError ? " ✗" : " ✓");
     Console.ResetColor();
@@ -491,19 +491,19 @@ public interface IClarificationEvent : IBidirectionalEvent
 
 ### Permission Events
 
-#### `InternalPermissionRequestEvent`
+#### `PermissionRequestEvent`
 
-Middleware requests permission to execute a function. Handler should prompt user and send `InternalPermissionResponseEvent`.
+Middleware requests permission to execute a function. Handler should prompt user and send `PermissionResponseEvent`.
 
 ```csharp
-public record InternalPermissionRequestEvent(
+public record PermissionRequestEvent(
     string PermissionId,
     string SourceName,
     string FunctionName,
     string? Description,
     string CallId,
     IDictionary<string, object?>? Arguments
-) : InternalAgentEvent, IPermissionEvent;
+) : AgentEvent, IPermissionEvent;
 ```
 
 **Properties:**
@@ -516,7 +516,7 @@ public record InternalPermissionRequestEvent(
 
 **Example:**
 ```csharp
-case InternalPermissionRequestEvent permReq:
+case PermissionRequestEvent permReq:
     Console.WriteLine($"\n🔐 Permission Request");
     Console.WriteLine($"   Function: {permReq.FunctionName}");
     Console.WriteLine($"   Purpose: {permReq.Description}");
@@ -527,7 +527,7 @@ case InternalPermissionRequestEvent permReq:
 
     _agent.SendMiddlewareResponse(
         permReq.PermissionId,
-        new InternalPermissionResponseEvent(
+        new PermissionResponseEvent(
             permReq.PermissionId,
             "Console",
             approved,
@@ -538,18 +538,18 @@ case InternalPermissionRequestEvent permReq:
     break;
 ```
 
-#### `InternalPermissionResponseEvent`
+#### `PermissionResponseEvent`
 
 Response to permission request. Sent by external handler back to waiting middleware.
 
 ```csharp
-public record InternalPermissionResponseEvent(
+public record PermissionResponseEvent(
     string PermissionId,
     string SourceName,
     bool Approved,
     string? Reason = null,
     PermissionChoice Choice = PermissionChoice.Ask
-) : InternalAgentEvent, IPermissionEvent;
+) : AgentEvent, IPermissionEvent;
 ```
 
 **Properties:**
@@ -567,47 +567,47 @@ public enum PermissionChoice
 }
 ```
 
-#### `InternalPermissionApprovedEvent`
+#### `PermissionApprovedEvent`
 
 Emitted after permission is approved (for observability).
 
 ```csharp
-public record InternalPermissionApprovedEvent(
+public record PermissionApprovedEvent(
     string PermissionId,
     string SourceName
-) : InternalAgentEvent, IPermissionEvent;
+) : AgentEvent, IPermissionEvent;
 ```
 
-#### `InternalPermissionDeniedEvent`
+#### `PermissionDeniedEvent`
 
 Emitted after permission is denied (for observability).
 
 ```csharp
-public record InternalPermissionDeniedEvent(
+public record PermissionDeniedEvent(
     string PermissionId,
     string SourceName,
     string Reason
-) : InternalAgentEvent, IPermissionEvent;
+) : AgentEvent, IPermissionEvent;
 ```
 
 ### Continuation Events
 
-#### `InternalContinuationRequestEvent`
+#### `ContinuationRequestEvent`
 
 Middleware requests permission to continue beyond max iterations.
 
 ```csharp
-public record InternalContinuationRequestEvent(
+public record ContinuationRequestEvent(
     string ContinuationId,
     string SourceName,
     int CurrentIteration,
     int MaxIterations
-) : InternalAgentEvent, IPermissionEvent;
+) : AgentEvent, IPermissionEvent;
 ```
 
 **Example:**
 ```csharp
-case InternalContinuationRequestEvent contReq:
+case ContinuationRequestEvent contReq:
     Console.WriteLine($"\n⏱️  Continuation Request");
     Console.WriteLine($"   Iteration: {contReq.CurrentIteration} / {contReq.MaxIterations}");
     Console.Write($"   Continue? (Y/N): ");
@@ -617,7 +617,7 @@ case InternalContinuationRequestEvent contReq:
 
     _agent.SendMiddlewareResponse(
         contReq.ContinuationId,
-        new InternalContinuationResponseEvent(
+        new ContinuationResponseEvent(
             contReq.ContinuationId,
             "Console",
             approved,
@@ -627,17 +627,17 @@ case InternalContinuationRequestEvent contReq:
     break;
 ```
 
-#### `InternalContinuationResponseEvent`
+#### `ContinuationResponseEvent`
 
 Response to continuation request.
 
 ```csharp
-public record InternalContinuationResponseEvent(
+public record ContinuationResponseEvent(
     string ContinuationId,
     string SourceName,
     bool Approved,
     int ExtensionAmount = 0
-) : InternalAgentEvent, IPermissionEvent;
+) : AgentEvent, IPermissionEvent;
 ```
 
 **Properties:**
@@ -646,18 +646,18 @@ public record InternalContinuationResponseEvent(
 
 ### Clarification Events
 
-#### `InternalClarificationRequestEvent`
+#### `ClarificationRequestEvent`
 
 Agent/plugin requests user clarification or additional input.
 
 ```csharp
-public record InternalClarificationRequestEvent(
+public record ClarificationRequestEvent(
     string RequestId,
     string SourceName,
     string Question,
     string? AgentName = null,
     string[]? Options = null
-) : InternalAgentEvent, IClarificationEvent;
+) : AgentEvent, IClarificationEvent;
 ```
 
 **Properties:**
@@ -669,7 +669,7 @@ public record InternalClarificationRequestEvent(
 
 **Example:**
 ```csharp
-case InternalClarificationRequestEvent clarReq:
+case ClarificationRequestEvent clarReq:
     Console.WriteLine($"\n❓ Clarification Needed: {clarReq.Question}");
 
     if (clarReq.Options != null)
@@ -682,7 +682,7 @@ case InternalClarificationRequestEvent clarReq:
 
     _agent.SendMiddlewareResponse(
         clarReq.RequestId,
-        new InternalClarificationResponseEvent(
+        new ClarificationResponseEvent(
             clarReq.RequestId,
             "Console",
             clarReq.Question,
@@ -692,36 +692,36 @@ case InternalClarificationRequestEvent clarReq:
     break;
 ```
 
-#### `InternalClarificationResponseEvent`
+#### `ClarificationResponseEvent`
 
 Response to clarification request.
 
 ```csharp
-public record InternalClarificationResponseEvent(
+public record ClarificationResponseEvent(
     string RequestId,
     string SourceName,
     string Question,
     string Answer
-) : InternalAgentEvent, IClarificationEvent;
+) : AgentEvent, IClarificationEvent;
 ```
 
 ### Progress & Error Events
 
-#### `InternalMiddlewareProgressEvent`
+#### `MiddlewareProgressEvent`
 
 Middleware reports progress (one-way, no response needed).
 
 ```csharp
-public record InternalMiddlewareProgressEvent(
+public record MiddlewareProgressEvent(
     string SourceName,
     string Message,
     int? PercentComplete = null
-) : InternalAgentEvent, IBidirectionalEvent;
+) : AgentEvent, IBidirectionalEvent;
 ```
 
 **Example:**
 ```csharp
-case InternalMiddlewareProgressEvent progress:
+case MiddlewareProgressEvent progress:
     var percent = progress.PercentComplete.HasValue
         ? $"{progress.PercentComplete}%"
         : "";
@@ -729,16 +729,16 @@ case InternalMiddlewareProgressEvent progress:
     break;
 ```
 
-#### `InternalMiddlewareErrorEvent`
+#### `MiddlewareErrorEvent`
 
 Middleware reports an error (one-way, no response needed).
 
 ```csharp
-public record InternalMiddlewareErrorEvent(
+public record MiddlewareErrorEvent(
     string SourceName,
     string ErrorMessage,
     Exception? Exception = null
-) : InternalAgentEvent, IBidirectionalEvent;
+) : AgentEvent, IBidirectionalEvent;
 ```
 
 ---
@@ -749,12 +749,12 @@ Events marked with `IObservabilityEvent` are designed for logging, metrics, and 
 
 ### Key Observability Events
 
-#### `InternalScopedToolsVisibleEvent`
+#### `ScopedToolsVisibleEvent`
 
 Emitted when scoped tools visibility is determined for an iteration.
 
 ```csharp
-public record InternalScopedToolsVisibleEvent(
+public record ScopedToolsVisibleEvent(
     string AgentName,
     int Iteration,
     IReadOnlyList<string> VisibleToolNames,
@@ -762,23 +762,23 @@ public record InternalScopedToolsVisibleEvent(
     ImmutableHashSet<string> ExpandedSkills,
     int TotalToolCount,
     DateTimeOffset Timestamp
-) : InternalAgentEvent, IObservabilityEvent;
+) : AgentEvent, IObservabilityEvent;
 ```
 
 **Use Case**: Monitor plugin scoping behavior, track tool visibility.
 
-#### `InternalContainerExpandedEvent`
+#### `ContainerExpandedEvent`
 
 Emitted when a plugin or skill container is expanded.
 
 ```csharp
-public record InternalContainerExpandedEvent(
+public record ContainerExpandedEvent(
     string ContainerName,
     ContainerType Type,
     IReadOnlyList<string> UnlockedFunctions,
     int Iteration,
     DateTimeOffset Timestamp
-) : InternalAgentEvent, IObservabilityEvent;
+) : AgentEvent, IObservabilityEvent;
 ```
 
 **ContainerType Enum:**
@@ -786,35 +786,35 @@ public record InternalContainerExpandedEvent(
 public enum ContainerType { Plugin, Skill }
 ```
 
-#### `InternalMiddlewarePipelineStartEvent`
+#### `MiddlewarePipelineStartEvent`
 
 Emitted when middleware pipeline execution starts.
 
 ```csharp
-public record InternalMiddlewarePipelineStartEvent(
+public record MiddlewarePipelineStartEvent(
     string FunctionName,
     int MiddlewareCount,
     DateTimeOffset Timestamp
-) : InternalAgentEvent, IObservabilityEvent;
+) : AgentEvent, IObservabilityEvent;
 ```
 
-#### `InternalMiddlewarePipelineEndEvent`
+#### `MiddlewarePipelineEndEvent`
 
 Emitted when middleware pipeline execution completes.
 
 ```csharp
-public record InternalMiddlewarePipelineEndEvent(
+public record MiddlewarePipelineEndEvent(
     string FunctionName,
     TimeSpan Duration,
     bool Success,
     string? ErrorMessage,
     DateTimeOffset Timestamp
-) : InternalAgentEvent, IObservabilityEvent;
+) : AgentEvent, IObservabilityEvent;
 ```
 
 **Example:**
 ```csharp
-case InternalMiddlewarePipelineEndEvent pipelineEnd:
+case MiddlewarePipelineEndEvent pipelineEnd:
     if (!pipelineEnd.Success)
     {
         _logger.LogError("Middleware pipeline failed for {Function}: {Error}",
@@ -824,12 +824,12 @@ case InternalMiddlewarePipelineEndEvent pipelineEnd:
     break;
 ```
 
-#### `InternalPermissionCheckEvent`
+#### `PermissionCheckEvent`
 
 Emitted when a permission check occurs.
 
 ```csharp
-public record InternalPermissionCheckEvent(
+public record PermissionCheckEvent(
     string FunctionName,
     bool IsApproved,
     string? DenialReason,
@@ -837,15 +837,15 @@ public record InternalPermissionCheckEvent(
     int Iteration,
     TimeSpan Duration,
     DateTimeOffset Timestamp
-) : InternalAgentEvent, IObservabilityEvent;
+) : AgentEvent, IObservabilityEvent;
 ```
 
-#### `InternalIterationStartEvent`
+#### `IterationStartEvent`
 
 Emitted when an iteration starts with full state snapshot.
 
 ```csharp
-public record InternalIterationStartEvent(
+public record IterationStartEvent(
     string AgentName,
     int Iteration,
     int MaxIterations,
@@ -856,7 +856,7 @@ public record InternalIterationStartEvent(
     int ExpandedSkillsCount,
     int CompletedFunctionsCount,
     DateTimeOffset Timestamp
-) : InternalAgentEvent, IObservabilityEvent;
+) : AgentEvent, IObservabilityEvent;
 ```
 
 **Use Case**: Full diagnostic snapshot of agent state at iteration start.
@@ -866,30 +866,30 @@ public record InternalIterationStartEvent(
 Emitted when circuit breaker is triggered (function fails too many times).
 
 ```csharp
-public record InternalCircuitBreakerTriggeredEvent(
+public recordCircuitBreakerTriggeredEvent(
     string AgentName,
     string FunctionName,
     int ConsecutiveCount,
     int Iteration,
     DateTimeOffset Timestamp
-) : InternalAgentEvent, IObservabilityEvent;
+) : AgentEvent, IObservabilityEvent;
 ```
 
 **Example:**
 ```csharp
-case InternalCircuitBreakerTriggeredEvent circuitBreaker:
+caseCircuitBreakerTriggeredEvent circuitBreaker:
     _logger.LogWarning("Circuit breaker triggered for {Function} after {Count} failures",
         circuitBreaker.FunctionName, circuitBreaker.ConsecutiveCount);
     await NotifyOpsTeamAsync(circuitBreaker);
     break;
 ```
 
-#### `InternalHistoryReductionCacheEvent`
+#### `HistoryReductionCacheEvent`
 
 Emitted when history reduction cache is checked.
 
 ```csharp
-public record InternalHistoryReductionCacheEvent(
+public record HistoryReductionCacheEvent(
     string AgentName,
     bool IsHit,
     DateTime? ReductionCreatedAt,
@@ -897,7 +897,7 @@ public record InternalHistoryReductionCacheEvent(
     int CurrentMessageCount,
     int? TokenSavings,
     DateTimeOffset Timestamp
-) : InternalAgentEvent, IObservabilityEvent;
+) : AgentEvent, IObservabilityEvent;
 ```
 
 **Use Case**: Monitor history reduction effectiveness and token savings.
@@ -933,7 +933,7 @@ public record AgentExecutionContext
 
 **Example:**
 ```csharp
-public async Task OnEventAsync(InternalAgentEvent evt, CancellationToken ct)
+public async Task OnEventAsync(AgentEvent evt, CancellationToken ct)
 {
     var context = evt.ExecutionContext;
     if (context?.IsSubAgent == true)
@@ -953,12 +953,12 @@ public async Task OnEventAsync(InternalAgentEvent evt, CancellationToken ct)
 **Purpose**: Interactive console display with color coding
 
 **Features:**
-- ✅ Streaming text (`InternalTextDeltaEvent`)
-- ✅ Reasoning tokens (`InternalReasoningEvent`)
-- ✅ Tool calls (`InternalToolCallStartEvent`, `InternalToolCallResultEvent`)
-- ✅ Interactive permissions (`InternalPermissionRequestEvent`)
-- ✅ Interactive continuations (`InternalContinuationRequestEvent`)
-- ✅ Iteration counter (`InternalAgentTurnStartedEvent`)
+- ✅ Streaming text (`TextDeltaEvent`)
+- ✅ Reasoning tokens (`Reasoning`)
+- ✅ Tool calls (`ToolCallStartEvent`, `ToolCallResultEvent`)
+- ✅ Interactive permissions (`PermissionRequestEvent`)
+- ✅ Interactive continuations (`ContinuationRequestEvent`)
+- ✅ Iteration counter (`AgentTurnStartedEvent`)
 
 **Usage:**
 ```csharp
@@ -1068,12 +1068,12 @@ _agent.SendMiddlewareResponse(
 
 **Example:**
 ```csharp
-case InternalPermissionRequestEvent permReq:
+case PermissionRequestEvent permReq:
     var approved = await PromptUserAsync();
 
     _agent.SendMiddlewareResponse(
         permReq.PermissionId,
-        new InternalPermissionResponseEvent(
+        new PermissionResponseEvent(
             permReq.PermissionId,
             "Console",
             approved,
@@ -1089,15 +1089,15 @@ case InternalPermissionRequestEvent permReq:
 
 **✅ Good** - Filter aggressively:
 ```csharp
-public bool ShouldProcess(InternalAgentEvent evt)
-    => evt is InternalTextDeltaEvent
-        or InternalToolCallStartEvent
-        or InternalPermissionRequestEvent;
+public bool ShouldProcess(AgentEvent evt)
+    => evt is TextDeltaEvent
+        or ToolCallStartEvent
+        or PermissionRequestEvent;
 ```
 
 **❌ Bad** - Process all events unnecessarily:
 ```csharp
-public bool ShouldProcess(InternalAgentEvent evt) => true;
+public bool ShouldProcess(AgentEvent evt) => true;
 ```
 
 **Performance Impact**: Filtering reduces CPU usage by 50-80% for high-frequency events.

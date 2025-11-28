@@ -81,66 +81,66 @@ public class ConsoleEventHandler : IEventHandler
     /// <summary>
     /// Filter events - only process the ones we care about for console display.
     /// </summary>
-    public bool ShouldProcess(InternalAgentEvent evt)
+    public bool ShouldProcess(AgentEvent evt)
     {
-        return evt is InternalPermissionRequestEvent
-            or InternalContinuationRequestEvent
-            or InternalReasoningEvent
-            or InternalTextMessageStartEvent
-            or InternalTextDeltaEvent
-            or InternalTextMessageEndEvent
-            or InternalToolCallStartEvent
-            or InternalToolCallResultEvent
-            or InternalAgentTurnStartedEvent;
+        return evt is PermissionRequestEvent
+            or ContinuationRequestEvent
+            or Reasoning
+            or TextMessageStartEvent
+            or TextDeltaEvent
+            or TextMessageEndEvent
+            or ToolCallStartEvent
+            or ToolCallResultEvent
+            or AgentTurnStartedEvent;
     }
 
     /// <summary>
     /// Handle filtered events asynchronously.
     /// Processes text streaming, permissions, continuations, tool calls, etc.
     /// </summary>
-    public async Task OnEventAsync(InternalAgentEvent evt, CancellationToken cancellationToken = default)
+    public async Task OnEventAsync(AgentEvent evt, CancellationToken cancellationToken = default)
     {
         switch (evt)
         {
-            case InternalPermissionRequestEvent permReq:
+            case PermissionRequestEvent permReq:
                 await HandlePermissionRequestAsync(permReq, cancellationToken);
                 break;
 
-            case InternalContinuationRequestEvent contReq:
+            case ContinuationRequestEvent contReq:
                 await HandleContinuationRequestAsync(contReq, cancellationToken);
                 break;
 
-            case InternalReasoningEvent reasoning:
+            case Reasoning reasoning:
                 HandleReasoningEvent(reasoning);
                 break;
 
-            case InternalTextMessageStartEvent textStart:
+            case TextMessageStartEvent textStart:
                 HandleTextMessageStart(textStart);
                 break;
 
-            case InternalTextDeltaEvent textDelta:
+            case TextDeltaEvent textDelta:
                 HandleTextDelta(textDelta);
                 break;
 
-            case InternalTextMessageEndEvent:
+            case TextMessageEndEvent:
                 // Text message ended - no action needed
                 break;
 
-            case InternalToolCallStartEvent toolStart:
+            case ToolCallStartEvent toolStart:
                 HandleToolCallStart(toolStart);
                 break;
 
-            case InternalToolCallResultEvent toolResult:
+            case ToolCallResultEvent toolResult:
                 HandleToolCallResult(toolResult);
                 break;
 
-            case InternalAgentTurnStartedEvent turnStart:
+            case AgentTurnStartedEvent turnStart:
                 HandleAgentTurnStarted(turnStart);
                 break;
         }
     }
 
-    private async Task HandlePermissionRequestAsync(InternalPermissionRequestEvent permReq, CancellationToken ct)
+    private async Task HandlePermissionRequestAsync(PermissionRequestEvent permReq, CancellationToken ct)
     {
         if (_agent == null)
         {
@@ -194,7 +194,7 @@ public class ConsoleEventHandler : IEventHandler
         // Send response back to the agent
         _agent.SendMiddlewareResponse(
             permReq.PermissionId,
-            new InternalPermissionResponseEvent(
+            new PermissionResponseEvent(
                 permReq.PermissionId,
                 "Console",
                 approved,
@@ -208,7 +208,7 @@ public class ConsoleEventHandler : IEventHandler
         Console.ResetColor();
     }
 
-    private async Task HandleContinuationRequestAsync(InternalContinuationRequestEvent contReq, CancellationToken ct)
+    private async Task HandleContinuationRequestAsync(ContinuationRequestEvent contReq, CancellationToken ct)
     {
         if (_agent == null)
         {
@@ -233,7 +233,7 @@ public class ConsoleEventHandler : IEventHandler
         // Send response back to the agent
         _agent.SendMiddlewareResponse(
             contReq.ContinuationId,
-            new InternalContinuationResponseEvent(
+            new ContinuationResponseEvent(
                 contReq.ContinuationId,
                 "Console",
                 approved,
@@ -246,7 +246,7 @@ public class ConsoleEventHandler : IEventHandler
         Console.ResetColor();
     }
 
-    private void HandleReasoningEvent(InternalReasoningEvent reasoning)
+    private void HandleReasoningEvent(Reasoning reasoning)
     {
         switch (reasoning.Phase)
         {
@@ -287,7 +287,7 @@ public class ConsoleEventHandler : IEventHandler
         }
     }
 
-    private void HandleTextMessageStart(InternalTextMessageStartEvent textStart)
+    private void HandleTextMessageStart(TextMessageStartEvent textStart)
     {
         // If transitioning from reasoning to text, ensure reasoning is closed
         if (!_isFirstReasoningChunk)
@@ -307,12 +307,13 @@ public class ConsoleEventHandler : IEventHandler
         _currentMessageId = textStart.MessageId;
     }
 
-    private void HandleTextDelta(InternalTextDeltaEvent textDelta)
+    private void HandleTextDelta(TextDeltaEvent textDelta)
     {
+        Console.ForegroundColor = ConsoleColor.White;
         Console.Write(textDelta.Text);
     }
 
-    private void HandleToolCallStart(InternalToolCallStartEvent toolStart)
+    private void HandleToolCallStart(ToolCallStartEvent toolStart)
     {
         // Close any open sections
         CloseOpenSections();
@@ -322,14 +323,14 @@ public class ConsoleEventHandler : IEventHandler
         Console.ResetColor();
     }
 
-    private void HandleToolCallResult(InternalToolCallResultEvent toolResult)
+    private void HandleToolCallResult(ToolCallResultEvent toolResult)
     {
         Console.ForegroundColor = ConsoleColor.Green;
         Console.Write($" ✓");
         Console.ResetColor();
     }
 
-    private void HandleAgentTurnStarted(InternalAgentTurnStartedEvent turnStart)
+    private void HandleAgentTurnStarted(AgentTurnStartedEvent turnStart)
     {
         if (turnStart.Iteration > 1) // Don't show for first iteration
         {

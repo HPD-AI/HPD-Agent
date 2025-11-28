@@ -138,13 +138,13 @@ public record MyRequestEvent(
     string RequestId,
     string SourceName,
     string Question,
-    string? AgentName = null) : InternalAgentEvent, IMyCustomEvent;
+    string? AgentName = null) : AgentEvent, IMyCustomEvent;
 
 // Response event
 public record MyResponseEvent(
     string RequestId,
     string SourceName,
-    string Answer) : InternalAgentEvent, IMyCustomEvent;
+    string Answer) : AgentEvent, IMyCustomEvent;
 ```
 
 ---

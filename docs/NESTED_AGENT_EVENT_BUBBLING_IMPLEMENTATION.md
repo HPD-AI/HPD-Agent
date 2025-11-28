@@ -83,7 +83,7 @@ finally
 
 **Updated Emit() to bubble events:**
 ```csharp
-public void Emit(InternalAgentEvent evt)
+public void Emit(AgentEvent evt)
 {
     // Emit to local agent's coordinator
     Agent.EventCoordinator.Emit(evt);
@@ -155,7 +155,7 @@ Orchestrator Turn 0:
       ↓
       CodingAgent needs permission
         ↓
-        Filter calls: context.Emit(InternalPermissionRequestEvent)
+        Filter calls: context.Emit(PermissionRequestEvent)
           ↓
           Writes to: CodingAgent.EventCoordinator.Emit()
           ALSO writes to: Orchestrator.EventCoordinator.Emit() ← BUBBLING!
@@ -164,7 +164,7 @@ Orchestrator Turn 0:
         ↓
         Drains: Orchestrator's filterEventQueue
         ↓
-        Yields: InternalPermissionRequestEvent ✅
+        Yields: PermissionRequestEvent ✅
         ↓
 Handler receives event:
   User approves/denies
@@ -209,14 +209,14 @@ await foreach (var evt in orchestrator.RunStreamingAsync("Build auth system"))
     switch (evt)
     {
         // Permission events from CodingAgent bubble up automatically!
-        case InternalPermissionRequestEvent permReq:
+        case PermissionRequestEvent permReq:
             Console.WriteLine($"🔐 {permReq.FunctionName} needs permission");
             var approved = GetUserApproval();
             orchestrator.SendFilterResponse(permReq.PermissionId,
-                new InternalPermissionResponseEvent(permReq.PermissionId, approved));
+                new PermissionResponseEvent(permReq.PermissionId, approved));
             break;
 
-        case InternalTextDeltaEvent text:
+        case TextDeltaEvent text:
             Console.Write(text.Text);
             break;
     }
@@ -226,7 +226,7 @@ await foreach (var evt in orchestrator.RunStreamingAsync("Build auth system"))
 **What happens:**
 1. Orchestrator calls CodingAgent (nested)
 2. CodingAgent needs permission for file operation
-3. Permission filter emits `InternalPermissionRequestEvent`
+3. Permission filter emits `PermissionRequestEvent`
 4. Event bubbles to Orchestrator ✅
 5. Handler sees event and prompts user
 6. User approves
@@ -239,18 +239,18 @@ await foreach (var evt in orchestrator.RunStreamingAsync("Build auth system"))
 
 ```csharp
 // Custom clarification events (user-defined)
-public record InternalClarificationRequestEvent(
+public record ClarificationRequestEvent(
     string RequestId,
     string FilterName,
     string Question,
     string[]? Options = null
-) : InternalAgentEvent, IFilterEvent;
+) : AgentEvent, IFilterEvent;
 
-public record InternalClarificationResponseEvent(
+public record ClarificationResponseEvent(
     string RequestId,
     string FilterName,
     string Answer
-) : InternalAgentEvent, IFilterEvent;
+) : AgentEvent, IFilterEvent;
 
 // Plugin that requests user clarification
 public class HumanInTheLoopPlugin
@@ -267,14 +267,14 @@ public class HumanInTheLoopPlugin
 
         var requestId = Guid.NewGuid().ToString();
 
-        context.Emit(new InternalClarificationRequestEvent(
+        context.Emit(new ClarificationRequestEvent(
             requestId,
             "HumanInTheLoop",
             question,
             options
         ));
 
-        var response = await context.WaitForResponseAsync<InternalClarificationResponseEvent>(
+        var response = await context.WaitForResponseAsync<ClarificationResponseEvent>(
             requestId,
             timeout: TimeSpan.FromMinutes(5));
 

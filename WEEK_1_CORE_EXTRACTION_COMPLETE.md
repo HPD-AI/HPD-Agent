@@ -65,7 +65,7 @@ namespace HPD.Agent;
 public sealed class Agent
 {
     public string Name => _name;
-    public async IAsyncEnumerable<InternalAgentEvent> RunAsync(...) { }
+    public async IAsyncEnumerable<AgentEvent> RunAsync(...) { }
     // Pure core - no protocol dependencies
 }
 ```
@@ -172,7 +172,7 @@ public sealed class Agent
     /// Runs the agent and emits raw internal events.
     /// This is the protocol-agnostic core API.
     /// </summary>
-    public async IAsyncEnumerable<InternalAgentEvent> RunAsync(
+    public async IAsyncEnumerable<AgentEvent> RunAsync(
         IEnumerable<ChatMessage> messages,
         ChatOptions? options = null,
         CancellationToken cancellationToken = default)
@@ -198,7 +198,7 @@ public sealed class Agent
     // TESTING/ADVANCED API
     // ═══════════════════════════════════════════════════════
 
-    public async IAsyncEnumerable<InternalAgentEvent> RunAgenticLoopAsync(...)
+    public async IAsyncEnumerable<AgentEvent> RunAgenticLoopAsync(...)
     {
         // For testing - exposes RunAgenticLoopInternal directly
     }
@@ -214,7 +214,7 @@ public sealed class Agent
     // CORE ENGINE (Private - Pure Implementation)
     // ═══════════════════════════════════════════════════════
 
-    private async IAsyncEnumerable<InternalAgentEvent> RunAgenticLoopInternal(...)
+    private async IAsyncEnumerable<AgentEvent> RunAgenticLoopInternal(...)
     {
         // Pure event-emitting agentic loop
         // No protocol dependencies
@@ -282,7 +282,7 @@ grep "^\s*public.*RunAsync" HPD-Agent/Agent/Agent.cs
 
 **Result:**
 ```
-1531:    public async IAsyncEnumerable<InternalAgentEvent> RunAsync(
+1531:    public async IAsyncEnumerable<AgentEvent> RunAsync(
 ```
 
 ✅ **Single clean public API method**
@@ -432,7 +432,7 @@ Week 1: Core Extraction is **complete**. The Agent class is now a pure, protocol
 - ❌ No Microsoft.Agents.AI dependencies
 - ❌ No AGUI protocol methods
 - ✅ Clean `HPD.Agent` namespace
-- ✅ Single public API: `RunAsync(messages, options)` → `IAsyncEnumerable<InternalAgentEvent>`
+- ✅ Single public API: `RunAsync(messages, options)` → `IAsyncEnumerable<AgentEvent>`
 - ✅ All internal architecture preserved and functional
 - ✅ 0 build errors
 

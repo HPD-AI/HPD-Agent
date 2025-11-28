@@ -7,7 +7,7 @@
 
 ## Summary
 
-Successfully exposed the internal event streaming API for testing by adding a public `RunAgenticLoopAsync` method to the `Agent` class. This enables Phase 0 characterization tests to access raw `InternalAgentEvent` streams for verification.
+Successfully exposed the internal event streaming API for testing by adding a public `RunAgenticLoopAsync` method to the `Agent` class. This enables Phase 0 characterization tests to access raw `AgentEvent` streams for verification.
 
 ---
 
@@ -28,7 +28,7 @@ Successfully exposed the internal event streaming API for testing by adding a pu
 /// <param name="options">Chat options including tools</param>
 /// <param name="cancellationToken">Cancellation token</param>
 /// <returns>Stream of internal agent events</returns>
-public async IAsyncEnumerable<InternalAgentEvent> RunAgenticLoopAsync(
+public async IAsyncEnumerable<AgentEvent> RunAgenticLoopAsync(
     IEnumerable<ChatMessage> messages,
     ChatOptions? options = null,
     [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -131,8 +131,8 @@ public Agent(
 
 | Method | Returns | Purpose | Public? |
 |--------|---------|---------|---------|
-| `RunAgenticLoopInternal` | `IAsyncEnumerable<InternalAgentEvent>` | Core loop, internal events | ❌ Private |
-| **`RunAgenticLoopAsync`** | `IAsyncEnumerable<InternalAgentEvent>` | Wrapper for testing | ✅ **NEW - Public** |
+| `RunAgenticLoopInternal` | `IAsyncEnumerable<AgentEvent>` | Core loop, internal events | ❌ Private |
+| **`RunAgenticLoopAsync`** | `IAsyncEnumerable<AgentEvent>` | Wrapper for testing | ✅ **NEW - Public** |
 | `ExecuteStreamingTurnAsync` | `Task<StreamingTurnResult>` | AGUI protocol | ✅ Public |
 | `RunAsync` (AIAgent override) | `Task<AgentRunResponse>` | Microsoft.Agents.AI | ✅ Public |
 | `RunAsync` (AgentTurn) | `IAsyncEnumerable<ChatResponseUpdate>` | IChatClient interface | ✅ Public |
@@ -141,25 +141,25 @@ public Agent(
 
 ---
 
-### 4. InternalAgentEvent Types
+### 4. AgentEvent Types
 
 Based on characterization tests, we need these event types:
-- `InternalMessageTurnStartedEvent`
-- `InternalMessageTurnFinishedEvent`
-- `InternalAgentTurnStartedEvent`
-- `InternalAgentTurnFinishedEvent`
-- `InternalTextMessageStartEvent`
-- `InternalTextMessageEndEvent`
-- `InternalTextDeltaEvent`
-- `InternalReasoningStartEvent`
-- `InternalReasoningEndEvent`
-- `InternalReasoningMessageStartEvent`
-- `InternalReasoningMessageEndEvent`
-- `InternalReasoningDeltaEvent`
-- `InternalToolCallStartEvent`
-- `InternalToolCallArgsEvent`
-- `InternalToolCallEndEvent`
-- `InternalToolCallResultEvent`
+- `MessageTurnStartedEvent`
+- `MessageTurnFinishedEvent`
+- `AgentTurnStartedEvent`
+- `AgentTurnFinishedEvent`
+- `TextMessageStartEvent`
+- `TextMessageEndEvent`
+- `TextDeltaEvent`
+- `ReasoningStartEvent`
+- `ReasoningEndEvent`
+- `ReasoningMessageStartEvent`
+- `ReasoningMessageEndEvent`
+- `ReasoningDeltaEvent`
+- `ToolCallStartEvent`
+- `ToolCallArgsEvent`
+- `ToolCallEndEvent`
+- `ToolCallResultEvent`
 
 **Action**: Verify these types exist and are accessible to test project
 

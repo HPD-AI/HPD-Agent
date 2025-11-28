@@ -3,17 +3,27 @@ using Microsoft.Extensions.AI;
 namespace HPD.Agent;
 
 /// <summary>
-/// Context provided to iteration Middlewares before each LLM call in the agentic loop.
-/// Contains both input (messages, options, state) and output (response, tool calls).
-/// Output properties are populated after next() returns.
+/// Context provided to iteration Middlewares during each iteration of the agentic loop.
+/// Contains input (messages, options, state), LLM output (response, tool calls), and tool results.
 /// </summary>
 /// <remarks>
-/// This context follows the pre/post invocation pattern:
-/// - PRE-INVOKE (before next()): Messages, Options, and State are available for inspection/modification
-/// - POST-INVOKE (after next()): Response, ToolCalls, and Exception are populated with LLM results
+/// This context follows a four-phase lifecycle:
+/// - BEFORE ITERATION (BeforeIterationAsync): Messages, Options, and State are available for inspection/modification
+/// - AFTER LLM CALL: Response, ToolCalls, and Exception are populated with LLM results
+/// - BEFORE TOOL EXECUTION (BeforeToolExecutionAsync): ToolCalls populated, can prevent execution via SkipToolExecution
+/// - AFTER TOOL EXECUTION (AfterIterationAsync): ToolResults are populated with function execution outcomes
 ///
 /// The State property is immutable (record type) and provides a snapshot of the agent's execution state.
 /// To signal state changes, use the Properties dictionary to communicate with the agent loop.
+///
+/// Key properties for circuit breaker:
+/// - ToolCalls: Contains pending tool calls from LLM (available in BeforeToolExecutionAsync)
+/// - State.ConsecutiveCountPerTool: Track repeated identical tool calls
+/// - State.LastSignaturePerTool: Track tool call signatures for comparison
+///
+/// Key properties for error tracking:
+/// - ToolResults: Contains FunctionResultContent with Result or Exception from each tool call
+/// - State.ConsecutiveFailures: Number of consecutive iterations with errors
 /// </remarks>
 public class IterationMiddleWareContext
 {
@@ -97,6 +107,16 @@ public class IterationMiddleWareContext
         = Array.Empty<FunctionCallContent>();
 
     /// <summary>
+    /// Results from tool execution in this iteration.
+    /// EMPTY before tool execution completes.
+    /// POPULATED after all tools have been executed (in AfterIterationAsync phase).
+    /// Each FunctionResultContent contains the result or exception from a tool call.
+    /// Use this to analyze tool outcomes for error tracking, logging, or custom logic.
+    /// </summary>
+    public IReadOnlyList<FunctionResultContent> ToolResults { get; set; }
+        = Array.Empty<FunctionResultContent>();
+
+    /// <summary>
     /// Exception that occurred during LLM invocation, or null if successful.
     /// NULL before next() is called.
     /// POPULATED after next() returns if an error occurred.
@@ -116,6 +136,16 @@ public class IterationMiddleWareContext
     public bool SkipLLMCall { get; set; }
 
     /// <summary>
+    /// Set to true in BeforeToolExecutionAsync to skip ALL pending tool executions.
+    /// Used by circuit breaker middleware to prevent infinite loops.
+    /// When set:
+    /// - No tools from ToolCalls will be executed
+    /// - The agent loop will terminate or continue based on Properties["IsTerminated"]
+    /// - The middleware should set Response with an appropriate message
+    /// </summary>
+    public bool SkipToolExecution { get; set; }
+
+    /// <summary>
     /// Extensible property bag for inter-Middleware communication and signaling.
     /// Use this to:
     /// - Pass data between Middlewares in the pipeline
@@ -130,26 +160,27 @@ public class IterationMiddleWareContext
     // ═══════════════════════════════════════════════════════
 
     /// <summary>
-    /// Reference to the agent instance (for event coordination).
-    /// Used internally for bidirectional event communication.
+    /// Event coordinator for bidirectional communication patterns.
+    /// Used for emitting events and waiting for responses (permissions, approvals, etc.)
+    /// Decoupled from AgentCore for testability and clean architecture.
     /// </summary>
-    internal AgentCore? Agent { get; init; }
+    internal IEventCoordinator? EventCoordinator { get; init; }
 
     /// <summary>
     /// Emits an event to the agent's event stream for external handling.
     /// Used for bidirectional communication patterns like permission requests.
     /// </summary>
     /// <param name="evt">The event to emit</param>
-    /// <exception cref="InvalidOperationException">If Agent reference is not configured</exception>
-    public void Emit(InternalAgentEvent evt)
+    /// <exception cref="InvalidOperationException">If EventCoordinator is not configured</exception>
+    public void Emit(AgentEvent evt)
     {
         if (evt == null)
             throw new ArgumentNullException(nameof(evt));
 
-        if (Agent == null)
-            throw new InvalidOperationException("Agent reference not configured for this context");
+        if (EventCoordinator == null)
+            throw new InvalidOperationException("Event coordination not configured for this context");
 
-        Agent.EventCoordinator.Emit(evt);
+        EventCoordinator.Emit(evt);
     }
 
     /// <summary>
@@ -162,17 +193,17 @@ public class IterationMiddleWareContext
     /// <returns>The response event</returns>
     /// <exception cref="TimeoutException">If no response received within timeout</exception>
     /// <exception cref="OperationCanceledException">If operation was cancelled</exception>
-    /// <exception cref="InvalidOperationException">If Agent reference is not configured</exception>
+    /// <exception cref="InvalidOperationException">If EventCoordinator is not configured</exception>
     public async Task<T> WaitForResponseAsync<T>(
         string requestId,
-        TimeSpan? timeout = null) where T : InternalAgentEvent
+        TimeSpan? timeout = null) where T : AgentEvent
     {
-        if (Agent == null)
-            throw new InvalidOperationException("Agent reference not configured for this context");
+        if (EventCoordinator == null)
+            throw new InvalidOperationException("Event coordination not configured for this context");
 
         var effectiveTimeout = timeout ?? TimeSpan.FromMinutes(5);
 
-        return await Agent.WaitForMiddlewareResponseAsync<T>(
+        return await EventCoordinator.WaitForResponseAsync<T>(
             requestId,
             effectiveTimeout,
             CancellationToken);

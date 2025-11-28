@@ -131,8 +131,8 @@ public class Agent
     /// Lifetime: Entire agent lifetime (created in constructor, completed in Dispose)
     /// Thread-safety: Channel is thread-safe for concurrent writes
     /// </summary>
-    private readonly Channel<InternalAgentEvent> _filterEventChannel =
-        Channel.CreateUnbounded<InternalAgentEvent>(new UnboundedChannelOptions
+    private readonly Channel<AgentEvent> _filterEventChannel =
+        Channel.CreateUnbounded<AgentEvent>(new UnboundedChannelOptions
         {
             SingleWriter = false,  // Multiple filters can emit concurrently
             SingleReader = true,   // Only background drainer reads
@@ -145,18 +145,18 @@ public class Agent
     /// Lifetime: Entire agent lifetime (not per-context)
     /// Thread-safe: ConcurrentDictionary handles concurrent access
     /// </summary>
-    private readonly ConcurrentDictionary<string, (TaskCompletionSource<InternalAgentEvent>, CancellationTokenSource)>
+    private readonly ConcurrentDictionary<string, (TaskCompletionSource<AgentEvent>, CancellationTokenSource)>
         _filterResponseWaiters = new();
 
     /// <summary>
     /// Internal access to filter event channel writer for context setup.
     /// </summary>
-    internal ChannelWriter<InternalAgentEvent> FilterEventWriter => _filterEventChannel.Writer;
+    internal ChannelWriter<AgentEvent> FilterEventWriter => _filterEventChannel.Writer;
 
     /// <summary>
     /// Internal access to filter event channel reader for RunAgenticLoopInternal.
     /// </summary>
-    internal ChannelReader<InternalAgentEvent> FilterEventReader => _filterEventChannel.Reader;
+    internal ChannelReader<AgentEvent> FilterEventReader => _filterEventChannel.Reader;
 
     /// <summary>
     /// Sends a response to a filter waiting for a specific request.
@@ -166,7 +166,7 @@ public class Agent
     /// <param name="requestId">The unique identifier for the request</param>
     /// <param name="response">The response event to deliver</param>
     /// <exception cref="ArgumentNullException">If response is null</exception>
-    public void SendFilterResponse(string requestId, InternalAgentEvent response)
+    public void SendFilterResponse(string requestId, AgentEvent response)
     {
         if (response == null)
             throw new ArgumentNullException(nameof(response));
@@ -186,9 +186,9 @@ public class Agent
     internal async Task<T> WaitForFilterResponseAsync<T>(
         string requestId,
         TimeSpan timeout,
-        CancellationToken cancellationToken) where T : InternalAgentEvent
+        CancellationToken cancellationToken) where T : AgentEvent
     {
-        var tcs = new TaskCompletionSource<InternalAgentEvent>();
+        var tcs = new TaskCompletionSource<AgentEvent>();
         var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         cts.CancelAfter(timeout);
 
@@ -255,7 +255,7 @@ public class AiFunctionContext : FunctionInvocationContext
     /// Event ordering: FIFO within each filter, interleaved across filters.
     /// Lifetime: Valid for entire filter execution.
     /// </summary>
-    internal ChannelWriter<InternalAgentEvent>? OutboundEvents { get; set; }
+    internal ChannelWriter<AgentEvent>? OutboundEvents { get; set; }
 
     /// <summary>
     /// Reference to the agent for response coordination.
@@ -275,7 +275,7 @@ public class AiFunctionContext : FunctionInvocationContext
     /// <param name="evt">The event to emit</param>
     /// <exception cref="ArgumentNullException">If event is null</exception>
     /// <exception cref="InvalidOperationException">If OutboundEvents channel is not configured</exception>
-    public void Emit(InternalAgentEvent evt)
+    public void Emit(AgentEvent evt)
     {
         if (evt == null)
             throw new ArgumentNullException(nameof(evt));
@@ -297,7 +297,7 @@ public class AiFunctionContext : FunctionInvocationContext
     /// Current implementation uses unbounded channels, so this is identical to Emit().
     /// Kept for future extensibility if bounded channels are introduced.
     /// </summary>
-    public async Task EmitAsync(InternalAgentEvent evt, CancellationToken cancellationToken = default)
+    public async Task EmitAsync(AgentEvent evt, CancellationToken cancellationToken = default)
     {
         if (evt == null)
             throw new ArgumentNullException(nameof(evt));
@@ -328,7 +328,7 @@ public class AiFunctionContext : FunctionInvocationContext
     public async Task<T> WaitForResponseAsync<T>(
         string requestId,
         TimeSpan? timeout = null,
-        CancellationToken cancellationToken = default) where T : InternalAgentEvent
+        CancellationToken cancellationToken = default) where T : AgentEvent
     {
         if (Agent == null)
             throw new InvalidOperationException("Agent reference not configured for this context");
@@ -467,7 +467,7 @@ public class FunctionCallProcessor
             catch (Exception ex)
             {
                 // Emit error event before handling
-                context.OutboundEvents?.TryWrite(new InternalFilterErrorEvent(
+                context.OutboundEvents?.TryWrite(new FilterErrorEvent(
                     "FilterPipeline",
                     $"Error in filter pipeline: {ex.Message}",
                     ex));
@@ -526,7 +526,7 @@ public class ToolScheduler
 ### 5. Modified RunAgenticLoopInternal (Background Event Drainer Added)
 
 ```csharp
-private async IAsyncEnumerable<InternalAgentEvent> RunAgenticLoopInternal(
+private async IAsyncEnumerable<AgentEvent> RunAgenticLoopInternal(
     IEnumerable<ChatMessage> messages,
     ChatOptions? options,
     string[]? documentPaths,
@@ -538,7 +538,7 @@ private async IAsyncEnumerable<InternalAgentEvent> RunAgenticLoopInternal(
     // ... existing setup ...
 
     // NEW: Queue to buffer filter events from background drainer
-    var filterEventQueue = new ConcurrentQueue<InternalAgentEvent>();
+    var filterEventQueue = new ConcurrentQueue<AgentEvent>();
     var eventDrainCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
     // NEW: Start background task to continuously drain filter events
@@ -559,7 +559,7 @@ private async IAsyncEnumerable<InternalAgentEvent> RunAgenticLoopInternal(
 
     try
     {
-        yield return new InternalMessageTurnStartedEvent(messageTurnId, conversationId);
+        yield return new MessageTurnStartedEvent(messageTurnId, conversationId);
 
         for (int iteration = 0; iteration < maxIterations; iteration++)
         {
@@ -569,7 +569,7 @@ private async IAsyncEnumerable<InternalAgentEvent> RunAgenticLoopInternal(
                 yield return filterEvt;
             }
 
-            yield return new InternalAgentTurnStartedEvent(iteration);
+            yield return new AgentTurnStartedEvent(iteration);
 
             // ... LLM streaming logic ...
 
@@ -607,8 +607,8 @@ private async IAsyncEnumerable<InternalAgentEvent> RunAgenticLoopInternal(
             {
                 if (content is FunctionResultContent result)
                 {
-                    yield return new InternalToolCallEndEvent(result.CallId);
-                    yield return new InternalToolCallResultEvent(result.CallId, result.Result?.ToString() ?? "null");
+                    yield return new ToolCallEndEvent(result.CallId);
+                    yield return new ToolCallResultEvent(result.CallId, result.Result?.ToString() ?? "null");
                 }
             }
 
@@ -622,7 +622,7 @@ private async IAsyncEnumerable<InternalAgentEvent> RunAgenticLoopInternal(
                 yield return filterEvt;
             }
 
-            yield return new InternalAgentTurnFinishedEvent(iteration);
+            yield return new AgentTurnFinishedEvent(iteration);
 
             // ... existing loop continuation logic ...
         }
@@ -633,7 +633,7 @@ private async IAsyncEnumerable<InternalAgentEvent> RunAgenticLoopInternal(
             yield return filterEvt;
         }
 
-        yield return new InternalMessageTurnFinishedEvent(messageTurnId, conversationId);
+        yield return new MessageTurnFinishedEvent(messageTurnId, conversationId);
     }
     finally
     {
@@ -660,37 +660,37 @@ private async IAsyncEnumerable<InternalAgentEvent> RunAgenticLoopInternal(
 ```csharp
 /// <summary>
 /// Filter requests permission to execute a function.
-/// Handler should prompt user and send InternalPermissionResponseEvent.
+/// Handler should prompt user and send PermissionResponseEvent.
 /// </summary>
-public record InternalPermissionRequestEvent(
+public record PermissionRequestEvent(
     string PermissionId,
     string FunctionName,
     string? Description,
     string CallId,
-    IDictionary<string, object?>? Arguments) : InternalAgentEvent;
+    IDictionary<string, object?>? Arguments) : AgentEvent;
 
 /// <summary>
 /// Response to permission request.
 /// Sent by external handler (AGUI, Console) back to waiting filter.
 /// </summary>
-public record InternalPermissionResponseEvent(
+public record PermissionResponseEvent(
     string PermissionId,
     bool Approved,
     string? Reason = null,
-    PermissionChoice Choice = PermissionChoice.AllowOnce) : InternalAgentEvent;
+    PermissionChoice Choice = PermissionChoice.AllowOnce) : AgentEvent;
 
 /// <summary>
 /// Emitted after permission is approved (for observability).
 /// </summary>
-public record InternalPermissionApprovedEvent(
-    string PermissionId) : InternalAgentEvent;
+public record PermissionApprovedEvent(
+    string PermissionId) : AgentEvent;
 
 /// <summary>
 /// Emitted after permission is denied (for observability).
 /// </summary>
-public record InternalPermissionDeniedEvent(
+public record PermissionDeniedEvent(
     string PermissionId,
-    string Reason) : InternalAgentEvent;
+    string Reason) : AgentEvent;
 ```
 
 ### Continuation Events
@@ -699,18 +699,18 @@ public record InternalPermissionDeniedEvent(
 /// <summary>
 /// Filter requests permission to continue beyond max iterations.
 /// </summary>
-public record InternalContinuationRequestEvent(
+public record ContinuationRequestEvent(
     string ContinuationId,
     int CurrentIteration,
-    int MaxIterations) : InternalAgentEvent;
+    int MaxIterations) : AgentEvent;
 
 /// <summary>
 /// Response to continuation request.
 /// </summary>
-public record InternalContinuationResponseEvent(
+public record ContinuationResponseEvent(
     string ContinuationId,
     bool Approved,
-    int ExtensionAmount = 0) : InternalAgentEvent;
+    int ExtensionAmount = 0) : AgentEvent;
 ```
 
 ### Generic Observability Events
@@ -719,32 +719,32 @@ public record InternalContinuationResponseEvent(
 /// <summary>
 /// Filter reports progress (one-way, no response needed).
 /// </summary>
-public record InternalFilterProgressEvent(
+public record FilterProgressEvent(
     string FilterName,
     string Message,
-    int? PercentComplete = null) : InternalAgentEvent;
+    int? PercentComplete = null) : AgentEvent;
 
 /// <summary>
 /// Filter reports an error (one-way, no response needed).
 /// </summary>
-public record InternalFilterErrorEvent(
+public record FilterErrorEvent(
     string FilterName,
     string ErrorMessage,
-    Exception? Exception = null) : InternalAgentEvent;
+    Exception? Exception = null) : AgentEvent;
 ```
 
 ### Custom Events (User Extensibility)
 
 ```csharp
 /// <summary>
-/// Users can create their own event types by deriving from InternalAgentEvent
+/// Users can create their own event types by deriving from AgentEvent
 /// and implementing IFilterEvent for automatic infrastructure integration.
 /// </summary>
 /// <example>
 /// public record MyCustomEvent(
 ///     string FilterName,
 ///     string CustomData
-/// ) : InternalAgentEvent, IFilterEvent;
+/// ) : AgentEvent, IFilterEvent;
 /// </example>
 ```
 
@@ -760,7 +760,7 @@ public class ProgressLoggingFilter : IAIFunctionMiddleware
     public async Task InvokeAsync(AiFunctionContext context, Func<AiFunctionContext, Task> next)
     {
         // Emit progress start (one-way, no response needed)
-        context.Emit(new InternalFilterProgressEvent(
+        context.Emit(new FilterProgressEvent(
             "ProgressLoggingFilter",
             $"Starting execution of {context.ToolCallRequest.FunctionName}",
             PercentComplete: 0));
@@ -772,7 +772,7 @@ public class ProgressLoggingFilter : IAIFunctionMiddleware
             await next(context);
 
             // Emit progress complete
-            context.Emit(new InternalFilterProgressEvent(
+            context.Emit(new FilterProgressEvent(
                 "ProgressLoggingFilter",
                 $"Completed {context.ToolCallRequest.FunctionName} in {sw.ElapsedMilliseconds}ms",
                 PercentComplete: 100));
@@ -780,7 +780,7 @@ public class ProgressLoggingFilter : IAIFunctionMiddleware
         catch (Exception ex)
         {
             // Emit error
-            context.Emit(new InternalFilterErrorEvent(
+            context.Emit(new FilterErrorEvent(
                 "ProgressLoggingFilter",
                 $"Error in {context.ToolCallRequest.FunctionName}: {ex.Message}",
                 ex));
@@ -803,11 +803,11 @@ await foreach (var evt in agent.RunStreamingAsync(thread, options))
 {
     switch (evt)
     {
-        case InternalFilterProgressEvent progress:
+        case FilterProgressEvent progress:
             Console.WriteLine($"[{progress.FilterName}] {progress.Message}");
             break;
 
-        case InternalTextDeltaEvent text:
+        case TextDeltaEvent text:
             Console.Write(text.Text);
             break;
     }
@@ -855,7 +855,7 @@ public class UnifiedPermissionMiddleware : IPermissionMiddleware
 
         // Emit permission request event
         var permissionId = Guid.NewGuid().ToString();
-        context.Emit(new InternalPermissionRequestEvent(
+        context.Emit(new PermissionRequestEvent(
             permissionId,
             functionName,
             context.Function.Description,
@@ -864,16 +864,16 @@ public class UnifiedPermissionMiddleware : IPermissionMiddleware
 
         // Wait for response from external handler (BLOCKS HERE)
         // While blocked, background drainer yields event to handler
-        InternalPermissionResponseEvent response;
+        PermissionResponseEvent response;
         try
         {
-            response = await context.WaitForResponseAsync<InternalPermissionResponseEvent>(
+            response = await context.WaitForResponseAsync<PermissionResponseEvent>(
                 permissionId,
                 timeout: TimeSpan.FromMinutes(5));
         }
         catch (TimeoutException)
         {
-            context.Emit(new InternalPermissionDeniedEvent(
+            context.Emit(new PermissionDeniedEvent(
                 permissionId,
                 "Permission request timed out"));
             context.Result = "Permission request timed out";
@@ -882,7 +882,7 @@ public class UnifiedPermissionMiddleware : IPermissionMiddleware
         }
         catch (OperationCanceledException)
         {
-            context.Emit(new InternalPermissionDeniedEvent(
+            context.Emit(new PermissionDeniedEvent(
                 permissionId,
                 "Permission request cancelled"));
             context.Result = "Permission request cancelled";
@@ -893,7 +893,7 @@ public class UnifiedPermissionMiddleware : IPermissionMiddleware
         // Emit result event
         if (response.Approved)
         {
-            context.Emit(new InternalPermissionApprovedEvent(permissionId));
+            context.Emit(new PermissionApprovedEvent(permissionId));
 
             // Store persistent choice if needed
             if (response.Choice != PermissionChoice.AllowOnce)
@@ -911,7 +911,7 @@ public class UnifiedPermissionMiddleware : IPermissionMiddleware
         }
         else
         {
-            context.Emit(new InternalPermissionDeniedEvent(
+            context.Emit(new PermissionDeniedEvent(
                 permissionId,
                 response.Reason ?? "Permission denied"));
             context.Result = response.Reason ?? "Permission denied";
@@ -934,14 +934,14 @@ public class AGUIEventHandler
     }
 
     public async Task HandleEventStreamAsync(
-        IAsyncEnumerable<InternalAgentEvent> eventStream,
+        IAsyncEnumerable<AgentEvent> eventStream,
         Func<BaseEvent, Task> emitToFrontend)
     {
         await foreach (var evt in eventStream)
         {
             switch (evt)
             {
-                case InternalPermissionRequestEvent permReq:
+                case PermissionRequestEvent permReq:
                     // Convert to AGUI event and send to frontend
                     await emitToFrontend(new FunctionPermissionRequestEvent
                     {
@@ -953,7 +953,7 @@ public class AGUIEventHandler
                     });
                     break;
 
-                case InternalPermissionApprovedEvent approved:
+                case PermissionApprovedEvent approved:
                     await emitToFrontend(new PermissionApprovedEvent
                     {
                         Type = "custom",
@@ -961,7 +961,7 @@ public class AGUIEventHandler
                     });
                     break;
 
-                case InternalPermissionDeniedEvent denied:
+                case PermissionDeniedEvent denied:
                     await emitToFrontend(new PermissionDeniedEvent
                     {
                         Type = "custom",
@@ -970,7 +970,7 @@ public class AGUIEventHandler
                     });
                     break;
 
-                case InternalTextDeltaEvent text:
+                case TextDeltaEvent text:
                     await emitToFrontend(CreateTextDelta(text));
                     break;
 
@@ -984,7 +984,7 @@ public class AGUIEventHandler
     {
         // Send response to waiting filter via agent
         // Thread-safe: SendFilterResponse can be called from any thread
-        _agent.SendFilterResponse(response.PermissionId, new InternalPermissionResponseEvent(
+        _agent.SendFilterResponse(response.PermissionId, new PermissionResponseEvent(
             response.PermissionId,
             response.Approved,
             response.Approved ? null : "User denied",
@@ -1007,20 +1007,20 @@ public class ConsoleEventHandler
         _agent = agent ?? throw new ArgumentNullException(nameof(agent));
     }
 
-    public async Task HandleEventStreamAsync(IAsyncEnumerable<InternalAgentEvent> eventStream)
+    public async Task HandleEventStreamAsync(IAsyncEnumerable<AgentEvent> eventStream)
     {
         await foreach (var evt in eventStream)
         {
             switch (evt)
             {
-                case InternalPermissionRequestEvent permReq:
+                case PermissionRequestEvent permReq:
                     // Prompt user on console (runs in background thread)
                     _ = Task.Run(async () =>
                     {
                         var decision = await PromptUserAsync(permReq);
 
                         // Send response back to agent
-                        _agent.SendFilterResponse(permReq.PermissionId, new InternalPermissionResponseEvent(
+                        _agent.SendFilterResponse(permReq.PermissionId, new PermissionResponseEvent(
                             permReq.PermissionId,
                             decision.Approved,
                             decision.Reason,
@@ -1028,11 +1028,11 @@ public class ConsoleEventHandler
                     });
                     break;
 
-                case InternalTextDeltaEvent text:
+                case TextDeltaEvent text:
                     Console.Write(text.Text);
                     break;
 
-                case InternalFilterProgressEvent progress:
+                case FilterProgressEvent progress:
                     Console.WriteLine($"\n[{progress.FilterName}] {progress.Message}");
                     break;
             }
@@ -1040,7 +1040,7 @@ public class ConsoleEventHandler
     }
 
     private async Task<(bool Approved, string? Reason, PermissionChoice Choice)> PromptUserAsync(
-        InternalPermissionRequestEvent request)
+        PermissionRequestEvent request)
     {
         return await Task.Run(() =>
         {
@@ -1076,12 +1076,12 @@ public class ConsoleEventHandler
 public record DatabaseQueryStartEvent(
     string QueryId,
     string Query,
-    TimeSpan EstimatedDuration) : InternalAgentEvent;
+    TimeSpan EstimatedDuration) : AgentEvent;
 
 public record DatabaseQueryCompleteEvent(
     string QueryId,
     int RowCount,
-    TimeSpan ActualDuration) : InternalAgentEvent;
+    TimeSpan ActualDuration) : AgentEvent;
 
 // User creates custom filter
 public class DatabaseObservabilityFilter : IAIFunctionMiddleware
@@ -1144,7 +1144,7 @@ await foreach (var evt in agent.RunStreamingAsync(thread, options))
             Console.WriteLine($"[DB] Query complete: {queryComplete.RowCount} rows in {queryComplete.ActualDuration}");
             break;
 
-        case InternalTextDeltaEvent text:
+        case TextDeltaEvent text:
             Console.Write(text.Text);
             break;
     }
@@ -1180,7 +1180,7 @@ T5: Filter.WaitForResponseAsync() receives      → Filter unblocks
 **Guarantee**: Events are yielded in FIFO order from each filter.
 
 **Reasoning**:
-1. Each filter writes to shared `Channel<InternalAgentEvent>`
+1. Each filter writes to shared `Channel<AgentEvent>`
 2. Channels preserve FIFO order per writer
 3. Background drainer reads sequentially → enqueues in order
 4. Main loop dequeues sequentially → yields in order
@@ -1203,7 +1203,7 @@ Main loop yields: Event1, Event2, Event3
 
 **Behavior**:
 1. Exception caught in `try/catch` around `await pipeline(context)`
-2. `InternalFilterErrorEvent` emitted before handling
+2. `FilterErrorEvent` emitted before handling
 3. Context marked as terminated, error result set
 4. Loop continues to next function call
 
@@ -1223,7 +1223,7 @@ try
 catch (Exception ex)
 {
     // Emit error event
-    context.OutboundEvents?.TryWrite(new InternalFilterErrorEvent(...));
+    context.OutboundEvents?.TryWrite(new FilterErrorEvent(...));
 
     // Mark as terminated
     context.IsTerminated = true;
@@ -1265,7 +1265,7 @@ else
 
 **Configuration**:
 ```csharp
-Channel.CreateUnbounded<InternalAgentEvent>(new UnboundedChannelOptions
+Channel.CreateUnbounded<AgentEvent>(new UnboundedChannelOptions
 {
     SingleWriter = false,  // ✅ Multiple filters can emit concurrently
     SingleReader = true,   // Only background drainer reads
@@ -1360,7 +1360,7 @@ var response = Console.ReadLine();
 
 **After**: All filters use same pattern
 ```csharp
-context.Emit(new InternalPermissionRequestEvent { ... });
+context.Emit(new PermissionRequestEvent { ... });
 ```
 
 ### 2. Protocol Independence
@@ -1377,9 +1377,9 @@ context.Emit(new InternalPermissionRequestEvent { ... });
 public class UnifiedPermissionMiddleware : IPermissionMiddleware { ... }
 
 // Multiple adapters
-AGUIEventHandler.ConvertToAGUI(InternalPermissionRequestEvent)
-ConsoleEventHandler.HandleConsole(InternalPermissionRequestEvent)
-WebEventHandler.ConvertToSSE(InternalPermissionRequestEvent)
+AGUIEventHandler.ConvertToAGUI(PermissionRequestEvent)
+ConsoleEventHandler.HandleConsole(PermissionRequestEvent)
+WebEventHandler.ConvertToSSE(PermissionRequestEvent)
 ```
 
 ### 3. User Extensibility
@@ -1388,7 +1388,7 @@ WebEventHandler.ConvertToSSE(InternalPermissionRequestEvent)
 
 **After**: Users define custom events and filters
 ```csharp
-public record MyCustomEvent(...) : InternalAgentEvent;
+public record MyCustomEvent(...) : AgentEvent;
 
 public class MyCustomFilter : IAIFunctionMiddleware
 {
@@ -1435,7 +1435,7 @@ public async Task Filter_EmitsEvents()
     var filter = new MyFilter();
 
     // Collect events in background
-    var events = new List<InternalAgentEvent>();
+    var events = new List<AgentEvent>();
     var collectTask = Task.Run(async () =>
     {
         await foreach (var evt in agent.FilterEventReader.ReadAllAsync())
@@ -1516,7 +1516,7 @@ public async Task Filter_EmitsEvents()
 ✅ Single `IAIFunctionMiddleware` interface (unchanged)
 ✅ All filters can emit events via `context.Emit()`
 ✅ Bidirectional communication via `context.WaitForResponseAsync()`
-✅ Users can create custom event types (derive from `InternalAgentEvent`)
+✅ Users can create custom event types (derive from `AgentEvent`)
 ✅ Foundation is event-type-agnostic (no hardcoded event type checking)
 ✅ **Events delivered in REAL-TIME** (during filter execution, not after) ← FIXED!
 ✅ No deadlocks for bidirectional filters
@@ -1614,7 +1614,7 @@ var pipelineTask = Task.Run(async () => { await pipeline(context); });
 3. **Local Channel Per Call**:
 ```csharp
 // v1.0 (WASTEFUL)
-var outboundChannel = Channel.CreateUnbounded<InternalAgentEvent>();
+var outboundChannel = Channel.CreateUnbounded<AgentEvent>();
 // Another ~200 bytes per call
 ```
 
@@ -1651,7 +1651,7 @@ Result: Handler sees events in real-time → Bidirectional communication works!
 2. **Shared Channel (No Task.Run per call)**:
 ```csharp
 // v2.0 (EFFICIENT)
-private readonly Channel<InternalAgentEvent> _filterEventChannel;  // Shared across all calls
+private readonly Channel<AgentEvent> _filterEventChannel;  // Shared across all calls
 context.OutboundEvents = _agent.FilterEventWriter;  // Just assign reference
 await pipeline(context);  // Synchronous execution, no Task.Run
 // ~16 bytes per call, 50 calls = 800 bytes + 500 bytes shared = 1.3 KB

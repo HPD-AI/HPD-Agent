@@ -1,6 +1,6 @@
 # HPD-Agent
 
-**A production-ready .NET agent framework with durable execution, intelligent tool management, and multi-protocol support.**
+**A production-ready .NET agent framework with event-driven architecture, durable execution, and intelligent tool management.**
 
 [![NuGet](https://img.shields.io/nuget/v/HPD-Agent.svg)](https://www.nuget.org/packages/HPD-Agent/)
 [![.NET](https://img.shields.io/badge/.NET-9.0-512BD4)](https://dotnet.microsoft.com/)
@@ -10,29 +10,39 @@
 
 ## What is HPD-Agent?
 
-HPD-Agent is a comprehensive framework for building AI agents in .NET. It provides everything you need to create production-grade agents: durable execution with crash recovery, intelligent token management, multi-provider support, and protocol adapters for seamless integration.
+HPD-Agent is a comprehensive framework for building AI agents in .NET. It provides everything you need to create production-grade agents: an event-driven observer architecture, durable execution with crash recovery, intelligent token management, and multi-provider support.
 
 ```csharp
-// Create a production-ready agent in minutes
-var agent = new AgentBuilder()
-    .WithInstructions("You are a helpful assistant.")
-    .WithProvider("openai", "gpt-4o", apiKey)
-    .RegisterPlugin<FileSystemPlugin>()
-    .RegisterPlugin<WebSearchPlugin>()
-    .WithThreadStore(new InMemoryConversationThreadStore())  // Durable execution
-    .Build();
+using HPD.Agent;
 
-// Run with automatic checkpointing
-var thread = agent.CreateThread();
-await foreach (var response in agent.RunAsync(messages, thread))
+// Configure agent
+var config = new AgentConfig
 {
-    Console.Write(response.Text);
-}
+    Name = "AI Assistant",
+    SystemInstructions = "You are a helpful assistant.",
+    Provider = new ProviderConfig { ProviderKey = "openai", ModelName = "gpt-4o" }
+};
+
+// Build with your observer (console, web, custom)
+var agent = new AgentBuilder(config)
+    .WithObserver(myObserver)  // IAgentEventObserver - you decide how to present events
+    .WithPlugin<FileSystemPlugin>()
+    .WithPermissions()
+    .BuildCoreAgent();
+
+var thread = agent.CreateThread();
+await foreach (var _ in agent.RunAsync("Hello!", thread)) { }
 ```
 
 ---
 
 ## Key Features
+
+### Event-Driven Observer Architecture
+- **Decoupled Display** - Observers handle UI, logging, telemetry independently
+- **Real-Time Events** - Streaming text, tool calls, reasoning tokens, permissions
+- **Interactive Middleware** - Permissions and continuations work via events
+- **Flexible Presentation** - Same event stream, different observer behaviors (streaming vs buffered)
 
 ### Durable Execution
 - **Automatic Checkpointing** - Agent state saved during execution, not just after
@@ -69,20 +79,22 @@ await foreach (var response in agent.RunAsync(messages, thread))
 │  HPD-Agent Architecture                                         │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐         │
-│  │  A2A        │    │  AG-UI      │    │  MCP        │         │
-│  │  Protocol   │    │  Protocol   │    │  Protocol   │         │
-│  └──────┬──────┘    └──────┬──────┘    └──────┬──────┘         │
-│         │                  │                  │                 │
-│         └──────────────────┼──────────────────┘                 │
-│                            ▼                                    │
 │  ┌─────────────────────────────────────────────────────────┐   │
-│  │  AgentCore (Protocol-Agnostic)                          │   │
+│  │  Observers (IAgentEventObserver)                        │   │
 │  │                                                          │   │
-│  │  • Stateless execution engine                           │   │
+│  │  • Your implementation - console, web, mobile, etc.     │   │
+│  │  • Receive all events (fire-and-forget)                 │   │
+│  │  • Handle bidirectional events (permissions, continuations) │
+│  │  • Multiple observers run in parallel                   │   │
+│  └──────────────────────────┬──────────────────────────────┘   │
+│                             │                                   │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │  AgentCore (Event-Driven Engine)                        │   │
+│  │                                                          │   │
+│  │  • Emits AgentEvent stream                      │   │
+│  │  • Middleware pipeline (permissions, continuations)     │   │
 │  │  • Internal checkpointing (fire-and-forget)             │   │
-│  │  • Middleware pipeline                                   │   │
-│  │  • Event-driven observability                           │   │
+│  │  • Protocol-agnostic execution                          │   │
 │  └─────────────────────────────────────────────────────────┘   │
 │                            │                                    │
 │         ┌──────────────────┼──────────────────┐                │
@@ -98,7 +110,6 @@ await foreach (var response in agent.RunAsync(messages, thread))
 │  │  • Full execution state (AgentLoopState)                │   │
 │  │  • Message history with token tracking                  │   │
 │  │  • Checkpoint metadata and versioning                   │   │
-│  │  • Pending writes for partial recovery                  │   │
 │  └─────────────────────────────────────────────────────────┘   │
 │                                                                  │
 │  ┌─────────────────────────────────────────────────────────┐   │
@@ -112,6 +123,31 @@ await foreach (var response in agent.RunAsync(messages, thread))
 
 ## Core Concepts
 
+### Observer Pattern (IAgentEventObserver)
+The core of HPD-Agent's architecture. Observers receive all agent events and decide how to present them.
+
+```csharp
+public interface IAgentEventObserver
+{
+    bool ShouldProcess(AgentEvent evt) => true;  // Filter events
+    Task OnEventAsync(AgentEvent evt, CancellationToken ct);  // Handle events
+}
+```
+
+```csharp
+// Register any observer implementation
+var agent = new AgentBuilder(config)
+    .WithObserver(new MyWebSocketObserver())   // For web apps
+    .WithObserver(new TelemetryObserver())     // For monitoring
+    .BuildCoreAgent();
+```
+
+**Why event-driven?** Interactive middleware (permissions, continuations) requires real-time event flow. The observer pattern enables:
+- **Streaming display** - Text appears as it's generated
+- **Interactive prompts** - Permission requests mid-execution
+- **Flexible presentation** - Same events, different UIs (console, web, silent)
+- **Multiple observers** - Log, display, and track metrics simultaneously
+
 ### ConversationThread
 The unit of conversation state. Contains messages, metadata, and execution state for durable execution.
 
@@ -119,11 +155,8 @@ The unit of conversation state. Contains messages, metadata, and execution state
 var thread = agent.CreateThread();
 
 // Thread persists across runs
-await agent.RunAsync(messages1, thread);
-await agent.RunAsync(messages2, thread);  // Continues conversation
-
-// Serialize for storage
-var snapshot = thread.Serialize();
+await foreach (var _ in agent.RunAsync("Hello", thread)) { }
+await foreach (var _ in agent.RunAsync("Follow up", thread)) { }  // Continues conversation
 ```
 
 ### IConversationThreadStore
@@ -135,12 +168,6 @@ var store = new InMemoryConversationThreadStore();
 
 // Production (implement your own)
 var store = new PostgresConversationThreadStore(connectionString);
-
-// Configure agent
-var agent = new AgentBuilder()
-    .WithThreadStore(store)
-    .WithCheckpointFrequency(CheckpointFrequency.PerIteration)
-    .Build();
 ```
 
 ### Plugins
@@ -276,59 +303,61 @@ if (restored?.ExecutionState != null)
 ## Example: Full-Featured Agent
 
 ```csharp
-var agent = new AgentBuilder()
-    // Core configuration
-    .WithInstructions("You are a senior software engineer assistant.")
-    .WithProvider("anthropic", "claude-sonnet-4-20250514", apiKey)
+using HPD.Agent;
 
-    // Plugins (tools)
-    .RegisterPlugin<FileSystemPlugin>()
-    .RegisterPlugin<GitPlugin>()
-    .RegisterPlugin<CodeAnalysisPlugin>()
-
-    // Skills (knowledge)
-    .RegisterSkill(Skill.Create(
-        name: "code_review",
-        description: "Comprehensive code review expertise",
-        instructions: await File.ReadAllTextAsync("skills/code-review.md"),
-        references: new[] { "CodeAnalysisPlugin.*", "GitPlugin.GetDiff" }
-    ))
-
-    // Memory
-    .WithDynamicMemory(maxTokens: 4000)
-    .WithStaticMemory(strategy: StaticMemoryStrategy.FullTextInjection)
-
-    // Durable execution
-    .WithThreadStore(new PostgresConversationThreadStore(connectionString))
-    .WithCheckpointFrequency(CheckpointFrequency.PerIteration)
-    .WithPendingWrites(true)
-
-    // Scoping (token reduction)
-    .WithScoping(enabled: true)
-
-    // Error handling
-    .WithErrorHandling(config => {
-        config.MaxRetries = 3;
-        config.UseProviderRetryDelays = true;
-    })
-
-    .Build();
-
-// Run with full observability
-var thread = agent.CreateThread();
-await foreach (var evt in agent.RunAsync(messages, thread))
+// Configuration
+var config = new AgentConfig
 {
-    switch (evt)
+    Name = "Code Review Assistant",
+    SystemInstructions = "You are a senior software engineer assistant.",
+    Provider = new ProviderConfig
     {
-        case TextDeltaEvent text:
-            Console.Write(text.Delta);
-            break;
-        case ToolCallEvent tool:
-            Console.WriteLine($"Calling: {tool.FunctionName}");
-            break;
-        case CheckpointEvent cp:
-            Console.WriteLine($"Checkpoint saved at iteration {cp.Iteration}");
-            break;
+        ProviderKey = "anthropic",
+        ModelName = "claude-sonnet-4-20250514"
+    },
+    MaxAgenticIterations = 25,
+    DynamicMemory = new DynamicMemoryConfig
+    {
+        StorageDirectory = "./agent-memory",
+        MaxTokens = 4000
+    },
+    Scoping = new ScopingConfig { Enabled = true }
+};
+
+// Build with observers
+var agent = new AgentBuilder(config)
+    .WithObserver(new WebSocketObserver(socket))  // Stream to frontend
+    .WithObserver(new TelemetryObserver())        // Metrics & tracing
+    .WithPlugin<FileSystemPlugin>()
+    .WithPlugin<GitPlugin>()
+    .WithPermissions()
+    .WithLogging()
+    .BuildCoreAgent();
+
+var thread = agent.CreateThread();
+await foreach (var _ in agent.RunAsync("Review the latest commit", thread)) { }
+```
+
+**Observer Implementation Example:**
+```csharp
+public class WebSocketObserver : IAgentEventObserver
+{
+    private readonly WebSocket _socket;
+
+    public WebSocketObserver(WebSocket socket) => _socket = socket;
+
+    public bool ShouldProcess(AgentEvent evt) =>
+        evt is TextDeltaEvent or ToolCallStartEvent;
+
+    public async Task OnEventAsync(AgentEvent evt, CancellationToken ct)
+    {
+        var payload = evt switch
+        {
+            TextDeltaEvent text => new { type = "text", data = text.Text },
+            ToolCallStartEvent tool => new { type = "tool", name = tool.Name },
+            _ => null
+        };
+        if (payload != null) await _socket.SendAsync(payload, ct);
     }
 }
 ```
@@ -351,28 +380,28 @@ await foreach (var evt in agent.RunAsync(messages, thread))
 ## Getting Started
 
 ```bash
-# Install the package
 dotnet add package HPD-Agent
-
-# Install a provider (e.g., OpenAI)
-dotnet add package HPD-Agent.Providers.OpenAI
 ```
 
 ```csharp
 using HPD.Agent;
 
-var agent = new AgentBuilder()
-    .WithInstructions("You are a helpful assistant.")
-    .WithProvider("openai", "gpt-4o", Environment.GetEnvironmentVariable("OPENAI_API_KEY"))
-    .Build();
-
-var thread = agent.CreateThread();
-await foreach (var response in agent.RunAsync(
-    new[] { new ChatMessage(ChatRole.User, "Hello!") },
-    thread))
+// 1. Configure
+var config = new AgentConfig
 {
-    Console.Write(response.Text);
-}
+    Name = "Assistant",
+    SystemInstructions = "You are a helpful assistant.",
+    Provider = new ProviderConfig { ProviderKey = "openai", ModelName = "gpt-4o" }
+};
+
+// 2. Build with observer
+var agent = new AgentBuilder(config)
+    .WithObserver(myObserver)  // Your IAgentEventObserver implementation
+    .BuildCoreAgent();
+
+// 3. Run
+var thread = agent.CreateThread();
+await foreach (var _ in agent.RunAsync("Hello!", thread)) { }
 ```
 
 See the **[Quick Start Guide](docs/QUICK_START.md)** for more.
@@ -396,7 +425,7 @@ Proprietary. See [LICENSE.md](LICENSE.md) for details.
 
 **Production-Ready .NET Agent Framework**
 
-*Durable Execution · Intelligent Token Management · Multi-Protocol Support*
+*Event-Driven Architecture · Durable Execution · Intelligent Token Management*
 
 [Quick Start](docs/QUICK_START.md) · [Documentation](docs/) · [Examples](examples/)
 

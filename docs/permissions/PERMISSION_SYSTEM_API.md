@@ -314,14 +314,14 @@ public async Task InvokeAsync(
 
 ## Events
 
-### InternalPermissionRequestEvent
+### PermissionRequestEvent
 
 Emitted when a function requires permission and no stored permission exists.
 
 **Namespace:** `HPD.Agent`
 
 ```csharp
-public record InternalPermissionRequestEvent(
+public record PermissionRequestEvent(
     string RequestId,
     string MiddlewareName,
     string FunctionName,
@@ -342,7 +342,7 @@ public record InternalPermissionRequestEvent(
 
 **Usage:**
 ```csharp
-agent.OnEvent<InternalPermissionRequestEvent>(async (e) =>
+agent.OnEvent<PermissionRequestEvent>(async (e) =>
 {
     Console.WriteLine($"Function {e.FunctionName} needs permission");
     Console.WriteLine($"Purpose: {e.FunctionDescription}");
@@ -351,7 +351,7 @@ agent.OnEvent<InternalPermissionRequestEvent>(async (e) =>
     bool approved = GetUserApproval();
 
     await agent.RespondToEventAsync(e.RequestId,
-        new InternalPermissionResponseEvent(
+        new PermissionResponseEvent(
             e.RequestId,
             approved,
             PermissionChoice.Ask
@@ -361,14 +361,14 @@ agent.OnEvent<InternalPermissionRequestEvent>(async (e) =>
 
 ---
 
-### InternalPermissionResponseEvent
+### PermissionResponseEvent
 
 Response to a permission request event.
 
 **Namespace:** `HPD.Agent`
 
 ```csharp
-public record InternalPermissionResponseEvent(
+public record PermissionResponseEvent(
     string RequestId,
     bool Approved,
     PermissionChoice Choice,
@@ -387,7 +387,7 @@ public record InternalPermissionResponseEvent(
 ```csharp
 // Allow once
 await agent.RespondToEventAsync(requestId,
-    new InternalPermissionResponseEvent(
+    new PermissionResponseEvent(
         requestId,
         Approved: true,
         Choice: PermissionChoice.Ask
@@ -395,7 +395,7 @@ await agent.RespondToEventAsync(requestId,
 
 // Allow forever for this conversation
 await agent.RespondToEventAsync(requestId,
-    new InternalPermissionResponseEvent(
+    new PermissionResponseEvent(
         requestId,
         Approved: true,
         Choice: PermissionChoice.AlwaysAllow
@@ -403,7 +403,7 @@ await agent.RespondToEventAsync(requestId,
 
 // Deny with custom message
 await agent.RespondToEventAsync(requestId,
-    new InternalPermissionResponseEvent(
+    new PermissionResponseEvent(
         requestId,
         Approved: false,
         Choice: PermissionChoice.Ask,
@@ -413,14 +413,14 @@ await agent.RespondToEventAsync(requestId,
 
 ---
 
-### InternalPermissionApprovedEvent
+### PermissionApprovedEvent
 
 Emitted when a permission request is approved (for observability).
 
 **Namespace:** `HPD.Agent`
 
 ```csharp
-public record InternalPermissionApprovedEvent(
+public record PermissionApprovedEvent(
     string RequestId,
     string MiddlewareName
 ) : IAgentEvent;
@@ -433,7 +433,7 @@ public record InternalPermissionApprovedEvent(
 
 **Usage:**
 ```csharp
-agent.OnEvent<InternalPermissionApprovedEvent>((e) =>
+agent.OnEvent<PermissionApprovedEvent>((e) =>
 {
     logger.LogInformation("Permission approved: {RequestId}", e.RequestId);
 });
@@ -441,14 +441,14 @@ agent.OnEvent<InternalPermissionApprovedEvent>((e) =>
 
 ---
 
-### InternalPermissionDeniedEvent
+### PermissionDeniedEvent
 
 Emitted when a permission request is denied (for observability).
 
 **Namespace:** `HPD.Agent`
 
 ```csharp
-public record InternalPermissionDeniedEvent(
+public record PermissionDeniedEvent(
     string RequestId,
     string MiddlewareName,
     string Reason
@@ -463,7 +463,7 @@ public record InternalPermissionDeniedEvent(
 
 **Usage:**
 ```csharp
-agent.OnEvent<InternalPermissionDeniedEvent>((e) =>
+agent.OnEvent<PermissionDeniedEvent>((e) =>
 {
     logger.LogWarning("Permission denied: {RequestId}, Reason: {Reason}",
         e.RequestId, e.Reason);
@@ -498,14 +498,14 @@ public enum PermissionChoice
 **Usage:**
 ```csharp
 // User approves once
-var response = new InternalPermissionResponseEvent(
+var response = new PermissionResponseEvent(
     requestId,
     Approved: true,
     Choice: PermissionChoice.Ask  // Don't remember
 );
 
 // User approves forever
-var response = new InternalPermissionResponseEvent(
+var response = new PermissionResponseEvent(
     requestId,
     Approved: true,
     Choice: PermissionChoice.AlwaysAllow  // Remember as allowed
@@ -667,10 +667,10 @@ Waits for a response event matching the request ID.
 ```csharp
 // Emit permission request
 var requestId = Guid.NewGuid().ToString();
-context.Emit(new InternalPermissionRequestEvent(...));
+context.Emit(new PermissionRequestEvent(...));
 
 // Wait for response
-var response = await context.WaitForResponseAsync<InternalPermissionResponseEvent>(
+var response = await context.WaitForResponseAsync<PermissionResponseEvent>(
     requestId,
     timeout: TimeSpan.FromMinutes(5)
 );

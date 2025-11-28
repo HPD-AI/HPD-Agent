@@ -36,13 +36,13 @@ await foreach (var evt in agent.RunAsync(messages, thread: thread))
 {
     switch (evt)
     {
-        case InternalTextDeltaEvent textDelta:
+        case TextDeltaEvent textDelta:
             Console.Write(textDelta.Text);
             break;
-        case InternalPermissionRequestEvent permReq:
+        case PermissionRequestEvent permReq:
             // 50+ lines of permission handling code
             break;
-        case InternalToolCallStartEvent toolStart:
+        case ToolCallStartEvent toolStart:
             // Tool call display logic
             break;
         // ... 20+ more event types
@@ -74,13 +74,13 @@ Monitor agent behavior for debugging, telemetry, or UI updates:
 ```csharp
 public class DebugEventHandler : IEventHandler
 {
-    public bool ShouldProcess(InternalAgentEvent evt) => true; // All events
+    public bool ShouldProcess(AgentEvent evt) => true; // All events
 
-    public async Task OnEventAsync(InternalAgentEvent evt, CancellationToken ct)
+    public async Task OnEventAsync(AgentEvent evt, CancellationToken ct)
     {
         _logger.LogDebug($"[{evt.GetType().Name}] at {DateTime.Now:HH:mm:ss.fff}");
 
-        if (evt is InternalToolCallStartEvent toolStart)
+        if (evt is ToolCallStartEvent toolStart)
         {
             _metrics.IncrementCounter($"tool.{toolStart.Name}.calls");
         }
@@ -93,14 +93,14 @@ public class DebugEventHandler : IEventHandler
 Handle events that require user responses (permissions, continuations):
 
 ```csharp
-case InternalPermissionRequestEvent permReq:
+case PermissionRequestEvent permReq:
     var approved = await PromptUserAsync(
         $"Allow '{permReq.FunctionName}'? (Y/N)"
     );
 
     _agent.SendMiddlewareResponse(
         permReq.PermissionId,
-        new InternalPermissionResponseEvent(
+        new PermissionResponseEvent(
             permReq.PermissionId,
             "Console",
             approved,
@@ -140,15 +140,15 @@ HPD-Agent offers two equivalent interfaces (use whichever you prefer):
 // Option 1: IEventHandler (recommended - more intuitive)
 public class MyHandler : IEventHandler
 {
-    public bool ShouldProcess(InternalAgentEvent evt) { }
-    public Task OnEventAsync(InternalAgentEvent evt, CancellationToken ct) { }
+    public bool ShouldProcess(AgentEvent evt) { }
+    public Task OnEventAsync(AgentEvent evt, CancellationToken ct) { }
 }
 
 // Option 2: IAgentEventObserver (backwards compatible)
 public class MyHandler : IAgentEventObserver
 {
-    public bool ShouldProcess(InternalAgentEvent evt) { }
-    public Task OnEventAsync(InternalAgentEvent evt, CancellationToken ct) { }
+    public bool ShouldProcess(AgentEvent evt) { }
+    public Task OnEventAsync(AgentEvent evt, CancellationToken ct) { }
 }
 ```
 
@@ -159,12 +159,12 @@ Both interfaces are **identical** - `IEventHandler` is just a friendly alias for
 Use `ShouldProcess()` to filter events (improves performance):
 
 ```csharp
-public bool ShouldProcess(InternalAgentEvent evt)
+public bool ShouldProcess(AgentEvent evt)
 {
     // Only process events you care about
-    return evt is InternalTextDeltaEvent
-        or InternalToolCallStartEvent
-        or InternalPermissionRequestEvent;
+    return evt is TextDeltaEvent
+        or ToolCallStartEvent
+        or PermissionRequestEvent;
 }
 ```
 
@@ -173,19 +173,19 @@ public bool ShouldProcess(InternalAgentEvent evt)
 Process events asynchronously in `OnEventAsync()`:
 
 ```csharp
-public async Task OnEventAsync(InternalAgentEvent evt, CancellationToken ct)
+public async Task OnEventAsync(AgentEvent evt, CancellationToken ct)
 {
     switch (evt)
     {
-        case InternalTextDeltaEvent textDelta:
+        case TextDeltaEvent textDelta:
             Console.Write(textDelta.Text);
             break;
 
-        case InternalToolCallStartEvent toolStart:
+        case ToolCallStartEvent toolStart:
             Console.WriteLine($"\n🔧 Using tool: {toolStart.Name}");
             break;
 
-        case InternalPermissionRequestEvent permReq:
+        case PermissionRequestEvent permReq:
             await HandlePermissionAsync(permReq, ct);
             break;
     }
@@ -234,12 +234,12 @@ Uses the built-in `ConsoleEventHandler` for console display.
 ```csharp
 public class TextOnlyHandler : IEventHandler
 {
-    public bool ShouldProcess(InternalAgentEvent evt)
-        => evt is InternalTextDeltaEvent;
+    public bool ShouldProcess(AgentEvent evt)
+        => evt is TextDeltaEvent;
 
-    public async Task OnEventAsync(InternalAgentEvent evt, CancellationToken ct)
+    public async Task OnEventAsync(AgentEvent evt, CancellationToken ct)
     {
-        if (evt is InternalTextDeltaEvent textDelta)
+        if (evt is TextDeltaEvent textDelta)
             Console.Write(textDelta.Text);
     }
 }
@@ -251,22 +251,22 @@ public class BasicTelemetryHandler : IEventHandler
 {
     private readonly ILogger _logger;
 
-    public bool ShouldProcess(InternalAgentEvent evt)
-        => evt is InternalToolCallStartEvent
-            or InternalToolCallResultEvent
-            or InternalAgentTurnStartedEvent;
+    public bool ShouldProcess(AgentEvent evt)
+        => evt is ToolCallStartEvent
+            or ToolCallResultEvent
+            or AgentTurnStartedEvent;
 
-    public async Task OnEventAsync(InternalAgentEvent evt, CancellationToken ct)
+    public async Task OnEventAsync(AgentEvent evt, CancellationToken ct)
     {
         switch (evt)
         {
-            case InternalToolCallStartEvent toolStart:
+            case ToolCallStartEvent toolStart:
                 _logger.LogInformation("Tool called: {Name}", toolStart.Name);
                 break;
-            case InternalToolCallResultEvent toolResult:
+            case ToolCallResultEvent toolResult:
                 _logger.LogInformation("Tool completed: {CallId}", toolResult.CallId);
                 break;
-            case InternalAgentTurnStartedEvent turnStart:
+            case AgentTurnStartedEvent turnStart:
                 _logger.LogInformation("Iteration: {Iteration}", turnStart.Iteration);
                 break;
         }
@@ -282,25 +282,25 @@ public class InteractiveHandler : IEventHandler
 
     internal void SetAgent(AgentCore agent) => _agent = agent;
 
-    public bool ShouldProcess(InternalAgentEvent evt)
-        => evt is InternalPermissionRequestEvent
-            or InternalContinuationRequestEvent;
+    public bool ShouldProcess(AgentEvent evt)
+        => evt is PermissionRequestEvent
+            or ContinuationRequestEvent;
 
-    public async Task OnEventAsync(InternalAgentEvent evt, CancellationToken ct)
+    public async Task OnEventAsync(AgentEvent evt, CancellationToken ct)
     {
         switch (evt)
         {
-            case InternalPermissionRequestEvent permReq:
+            case PermissionRequestEvent permReq:
                 await HandlePermissionAsync(permReq, ct);
                 break;
-            case InternalContinuationRequestEvent contReq:
+            case ContinuationRequestEvent contReq:
                 await HandleContinuationAsync(contReq, ct);
                 break;
         }
     }
 
     private async Task HandlePermissionAsync(
-        InternalPermissionRequestEvent permReq, CancellationToken ct)
+        PermissionRequestEvent permReq, CancellationToken ct)
     {
         Console.Write($"Allow '{permReq.FunctionName}'? (Y/N): ");
         var input = await Task.Run(() => Console.ReadLine(), ct);
@@ -308,7 +308,7 @@ public class InteractiveHandler : IEventHandler
 
         _agent?.SendMiddlewareResponse(
             permReq.PermissionId,
-            new InternalPermissionResponseEvent(
+            new PermissionResponseEvent(
                 permReq.PermissionId,
                 "Console",
                 approved,
@@ -426,11 +426,11 @@ All observers run **in parallel** via fire-and-forget.
 ### **Pattern 3: Conditional Event Processing**
 
 ```csharp
-public bool ShouldProcess(InternalAgentEvent evt)
+public bool ShouldProcess(AgentEvent evt)
 {
     // Only process errors in production
     if (_isProduction)
-        return evt is InternalMessageTurnErrorEvent or InternalMiddlewareErrorEvent;
+        return evt is MessageTurnErrorEvent or MiddlewareErrorEvent;
 
     // Process everything in development
     return true;
@@ -444,9 +444,9 @@ public class MetricsHandler : IEventHandler
 {
     private readonly ConcurrentDictionary<string, int> _toolCalls = new();
 
-    public async Task OnEventAsync(InternalAgentEvent evt, CancellationToken ct)
+    public async Task OnEventAsync(AgentEvent evt, CancellationToken ct)
     {
-        if (evt is InternalToolCallStartEvent toolStart)
+        if (evt is ToolCallStartEvent toolStart)
         {
             _toolCalls.AddOrUpdate(toolStart.Name, 1, (_, count) => count + 1);
         }
@@ -467,16 +467,16 @@ public class UIEventHandler : IEventHandler
 {
     private readonly IDispatcher _dispatcher;
 
-    public async Task OnEventAsync(InternalAgentEvent evt, CancellationToken ct)
+    public async Task OnEventAsync(AgentEvent evt, CancellationToken ct)
     {
         await _dispatcher.InvokeAsync(() =>
         {
             switch (evt)
             {
-                case InternalTextDeltaEvent textDelta:
+                case TextDeltaEvent textDelta:
                     _chatView.AppendText(textDelta.Text);
                     break;
-                case InternalToolCallStartEvent toolStart:
+                case ToolCallStartEvent toolStart:
                     _statusBar.Text = $"Using tool: {toolStart.Name}";
                     break;
             }
@@ -493,11 +493,11 @@ public class UIEventHandler : IEventHandler
 
 ```csharp
 // ✅ Good - Only process relevant events
-public bool ShouldProcess(InternalAgentEvent evt)
-    => evt is InternalTextDeltaEvent or InternalToolCallStartEvent;
+public bool ShouldProcess(AgentEvent evt)
+    => evt is TextDeltaEvent or ToolCallStartEvent;
 
 // ❌ Bad - Processes all 58 event types unnecessarily
-public bool ShouldProcess(InternalAgentEvent evt) => true;
+public bool ShouldProcess(AgentEvent evt) => true;
 ```
 
 ### **2. Use Circuit Breaker Protection**
@@ -505,7 +505,7 @@ public bool ShouldProcess(InternalAgentEvent evt) => true;
 The framework **automatically disables** observers after 10 consecutive failures:
 
 ```csharp
-public async Task OnEventAsync(InternalAgentEvent evt, CancellationToken ct)
+public async Task OnEventAsync(AgentEvent evt, CancellationToken ct)
 {
     try
     {
@@ -526,7 +526,7 @@ After 3 successful calls, the circuit breaker **re-enables** the observer.
 
 ```csharp
 // ✅ Good - Fire-and-forget async
-public async Task OnEventAsync(InternalAgentEvent evt, CancellationToken ct)
+public async Task OnEventAsync(AgentEvent evt, CancellationToken ct)
 {
     _ = Task.Run(async () =>
     {
@@ -535,7 +535,7 @@ public async Task OnEventAsync(InternalAgentEvent evt, CancellationToken ct)
 }
 
 // ❌ Bad - Blocks event processing
-public async Task OnEventAsync(InternalAgentEvent evt, CancellationToken ct)
+public async Task OnEventAsync(AgentEvent evt, CancellationToken ct)
 {
     await Task.Delay(5000); // Blocks all other events!
 }
@@ -573,12 +573,12 @@ builder.WithObserver(readOnlyHandler); // No SetAgent() needed
 ```csharp
 public class StreamingHandler : IEventHandler
 {
-    public bool ShouldProcess(InternalAgentEvent evt)
-        => evt is InternalTextDeltaEvent;
+    public bool ShouldProcess(AgentEvent evt)
+        => evt is TextDeltaEvent;
 
-    public async Task OnEventAsync(InternalAgentEvent evt, CancellationToken ct)
+    public async Task OnEventAsync(AgentEvent evt, CancellationToken ct)
     {
-        if (evt is InternalTextDeltaEvent textDelta)
+        if (evt is TextDeltaEvent textDelta)
             Console.Write(textDelta.Text);
     }
 }
@@ -596,19 +596,19 @@ public class ToolMonitor : IEventHandler
 {
     private readonly Dictionary<string, DateTime> _startTimes = new();
 
-    public bool ShouldProcess(InternalAgentEvent evt)
-        => evt is InternalToolCallStartEvent or InternalToolCallResultEvent;
+    public bool ShouldProcess(AgentEvent evt)
+        => evt is ToolCallStartEvent or ToolCallResultEvent;
 
-    public async Task OnEventAsync(InternalAgentEvent evt, CancellationToken ct)
+    public async Task OnEventAsync(AgentEvent evt, CancellationToken ct)
     {
         switch (evt)
         {
-            case InternalToolCallStartEvent toolStart:
+            case ToolCallStartEvent toolStart:
                 _startTimes[toolStart.CallId] = DateTime.Now;
                 Console.WriteLine($"🔧 Started: {toolStart.Name}");
                 break;
 
-            case InternalToolCallResultEvent toolResult:
+            case ToolCallResultEvent toolResult:
                 if (_startTimes.TryGetValue(toolResult.CallId, out var startTime))
                 {
                     var duration = DateTime.Now - startTime;
@@ -628,12 +628,12 @@ public class ReasoningHandler : IEventHandler
 {
     private bool _isFirstChunk = true;
 
-    public bool ShouldProcess(InternalAgentEvent evt)
-        => evt is InternalReasoningEvent;
+    public bool ShouldProcess(AgentEvent evt)
+        => evt is Reasoning;
 
-    public async Task OnEventAsync(InternalAgentEvent evt, CancellationToken ct)
+    public async Task OnEventAsync(AgentEvent evt, CancellationToken ct)
     {
-        if (evt is not InternalReasoningEvent reasoning) return;
+        if (evt is not Reasoning reasoning) return;
 
         switch (reasoning.Phase)
         {
@@ -669,12 +669,12 @@ public class PermissionHandler : IEventHandler
 
     internal void SetAgent(AgentCore agent) => _agent = agent;
 
-    public bool ShouldProcess(InternalAgentEvent evt)
-        => evt is InternalPermissionRequestEvent;
+    public bool ShouldProcess(AgentEvent evt)
+        => evt is PermissionRequestEvent;
 
-    public async Task OnEventAsync(InternalAgentEvent evt, CancellationToken ct)
+    public async Task OnEventAsync(AgentEvent evt, CancellationToken ct)
     {
-        if (evt is not InternalPermissionRequestEvent permReq) return;
+        if (evt is not PermissionRequestEvent permReq) return;
 
         Console.WriteLine($"\n🔐 Permission Request");
         Console.WriteLine($"   Function: {permReq.FunctionName}");
@@ -686,7 +686,7 @@ public class PermissionHandler : IEventHandler
 
         _agent?.SendMiddlewareResponse(
             permReq.PermissionId,
-            new InternalPermissionResponseEvent(
+            new PermissionResponseEvent(
                 permReq.PermissionId,
                 "Console",
                 approved,
@@ -713,22 +713,22 @@ public class OpenTelemetryHandler : IEventHandler
         _activitySource = new ActivitySource("HPD.Agent");
     }
 
-    public bool ShouldProcess(InternalAgentEvent evt)
-        => evt is InternalToolCallStartEvent
-            or InternalToolCallResultEvent
-            or InternalAgentTurnStartedEvent
-            or InternalAgentTurnFinishedEvent;
+    public bool ShouldProcess(AgentEvent evt)
+        => evt is ToolCallStartEvent
+            or ToolCallResultEvent
+            or AgentTurnStartedEvent
+            or AgentTurnFinishedEvent;
 
-    public async Task OnEventAsync(InternalAgentEvent evt, CancellationToken ct)
+    public async Task OnEventAsync(AgentEvent evt, CancellationToken ct)
     {
         switch (evt)
         {
-            case InternalAgentTurnStartedEvent turnStart:
+            case AgentTurnStartedEvent turnStart:
                 var turnActivity = _activitySource.StartActivity($"AgentTurn-{turnStart.Iteration}");
                 _activities[$"turn-{turnStart.Iteration}"] = turnActivity!;
                 break;
 
-            case InternalAgentTurnFinishedEvent turnEnd:
+            case AgentTurnFinishedEvent turnEnd:
                 if (_activities.TryGetValue($"turn-{turnEnd.Iteration}", out var activity))
                 {
                     activity.Stop();
@@ -736,14 +736,14 @@ public class OpenTelemetryHandler : IEventHandler
                 }
                 break;
 
-            case InternalToolCallStartEvent toolStart:
+            case ToolCallStartEvent toolStart:
                 var toolActivity = _activitySource.StartActivity($"ToolCall-{toolStart.Name}");
                 toolActivity?.SetTag("tool.name", toolStart.Name);
                 toolActivity?.SetTag("call.id", toolStart.CallId);
                 _activities[toolStart.CallId] = toolActivity!;
                 break;
 
-            case InternalToolCallResultEvent toolResult:
+            case ToolCallResultEvent toolResult:
                 if (_activities.TryGetValue(toolResult.CallId, out var toolActivity))
                 {
                     toolActivity.SetTag("result.is_error", toolResult.IsError);
@@ -800,7 +800,7 @@ public class OpenTelemetryHandler : IEventHandler
 3. Circuit breaker re-enables after 3 successful calls
 4. Use try-catch to handle errors gracefully:
    ```csharp
-   public async Task OnEventAsync(InternalAgentEvent evt, CancellationToken ct)
+   public async Task OnEventAsync(AgentEvent evt, CancellationToken ct)
    {
        try
        {
@@ -836,7 +836,7 @@ public class OpenTelemetryHandler : IEventHandler
 2. Use `ConcurrentDictionary.TryRemove()` for tracking dictionaries
 3. Clear state after agent turns:
    ```csharp
-   case InternalAgentTurnFinishedEvent:
+   case AgentTurnFinishedEvent:
        _eventCache.Clear();
        break;
    ```

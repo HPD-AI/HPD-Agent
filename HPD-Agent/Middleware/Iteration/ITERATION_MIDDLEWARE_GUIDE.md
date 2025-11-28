@@ -400,14 +400,14 @@ public class IterationMiddleWareContext
     /// <summary>
     /// Emits an event to the agent's event stream for external handling.
     /// </summary>
-    public void Emit(InternalAgentEvent evt);
+    public void Emit(AgentEvent evt);
 
     /// <summary>
     /// Waits for a response event from external handlers (blocking operation).
     /// </summary>
     public async Task<T> WaitForResponseAsync<T>(
         string requestId,
-        TimeSpan? timeout = null) where T : InternalAgentEvent;
+        TimeSpan? timeout = null) where T : AgentEvent;
 }
 ```
 
@@ -464,17 +464,17 @@ internal class ContinuationPermissionIterationMiddleWare : IIterationMiddleWare
         var continuationId = Guid.NewGuid().ToString();
 
         // Emit request event to external handler (UI, console, web, etc.)
-        context.Emit(new InternalContinuationRequestEvent(
+        context.Emit(new ContinuationRequestEvent(
             continuationId,
             "ContinuationPermissionMiddleware",
             context.Iteration + 1,  // Display as 1-based
             _currentExtendedLimit));
 
         // Wait for response (blocks until user responds or timeout)
-        InternalContinuationResponseEvent response;
+        ContinuationResponseEvent response;
         try
         {
-            response = await context.WaitForResponseAsync<InternalContinuationResponseEvent>(
+            response = await context.WaitForResponseAsync<ContinuationResponseEvent>(
                 continuationId,
                 timeout: TimeSpan.FromMinutes(2));
         }
@@ -512,7 +512,7 @@ internal class ContinuationPermissionIterationMiddleWare : IIterationMiddleWare
 4. **Handle response**: Process the response and adjust Middleware behavior
 
 **Event Types**:
-- Events must inherit from `InternalAgentEvent`
+- Events must inherit from `AgentEvent`
 - Request events contain the data needed for the handler to make a decision
 - Response events contain the user's decision and any additional data
 
@@ -551,13 +551,13 @@ External handlers (UI, console, web) subscribe to the agent's event stream and r
 // External handler subscribes to events
 await foreach (var evt in agent.RunAsync("Do something complex"))
 {
-    if (evt is InternalContinuationRequestEvent request)
+    if (evt is ContinuationRequestEvent request)
     {
         // Show prompt to user
         var approved = await PromptUserForContinuation(request);
 
         // Send response back to Middleware
-        agent.EventCoordinator.Emit(new InternalContinuationResponseEvent(
+        agent.EventCoordinator.Emit(new ContinuationResponseEvent(
             request.RequestId,
             approved,
             extensionAmount: 5));
@@ -681,7 +681,7 @@ The LLM call uses **streaming with `yield return`** to emit events in real-time:
 ```csharp
 await foreach (var update in _agentTurn.RunAsync(messages, options, ct))
 {
-    yield return new InternalTextDeltaEvent(textContent.Text);
+    yield return new TextDeltaEvent(textContent.Text);
     // ... more event emissions
 }
 ```

@@ -9,8 +9,8 @@ public sealed class MockPermissionHandler : IDisposable
     private readonly AgentCore _agent;
     private readonly Task _handlerTask;
     private readonly CancellationTokenSource _cts = new();
-    private readonly List<InternalPermissionRequestEvent> _capturedRequests = new();
-    private readonly List<InternalAgentEvent> _capturedEvents = new();
+    private readonly List<PermissionRequestEvent> _capturedRequests = new();
+    private readonly List<AgentEvent> _capturedEvents = new();
     private readonly Queue<PermissionResponse> _queuedResponses = new();
     private readonly object _lock = new();
     private bool _autoApprove = false;
@@ -24,7 +24,7 @@ public sealed class MockPermissionHandler : IDisposable
         string? DenialReason = null,
         PermissionChoice Choice = PermissionChoice.Ask);
 
-        internal MockPermissionHandler(AgentCore agent, IAsyncEnumerable<InternalAgentEvent> eventStream)
+        internal MockPermissionHandler(AgentCore agent, IAsyncEnumerable<AgentEvent> eventStream)
     {
         _agent = agent;
         _handlerTask = Task.Run(async () => await HandleEventsAsync(eventStream));
@@ -33,7 +33,7 @@ public sealed class MockPermissionHandler : IDisposable
     /// <summary>
     /// Gets all permission requests that were captured.
     /// </summary>
-    public IReadOnlyList<InternalPermissionRequestEvent> CapturedRequests
+    public IReadOnlyList<PermissionRequestEvent> CapturedRequests
     {
         get
         {
@@ -47,7 +47,7 @@ public sealed class MockPermissionHandler : IDisposable
     /// <summary>
     /// Gets all events that were captured.
     /// </summary>
-    public IReadOnlyList<InternalAgentEvent> CapturedEvents
+    public IReadOnlyList<AgentEvent> CapturedEvents
     {
         get
         {
@@ -111,7 +111,7 @@ public sealed class MockPermissionHandler : IDisposable
         return this;
     }
 
-    private async Task HandleEventsAsync(IAsyncEnumerable<InternalAgentEvent> eventStream)
+    private async Task HandleEventsAsync(IAsyncEnumerable<AgentEvent> eventStream)
     {
         try
         {
@@ -123,7 +123,7 @@ public sealed class MockPermissionHandler : IDisposable
                     _capturedEvents.Add(evt);
                 }
 
-                if (evt is InternalPermissionRequestEvent permissionRequest)
+                if (evt is PermissionRequestEvent permissionRequest)
                 {
                     // Capture the request
                     lock (_lock)
@@ -158,19 +158,19 @@ public sealed class MockPermissionHandler : IDisposable
                     // Send response back to agent
                     _agent.SendMiddlewareResponse(
                         permissionRequest.PermissionId,
-                        new InternalPermissionResponseEvent(
+                        new PermissionResponseEvent(
                             permissionRequest.PermissionId,
                             "MockPermissionHandler",
                             response.Approved,
                             response.DenialReason,
                             response.Choice));
                 }
-                else if (evt is InternalContinuationRequestEvent continuationRequest)
+                else if (evt is ContinuationRequestEvent continuationRequest)
                 {
                     // Auto-approve continuation requests by default
                     _agent.SendMiddlewareResponse(
                         continuationRequest.ContinuationId,
-                        new InternalContinuationResponseEvent(
+                        new ContinuationResponseEvent(
                             continuationRequest.ContinuationId,
                             "MockPermissionHandler",
                             true));

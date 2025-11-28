@@ -48,7 +48,7 @@ This allows **100% lossless conversion** of internal HPD events:
 
 ```csharp
 // HPD Internal Event → AGUI CustomEvent (NO DATA LOSS)
-InternalPermissionRequestEvent permReq => new CustomEvent
+PermissionRequestEvent permReq => new CustomEvent
 {
     Type = "CUSTOM",
     Name = "PermissionRequest",
@@ -66,9 +66,9 @@ InternalPermissionRequestEvent permReq => new CustomEvent
 
 ```csharp
 // HPD Internal Event → Microsoft Protocol (DATA LOSS)
-InternalPermissionRequestEvent permReq => null  // ❌ FILTERED OUT
-InternalClarificationRequestEvent clarReq => null  // ❌ FILTERED OUT
-InternalFilterProgressEvent progress => null  // ❌ FILTERED OUT
+PermissionRequestEvent permReq => null  // ❌ FILTERED OUT
+ClarificationRequestEvent clarReq => null  // ❌ FILTERED OUT
+FilterProgressEvent progress => null  // ❌ FILTERED OUT
 ```
 
 ---
@@ -138,7 +138,7 @@ public async Task<RunAgentResult> RunAsync(
 // File: HPD-Agent\Agent\AGUI\Agent.cs (EventStreamAdapter class)
 
 public static async IAsyncEnumerable<BaseEvent> ToAGUI(
-    IAsyncEnumerable<InternalAgentEvent> internalStream,
+    IAsyncEnumerable<AgentEvent> internalStream,
     string threadId,
     string runId,
     [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -150,47 +150,47 @@ public static async IAsyncEnumerable<BaseEvent> ToAGUI(
             // ===== EXISTING MAPPINGS (Keep as-is) =====
 
             // MESSAGE TURN → RUN events
-            InternalMessageTurnStartedEvent => EventSerialization.CreateRunStarted(threadId, runId),
-            InternalMessageTurnFinishedEvent => EventSerialization.CreateRunFinished(threadId, runId),
-            InternalMessageTurnErrorEvent e => EventSerialization.CreateRunError(e.Message),
+            MessageTurnStartedEvent => EventSerialization.CreateRunStarted(threadId, runId),
+            MessageTurnFinishedEvent => EventSerialization.CreateRunFinished(threadId, runId),
+            MessageTurnErrorEvent e => EventSerialization.CreateRunError(e.Message),
 
             // AGENT TURN → STEP events
-            InternalAgentTurnStartedEvent e => EventSerialization.CreateStepStarted(
+            AgentTurnStartedEvent e => EventSerialization.CreateStepStarted(
                 stepId: $"step_{e.Iteration}",
                 stepName: $"Iteration {e.Iteration}",
                 description: null),
-            InternalAgentTurnFinishedEvent e => EventSerialization.CreateStepFinished(
+            AgentTurnFinishedEvent e => EventSerialization.CreateStepFinished(
                 stepId: $"step_{e.Iteration}",
                 stepName: $"Iteration {e.Iteration}",
                 result: null),
 
             // TEXT CONTENT events
-            InternalTextMessageStartEvent e => EventSerialization.CreateTextMessageStart(e.MessageId, e.Role),
-            InternalTextDeltaEvent e => EventSerialization.CreateTextMessageContent(e.MessageId, e.Text),
-            InternalTextMessageEndEvent e => EventSerialization.CreateTextMessageEnd(e.MessageId),
+            TextMessageStartEvent e => EventSerialization.CreateTextMessageStart(e.MessageId, e.Role),
+            TextDeltaEvent e => EventSerialization.CreateTextMessageContent(e.MessageId, e.Text),
+            TextMessageEndEvent e => EventSerialization.CreateTextMessageEnd(e.MessageId),
 
             // REASONING events
-            InternalReasoningStartEvent e => EventSerialization.CreateReasoningStart(e.MessageId),
-            InternalReasoningMessageStartEvent e => EventSerialization.CreateReasoningMessageStart(e.MessageId, e.Role),
-            InternalReasoningDeltaEvent e => EventSerialization.CreateReasoningMessageContent(e.MessageId, e.Text),
-            InternalReasoningMessageEndEvent e => EventSerialization.CreateReasoningMessageEnd(e.MessageId),
-            InternalReasoningEndEvent e => EventSerialization.CreateReasoningEnd(e.MessageId),
+            ReasoningStartEvent e => EventSerialization.CreateReasoningStart(e.MessageId),
+            ReasoningMessageStartEvent e => EventSerialization.CreateReasoningMessageStart(e.MessageId, e.Role),
+            ReasoningDeltaEvent e => EventSerialization.CreateReasoningMessageContent(e.MessageId, e.Text),
+            ReasoningMessageEndEvent e => EventSerialization.CreateReasoningMessageEnd(e.MessageId),
+            ReasoningEndEvent e => EventSerialization.CreateReasoningEnd(e.MessageId),
 
             // TOOL events
-            InternalToolCallStartEvent e => EventSerialization.CreateToolCallStart(e.CallId, e.Name, e.MessageId),
-            InternalToolCallArgsEvent e => EventSerialization.CreateToolCallArgs(e.CallId, e.ArgsJson),
-            InternalToolCallEndEvent e => EventSerialization.CreateToolCallEnd(e.CallId),
-            InternalToolCallResultEvent e => EventSerialization.CreateToolCallResult(e.CallId, e.Result),
+            ToolCallStartEvent e => EventSerialization.CreateToolCallStart(e.CallId, e.Name, e.MessageId),
+            ToolCallArgsEvent e => EventSerialization.CreateToolCallArgs(e.CallId, e.ArgsJson),
+            ToolCallEndEvent e => EventSerialization.CreateToolCallEnd(e.CallId),
+            ToolCallResultEvent e => EventSerialization.CreateToolCallResult(e.CallId, e.Result),
 
             // PERMISSION events (Native AGUI support!)
-            InternalPermissionRequestEvent e => EventSerialization.CreateFunctionPermissionRequest(
+            PermissionRequestEvent e => EventSerialization.CreateFunctionPermissionRequest(
                 e.PermissionId,
                 e.FunctionName,
                 e.Description ?? "",
                 e.Arguments?.ToDictionary(kvp => kvp.Key, kvp => kvp.Value) ?? new Dictionary<string, object?>(),
                 new[] { PermissionScope.Conversation, PermissionScope.Project, PermissionScope.Global }),
 
-            InternalContinuationRequestEvent e => EventSerialization.CreateContinuationPermissionRequest(
+            ContinuationRequestEvent e => EventSerialization.CreateContinuationPermissionRequest(
                 e.ContinuationId,
                 e.CurrentIteration,
                 e.MaxIterations,
@@ -200,7 +200,7 @@ public static async IAsyncEnumerable<BaseEvent> ToAGUI(
             // ===== NEW MAPPINGS (CustomEvent for HPD-specific events) =====
 
             // Permission responses (use CustomEvent)
-            InternalPermissionResponseEvent e => new CustomEvent
+            PermissionResponseEvent e => new CustomEvent
             {
                 Type = "CUSTOM",
                 Name = "PermissionResponse",
@@ -213,7 +213,7 @@ public static async IAsyncEnumerable<BaseEvent> ToAGUI(
                 Timestamp = GetTimestamp()
             },
 
-            InternalPermissionApprovedEvent e => new CustomEvent
+            PermissionApprovedEvent e => new CustomEvent
             {
                 Type = "CUSTOM",
                 Name = "PermissionApproved",
@@ -223,7 +223,7 @@ public static async IAsyncEnumerable<BaseEvent> ToAGUI(
                 Timestamp = GetTimestamp()
             },
 
-            InternalPermissionDeniedEvent e => new CustomEvent
+            PermissionDeniedEvent e => new CustomEvent
             {
                 Type = "CUSTOM",
                 Name = "PermissionDenied",
@@ -235,7 +235,7 @@ public static async IAsyncEnumerable<BaseEvent> ToAGUI(
             },
 
             // Continuation responses (use CustomEvent)
-            InternalContinuationResponseEvent e => new CustomEvent
+            ContinuationResponseEvent e => new CustomEvent
             {
                 Type = "CUSTOM",
                 Name = "ContinuationResponse",
@@ -248,7 +248,7 @@ public static async IAsyncEnumerable<BaseEvent> ToAGUI(
             },
 
             // Clarification events (use CustomEvent)
-            InternalClarificationRequestEvent e => new CustomEvent
+            ClarificationRequestEvent e => new CustomEvent
             {
                 Type = "CUSTOM",
                 Name = "ClarificationRequest",
@@ -261,7 +261,7 @@ public static async IAsyncEnumerable<BaseEvent> ToAGUI(
                 Timestamp = GetTimestamp()
             },
 
-            InternalClarificationResponseEvent e => new CustomEvent
+            ClarificationResponseEvent e => new CustomEvent
             {
                 Type = "CUSTOM",
                 Name = "ClarificationResponse",
@@ -274,7 +274,7 @@ public static async IAsyncEnumerable<BaseEvent> ToAGUI(
             },
 
             // Filter events (use CustomEvent)
-            InternalFilterProgressEvent e => new CustomEvent
+            FilterProgressEvent e => new CustomEvent
             {
                 Type = "CUSTOM",
                 Name = "FilterProgress",
@@ -286,7 +286,7 @@ public static async IAsyncEnumerable<BaseEvent> ToAGUI(
                 Timestamp = GetTimestamp()
             },
 
-            InternalFilterErrorEvent e => new CustomEvent
+            FilterErrorEvent e => new CustomEvent
             {
                 Type = "CUSTOM",
                 Name = "FilterError",
@@ -299,7 +299,7 @@ public static async IAsyncEnumerable<BaseEvent> ToAGUI(
             },
 
             // State snapshot (use AGUI native StateSnapshotEvent)
-            InternalStateSnapshotEvent e => new StateSnapshotEvent
+            StateSnapshotEvent e => new StateSnapshotEvent
             {
                 Type = "STATE_SNAPSHOT",
                 State = JsonSerializer.SerializeToElement(e.State),
@@ -323,24 +323,24 @@ private static long GetTimestamp() => DateTimeOffset.UtcNow.ToUnixTimeMillisecon
 
 | HPD Internal Event | AGUI Event Type | Notes |
 |-------------------|-----------------|-------|
-| `InternalMessageTurnStartedEvent` | `RunStartedEvent` | ✅ Native AGUI |
-| `InternalMessageTurnFinishedEvent` | `RunFinishedEvent` | ✅ Native AGUI |
-| `InternalAgentTurnStartedEvent` | `StepStartedEvent` | ✅ Native AGUI |
-| `InternalAgentTurnFinishedEvent` | `StepFinishedEvent` | ✅ Native AGUI |
-| `InternalTextDeltaEvent` | `TextMessageContentEvent` | ✅ Native AGUI |
-| `InternalReasoningDeltaEvent` | `ReasoningMessageContentEvent` | ✅ Native AGUI |
-| `InternalToolCallStartEvent` | `ToolCallStartEvent` | ✅ Native AGUI |
-| `InternalPermissionRequestEvent` | `FunctionPermissionRequestEvent` | ✅ Native AGUI |
-| `InternalContinuationRequestEvent` | `ContinuationPermissionRequestEvent` | ✅ Native AGUI |
-| `InternalPermissionResponseEvent` | `CustomEvent(PermissionResponse)` | 🔧 CustomEvent |
-| `InternalPermissionApprovedEvent` | `CustomEvent(PermissionApproved)` | 🔧 CustomEvent |
-| `InternalPermissionDeniedEvent` | `CustomEvent(PermissionDenied)` | 🔧 CustomEvent |
-| `InternalContinuationResponseEvent` | `CustomEvent(ContinuationResponse)` | 🔧 CustomEvent |
-| `InternalClarificationRequestEvent` | `CustomEvent(ClarificationRequest)` | 🔧 CustomEvent |
-| `InternalClarificationResponseEvent` | `CustomEvent(ClarificationResponse)` | 🔧 CustomEvent |
-| `InternalFilterProgressEvent` | `CustomEvent(FilterProgress)` | 🔧 CustomEvent |
-| `InternalFilterErrorEvent` | `CustomEvent(FilterError)` | 🔧 CustomEvent |
-| `InternalStateSnapshotEvent` | `StateSnapshotEvent` | ✅ Native AGUI |
+| `MessageTurnStartedEvent` | `RunStartedEvent` | ✅ Native AGUI |
+| `MessageTurnFinishedEvent` | `RunFinishedEvent` | ✅ Native AGUI |
+| `AgentTurnStartedEvent` | `StepStartedEvent` | ✅ Native AGUI |
+| `AgentTurnFinishedEvent` | `StepFinishedEvent` | ✅ Native AGUI |
+| `TextDeltaEvent` | `TextMessageContentEvent` | ✅ Native AGUI |
+| `ReasoningDeltaEvent` | `ReasoningMessageContentEvent` | ✅ Native AGUI |
+| `ToolCallStartEvent` | `ToolCallStartEvent` | ✅ Native AGUI |
+| `PermissionRequestEvent` | `FunctionPermissionRequestEvent` | ✅ Native AGUI |
+| `ContinuationRequestEvent` | `ContinuationPermissionRequestEvent` | ✅ Native AGUI |
+| `PermissionResponseEvent` | `CustomEvent(PermissionResponse)` | 🔧 CustomEvent |
+| `PermissionApprovedEvent` | `CustomEvent(PermissionApproved)` | 🔧 CustomEvent |
+| `PermissionDeniedEvent` | `CustomEvent(PermissionDenied)` | 🔧 CustomEvent |
+| `ContinuationResponseEvent` | `CustomEvent(ContinuationResponse)` | 🔧 CustomEvent |
+| `ClarificationRequestEvent` | `CustomEvent(ClarificationRequest)` | 🔧 CustomEvent |
+| `ClarificationResponseEvent` | `CustomEvent(ClarificationResponse)` | 🔧 CustomEvent |
+| `FilterProgressEvent` | `CustomEvent(FilterProgress)` | 🔧 CustomEvent |
+| `FilterErrorEvent` | `CustomEvent(FilterError)` | 🔧 CustomEvent |
+| `StateSnapshotEvent` | `StateSnapshotEvent` | ✅ Native AGUI |
 
 **Result**: 100% lossless event streaming - no HPD events are filtered!
 

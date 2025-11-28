@@ -215,7 +215,20 @@ internal sealed class AgentCore
     /// Execution context for this agent (agent name, ID, hierarchy).
     /// Set during agent initialization to enable event attribution in multi-agent systems.
     /// </summary>
-    public AgentExecutionContext? ExecutionContext { get; internal set; }
+    private AgentExecutionContext? _executionContextValue;
+    public AgentExecutionContext? ExecutionContext
+    {
+        get => _executionContextValue;
+        internal set
+        {
+            _executionContextValue = value;
+            // Sync with event coordinator so it can auto-attach context to events
+            if (value != null)
+            {
+                _eventCoordinator.SetExecutionContext(value);
+            }
+        }
+    }
 
     /// <summary>
     /// Internal access to event coordinator for context setup and nested agent configuration.
@@ -226,13 +239,13 @@ internal sealed class AgentCore
     /// Internal access to Middleware event channel writer for context setup.
     /// Delegates to the event coordinator.
     /// </summary>
-    internal ChannelWriter<InternalAgentEvent> MiddlewareEventWriter => _eventCoordinator.EventWriter;
+    internal ChannelWriter<AgentEvent> MiddlewareEventWriter => _eventCoordinator.EventWriter;
 
     /// <summary>
     /// Internal access to Middleware event channel reader for RunAgenticLoopInternal.
     /// Delegates to the event coordinator.
     /// </summary>
-    internal ChannelReader<InternalAgentEvent> MiddlewareEventReader => _eventCoordinator.EventReader;
+    internal ChannelReader<AgentEvent> MiddlewareEventReader => _eventCoordinator.EventReader;
 
     /// <summary>
     /// Sends a response to a Middleware waiting for a specific request.
@@ -243,7 +256,7 @@ internal sealed class AgentCore
     /// <param name="requestId">The unique identifier for the request</param>
     /// <param name="response">The response event to deliver</param>
     /// <exception cref="ArgumentNullException">If response is null</exception>
-    public void SendMiddlewareResponse(string requestId, InternalAgentEvent response)
+    public void SendMiddlewareResponse(string requestId, AgentEvent response)
     {
         _eventCoordinator.SendResponse(requestId, response);
     }
@@ -256,7 +269,7 @@ internal sealed class AgentCore
     internal async Task<T> WaitForMiddlewareResponseAsync<T>(
         string requestId,
         TimeSpan timeout,
-        CancellationToken cancellationToken) where T : InternalAgentEvent
+        CancellationToken cancellationToken) where T : AgentEvent
     {
         return await _eventCoordinator.WaitForResponseAsync<T>(requestId, timeout, cancellationToken);
     }
@@ -322,8 +335,8 @@ internal sealed class AgentCore
         _IterationMiddleWares = IterationMiddleWares ?? new List<IIterationMiddleWare>();
 
         // Create bidirectional event coordinator for Middleware events and human-in-the-loop
-        // Pass 'this' to enable automatic ExecutionContext attachment to events
-        _eventCoordinator = new BidirectionalEventCoordinator(this);
+        // ExecutionContext is set lazily on first RunAsync via SetExecutionContext()
+        _eventCoordinator = new BidirectionalEventCoordinator();
 
         // Create permission manager
         _permissionManager = new PermissionManager(PermissionMiddlewares);
@@ -341,13 +354,13 @@ internal sealed class AgentCore
             chatReducer,
             config.HistoryReduction);
         _functionCallProcessor = new FunctionCallProcessor(
-            this, // NEW: Pass agent reference for Middleware event coordination
+            _eventCoordinator, // Pass IEventCoordinator for decoupled event emission
             ScopedFunctionMiddlewareManager,
             _permissionManager,
             config.MaxAgenticIterations,
             config.ErrorHandling,
             config.ServerConfiguredTools,
-            config.AgenticLoop);  // NEW: Pass agentic loop config for TerminateOnUnknownCalls
+            config.AgenticLoop);  // Pass agentic loop config for TerminateOnUnknownCalls
         _agentTurn = new AgentTurn(
             _baseClient,
             config.ConfigureOptions,
@@ -461,7 +474,7 @@ internal sealed class AgentCore
     /// Observer failures are logged but don't impact agent execution.
     /// Circuit breaker pattern automatically disables failing observers.
     /// </summary>
-    private void NotifyObservers(InternalAgentEvent evt)
+    private void NotifyObservers(AgentEvent evt)
     {
         if (_observers.Count == 0) return;
 
@@ -503,7 +516,7 @@ internal sealed class AgentCore
         }
     }
 
-    private async IAsyncEnumerable<InternalAgentEvent> RunAgenticLoopInternal(
+    private async IAsyncEnumerable<AgentEvent> RunAgenticLoopInternal(
         PreparedTurn turn,
         string[]? documentPaths,
         List<ChatMessage> turnHistory,
@@ -543,6 +556,8 @@ internal sealed class AgentCore
                 AgentChain = new[] { _name },
                 Depth = 0
             };
+            // Update coordinator with the lazily-initialized execution context
+            _eventCoordinator.SetExecutionContext(ExecutionContext);
         }
 
         // ═══════════════════════════════════════════════════════
@@ -598,7 +613,7 @@ internal sealed class AgentCore
         try
         {
             // Emit MESSAGE TURN started event
-            yield return new InternalMessageTurnStartedEvent(
+            yield return new MessageTurnStartedEvent(
                 messageTurnId,
                 conversationId,
                 _name,
@@ -640,7 +655,7 @@ internal sealed class AgentCore
                 restoreStopwatch.Stop();
 
                 // Emit checkpoint restored event
-                yield return new InternalCheckpointEvent(
+                yield return new CheckpointEvent(
                     Operation: CheckpointOperation.Restored,
                     ThreadId: thread.Id,
                     Timestamp: DateTimeOffset.UtcNow,
@@ -683,7 +698,7 @@ internal sealed class AgentCore
                     // Emit observability event outside try-catch
                     if (pendingWritesLoaded)
                     {
-                        yield return new InternalCheckpointEvent(
+                        yield return new CheckpointEvent(
                             Operation: CheckpointOperation.PendingWritesLoaded,
                             ThreadId: thread.Id,
                             Timestamp: DateTimeOffset.UtcNow,
@@ -719,7 +734,7 @@ internal sealed class AgentCore
                     if (turn.NewReductionMetadata != null)
                     {
                         // Cache miss - new reduction was performed in PrepareTurnAsync
-                        yield return new InternalHistoryReductionCacheEvent(
+                        yield return new HistoryReductionCacheEvent(
                             _name,
                             IsHit: false,
                             turn.ActiveReduction.CreatedAt,
@@ -731,7 +746,7 @@ internal sealed class AgentCore
                     else
                     {
                         // Cache hit - existing reduction was reused
-                        yield return new InternalHistoryReductionCacheEvent(
+                        yield return new HistoryReductionCacheEvent(
                             _name,
                             IsHit: true,
                             turn.ActiveReduction.CreatedAt,
@@ -809,10 +824,10 @@ internal sealed class AgentCore
                 var assistantMessageId = Guid.NewGuid().ToString();
 
                 // Emit iteration start
-                yield return new InternalAgentTurnStartedEvent(state.Iteration);
+                yield return new AgentTurnStartedEvent(state.Iteration);
 
                 // Emit state snapshot for testing/debugging
-                yield return new InternalStateSnapshotEvent(
+                yield return new StateSnapshotEvent(
                     CurrentIteration: state.Iteration,
                     MaxIterations: _maxFunctionCalls,
                     IsTerminated: state.IsTerminated,
@@ -837,7 +852,7 @@ internal sealed class AgentCore
                 // ═══════════════════════════════════════════════════
 
                 // Emit iteration start event
-                yield return new InternalIterationStartEvent(
+                yield return new IterationStartEvent(
                     AgentName: _name,
                     Iteration: state.Iteration,
                     MaxIterations: config.MaxIterations,
@@ -850,7 +865,7 @@ internal sealed class AgentCore
                     Timestamp: DateTimeOffset.UtcNow);
 
                 // Emit decision event
-                yield return new InternalAgentDecisionEvent(
+                yield return new AgentDecisionEvent(
                     AgentName: _name,
                     DecisionType: decision.GetType().Name,
                     Iteration: state.Iteration,
@@ -859,27 +874,8 @@ internal sealed class AgentCore
                     CompletedFunctionsCount: state.CompletedFunctions.Count,
                     Timestamp: DateTimeOffset.UtcNow);
 
-                // If circuit breaker triggered, emit circuit breaker event
-                if (decision is AgentDecision.Terminate terminate &&
-                    terminate.Reason.Contains("Circuit breaker", StringComparison.OrdinalIgnoreCase))
-                {
-                    // Extract function name from termination reason (format: "Circuit breaker triggered: function 'X' called...")
-                    var match = System.Text.RegularExpressions.Regex.Match(
-                        terminate.Reason,
-                        @"function '([^']+)' called (\d+)");
-                    if (match.Success)
-                    {
-                        var functionName = match.Groups[1].Value;
-                        var count = int.Parse(match.Groups[2].Value);
-
-                        yield return new InternalCircuitBreakerTriggeredEvent(
-                            AgentName: _name,
-                            FunctionName: functionName,
-                            ConsecutiveCount: count,
-                            Iteration: state.Iteration,
-                            Timestamp: DateTimeOffset.UtcNow);
-                    }
-                }
+                // NOTE: Circuit breaker events are now emitted directly by CircuitBreakerIterationMiddleware
+                // via context.Emit() in BeforeToolExecutionAsync.
 
                 // Drain Middleware events after decision-making, before execution
                 // CRITICAL: Ensures events emitted during decision logic are yielded before LLM streaming starts
@@ -968,7 +964,7 @@ internal sealed class AgentCore
                         if (scopedOptions?.Tools != null)
                         {
                             var visibleToolNames = scopedOptions.Tools.Select(t => t.Name).ToList();
-                            yield return new InternalScopedToolsVisibleEvent(
+                            yield return new ScopedToolsVisibleEvent(
                                 _name,
                                 state.Iteration,
                                 visibleToolNames,
@@ -1009,7 +1005,7 @@ internal sealed class AgentCore
                         Options = scopedOptions,
                         State = state,
                         CancellationToken = effectiveCancellationToken,
-                        Agent = this  // Enable bidirectional event communication
+                        EventCoordinator = _eventCoordinator  // Enable bidirectional event communication
                     };
 
                     // ═══════════════════════════════════════════════════════
@@ -1085,7 +1081,7 @@ internal sealed class AgentCore
                     else
                     {
                         // Emit iteration messages event
-                        yield return new InternalIterationMessagesEvent(
+                        yield return new IterationMessagesEvent(
                             _name,
                             state.Iteration,
                             messagesToSend.Count(),
@@ -1106,7 +1102,7 @@ internal sealed class AgentCore
                                 {
                                     if (!reasoningStarted)
                                     {
-                                        yield return new InternalReasoningEvent(
+                                        yield return new Reasoning(
                                             Phase: ReasoningPhase.SessionStart,
                                             MessageId: assistantMessageId);
                                         reasoningStarted = true;
@@ -1114,14 +1110,14 @@ internal sealed class AgentCore
 
                                     if (!reasoningMessageStarted)
                                     {
-                                        yield return new InternalReasoningEvent(
+                                        yield return new Reasoning(
                                             Phase: ReasoningPhase.MessageStart,
                                             MessageId: assistantMessageId,
                                             Role: "assistant");
                                         reasoningMessageStarted = true;
                                     }
 
-                                    yield return new InternalReasoningEvent(
+                                    yield return new Reasoning(
                                         Phase: ReasoningPhase.Delta,
                                         MessageId: assistantMessageId,
                                         Text: reasoning.Text);
@@ -1131,14 +1127,14 @@ internal sealed class AgentCore
                                 {
                                     if (reasoningMessageStarted)
                                     {
-                                        yield return new InternalReasoningEvent(
+                                        yield return new Reasoning(
                                             Phase: ReasoningPhase.MessageEnd,
                                             MessageId: assistantMessageId);
                                         reasoningMessageStarted = false;
                                     }
                                     if (reasoningStarted)
                                     {
-                                        yield return new InternalReasoningEvent(
+                                        yield return new Reasoning(
                                             Phase: ReasoningPhase.SessionEnd,
                                             MessageId: assistantMessageId);
                                         reasoningStarted = false;
@@ -1146,22 +1142,22 @@ internal sealed class AgentCore
 
                                     if (!messageStarted)
                                     {
-                                        yield return new InternalTextMessageStartEvent(assistantMessageId, "assistant");
+                                        yield return new TextMessageStartEvent(assistantMessageId, "assistant");
                                         messageStarted = true;
                                     }
 
                                     assistantContents.Add(textContent);
-                                    yield return new InternalTextDeltaEvent(textContent.Text, assistantMessageId);
+                                    yield return new TextDeltaEvent(textContent.Text, assistantMessageId);
                                 }
                                 else if (content is FunctionCallContent functionCall)
                                 {
                                     if (!messageStarted)
                                     {
-                                        yield return new InternalTextMessageStartEvent(assistantMessageId, "assistant");
+                                        yield return new TextMessageStartEvent(assistantMessageId, "assistant");
                                         messageStarted = true;
                                     }
 
-                                    yield return new InternalToolCallStartEvent(
+                                    yield return new ToolCallStartEvent(
                                         functionCall.CallId,
                                         functionCall.Name ?? string.Empty,
                                         assistantMessageId);
@@ -1172,7 +1168,7 @@ internal sealed class AgentCore
                                             functionCall.Arguments,
                                              HPDJsonContext.Default.DictionaryStringObject);
 
-                                        yield return new InternalToolCallArgsEvent(functionCall.CallId, argsJson);
+                                        yield return new ToolCallArgsEvent(functionCall.CallId, argsJson);
                                     }
 
                                     toolRequests.Add(functionCall);
@@ -1192,14 +1188,14 @@ internal sealed class AgentCore
                         {
                             if (reasoningMessageStarted)
                             {
-                                yield return new InternalReasoningEvent(
+                                yield return new Reasoning(
                                     Phase: ReasoningPhase.MessageEnd,
                                     MessageId: assistantMessageId);
                                 reasoningMessageStarted = false;
                             }
                             if (reasoningStarted)
                             {
-                                yield return new InternalReasoningEvent(
+                                yield return new Reasoning(
                                     Phase: ReasoningPhase.SessionEnd,
                                     MessageId: assistantMessageId);
                                 reasoningStarted = false;
@@ -1224,7 +1220,7 @@ internal sealed class AgentCore
                         // Close the message if we started one
                         if (messageStarted)
                         {
-                            yield return new InternalTextMessageEndEvent(assistantMessageId);
+                            yield return new TextMessageEndEvent(assistantMessageId);
                         }
                     } // End of else block (LLM call not skipped)
 
@@ -1236,23 +1232,6 @@ internal sealed class AgentCore
                         ChatRole.Assistant, assistantContents);
                     MiddlewareContext.ToolCalls = toolRequests.AsReadOnly();
                     MiddlewareContext.Exception = null;
-
-                    // ═══════════════════════════════════════════════════════
-                    // ✅ NEW: Execute AFTER iteration Middlewares
-                    // ═══════════════════════════════════════════════════════
-
-                    foreach (var Middleware in _IterationMiddleWares)
-                    {
-                        await Middleware.AfterIterationAsync(
-                            MiddlewareContext,
-                            effectiveCancellationToken).ConfigureAwait(false);
-                    }
-
-                    // ═══════════════════════════════════════════════════════
-                    // ✅ NEW: Process Middleware signals
-                    // ═══════════════════════════════════════════════════════
-
-                    ProcessIterationMiddleWareSignals(MiddlewareContext, ref state);
 
                     // If there are tool requests, execute them immediately
                     if (toolRequests.Count > 0)
@@ -1307,46 +1286,51 @@ internal sealed class AgentCore
                         }
 
                         // ═══════════════════════════════════════════════════════
-                        // CIRCUIT BREAKER: Check BEFORE execution (prevent the call)
+                        // BEFORE TOOL EXECUTION MIDDLEWARE HOOK
+                        // Allows middlewares (e.g., circuit breaker) to inspect pending
+                        // tool calls and prevent execution if needed.
                         // ═══════════════════════════════════════════════════════
-                        if (Config?.AgenticLoop?.MaxConsecutiveFunctionCalls is { } maxConsecutiveCalls)
+                        foreach (var middleware in _IterationMiddleWares)
                         {
-                            bool circuitBreakerTriggered = false;
+                            var middlewareTask = middleware.BeforeToolExecutionAsync(
+                                MiddlewareContext,
+                                effectiveCancellationToken);
 
-                            foreach (var toolRequest in toolRequests)
+                            // Poll for events while middleware executes
+                            while (!middlewareTask.IsCompleted)
                             {
-                                var signature = ComputeFunctionSignatureFromContent(toolRequest);
-                                var toolName = toolRequest.Name ?? "_unknown";
+                                var delayTask = Task.Delay(10, effectiveCancellationToken);
+                                await Task.WhenAny(middlewareTask, delayTask).ConfigureAwait(false);
 
-                                // Calculate what the count WOULD BE if we execute this tool
-                                var lastSig = state.LastSignaturePerTool.GetValueOrDefault(toolName);
-                                var isIdentical = !string.IsNullOrEmpty(lastSig) && signature == lastSig;
-
-                                var countAfterExecution = isIdentical
-                                    ? state.ConsecutiveCountPerTool.GetValueOrDefault(toolName, 0) + 1
-                                    : 1;
-
-                                // Check if executing this tool would exceed the limit
-                                if (countAfterExecution >= maxConsecutiveCalls)
+                                while (_eventCoordinator.EventReader.TryRead(out var evt))
                                 {
-                                    var errorMessage = $"⚠️ Circuit breaker triggered: Function '{toolRequest.Name}' " +
-                                        $"with same arguments would be called {countAfterExecution} times consecutively. " +
-                                        $"Stopping to prevent infinite loop.";
-
-                                    yield return new InternalTextDeltaEvent(errorMessage, assistantMessageId);
-
-                                    var terminationReason = $"Circuit breaker: '{toolRequest.Name}' " +
-                                        $"with same arguments would be called {countAfterExecution} times consecutively";
-                                    state = state.Terminate(terminationReason);
-                                    circuitBreakerTriggered = true;
-                                    break;
+                                    yield return evt;
                                 }
                             }
 
-                            if (circuitBreakerTriggered)
+                            await middlewareTask.ConfigureAwait(false);
+                        }
+
+                        // Drain any remaining events after middleware execution
+                        while (_eventCoordinator.EventReader.TryRead(out var postMiddlewareEvt))
+                        {
+                            yield return postMiddlewareEvt;
+                        }
+
+                        // Check if middleware signaled to skip tool execution (e.g., circuit breaker)
+                        if (MiddlewareContext.SkipToolExecution)
+                        {
+                            // Process termination signals from middleware
+                            ProcessIterationMiddleWareSignals(MiddlewareContext, ref state);
+
+                            if (MiddlewareContext.Properties.TryGetValue("IsTerminated", out var isTerminatedByMiddleware) &&
+                                isTerminatedByMiddleware is true)
                             {
                                 break; // Exit the main loop WITHOUT executing tools
                             }
+
+                            // If not terminated, continue to next iteration without executing tools
+                            continue;
                         }
 
                         // Execute tools with event polling (CRITICAL for permissions)
@@ -1385,6 +1369,36 @@ internal sealed class AgentCore
                         }
 
                         // ═══════════════════════════════════════════════════════
+                        // AFTER ITERATION MIDDLEWARES (post-tool execution)
+                        // Populate ToolResults and call AfterIterationAsync
+                        // ═══════════════════════════════════════════════════════
+                        MiddlewareContext.ToolResults = toolResultMessage.Contents
+                            .OfType<FunctionResultContent>()
+                            .ToList()
+                            .AsReadOnly();
+
+                        foreach (var middleware in _IterationMiddleWares)
+                        {
+                            await middleware.AfterIterationAsync(
+                                MiddlewareContext,
+                                effectiveCancellationToken).ConfigureAwait(false);
+                        }
+
+                        // Process middleware signals (e.g., termination, state updates)
+                        ProcessIterationMiddleWareSignals(MiddlewareContext, ref state);
+
+                        // Check if middleware signaled termination
+                        if (MiddlewareContext.Properties.TryGetValue("IsTerminated", out var terminated) &&
+                            terminated is true)
+                        {
+                            var reason = MiddlewareContext.Properties.TryGetValue("TerminationReason", out var r)
+                                ? r?.ToString() ?? "Middleware requested termination"
+                                : "Middleware requested termination";
+                            state = state.Terminate(reason);
+                            break;
+                        }
+
+                        // ═══════════════════════════════════════════════════════
                         // PENDING WRITES (save successful function results immediately)
                         // ═══════════════════════════════════════════════════════
                         if (Config?.EnablePendingWrites == true &&
@@ -1395,55 +1409,11 @@ internal sealed class AgentCore
                             SavePendingWritesFireAndForget(toolResultMessage, state, Config.ThreadStore, thread.Id);
                         }
 
-                        // ═══════════════════════════════════════════════════════
-                        // ERROR TRACKING (AFTER tool execution, BEFORE container updates)
-                        // ✅ FIXED: Enhanced error detection to reduce false positives
-                        bool hasErrors = toolResultMessage.Contents
-                            .OfType<FunctionResultContent>()
-                            .Any(r =>
-                            {
-                                // Primary signal: Exception present
-                                if (r.Exception != null) return true;
-
-                                // Secondary signal: Result contains error indicators
-                                var resultStr = r.Result?.ToString();
-                                if (string.IsNullOrEmpty(resultStr)) return false;
-
-                                // Check for definitive error patterns (case-insensitive)
-                                return resultStr.StartsWith("Error:", StringComparison.OrdinalIgnoreCase) ||
-                                       resultStr.StartsWith("Failed:", StringComparison.OrdinalIgnoreCase) ||
-                                       // More precise exception matching - look for error context
-                                       resultStr.Contains("exception occurred", StringComparison.OrdinalIgnoreCase) ||
-                                       resultStr.Contains("unhandled exception", StringComparison.OrdinalIgnoreCase) ||
-                                       resultStr.Contains("exception was thrown", StringComparison.OrdinalIgnoreCase) ||
-                                       // More precise rate limit matching - look for error context
-                                       resultStr.Contains("rate limit exceeded", StringComparison.OrdinalIgnoreCase) ||
-                                       resultStr.Contains("rate limited", StringComparison.OrdinalIgnoreCase) ||
-                                       resultStr.Contains("quota exceeded", StringComparison.OrdinalIgnoreCase) ||
-                                       resultStr.Contains("quota reached", StringComparison.OrdinalIgnoreCase);
-                            });
-
-                        if (hasErrors)
-                        {
-                            state = state.WithFailure();
-
-                            var maxConsecutiveErrors = Config?.ErrorHandling?.MaxRetries ?? 3;
-                            if (state.ConsecutiveFailures >= maxConsecutiveErrors)
-                            {
-                                var errorMessage = $"⚠️ Maximum consecutive errors ({maxConsecutiveErrors}) exceeded. " +
-                                    "Stopping execution to prevent infinite error loop.";
-
-                                yield return new InternalTextDeltaEvent(errorMessage, assistantMessageId);
-
-                                var terminationReason = $"Exceeded maximum consecutive errors ({maxConsecutiveErrors})";
-                                state = state.Terminate(terminationReason);
-                                break;  // ✅ EXIT LOOP
-                            }
-                        }
-                        else
-                        {
-                            state = state.WithSuccess();
-                        }
+                        // NOTE: Error tracking logic has been moved to ErrorTrackingIterationMiddleware
+                        // which runs in AfterIterationAsync (after tool execution).
+                        // The middleware signals state updates via Properties["ShouldIncrementFailures"]
+                        // and Properties["ShouldResetFailures"], processed by ProcessIterationMiddleWareSignals.
+                        // This provides configurable error detection and is registered via WithErrorTracking().
 
                         // ═══════════════════════════════════════════════════════
                         // UPDATE STATE WITH CONTAINER EXPANSIONS
@@ -1507,8 +1477,8 @@ internal sealed class AgentCore
                         {
                             if (content is FunctionResultContent result)
                             {
-                                yield return new InternalToolCallEndEvent(result.CallId);
-                                yield return new InternalToolCallResultEvent(result.CallId, result.Result?.ToString() ?? "null");
+                                yield return new ToolCallEndEvent(result.CallId);
+                                yield return new ToolCallResultEvent(result.CallId, result.Result?.ToString() ?? "null");
                             }
                         }
 
@@ -1536,6 +1506,18 @@ internal sealed class AgentCore
                     else
                     {
                         // No tools called - we're done
+                        // Call AfterIterationAsync with empty ToolResults for final iteration
+                        MiddlewareContext.ToolResults = Array.Empty<FunctionResultContent>();
+
+                        foreach (var middleware in _IterationMiddleWares)
+                        {
+                            await middleware.AfterIterationAsync(
+                                MiddlewareContext,
+                                effectiveCancellationToken).ConfigureAwait(false);
+                        }
+
+                        ProcessIterationMiddleWareSignals(MiddlewareContext, ref state);
+
                         var finalResponse = ConstructChatResponseFromUpdates(responseUpdates, Config?.PreserveReasoningInHistory ?? false);
                         lastResponse = finalResponse;
 
@@ -1586,7 +1568,7 @@ internal sealed class AgentCore
                 }
 
                 // Emit iteration end
-                yield return new InternalAgentTurnFinishedEvent(state.Iteration);
+                yield return new AgentTurnFinishedEvent(state.Iteration);
 
                 // Advance to next iteration
                 state = state.NextIteration();
@@ -1634,7 +1616,7 @@ internal sealed class AgentCore
                                             CancellationToken.None);
 
                                         // Emit pending writes deleted event
-                                        NotifyObservers(new InternalCheckpointEvent(
+                                        NotifyObservers(new CheckpointEvent(
                                             Operation: CheckpointOperation.PendingWritesDeleted,
                                             ThreadId: threadId,
                                             Timestamp: DateTimeOffset.UtcNow));
@@ -1649,7 +1631,7 @@ internal sealed class AgentCore
                             stopwatch.Stop();
 
                             // Emit checkpoint success event
-                            NotifyObservers(new InternalCheckpointEvent(
+                            NotifyObservers(new CheckpointEvent(
                                 Operation: CheckpointOperation.Saved,
                                 ThreadId: thread.Id,
                                 Timestamp: DateTimeOffset.UtcNow,
@@ -1662,7 +1644,7 @@ internal sealed class AgentCore
                             stopwatch.Stop();
 
                             // Emit checkpoint failure event
-                            NotifyObservers(new InternalCheckpointEvent(
+                            NotifyObservers(new CheckpointEvent(
                                 Operation: CheckpointOperation.Saved,
                                 ThreadId: thread.Id,
                                 Timestamp: DateTimeOffset.UtcNow,
@@ -1683,7 +1665,7 @@ internal sealed class AgentCore
             // ═══════════════════════════════════════════════════════
             // NOTE: Do NOT auto-generate termination messages for max iterations.
             // Iteration Middlewares (like ContinuationPermissionIterationMiddleWare) are responsible
-            // for emitting bidirectional events (InternalContinuationRequestEvent) that the
+            // for emitting bidirectional events (ContinuationRequestEvent) that the
             // consumer can handle. The fallback termination message would mask these events,
             // defeating the purpose of bidirectional communication.
             // Let the event flow to the consumer - they decide what to do.
@@ -1719,7 +1701,7 @@ internal sealed class AgentCore
 
             // Emit MESSAGE TURN finished event
             turnStopwatch.Stop();
-            yield return new InternalMessageTurnFinishedEvent(
+            yield return new MessageTurnFinishedEvent(
                 messageTurnId,
                 conversationId,
                 _name,
@@ -1753,7 +1735,7 @@ internal sealed class AgentCore
             }
 
             // Emit agent completion event
-            yield return new InternalAgentCompletionEvent(
+            yield return new AgentCompletionEvent(
                 _name,
                 state.Iteration,
                 turnStopwatch.Elapsed,
@@ -1803,7 +1785,7 @@ internal sealed class AgentCore
                                         CancellationToken.None);
 
                                     // Emit pending writes deleted event
-                                    NotifyObservers(new InternalCheckpointEvent(
+                                    NotifyObservers(new CheckpointEvent(
                                         Operation: CheckpointOperation.PendingWritesDeleted,
                                         ThreadId: threadId,
                                         Timestamp: DateTimeOffset.UtcNow));
@@ -1825,7 +1807,7 @@ internal sealed class AgentCore
                         stopwatch.Stop();
 
                         // Emit checkpoint event
-                        NotifyObservers(new InternalCheckpointEvent(
+                        NotifyObservers(new CheckpointEvent(
                             Operation: CheckpointOperation.Saved,
                             ThreadId: thread.Id,
                             Timestamp: DateTimeOffset.UtcNow,
@@ -2075,7 +2057,7 @@ internal sealed class AgentCore
                     CancellationToken.None).ConfigureAwait(false);
 
                 // Emit pending writes saved event
-                NotifyObservers(new InternalCheckpointEvent(
+                NotifyObservers(new CheckpointEvent(
                     Operation: CheckpointOperation.PendingWritesSaved,
                     ThreadId: threadId,
                     Timestamp: DateTimeOffset.UtcNow,
@@ -2423,7 +2405,7 @@ Best practices:
     /// <param name="options">Chat options including tools</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Stream of internal agent events</returns>
-    public async IAsyncEnumerable<InternalAgentEvent> RunAgenticLoopAsync(
+    public async IAsyncEnumerable<AgentEvent> RunAgenticLoopAsync(
         IEnumerable<ChatMessage> messages,
         ChatOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -2480,7 +2462,7 @@ Best practices:
     /// <param name="options">Optional chat options</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Stream of internal agent events</returns>
-    public async IAsyncEnumerable<InternalAgentEvent> RunAsync(
+    public async IAsyncEnumerable<AgentEvent> RunAsync(
         IEnumerable<ChatMessage> messages,
         ChatOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -2518,6 +2500,26 @@ Best practices:
     }
 
     /// <summary>
+    /// Runs the agent with a simple string message.
+    /// Convenience overload that wraps the message as a user ChatMessage.
+    /// </summary>
+    /// <param name="userMessage">The user's message text</param>
+    /// <param name="thread">Thread containing conversation history</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Stream of internal agent events</returns>
+    public IAsyncEnumerable<AgentEvent> RunAsync(
+        string userMessage,
+        ConversationThread thread,
+        CancellationToken cancellationToken = default)
+    {
+        return RunAsync(
+            [new ChatMessage(ChatRole.User, userMessage)],
+            options: null,
+            thread: thread,
+            cancellationToken: cancellationToken);
+    }
+
+    /// <summary>
     /// Runs the agent with checkpoint/resume support via ConversationThread.
     /// Use this overload for durable execution with crash recovery.
     /// </summary>
@@ -2526,7 +2528,7 @@ Best practices:
     /// <param name="thread">Thread containing conversation history and optional execution state checkpoint</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Stream of internal agent events</returns>
-    public async IAsyncEnumerable<InternalAgentEvent> RunAsync(
+    public async IAsyncEnumerable<AgentEvent> RunAsync(
         IEnumerable<ChatMessage> messages,
         ChatOptions? options,
         ConversationThread thread,
@@ -2634,8 +2636,19 @@ Best practices:
             };
         }
 
+        // Handle error tracking signals from ErrorTrackingIterationMiddleware
+        if (context.Properties.TryGetValue("ShouldIncrementFailures", out var increment) &&
+            increment is true)
+        {
+            state = state.WithFailure();
+        }
+        else if (context.Properties.TryGetValue("ShouldResetFailures", out var reset) &&
+                 reset is true)
+        {
+            state = state.WithSuccess();
+        }
+
         // Future: Add more signal handlers here as needed
-        // Example: context.Properties["ShouldTerminate"] = true;
     }
 
     #endregion
@@ -2695,10 +2708,9 @@ internal sealed class AgentDecisionEngine
         if (state.IsTerminated)
             return new AgentDecision.Terminate(state.TerminationReason ?? "Terminated");
 
-        // Check: Too many consecutive errors
-        if (state.ConsecutiveFailures >= config.MaxConsecutiveFailures)
-            return new AgentDecision.Terminate(
-                $"Maximum consecutive failures ({config.MaxConsecutiveFailures}) exceeded");
+        // NOTE: Consecutive error checking is now handled by ErrorTrackingIterationMiddleware
+        // which runs in AfterIterationAsync and signals termination via Properties["IsTerminated"].
+        // The middleware provides configurable error detection and is registered via WithErrorTracking().
 
         // ═══════════════════════════════════════════════════════
         // PRIORITY 2: FIRST ITERATION
@@ -2720,31 +2732,12 @@ internal sealed class AgentDecisionEngine
         if (!hasToolCalls)
             return new AgentDecision.Complete(lastResponse);
 
-        // ═══════════════════════════════════════════════════════
-        // PRIORITY 4: CIRCUIT BREAKER CHECK
-        // Prevent infinite loops from repeated identical tool calls
-        // ═══════════════════════════════════════════════════════
-
-        if (config.MaxConsecutiveFunctionCalls.HasValue)
-        {
-            var toolRequests = ExtractToolRequestsFromResponse(lastResponse);
-
-            foreach (var toolRequest in toolRequests)
-            {
-                var signature = ComputeFunctionSignature(toolRequest);
-
-                // Check if this function signature has been called too many times consecutively
-                if (state.ConsecutiveCountPerTool.TryGetValue(toolRequest.Name, out var count) &&
-                    count >= config.MaxConsecutiveFunctionCalls.Value)
-                {
-                    return new AgentDecision.Terminate(
-                        $"Circuit breaker triggered: function '{toolRequest.Name}' called {count} consecutive times with identical arguments");
-                }
-            }
-        }
+        // NOTE: Circuit breaker logic has been moved to CircuitBreakerIterationMiddleware
+        // which runs in BeforeToolExecutionAsync (after LLM call, before tool execution).
+        // This provides predictive checking and is configurable via WithCircuitBreaker().
 
         // ═══════════════════════════════════════════════════════
-        // PRIORITY 5: UNKNOWN TOOLS CHECK
+        // PRIORITY 4: UNKNOWN TOOLS CHECK
         // Check if all requested tools are available (optional)
         // ═══════════════════════════════════════════════════════
 
@@ -3948,7 +3941,7 @@ internal static class ContentExtractor
 /// </summary>
 internal class FunctionCallProcessor
 {
-    private readonly AgentCore _agent; // NEW: Reference to agent for Middleware event coordination
+    private readonly IEventCoordinator _eventCoordinator;
     private readonly ScopedFunctionMiddlewareManager? _ScopedFunctionMiddlewareManager;
     private readonly PermissionManager _permissionManager;
     private readonly int _maxFunctionCalls;
@@ -3957,7 +3950,7 @@ internal class FunctionCallProcessor
     private readonly AgenticLoopConfig? _agenticLoopConfig;
 
     public FunctionCallProcessor(
-        AgentCore agent, // NEW: Added parameter
+        IEventCoordinator eventCoordinator,
         ScopedFunctionMiddlewareManager? ScopedFunctionMiddlewareManager,
         PermissionManager permissionManager,
         int maxFunctionCalls,
@@ -3965,7 +3958,7 @@ internal class FunctionCallProcessor
         IList<AITool>? serverConfiguredTools = null,
         AgenticLoopConfig? agenticLoopConfig = null)
     {
-        _agent = agent ?? throw new ArgumentNullException(nameof(agent));
+        _eventCoordinator = eventCoordinator ?? throw new ArgumentNullException(nameof(eventCoordinator));
         _ScopedFunctionMiddlewareManager = ScopedFunctionMiddlewareManager;
         _permissionManager = permissionManager ?? throw new ArgumentNullException(nameof(permissionManager));
         _maxFunctionCalls = maxFunctionCalls;
@@ -4081,7 +4074,7 @@ internal class FunctionCallProcessor
     {
         // PHASE 1: Batch permission check (ONCE, not duplicated per-tool)
         var permissionResult = await _permissionManager.CheckPermissionsAsync(
-            toolRequests, options, agentLoopState, _agent, cancellationToken).ConfigureAwait(false);
+            toolRequests, options, agentLoopState, _eventCoordinator, cancellationToken).ConfigureAwait(false);
 
         var approvedTools = permissionResult.Approved;
         var deniedTools = permissionResult.Denied;
@@ -4278,9 +4271,8 @@ internal class FunctionCallProcessor
                 CallId = functionCall.CallId,
                 Iteration = agentLoopState.Iteration,
                 TotalFunctionCallsInRun = agentLoopState.CompletedFunctions.Count,
-                // Point to Agent's shared channel for event emission
-                OutboundEvents = _agent.MiddlewareEventWriter,
-                Agent = _agent
+                // Use IEventCoordinator for decoupled event emission
+                EventCoordinator = _eventCoordinator
             };
 
             // Store CallId in metadata for extensibility
@@ -4302,7 +4294,7 @@ internal class FunctionCallProcessor
                 functionCall,
                 context.Function,
                 agentLoopState,
-                _agent,
+                _eventCoordinator,
                 cancellationToken).ConfigureAwait(false);
 
             // If permission denied, record the denial and skip execution
@@ -4394,7 +4386,7 @@ internal class FunctionCallProcessor
                 Middlewarestopwatch.Stop();
 
                 // Emit error event before handling
-                context.OutboundEvents?.TryWrite(new InternalMiddlewareErrorEvent(
+                context.EventCoordinator?.Emit(new MiddlewareErrorEvent(
                     "MiddlewarePipeline",
                     $"Error in Middleware pipeline: {ex.Message}",
                     ex));
@@ -5460,7 +5452,7 @@ internal class PermissionManager
         FunctionCallContent functionCall,
         AIFunction? function,
         AgentLoopState state,
-        AgentCore agent,
+        IEventCoordinator eventCoordinator,
         CancellationToken cancellationToken)
     {
         // Null checks
@@ -5497,9 +5489,8 @@ internal class PermissionManager
             CallId = functionCall.CallId,
             Iteration = state.Iteration,
             TotalFunctionCallsInRun = state.CompletedFunctions.Count,
-            // Set OutboundEvents and Agent for permission event emission
-            OutboundEvents = agent.MiddlewareEventWriter,
-            Agent = agent
+            // Use IEventCoordinator for decoupled event emission
+            EventCoordinator = eventCoordinator
         };
 
         context.Metadata["CallId"] = functionCall.CallId;
@@ -5526,7 +5517,7 @@ internal class PermissionManager
         IEnumerable<FunctionCallContent> toolRequests,
         ChatOptions? options,
         AgentLoopState state,
-        AgentCore agent,
+        IEventCoordinator eventCoordinator,
         CancellationToken cancellationToken)
     {
         var approved = new List<FunctionCallContent>();
@@ -5541,7 +5532,7 @@ internal class PermissionManager
             var function = FunctionMapBuilder.FindFunction(toolRequest.Name ?? string.Empty, functionMap);
 
             var result = await CheckPermissionAsync(
-                toolRequest, function, state, agent, cancellationToken).ConfigureAwait(false);
+                toolRequest, function, state, eventCoordinator, cancellationToken).ConfigureAwait(false);
 
             if (result.IsApproved)
                 approved.Add(toolRequest);
@@ -5669,21 +5660,21 @@ internal static class ErrorFormatter
 /// - Multiple Middlewares can emit concurrently
 /// - Event channel supports multiple producers, single consumer
 /// </remarks>
-internal class BidirectionalEventCoordinator : IDisposable
+internal class BidirectionalEventCoordinator : IEventCoordinator, IDisposable
 {
     /// <summary>
     /// Shared event channel for all events.
     /// Unbounded to prevent blocking during event emission.
     /// Thread-safe: Multiple producers (Middlewares), single consumer (background drainer).
     /// </summary>
-    private readonly Channel<InternalAgentEvent> _eventChannel;
+    private readonly Channel<AgentEvent> _eventChannel;
 
     /// <summary>
     /// Response coordination for bidirectional patterns.
     /// Maps requestId -> (TaskCompletionSource, CancellationTokenSource)
     /// Thread-safe: ConcurrentDictionary handles concurrent access.
     /// </summary>
-    private readonly ConcurrentDictionary<string, (TaskCompletionSource<InternalAgentEvent>, CancellationTokenSource)>
+    private readonly ConcurrentDictionary<string, (TaskCompletionSource<AgentEvent>, CancellationTokenSource)>
         _responseWaiters = new();
 
     /// <summary>
@@ -5694,24 +5685,37 @@ internal class BidirectionalEventCoordinator : IDisposable
     private BidirectionalEventCoordinator? _parentCoordinator;
 
     /// <summary>
-    /// Owning agent for automatic ExecutionContext attachment.
+    /// Execution context for automatic attachment to events.
     /// Used to attach ExecutionContext to events that don't already have it.
+    /// Decoupled from AgentCore for testability and clean architecture.
+    /// Can be set after construction via SetExecutionContext() for lazy initialization.
     /// </summary>
-    private readonly AgentCore? _owningAgent;
+    private AgentExecutionContext? _executionContext;
 
     /// <summary>
     /// Creates a new bidirectional event coordinator.
     /// </summary>
-    /// <param name="owningAgent">The agent that owns this coordinator (for ExecutionContext attachment)</param>
-    public BidirectionalEventCoordinator(AgentCore? owningAgent = null)
+    /// <param name="executionContext">The execution context for event attribution (optional)</param>
+    public BidirectionalEventCoordinator(AgentExecutionContext? executionContext = null)
     {
-        _owningAgent = owningAgent;
-        _eventChannel = Channel.CreateUnbounded<InternalAgentEvent>(new UnboundedChannelOptions
+        _executionContext = executionContext;
+        _eventChannel = Channel.CreateUnbounded<AgentEvent>(new UnboundedChannelOptions
         {
             SingleWriter = false,  // Multiple Middlewares can emit concurrently
             SingleReader = true,   // Only background drainer reads
             AllowSynchronousContinuations = false  // Performance & safety
         });
+    }
+
+    /// <summary>
+    /// Sets the execution context for event attribution.
+    /// Called when the execution context is lazily initialized (e.g., on first RunAsync).
+    /// Thread-safe: Can be called from any thread.
+    /// </summary>
+    /// <param name="executionContext">The execution context to attach to events</param>
+    public void SetExecutionContext(AgentExecutionContext executionContext)
+    {
+        _executionContext = executionContext ?? throw new ArgumentNullException(nameof(executionContext));
     }
 
     /// <summary>
@@ -5722,13 +5726,13 @@ internal class BidirectionalEventCoordinator : IDisposable
     /// Note: For most use cases, prefer Emit() method over direct channel access
     /// as it handles event bubbling to parent coordinators.
     /// </remarks>
-    public ChannelWriter<InternalAgentEvent> EventWriter => _eventChannel.Writer;
+    public ChannelWriter<AgentEvent> EventWriter => _eventChannel.Writer;
 
     /// <summary>
     /// Gets the channel reader for event consumption.
     /// Used by the agent's background drainer to read events.
     /// </summary>
-    public ChannelReader<InternalAgentEvent> EventReader => _eventChannel.Reader;
+    public ChannelReader<AgentEvent> EventReader => _eventChannel.Reader;
 
     /// <summary>
     /// Sets the parent coordinator for event bubbling in nested agent scenarios.
@@ -5805,7 +5809,7 @@ internal class BidirectionalEventCoordinator : IDisposable
     /// - Handlers at any level can process the event
     /// - ExecutionContext enables filtering/routing by agent name, depth, or hierarchy
     /// </remarks>
-    public void Emit(InternalAgentEvent evt)
+    public void Emit(AgentEvent evt)
     {
         if (evt == null)
             throw new ArgumentNullException(nameof(evt));
@@ -5813,13 +5817,17 @@ internal class BidirectionalEventCoordinator : IDisposable
         // Auto-attach execution context if not already set
         // This enables event attribution in multi-agent systems
         var eventToEmit = evt;
-        if (evt.ExecutionContext == null && _owningAgent?.ExecutionContext != null)
+        if (evt.ExecutionContext == null && _executionContext != null)
         {
-            eventToEmit = evt with { ExecutionContext = _owningAgent.ExecutionContext };
+            eventToEmit = evt with { ExecutionContext = _executionContext };
         }
 
         // Emit to local channel
-        _eventChannel.Writer.TryWrite(eventToEmit);
+        if (!_eventChannel.Writer.TryWrite(eventToEmit))
+        {
+            // Channel is closed or full - log but don't throw to avoid crashing the agent
+            System.Diagnostics.Debug.WriteLine($"Failed to write event to channel: {eventToEmit.GetType().Name}");
+        }
 
         // Bubble to parent coordinator (if nested agent)
         // This creates a chain: NestedAgent -> Orchestrator -> RootOrchestrator
@@ -5843,16 +5851,16 @@ internal class BidirectionalEventCoordinator : IDisposable
     /// // In handler
     /// await foreach (var evt in agent.RunStreamingAsync(...))
     /// {
-    ///     if (evt is InternalPermissionRequestEvent permReq)
+    ///     if (evt is PermissionRequestEvent permReq)
     ///     {
     ///         var approved = PromptUser(permReq);
     ///         coordinator.SendResponse(permReq.PermissionId,
-    ///             new InternalPermissionResponseEvent(permReq.PermissionId, approved));
+    ///             new PermissionResponseEvent(permReq.PermissionId, approved));
     ///     }
     /// }
     /// </code>
     /// </remarks>
-    public void SendResponse(string requestId, InternalAgentEvent response)
+    public void SendResponse(string requestId, AgentEvent response)
     {
         if (response == null)
             throw new ArgumentNullException(nameof(response));
@@ -5879,7 +5887,7 @@ internal class BidirectionalEventCoordinator : IDisposable
     /// <exception cref="InvalidOperationException">Response type mismatch</exception>
     /// <remarks>
     /// This method is used by Middlewares that need bidirectional communication:
-    /// 1. Middleware emits request event (e.g., InternalPermissionRequestEvent)
+    /// 1. Middleware emits request event (e.g., PermissionRequestEvent)
     /// 2. Middleware calls WaitForResponseAsync() - BLOCKS HERE
     /// 3. Handler receives request event (via agent's event loop)
     /// 4. User provides input
@@ -5897,11 +5905,11 @@ internal class BidirectionalEventCoordinator : IDisposable
     /// <code>
     /// // In Middleware
     /// var requestId = Guid.NewGuid().ToString();
-    /// coordinator.Emit(new InternalPermissionRequestEvent(requestId, ...));
+    /// coordinator.Emit(new PermissionRequestEvent(requestId, ...));
     ///
     /// try
     /// {
-    ///     var response = await coordinator.WaitForResponseAsync&lt;InternalPermissionResponseEvent&gt;(
+    ///     var response = await coordinator.WaitForResponseAsync&lt;PermissionResponseEvent&gt;(
     ///         requestId,
     ///         TimeSpan.FromMinutes(5),
     ///         cancellationToken);
@@ -5921,9 +5929,9 @@ internal class BidirectionalEventCoordinator : IDisposable
     public async Task<T> WaitForResponseAsync<T>(
         string requestId,
         TimeSpan timeout,
-        CancellationToken cancellationToken) where T : InternalAgentEvent
+        CancellationToken cancellationToken) where T : AgentEvent
     {
-        var tcs = new TaskCompletionSource<InternalAgentEvent>();
+        var tcs = new TaskCompletionSource<AgentEvent>();
         var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         cts.CancelAfter(timeout);
 
@@ -6309,646 +6317,6 @@ internal static class MiddlewareChain
 #endregion
 
 
-
-
-
-#region Internal Events
-/// <summary>
-/// Provides hierarchical context about which agent emitted an event.
-/// Enables event attribution and filtering in multi-agent systems.
-/// </summary>
-public record AgentExecutionContext
-{
-    /// <summary>
-    /// The immediate agent that emitted this event (e.g., "WeatherExpert")
-    /// </summary>
-    public required string AgentName { get; init; }
-
-    /// <summary>
-    /// Hierarchical agent ID showing full execution path.
-    /// Format: "parent-abc12345-weatherExpert-def67890"
-    /// </summary>
-    public required string AgentId { get; init; }
-
-    /// <summary>
-    /// Parent agent ID (null if this is root orchestrator)
-    /// </summary>
-    public string? ParentAgentId { get; init; }
-
-    /// <summary>
-    /// Full agent chain from root to current.
-    /// Example: ["Orchestrator", "DomainExpert", "WeatherExpert"]
-    /// </summary>
-    public IReadOnlyList<string> AgentChain { get; init; } = Array.Empty<string>();
-
-    /// <summary>
-    /// Depth in the agent hierarchy (0 = root, 1 = direct SubAgent, etc.)
-    /// </summary>
-    public int Depth { get; init; }
-
-    /// <summary>
-    /// Is this event from a SubAgent (vs root orchestrator)?
-    /// </summary>
-    public bool IsSubAgent => Depth > 0;
-}
-
-/// <summary>
-/// Protocol-agnostic internal events emitted by the agent core.
-/// These events represent what actually happened during agent execution,
-/// independent of any specific protocol.
-///
-/// KEY CONCEPTS:
-/// - MESSAGE TURN: The entire user interaction (user sends message → agent responds)
-///   May contain multiple agent turns if tools are called
-/// - AGENT TURN: A single call to the LLM (one iteration in the agentic loop)
-///   Multiple agent turns happen within one message turn when using tools
-///
-/// Adapters convert these to protocol-specific formats as needed.
-/// </summary>
-public abstract record InternalAgentEvent
-{
-    /// <summary>
-    /// Context about which agent emitted this event (optional for backwards compatibility).
-    /// Automatically attached by BidirectionalEventCoordinator.Emit() if not already set.
-    /// </summary>
-    public AgentExecutionContext? ExecutionContext { get; init; }
-}
-
-#region Message Turn Events (Entire User Interaction)
-
-/// <summary>
-/// Emitted when a message turn starts (user sends message, agent begins processing)
-/// This represents the START of the entire multi-step agent execution.
-/// </summary>
-public record InternalMessageTurnStartedEvent(
-    string MessageTurnId,
-    string ConversationId,
-    string AgentName,
-    DateTimeOffset Timestamp) : InternalAgentEvent;
-
-/// <summary>
-/// Emitted when a message turn completes successfully
-/// This represents the END of the entire agent execution for this user message.
-/// </summary>
-public record InternalMessageTurnFinishedEvent(
-    string MessageTurnId,
-    string ConversationId,
-    string AgentName,
-    TimeSpan Duration,
-    DateTimeOffset Timestamp) : InternalAgentEvent;
-
-/// <summary>
-/// Emitted when an error occurs during message turn execution
-/// </summary>
-public record InternalMessageTurnErrorEvent(string Message, Exception? Exception = null) : InternalAgentEvent;
-
-#endregion
-
-#region Agent Turn Events (Single LLM Call Within Message Turn)
-
-/// <summary>
-/// Emitted when an agent turn starts (single LLM call within the agentic loop)
-/// An agent turn represents one iteration where the LLM processes messages and responds.
-/// Multiple agent turns may occur in one message turn when tools are called.
-/// </summary>
-public record InternalAgentTurnStartedEvent(int Iteration) : InternalAgentEvent;
-
-/// <summary>
-/// Emitted when an agent turn completes
-/// </summary>
-public record InternalAgentTurnFinishedEvent(int Iteration) : InternalAgentEvent;
-
-/// <summary>
-/// Emitted during agent execution to expose internal state for testing/debugging.
-/// NOT intended for production use - only for characterization tests and debugging.
-/// </summary>
-public record InternalStateSnapshotEvent(
-    int CurrentIteration,
-    int MaxIterations,
-    bool IsTerminated,
-    string? TerminationReason,
-    int ConsecutiveErrorCount,
-    List<string> CompletedFunctions,
-    string AgentName,
-    DateTimeOffset Timestamp) : InternalAgentEvent;
-
-#endregion
-
-#region Content Events (Within an Agent Turn)
-
-/// <summary>
-/// Emitted when the agent starts producing text content
-/// </summary>
-public record InternalTextMessageStartEvent(string MessageId, string Role) : InternalAgentEvent;
-
-/// <summary>
-/// Emitted when the agent produces text content (streaming delta)
-/// </summary>
-public record InternalTextDeltaEvent(string Text, string MessageId) : InternalAgentEvent;
-
-/// <summary>
-/// Emitted when the agent finishes producing text content
-/// </summary>
-public record InternalTextMessageEndEvent(string MessageId) : InternalAgentEvent;
-
-#endregion
-
-#region Reasoning Events (For reasoning-capable models like o1, DeepSeek-R1)
-
-/// <summary>
-/// Reasoning phase within a reasoning session.
-/// </summary>
-public enum ReasoningPhase
-{
-    /// <summary>Overall reasoning session begins</summary>
-    SessionStart,
-    /// <summary>Individual reasoning message starts</summary>
-    MessageStart,
-    /// <summary>Streaming reasoning content (delta)</summary>
-    Delta,
-    /// <summary>Individual reasoning message ends</summary>
-    MessageEnd,
-    /// <summary>Overall reasoning session ends</summary>
-    SessionEnd
-}
-
-/// <summary>
-/// Emitted for all reasoning-related events during agent execution.
-/// Supports reasoning-capable models like o1, DeepSeek-R1.
-/// </summary>
-public record InternalReasoningEvent(
-    ReasoningPhase Phase,
-    string MessageId,
-    string? Role = null,
-    string? Text = null
-) : InternalAgentEvent;
-
-#endregion
-
-#region Tool Events
-
-/// <summary>
-/// Emitted when the agent requests a tool call
-/// </summary>
-public record InternalToolCallStartEvent(
-    string CallId,
-    string Name,
-    string MessageId) : InternalAgentEvent;
-
-/// <summary>
-/// Emitted when a tool call's arguments are fully available
-/// </summary>
-public record InternalToolCallArgsEvent(string CallId, string ArgsJson) : InternalAgentEvent;
-
-/// <summary>
-/// Emitted when a tool call completes execution
-/// </summary>
-public record InternalToolCallEndEvent(string CallId) : InternalAgentEvent;
-
-/// <summary>
-/// Emitted when a tool call result is available
-/// </summary>
-public record InternalToolCallResultEvent(
-    string CallId,
-    string Result) : InternalAgentEvent;
-
-#endregion
-
-#region Middleware Events
-
-/// <summary>
-/// Marker interface for events that support bidirectional communication.
-/// Events implementing this interface can:
-/// - Be emitted during execution
-/// - Bubble to parent agents via AsyncLocal
-/// - Wait for responses using WaitForResponseAsync
-/// </summary>
-public interface IBidirectionalEvent
-{
-    /// <summary>
-    /// Name of the Middleware that emitted this event.
-    /// </summary>
-    string SourceName { get; }
-}
-
-/// <summary>
-/// Marker interface for permission-related Middleware events.
-/// Permission events are a specialized subset of Middleware events
-/// that require user interaction and approval workflows.
-/// </summary>
-public interface IPermissionEvent : IBidirectionalEvent
-{
-    /// <summary>
-    /// Unique identifier for this permission interaction.
-    /// Used to correlate requests and responses.
-    /// </summary>
-    string PermissionId { get; }
-}
-
-/// <summary>
-/// Middleware requests permission to execute a function.
-/// Handler should prompt user and send InternalPermissionResponseEvent.
-/// </summary>
-public record InternalPermissionRequestEvent(
-    string PermissionId,
-    string SourceName,
-    string FunctionName,
-    string? Description,
-    string CallId,
-    IDictionary<string, object?>? Arguments) : InternalAgentEvent, IPermissionEvent;
-
-/// <summary>
-/// Response to permission request.
-/// Sent by external handler back to waiting Middleware.
-/// </summary>
-public record InternalPermissionResponseEvent(
-    string PermissionId,
-    string SourceName,
-    bool Approved,
-    string? Reason = null,
-    PermissionChoice Choice = PermissionChoice.Ask) : InternalAgentEvent, IPermissionEvent;
-
-/// <summary>
-/// Emitted after permission is approved (for observability).
-/// </summary>
-public record InternalPermissionApprovedEvent(
-    string PermissionId,
-    string SourceName) : InternalAgentEvent, IPermissionEvent;
-
-/// <summary>
-/// Emitted after permission is denied (for observability).
-/// </summary>
-public record InternalPermissionDeniedEvent(
-    string PermissionId,
-    string SourceName,
-    string Reason) : InternalAgentEvent, IPermissionEvent;
-
-/// <summary>
-/// Middleware requests permission to continue beyond max iterations.
-/// </summary>
-public record InternalContinuationRequestEvent(
-    string ContinuationId,
-    string SourceName,
-    int CurrentIteration,
-    int MaxIterations) : InternalAgentEvent, IPermissionEvent
-{
-    /// <summary>
-    /// Explicit interface implementation for IPermissionEvent.PermissionId
-    /// Maps ContinuationId to PermissionId for consistency.
-    /// </summary>
-    string IPermissionEvent.PermissionId => ContinuationId;
-}
-
-/// <summary>
-/// Response to continuation request.
-/// </summary>
-public record InternalContinuationResponseEvent(
-    string ContinuationId,
-    string SourceName,
-    bool Approved,
-    int ExtensionAmount = 0) : InternalAgentEvent, IPermissionEvent
-{
-    /// <summary>
-    /// Explicit interface implementation for IPermissionEvent.PermissionId
-    /// Maps ContinuationId to PermissionId for consistency.
-    /// </summary>
-    string IPermissionEvent.PermissionId => ContinuationId;
-}
-
-/// <summary>
-/// Marker interface for clarification-related events.
-/// Clarification events enable agents/plugins to ask the user for additional information
-/// during execution, supporting human-in-the-loop workflows beyond just permissions.
-/// </summary>
-public interface IClarificationEvent : IBidirectionalEvent
-{
-    /// <summary>
-    /// Unique identifier for this clarification interaction.
-    /// Used to correlate requests and responses.
-    /// </summary>
-    string RequestId { get; }
-
-    /// <summary>
-    /// The question being asked to the user.
-    /// </summary>
-    string Question { get; }
-}
-
-/// <summary>
-/// Agent/plugin requests user clarification or additional input.
-/// Handler should prompt user and send InternalClarificationResponseEvent.
-/// </summary>
-public record InternalClarificationRequestEvent(
-    string RequestId,
-    string SourceName,
-    string Question,
-    string? AgentName = null,
-    string[]? Options = null) : InternalAgentEvent, IClarificationEvent;
-
-/// <summary>
-/// Response to clarification request.
-/// Sent by external handler back to waiting agent/plugin.
-/// </summary>
-public record InternalClarificationResponseEvent(
-    string RequestId,
-    string SourceName,
-    string Question,
-    string Answer) : InternalAgentEvent, IClarificationEvent;
-
-/// <summary>
-/// Middleware reports progress (one-way, no response needed).
-/// </summary>
-public record InternalMiddlewareProgressEvent(
-    string SourceName,
-    string Message,
-    int? PercentComplete = null) : InternalAgentEvent, IBidirectionalEvent;
-
-/// <summary>
-/// Middleware reports an error (one-way, no response needed).
-/// </summary>
-public record InternalMiddlewareErrorEvent(
-    string SourceName,
-    string ErrorMessage,
-    Exception? Exception = null) : InternalAgentEvent, IBidirectionalEvent;
-
-#endregion
-
-#region Observability Events (Internal diagnostics)
-
-/// <summary>
-/// Marker interface to distinguish observability events from protocol events.
-/// Observability events are designed for logging, metrics, and monitoring.
-/// They are processed by IAgentEventObserver implementations.
-/// </summary>
-public interface IObservabilityEvent { }
-
-/// <summary>
-/// Emitted when scoped tools visibility is determined for an iteration.
-/// Contains full snapshot of what tools the LLM can see.
-/// </summary>
-public record InternalScopedToolsVisibleEvent(
-    string AgentName,
-    int Iteration,
-    IReadOnlyList<string> VisibleToolNames,
-    ImmutableHashSet<string> ExpandedPlugins,
-    ImmutableHashSet<string> ExpandedSkills,
-    int TotalToolCount,
-    DateTimeOffset Timestamp
-) : InternalAgentEvent, IObservabilityEvent;
-
-/// <summary>
-/// Emitted when a plugin or skill container is expanded.
-/// </summary>
-public record InternalContainerExpandedEvent(
-    string ContainerName,
-    ContainerType Type,
-    IReadOnlyList<string> UnlockedFunctions,
-    int Iteration,
-    DateTimeOffset Timestamp
-) : InternalAgentEvent, IObservabilityEvent;
-
-public enum ContainerType { Plugin, Skill }
-
-/// <summary>
-/// Emitted when Middleware pipeline execution starts.
-/// </summary>
-public record InternalMiddlewarePipelineStartEvent(
-    string FunctionName,
-    int MiddlewareCount,
-    DateTimeOffset Timestamp
-) : InternalAgentEvent, IObservabilityEvent;
-
-/// <summary>
-/// Emitted when Middleware pipeline execution completes.
-/// </summary>
-public record InternalMiddlewarePipelineEndEvent(
-    string FunctionName,
-    TimeSpan Duration,
-    bool Success,
-    string? ErrorMessage,
-    DateTimeOffset Timestamp
-) : InternalAgentEvent, IObservabilityEvent;
-
-/// <summary>
-/// Emitted when a permission check occurs.
-/// </summary>
-public record InternalPermissionCheckEvent(
-    string FunctionName,
-    bool IsApproved,
-    string? DenialReason,
-    string AgentName,
-    int Iteration,
-    TimeSpan Duration,
-    DateTimeOffset Timestamp
-) : InternalAgentEvent, IObservabilityEvent;
-
-/// <summary>
-/// Emitted when an iteration starts with full state snapshot.
-/// </summary>
-public record InternalIterationStartEvent(
-    string AgentName,
-    int Iteration,
-    int MaxIterations,
-    int CurrentMessageCount,
-    int HistoryMessageCount,
-    int TurnHistoryMessageCount,
-    int ExpandedPluginsCount,
-    int ExpandedSkillsCount,
-    int CompletedFunctionsCount,
-    DateTimeOffset Timestamp
-) : InternalAgentEvent, IObservabilityEvent;
-
-/// <summary>
-/// Emitted when circuit breaker is triggered.
-/// </summary>
-public record InternalCircuitBreakerTriggeredEvent(
-    string AgentName,
-    string FunctionName,
-    int ConsecutiveCount,
-    int Iteration,
-    DateTimeOffset Timestamp
-) : InternalAgentEvent, IObservabilityEvent;
-
-/// <summary>
-/// Emitted when history reduction cache is checked.
-/// </summary>
-public record InternalHistoryReductionCacheEvent(
-    string AgentName,
-    bool IsHit,
-    DateTime? ReductionCreatedAt,
-    int? SummarizedUpToIndex,
-    int CurrentMessageCount,
-    int? TokenSavings,
-    DateTimeOffset Timestamp
-) : InternalAgentEvent, IObservabilityEvent;
-
-/// <summary>
-/// Checkpoint operation type.
-/// </summary>
-public enum CheckpointOperation
-{
-    Saved,
-    Restored,
-    PendingWritesSaved,
-    PendingWritesLoaded,
-    PendingWritesDeleted
-}
-
-/// <summary>
-/// Emitted for all checkpoint-related operations (save, restore, pending writes).
-/// </summary>
-public record InternalCheckpointEvent(
-    CheckpointOperation Operation,
-    string ThreadId,
-    DateTimeOffset Timestamp,
-    TimeSpan? Duration = null,
-    int? Iteration = null,
-    int? WriteCount = null,
-    int? SizeBytes = null,
-    int? MessageCount = null,
-    bool? Success = null,
-    string? ErrorMessage = null
-) : InternalAgentEvent, IObservabilityEvent;
-
-/// <summary>
-/// Emitted when parallel tool execution starts.
-/// </summary>
-public record InternalParallelToolExecutionEvent(
-    string AgentName,
-    int Iteration,
-    int ToolCount,
-    int ParallelBatchSize,
-    int ApprovedCount,
-    int DeniedCount,
-    TimeSpan Duration,
-    TimeSpan? SemaphoreWaitDuration,
-    bool IsParallel,
-    DateTimeOffset Timestamp
-) : InternalAgentEvent, IObservabilityEvent;
-
-/// <summary>
-/// Retry status for function execution.
-/// </summary>
-public enum RetryStatus
-{
-    /// <summary>Retry attempt in progress</summary>
-    Attempting,
-    /// <summary>All retry attempts exhausted</summary>
-    Exhausted
-}
-
-/// <summary>
-/// Emitted for all retry-related events during function execution.
-/// </summary>
-public record InternalRetryEvent(
-    RetryStatus Status,
-    string AgentName,
-    string FunctionName,
-    int AttemptNumber,
-    int MaxRetries,
-    DateTimeOffset Timestamp,
-    string? ErrorMessage = null,
-    TimeSpan? RetryDelay = null
-) : InternalAgentEvent, IObservabilityEvent;
-
-/// <summary>
-/// Emitted when delta sending is activated.
-/// </summary>
-public record InternalDeltaSendingActivatedEvent(
-    string AgentName,
-    int MessageCountSent,
-    DateTimeOffset Timestamp
-) : InternalAgentEvent, IObservabilityEvent;
-
-/// <summary>
-/// Emitted when plan mode is activated.
-/// </summary>
-public record InternalPlanModeActivatedEvent(
-    string AgentName,
-    DateTimeOffset Timestamp
-) : InternalAgentEvent, IObservabilityEvent;
-
-/// <summary>
-/// Emitted when a nested agent is invoked.
-/// </summary>
-public record InternalNestedAgentInvokedEvent(
-    string OrchestratorName,
-    string ChildAgentName,
-    int NestingDepth,
-    DateTimeOffset Timestamp
-) : InternalAgentEvent, IObservabilityEvent;
-
-/// <summary>
-/// Emitted when document processing occurs.
-/// </summary>
-public record InternalDocumentProcessedEvent(
-    string AgentName,
-    string DocumentPath,
-    long SizeBytes,
-    TimeSpan Duration,
-    DateTimeOffset Timestamp
-) : InternalAgentEvent, IObservabilityEvent;
-
-/// <summary>
-/// Emitted when message preparation completes.
-/// </summary>
-public record InternalMessagePreparedEvent(
-    string AgentName,
-    int Iteration,
-    int FinalMessageCount,
-    DateTimeOffset Timestamp
-) : InternalAgentEvent, IObservabilityEvent;
-
-/// <summary>
-/// Emitted when a bidirectional event is processed.
-/// </summary>
-public record InternalBidirectionalEventProcessedEvent(
-    string AgentName,
-    string EventType,
-    bool RequiresResponse,
-    DateTimeOffset Timestamp
-) : InternalAgentEvent, IObservabilityEvent;
-
-/// <summary>
-/// Emitted when agent makes a decision.
-/// </summary>
-public record InternalAgentDecisionEvent(
-    string AgentName,
-    string DecisionType,
-    int Iteration,
-    int ConsecutiveFailures,
-    int ExpandedPluginsCount,
-    int CompletedFunctionsCount,
-    DateTimeOffset Timestamp
-) : InternalAgentEvent, IObservabilityEvent;
-
-/// <summary>
-/// Emitted when agent completes successfully.
-/// </summary>
-public record InternalAgentCompletionEvent(
-    string AgentName,
-    int TotalIterations,
-    TimeSpan Duration,
-    DateTimeOffset Timestamp
-) : InternalAgentEvent, IObservabilityEvent;
-
-/// <summary>
-/// Emitted when iteration messages are logged.
-/// </summary>
-public record InternalIterationMessagesEvent(
-    string AgentName,
-    int Iteration,
-    int MessageCount,
-    DateTimeOffset Timestamp
-) : InternalAgentEvent, IObservabilityEvent;
-
-
-
-
-#endregion
-
-#endregion
-
 #region Tool Execution Result Types
 
 /// <summary>
@@ -6989,7 +6357,7 @@ internal record ContainerDetectionInfo(
 /// - Function metadata (name, description, arguments, CallId)
 /// - Agent context (AgentName, RunContext, Iteration tracking)
 /// - Bidirectional communication (Emit, WaitForResponseAsync)
-/// - Event coordination and bubbling (Agent reference, OutboundEvents)
+/// - Event coordination and bubbling (IEventCoordinator)
 /// - Middleware pipeline control (IsTerminated, Result)
 ///
 /// Use cases:
@@ -7078,20 +6446,11 @@ internal class FunctionInvocationContext
     public object? Result { get; set; }
 
     /// <summary>
-    /// Channel writer for emitting events during Middleware execution.
-    /// Points to Agent's shared channel - events are immediately visible to background drainer.
-    ///
-    /// Thread-safety: Multiple Middlewares in the pipeline can emit concurrently.
-    /// Event ordering: FIFO within each Middleware, interleaved across Middlewares.
-    /// Lifetime: Valid for entire Middleware execution.
+    /// Event coordinator for bidirectional communication patterns.
+    /// Used for emitting events and waiting for responses (permissions, approvals, etc.)
+    /// Decoupled from AgentCore for testability and clean architecture.
     /// </summary>
-    internal ChannelWriter<InternalAgentEvent>? OutboundEvents { get; set; }
-
-    /// <summary>
-    /// Reference to the agent for response coordination.
-    /// Lifetime: Set by ProcessFunctionCallsAsync, valid for entire Middleware execution.
-    /// </summary>
-    internal AgentCore? Agent { get; set; }
+    internal IEventCoordinator? EventCoordinator { get; set; }
 
     /// <summary>
     /// Emits an event that will be yielded by RunAgenticLoopInternal.
@@ -7106,34 +6465,16 @@ internal class FunctionInvocationContext
     /// </summary>
     /// <param name="evt">The event to emit</param>
     /// <exception cref="ArgumentNullException">If event is null</exception>
-    /// <exception cref="InvalidOperationException">If Agent reference is not configured</exception>
-    public void Emit(InternalAgentEvent evt)
+    /// <exception cref="InvalidOperationException">If EventCoordinator is not configured</exception>
+    public void Emit(AgentEvent evt)
     {
         if (evt == null)
             throw new ArgumentNullException(nameof(evt));
 
-        if (Agent == null)
-            throw new InvalidOperationException("Agent reference not configured for this context");
+        if (EventCoordinator == null)
+            throw new InvalidOperationException("Event coordination not configured for this context");
 
-        // Emit to local agent's coordinator
-        // BidirectionalEventCoordinator handles bubbling via _parentCoordinator chain
-        Agent.EventCoordinator.Emit(evt);
-    }
-
-    /// <summary>
-    /// Emits an event and returns immediately (async version for bounded channels if needed).
-    /// Current implementation uses unbounded channels, so this is identical to Emit().
-    /// Kept for future extensibility if bounded channels are introduced.
-    /// </summary>
-    public async Task EmitAsync(InternalAgentEvent evt, CancellationToken cancellationToken = default)
-    {
-        if (evt == null)
-            throw new ArgumentNullException(nameof(evt));
-
-        if (OutboundEvents == null)
-            throw new InvalidOperationException("Event emission not configured for this context");
-
-        await OutboundEvents.WriteAsync(evt, cancellationToken);
+        EventCoordinator.Emit(evt);
     }
 
     /// <summary>
@@ -7152,18 +6493,18 @@ internal class FunctionInvocationContext
     /// <returns>The response event</returns>
     /// <exception cref="TimeoutException">Thrown if no response received within timeout</exception>
     /// <exception cref="OperationCanceledException">Thrown if cancellation requested</exception>
-    /// <exception cref="InvalidOperationException">Thrown if Agent reference not set or response type mismatch</exception>
+    /// <exception cref="InvalidOperationException">Thrown if EventCoordinator not set or response type mismatch</exception>
     public async Task<T> WaitForResponseAsync<T>(
         string requestId,
         TimeSpan? timeout = null,
-        CancellationToken cancellationToken = default) where T : InternalAgentEvent
+        CancellationToken cancellationToken = default) where T : AgentEvent
     {
-        if (Agent == null)
-            throw new InvalidOperationException("Agent reference not configured for this context");
+        if (EventCoordinator == null)
+            throw new InvalidOperationException("Event coordination not configured for this context");
 
         var effectiveTimeout = timeout ?? TimeSpan.FromMinutes(5);
 
-        return await Agent.WaitForMiddlewareResponseAsync<T>(requestId, effectiveTimeout, cancellationToken);
+        return await EventCoordinator.WaitForResponseAsync<T>(requestId, effectiveTimeout, cancellationToken);
     }
 
     /// <summary>

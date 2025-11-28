@@ -53,7 +53,7 @@ public class CharacterizationTests : AgentTestBase
 
         var messages = CreateSimpleConversation("What is 2+2?");
 
-        var capturedEvents = new List<InternalAgentEvent>();
+        var capturedEvents = new List<AgentEvent>();
 
         // Act
         await foreach (var evt in agent.RunAgenticLoopAsync(messages, cancellationToken: TestCancellationToken))
@@ -63,16 +63,16 @@ public class CharacterizationTests : AgentTestBase
 
         // Assert - CURRENT behavior
         // Should have 2 iterations (tool call + final response)
-        var agentTurnStarts = capturedEvents.OfType<InternalAgentTurnStartedEvent>().ToList();
+        var agentTurnStarts = capturedEvents.OfType<AgentTurnStartedEvent>().ToList();
         agentTurnStarts.Should().HaveCount(2, "there should be 2 iterations: one for tool call, one for final response");
 
         // Should have tool call events
-        capturedEvents.OfType<InternalToolCallStartEvent>().Should().ContainSingle("there should be exactly one tool call");
-        capturedEvents.OfType<InternalToolCallEndEvent>().Should().ContainSingle("there should be exactly one tool completion");
-        capturedEvents.OfType<InternalToolCallResultEvent>().Should().ContainSingle("there should be exactly one tool result");
+        capturedEvents.OfType<ToolCallStartEvent>().Should().ContainSingle("there should be exactly one tool call");
+        capturedEvents.OfType<ToolCallEndEvent>().Should().ContainSingle("there should be exactly one tool completion");
+        capturedEvents.OfType<ToolCallResultEvent>().Should().ContainSingle("there should be exactly one tool result");
 
         // Should have final text response
-        var textDeltas = capturedEvents.OfType<InternalTextDeltaEvent>().ToList();
+        var textDeltas = capturedEvents.OfType<TextDeltaEvent>().ToList();
         var finalText = string.Concat(textDeltas.Select(e => e.Text));
         finalText.Should().Contain("4", "final response should mention the answer");
 
@@ -122,7 +122,7 @@ public class CharacterizationTests : AgentTestBase
 
         var messages = CreateSimpleConversation("Use the failing tool");
 
-        var capturedEvents = new List<InternalAgentEvent>();
+        var capturedEvents = new List<AgentEvent>();
 
         // Act
         await foreach (var evt in agent.RunAgenticLoopAsync(messages, cancellationToken: TestCancellationToken))
@@ -132,11 +132,11 @@ public class CharacterizationTests : AgentTestBase
 
         // Assert - CURRENT behavior
         // Should terminate after hitting circuit breaker (3 consecutive identical calls)
-        var agentTurnStarts = capturedEvents.OfType<InternalAgentTurnStartedEvent>().ToList();
+        var agentTurnStarts = capturedEvents.OfType<AgentTurnStartedEvent>().ToList();
         agentTurnStarts.Should().HaveCountLessOrEqualTo(4, "circuit breaker should stop after max consecutive calls");
 
         // Should have circuit breaker message or error message
-        var textDeltas = capturedEvents.OfType<InternalTextDeltaEvent>().ToList();
+        var textDeltas = capturedEvents.OfType<TextDeltaEvent>().ToList();
         var allText = string.Concat(textDeltas.Select(e => e.Text));
         allText.Should().ContainAny("Circuit breaker", "circuit", "consecutive", "repeated");
     }
@@ -178,7 +178,7 @@ public class CharacterizationTests : AgentTestBase
 
         var messages = CreateSimpleConversation("Use the tool repeatedly");
 
-        var capturedEvents = new List<InternalAgentEvent>();
+        var capturedEvents = new List<AgentEvent>();
 
         // Act
         await foreach (var evt in agent.RunAgenticLoopAsync(messages, cancellationToken: TestCancellationToken))
@@ -188,7 +188,7 @@ public class CharacterizationTests : AgentTestBase
 
         // Assert - Behavior after fix
         // Loop condition uses <=, so MaxAgenticIterations=5 means iterations 0-5 (6 total)
-        var agentTurnStarts = capturedEvents.OfType<InternalAgentTurnStartedEvent>().ToList();
+        var agentTurnStarts = capturedEvents.OfType<AgentTurnStartedEvent>().ToList();
         agentTurnStarts.Should().HaveCountLessOrEqualTo(6, "should respect MaxAgenticIterations limit (loop uses <=)");
 
         // NOTE: Iteration limits are now enforced by loop condition, not decision engine
@@ -198,8 +198,8 @@ public class CharacterizationTests : AgentTestBase
         agentTurns.Max(t => t.Iteration).Should().BeLessThanOrEqualTo(5, "should not exceed configured max iterations");
 
         // Should have completed successfully (no error)
-        capturedEvents.OfType<InternalTextMessageStartEvent>().Should().NotBeEmpty("should have text message start");
-        capturedEvents.OfType<InternalTextMessageEndEvent>().Should().NotBeEmpty("should have text message end");
+        capturedEvents.OfType<TextMessageStartEvent>().Should().NotBeEmpty("should have text message start");
+        capturedEvents.OfType<TextMessageEndEvent>().Should().NotBeEmpty("should have text message end");
     }
 
     /// <summary>
@@ -235,7 +235,7 @@ public class CharacterizationTests : AgentTestBase
 
         var messages = CreateSimpleConversation("Use all three tools");
 
-        var capturedEvents = new List<InternalAgentEvent>();
+        var capturedEvents = new List<AgentEvent>();
 
         // Act
         await foreach (var evt in agent.RunAgenticLoopAsync(messages, cancellationToken: TestCancellationToken))
@@ -246,9 +246,9 @@ public class CharacterizationTests : AgentTestBase
         // Assert - CURRENT behavior
         // Note: Current implementation may process tool calls sequentially or in parallel
         // We're just documenting what happens, not prescribing behavior
-        var toolStartEvents = capturedEvents.OfType<InternalToolCallStartEvent>().ToList();
-        var toolEndEvents = capturedEvents.OfType<InternalToolCallEndEvent>().ToList();
-        var toolResultEvents = capturedEvents.OfType<InternalToolCallResultEvent>().ToList();
+        var toolStartEvents = capturedEvents.OfType<ToolCallStartEvent>().ToList();
+        var toolEndEvents = capturedEvents.OfType<ToolCallEndEvent>().ToList();
+        var toolResultEvents = capturedEvents.OfType<ToolCallResultEvent>().ToList();
 
         // All three tools should be executed
         toolStartEvents.Should().HaveCount(3, "all three tools should start execution");
@@ -303,7 +303,7 @@ public class CharacterizationTests : AgentTestBase
 
         var messages = CreateSimpleConversation("Use the error tool");
 
-        var capturedEvents = new List<InternalAgentEvent>();
+        var capturedEvents = new List<AgentEvent>();
 
         // Act
         await foreach (var evt in agent.RunAgenticLoopAsync(messages, cancellationToken: TestCancellationToken))
@@ -312,17 +312,17 @@ public class CharacterizationTests : AgentTestBase
         }
 
         // Assert - Should terminate after MaxConsecutiveErrors
-        var agentTurnStarts = capturedEvents.OfType<InternalAgentTurnStartedEvent>().ToList();
+        var agentTurnStarts = capturedEvents.OfType<AgentTurnStartedEvent>().ToList();
         agentTurnStarts.Should().HaveCountLessOrEqualTo(4, "should stop after max consecutive errors (3) + initial turn");
 
         // Should have error message indicating consecutive errors
-        var textDeltas = capturedEvents.OfType<InternalTextDeltaEvent>().ToList();
+        var textDeltas = capturedEvents.OfType<TextDeltaEvent>().ToList();
         var allText = string.Concat(textDeltas.Select(e => e.Text));
         allText.Should().ContainAny("consecutive errors", "Exceeded maximum", "unable to proceed");
 
         // Should have termination events
-        capturedEvents.OfType<InternalTextMessageStartEvent>().Should().NotBeEmpty("should have text message start");
-        capturedEvents.OfType<InternalTextMessageEndEvent>().Should().NotBeEmpty("should have text message end");
+        capturedEvents.OfType<TextMessageStartEvent>().Should().NotBeEmpty("should have text message start");
+        capturedEvents.OfType<TextMessageEndEvent>().Should().NotBeEmpty("should have text message end");
     }
 
     // Helper method for calculator

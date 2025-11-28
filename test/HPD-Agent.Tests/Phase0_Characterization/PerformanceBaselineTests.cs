@@ -31,7 +31,7 @@ public class PerformanceBaselineTests : AgentTestBase
         // Act
         var stopwatch = Stopwatch.StartNew();
 
-        var events = new List<InternalAgentEvent>();
+        var events = new List<AgentEvent>();
         await foreach (var evt in agent.RunAgenticLoopAsync(messages, cancellationToken: TestCancellationToken))
         {
             events.Add(evt);
@@ -80,7 +80,7 @@ public class PerformanceBaselineTests : AgentTestBase
         // Act
         var stopwatch = Stopwatch.StartNew();
 
-        var events = new List<InternalAgentEvent>();
+        var events = new List<AgentEvent>();
         await foreach (var evt in agent.RunAgenticLoopAsync(messages, cancellationToken: TestCancellationToken))
         {
             events.Add(evt);
@@ -94,7 +94,7 @@ public class PerformanceBaselineTests : AgentTestBase
             "single tool call should complete within 2 seconds (baseline: typically <1s)");
 
         // Verify the tool was actually called
-        events.OfType<InternalToolCallStartEvent>().Should().ContainSingle("one tool should be called");
+        events.OfType<ToolCallStartEvent>().Should().ContainSingle("one tool should be called");
         fakeLLM.CapturedRequests.Should().HaveCount(2, "LLM should be called twice (initial + after tool)");
     }
 
@@ -131,7 +131,7 @@ public class PerformanceBaselineTests : AgentTestBase
         // Act
         var stopwatch = Stopwatch.StartNew();
 
-        var events = new List<InternalAgentEvent>();
+        var events = new List<AgentEvent>();
         await foreach (var evt in agent.RunAgenticLoopAsync(messages, cancellationToken: TestCancellationToken))
         {
             events.Add(evt);
@@ -145,8 +145,8 @@ public class PerformanceBaselineTests : AgentTestBase
             "multiple iterations should complete within 5 seconds (baseline: typically <3s)");
 
         // Verify all iterations completed
-        events.OfType<InternalToolCallStartEvent>().Should().HaveCount(3, "three tools should be called");
-        events.OfType<InternalAgentTurnStartedEvent>().Should().HaveCount(4, "should have 4 agent turns");
+        events.OfType<ToolCallStartEvent>().Should().HaveCount(3, "three tools should be called");
+        events.OfType<AgentTurnStartedEvent>().Should().HaveCount(4, "should have 4 agent turns");
         fakeLLM.CapturedRequests.Should().HaveCount(4, "LLM should be called 4 times");
     }
 }

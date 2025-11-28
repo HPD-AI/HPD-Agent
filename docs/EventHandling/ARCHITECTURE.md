@@ -39,7 +39,7 @@ The HPD-Agent event handling system is built on a **push-based Observer Pattern*
 │  ┌──────────────────────────────────────────────────────────┐ │
 │  │        BidirectionalEventCoordinator                      │ │
 │  │  ┌────────────────────────────────────────────────────┐  │ │
-│  │  │  Channel<InternalAgentEvent>                       │  │ │
+│  │  │  Channel<AgentEvent>                       │  │ │
 │  │  │  • Unbounded queue                                 │  │ │
 │  │  │  • Thread-safe multi-producer, single-consumer     │  │ │
 │  │  │  • TryRead() polling in main loop                  │  │ │
@@ -113,7 +113,7 @@ public AgentBuilder WithObserver(IAgentEventObserver observer)
 ### Event Dispatch
 
 ```csharp
-private async Task NotifyObserversAsync(InternalAgentEvent evt, CancellationToken ct)
+private async Task NotifyObserversAsync(AgentEvent evt, CancellationToken ct)
 {
     foreach (var observer in _observers)
     {
@@ -171,11 +171,11 @@ The coordinator is the **core infrastructure** enabling both fire-and-forget eve
 ### Channel-Based Event Streaming
 
 ```csharp
-private readonly Channel<InternalAgentEvent> _eventChannel;
+private readonly Channel<AgentEvent> _eventChannel;
 
 public BidirectionalEventCoordinator()
 {
-    _eventChannel = Channel.CreateUnbounded<InternalAgentEvent>(new UnboundedChannelOptions
+    _eventChannel = Channel.CreateUnbounded<AgentEvent>(new UnboundedChannelOptions
     {
         SingleWriter = false,  // Multiple producers (filters, functions, nested agents)
         SingleReader = true,   // Main loop polls via TryRead()
@@ -196,15 +196,15 @@ public BidirectionalEventCoordinator()
 ### Response Coordination
 
 ```csharp
-private readonly ConcurrentDictionary<string, (TaskCompletionSource<InternalAgentEvent>, CancellationTokenSource)>
+private readonly ConcurrentDictionary<string, (TaskCompletionSource<AgentEvent>, CancellationTokenSource)>
     _responseWaiters = new();
 
 public async Task<T> WaitForResponseAsync<T>(
     string requestId,
     TimeSpan timeout,
-    CancellationToken cancellationToken) where T : InternalAgentEvent
+    CancellationToken cancellationToken) where T : AgentEvent
 {
-    var tcs = new TaskCompletionSource<InternalAgentEvent>();
+    var tcs = new TaskCompletionSource<AgentEvent>();
     var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
     _responseWaiters[requestId] = (tcs, linkedCts);
@@ -225,7 +225,7 @@ public async Task<T> WaitForResponseAsync<T>(
 ```
 
 **Flow:**
-1. Middleware emits `InternalPermissionRequestEvent` via `Emit()`
+1. Middleware emits `PermissionRequestEvent` via `Emit()`
 2. Middleware calls `WaitForResponseAsync()` to block
 3. Event flows to observers (console, UI, etc.)
 4. Observer prompts user and calls `SendMiddlewareResponse()`
@@ -241,7 +241,7 @@ public async Task<T> WaitForResponseAsync<T>(
 ```csharp
 private BidirectionalEventCoordinator? _parentCoordinator;
 
-public void Emit(InternalAgentEvent evt)
+public void Emit(AgentEvent evt)
 {
     // Attach execution context (agent name, depth, etc.)
     if (evt.ExecutionContext == null)
@@ -261,13 +261,13 @@ public void Emit(InternalAgentEvent evt)
 ```
 Orchestrator (Depth 0)
   ├─> SubAgent A (Depth 1)
-  │   └─> Emits InternalToolCallStartEvent
+  │   └─> Emits ToolCallStartEvent
   │       ├─> Local channel (SubAgent A's observers)
   │       └─> Bubbles to Orchestrator channel
   │           └─> Orchestrator's observers receive event
   │               with ExecutionContext { AgentName="SubAgent A", Depth=1 }
   └─> SubAgent B (Depth 1)
-      └─> Emits InternalTextDeltaEvent
+      └─> Emits TextDeltaEvent
           ├─> Local channel
           └─> Bubbles to Orchestrator
 ```
@@ -285,7 +285,7 @@ Agent Execution
   │
   ├─> LLM streams text chunk
   │     │
-  │     ├─> Coordinator.Emit(InternalTextDeltaEvent)
+  │     ├─> Coordinator.Emit(TextDeltaEvent)
   │     │     │
   │     │     ├─> Write to channel
   │     │     │
@@ -300,7 +300,7 @@ Agent Execution
   │     └─> Agent continues execution (doesn't wait for observers)
   │
   └─> LLM calls tool
-        └─> Coordinator.Emit(InternalToolCallStartEvent)
+        └─> Coordinator.Emit(ToolCallStartEvent)
               └─> Same fire-and-forget flow
 ```
 
@@ -313,7 +313,7 @@ Agent Execution
   │
   ├─> Tool call intercepted by PermissionMiddleware
   │     │
-  │     ├─> Coordinator.Emit(InternalPermissionRequestEvent)
+  │     ├─> Coordinator.Emit(PermissionRequestEvent)
   │     │     │
   │     │     ├─> Write to channel
   │     │     │
@@ -327,7 +327,7 @@ Agent Execution
   │     │                 │
   │     │                 └─> agent.SendMiddlewareResponse(
   │     │                       permReq.PermissionId,
-  │     │                       InternalPermissionResponseEvent(approved=true)
+  │     │                       PermissionResponseEvent(approved=true)
   │     │                     )
   │     │
   │     ├─> Middleware.WaitForResponseAsync(permReq.PermissionId)
@@ -448,7 +448,7 @@ public record AgentExecutionContext
 
 **Automatic Attachment:**
 ```csharp
-public void Emit(InternalAgentEvent evt)
+public void Emit(AgentEvent evt)
 {
     if (evt.ExecutionContext == null)
     {
@@ -472,7 +472,7 @@ public void Emit(InternalAgentEvent evt)
 
 **Observer Filter Example:**
 ```csharp
-public bool ShouldProcess(InternalAgentEvent evt)
+public bool ShouldProcess(AgentEvent evt)
 {
     // Only process events from root agent (ignore SubAgent events)
     return evt.ExecutionContext?.IsRootAgent == true;
@@ -481,7 +481,7 @@ public bool ShouldProcess(InternalAgentEvent evt)
 
 **Observer Display Example:**
 ```csharp
-public async Task OnEventAsync(InternalAgentEvent evt, CancellationToken ct)
+public async Task OnEventAsync(AgentEvent evt, CancellationToken ct)
 {
     var context = evt.ExecutionContext;
     if (context?.IsSubAgent == true)
@@ -514,9 +514,9 @@ public async Task OnEventAsync(InternalAgentEvent evt, CancellationToken ct)
 
 | Component | Size | Notes |
 |-----------|------|-------|
-| `InternalTextDeltaEvent` | ~64 bytes | String reference + metadata |
-| `InternalToolCallStartEvent` | ~80 bytes | CallId, Name, MessageId |
-| `InternalPermissionRequestEvent` | ~200 bytes | Includes Arguments dictionary |
+| `TextDeltaEvent` | ~64 bytes | String reference + metadata |
+| `ToolCallStartEvent` | ~80 bytes | CallId, Name, MessageId |
+| `PermissionRequestEvent` | ~200 bytes | Includes Arguments dictionary |
 | Channel buffer | Dynamic | Unbounded, auto-drained |
 
 **Average memory per event**: **~100 bytes**
@@ -671,10 +671,10 @@ Events are emitted at **52 distinct locations** in `AgentCore.cs`:
 
 | Location | Event Type | Frequency |
 |----------|-----------|-----------|
-| `StreamingResponseAsync()` | `InternalTextDeltaEvent` | High (every text chunk) |
-| `ExecuteToolCallAsync()` | `InternalToolCallStartEvent`, `InternalToolCallResultEvent` | Medium (per tool call) |
-| `RunAsync()` | `InternalAgentTurnStartedEvent`, `InternalAgentTurnFinishedEvent` | Low (per iteration) |
-| `PermissionMiddleware` | `InternalPermissionRequestEvent` | Low (if permissions enabled) |
+| `StreamingResponseAsync()` | `TextDeltaEvent` | High (every text chunk) |
+| `ExecuteToolCallAsync()` | `ToolCallStartEvent`, `ToolCallResultEvent` | Medium (per tool call) |
+| `RunAsync()` | `AgentTurnStartedEvent`, `AgentTurnFinishedEvent` | Low (per iteration) |
+| `PermissionMiddleware` | `PermissionRequestEvent` | Low (if permissions enabled) |
 
 ### Event Channel Polling
 
@@ -683,7 +683,7 @@ Main loop polls channel every **10ms** during blocking operations:
 ```csharp
 private async Task<T> WaitForResponseAsync<T>(string requestId, TimeSpan timeout, CancellationToken ct)
 {
-    var tcs = new TaskCompletionSource<InternalAgentEvent>();
+    var tcs = new TaskCompletionSource<AgentEvent>();
     _responseWaiters[requestId] = (tcs, linkedCts);
 
     // Poll channel while waiting for response

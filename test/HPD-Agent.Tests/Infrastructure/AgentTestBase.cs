@@ -109,7 +109,7 @@ public abstract class AgentTestBase : IAsyncDisposable, IDisposable
     /// Asserts that an event sequence matches expected types in order.
     /// </summary>
     protected static void AssertEventSequence(
-        IEnumerable<InternalAgentEvent> actualEvents,
+        IEnumerable<AgentEvent> actualEvents,
         params Type[] expectedEventTypes)
     {
         var actual = actualEvents.Select(e => e.GetType()).ToList();
@@ -129,7 +129,7 @@ public abstract class AgentTestBase : IAsyncDisposable, IDisposable
     /// Asserts that the event sequence contains a specific event type.
     /// </summary>
     protected static void AssertContainsEvent<TEvent>(
-        IEnumerable<InternalAgentEvent> actualEvents) where TEvent : InternalAgentEvent
+        IEnumerable<AgentEvent> actualEvents) where TEvent : AgentEvent
     {
         Assert.Contains(actualEvents, e => e is TEvent);
     }

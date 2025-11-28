@@ -33,7 +33,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
         var thread = new ConversationThread();
 
         // Act: Run agent
-        var events = new List<InternalAgentEvent>();
+        var events = new List<AgentEvent>();
         await foreach (var evt in agent.RunAsync(
             new[] { UserMessage("Hello") },
             options: null,
@@ -122,7 +122,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
         Assert.NotNull(loadedThread);
 
         // Resume with empty messages array
-        var events = new List<InternalAgentEvent>();
+        var events = new List<AgentEvent>();
         await foreach (var evt in agent.RunAsync(
             Array.Empty<ChatMessage>(),
             options: null,
@@ -135,7 +135,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
         // Assert: Should have resumed from checkpoint
         Assert.NotEmpty(events);
         // State should have been restored (iteration > 0)
-        var stateSnapshot = events.OfType<InternalStateSnapshotEvent>().FirstOrDefault();
+        var stateSnapshot = events.OfType<StateSnapshotEvent>().FirstOrDefault();
         Assert.NotNull(stateSnapshot);
         Assert.True(stateSnapshot.CurrentIteration > 0);
     }
@@ -191,7 +191,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
         var thread = new ConversationThread();
 
         // Act: Run with messages
-        var events = new List<InternalAgentEvent>();
+        var events = new List<AgentEvent>();
         await foreach (var evt in agent.RunAsync(
             new[] { UserMessage("Hello") },
             options: null,
@@ -236,7 +236,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
         var agent = CreateAgent(config, client);
 
         // Act: Resume with no new messages
-        var events = new List<InternalAgentEvent>();
+        var events = new List<AgentEvent>();
         await foreach (var evt in agent.RunAsync(
             Array.Empty<ChatMessage>(),
             options: null,
@@ -468,7 +468,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
         var thread = new ConversationThread();
 
         // Run until first iteration completes
-        var firstRunEvents = new List<InternalAgentEvent>();
+        var firstRunEvents = new List<AgentEvent>();
         await foreach (var evt in agent1.RunAsync(
             new[] { UserMessage("Start process") },
             options: null,
@@ -478,7 +478,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
             firstRunEvents.Add(evt);
 
             // Simulate crash after first iteration
-            if (evt is InternalAgentTurnFinishedEvent)
+            if (evt is AgentTurnFinishedEvent)
                 break;
         }
 
@@ -506,7 +506,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
         Assert.NotNull(recoveredThread.ExecutionState);
 
         // Resume execution with empty messages
-        var resumedEvents = new List<InternalAgentEvent>();
+        var resumedEvents = new List<AgentEvent>();
         await foreach (var evt in agent2.RunAsync(
             Array.Empty<ChatMessage>(),
             options: null,
@@ -518,7 +518,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
 
         // Assert: Should have successfully resumed and completed
         Assert.NotEmpty(resumedEvents);
-        var finishEvent = resumedEvents.OfType<InternalMessageTurnFinishedEvent>().FirstOrDefault();
+        var finishEvent = resumedEvents.OfType<MessageTurnFinishedEvent>().FirstOrDefault();
         Assert.NotNull(finishEvent);
     }
 
@@ -555,7 +555,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
         var thread = new ConversationThread();
 
         // Act: Run agent with parallel function calls
-        var events = new List<InternalAgentEvent>();
+        var events = new List<AgentEvent>();
         await foreach (var evt in agent.RunAsync(
             new[] { UserMessage("Get weather and news") },
             options: null,
@@ -572,7 +572,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
         // Note: After checkpoint completes, pending writes are cleaned up
         // So we can't directly verify them here, but we verified the logic in unit tests
         Assert.NotEmpty(events);
-        var finishEvent = events.OfType<InternalMessageTurnFinishedEvent>().FirstOrDefault();
+        var finishEvent = events.OfType<MessageTurnFinishedEvent>().FirstOrDefault();
         Assert.NotNull(finishEvent);
     }
 
@@ -599,7 +599,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
         var thread = new ConversationThread();
 
         // Run until first iteration
-        var firstRunEvents = new List<InternalAgentEvent>();
+        var firstRunEvents = new List<AgentEvent>();
         await foreach (var evt in agent1.RunAsync(
             new[] { UserMessage("Start") },
             options: null,
@@ -607,7 +607,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
             cancellationToken: TestCancellationToken))
         {
             firstRunEvents.Add(evt);
-            if (evt is InternalAgentTurnFinishedEvent)
+            if (evt is AgentTurnFinishedEvent)
                 break;
         }
 
@@ -649,7 +649,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
         Assert.NotNull(recoveredThread.ExecutionState);
 
         // Resume - the pending writes should be loaded into state
-        var resumedEvents = new List<InternalAgentEvent>();
+        var resumedEvents = new List<AgentEvent>();
         await foreach (var evt in agent2.RunAsync(
             Array.Empty<ChatMessage>(),
             options: null,

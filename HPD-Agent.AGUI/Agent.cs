@@ -57,7 +57,7 @@ internal Agent(CoreAgent core)
             // ═══════════════════════════════════════════════════════
 
             ConversationThread? conversationThread = null;
-            IAsyncEnumerable<InternalAgentEvent> internalStream;
+            IAsyncEnumerable<AgentEvent> internalStream;
 
             var config = _core.Config;
             if (config?.ThreadStore != null)
@@ -127,7 +127,7 @@ internal Agent(CoreAgent core)
     /// </summary>
     /// <param name="MiddlewareId">The Middleware ID to respond to</param>
     /// <param name="response">The response event</param>
-    public void SendMiddlewareResponse(string MiddlewareId, InternalAgentEvent response)
+    public void SendMiddlewareResponse(string MiddlewareId, AgentEvent response)
     {
         _core.SendMiddlewareResponse(MiddlewareId, response);
     }
@@ -143,7 +143,7 @@ internal static class EventStreamAdapter
     /// Maps internal events to AGUI lifecycle events (Run, Step, Tool, Content).
     /// </summary>
     public static async IAsyncEnumerable<BaseEvent> ToAGUI(
-        IAsyncEnumerable<InternalAgentEvent> internalStream,
+        IAsyncEnumerable<AgentEvent> internalStream,
         string threadId,
         string runId,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -153,46 +153,46 @@ internal static class EventStreamAdapter
             BaseEvent? aguiEvent = internalEvent switch
             {
                 // MESSAGE TURN → RUN events
-                InternalMessageTurnStartedEvent => EventSerialization.CreateRunStarted(threadId, runId),
-                InternalMessageTurnFinishedEvent => EventSerialization.CreateRunFinished(threadId, runId),
-                InternalMessageTurnErrorEvent e => EventSerialization.CreateRunError(e.Message),
+                MessageTurnStartedEvent => EventSerialization.CreateRunStarted(threadId, runId),
+                MessageTurnFinishedEvent => EventSerialization.CreateRunFinished(threadId, runId),
+                MessageTurnErrorEvent e => EventSerialization.CreateRunError(e.Message),
 
                 // AGENT TURN → STEP events
-                InternalAgentTurnStartedEvent e => EventSerialization.CreateStepStarted(
+                AgentTurnStartedEvent e => EventSerialization.CreateStepStarted(
                     stepId: $"step_{e.Iteration}",
                     stepName: $"Iteration {e.Iteration}",
                     description: null),
-                InternalAgentTurnFinishedEvent e => EventSerialization.CreateStepFinished(
+                AgentTurnFinishedEvent e => EventSerialization.CreateStepFinished(
                     stepId: $"step_{e.Iteration}",
                     stepName: $"Iteration {e.Iteration}",
                     result: null),
 
                 // TEXT CONTENT events
-                InternalTextMessageStartEvent e => EventSerialization.CreateTextMessageStart(e.MessageId, e.Role),
-                InternalTextDeltaEvent e => EventSerialization.CreateTextMessageContent(e.MessageId, e.Text),
-                InternalTextMessageEndEvent e => EventSerialization.CreateTextMessageEnd(e.MessageId),
+                TextMessageStartEvent e => EventSerialization.CreateTextMessageStart(e.MessageId, e.Role),
+                TextDeltaEvent e => EventSerialization.CreateTextMessageContent(e.MessageId, e.Text),
+                TextMessageEndEvent e => EventSerialization.CreateTextMessageEnd(e.MessageId),
 
                 // REASONING events (consolidated)
-                InternalReasoningEvent e when e.Phase == ReasoningPhase.SessionStart => EventSerialization.CreateReasoningStart(e.MessageId),
-                InternalReasoningEvent e when e.Phase == ReasoningPhase.MessageStart => EventSerialization.CreateReasoningMessageStart(e.MessageId, e.Role ?? "assistant"),
-                InternalReasoningEvent e when e.Phase == ReasoningPhase.Delta => EventSerialization.CreateReasoningMessageContent(e.MessageId, e.Text ?? ""),
-                InternalReasoningEvent e when e.Phase == ReasoningPhase.MessageEnd => EventSerialization.CreateReasoningMessageEnd(e.MessageId),
-                InternalReasoningEvent e when e.Phase == ReasoningPhase.SessionEnd => EventSerialization.CreateReasoningEnd(e.MessageId),
+                Reasoning e when e.Phase == ReasoningPhase.SessionStart => EventSerialization.CreateReasoningStart(e.MessageId),
+                Reasoning e when e.Phase == ReasoningPhase.MessageStart => EventSerialization.CreateReasoningMessageStart(e.MessageId, e.Role ?? "assistant"),
+                Reasoning e when e.Phase == ReasoningPhase.Delta => EventSerialization.CreateReasoningMessageContent(e.MessageId, e.Text ?? ""),
+                Reasoning e when e.Phase == ReasoningPhase.MessageEnd => EventSerialization.CreateReasoningMessageEnd(e.MessageId),
+                Reasoning e when e.Phase == ReasoningPhase.SessionEnd => EventSerialization.CreateReasoningEnd(e.MessageId),
 
                 // TOOL events
-                InternalToolCallStartEvent e => EventSerialization.CreateToolCallStart(e.CallId, e.Name, e.MessageId),
-                InternalToolCallArgsEvent e => EventSerialization.CreateToolCallArgs(e.CallId, e.ArgsJson),
-                InternalToolCallEndEvent e => EventSerialization.CreateToolCallEnd(e.CallId),
-                InternalToolCallResultEvent e => EventSerialization.CreateToolCallResult(e.CallId, e.Result),
+                HPD.Agent.ToolCallStartEvent e => EventSerialization.CreateToolCallStart(e.CallId, e.Name, e.MessageId),
+                HPD.Agent.ToolCallArgsEvent e => EventSerialization.CreateToolCallArgs(e.CallId, e.ArgsJson),
+                HPD.Agent.ToolCallEndEvent e => EventSerialization.CreateToolCallEnd(e.CallId),
+                HPD.Agent.ToolCallResultEvent e => EventSerialization.CreateToolCallResult(e.CallId, e.Result),
 
                 // PERMISSION events (Human-in-the-Loop)
-                InternalPermissionRequestEvent e => EventSerialization.CreateFunctionPermissionRequest(
+                PermissionRequestEvent e => EventSerialization.CreateFunctionPermissionRequest(
                     e.PermissionId,
                     e.FunctionName,
                     e.Description ?? "",
                     e.Arguments?.ToDictionary(kvp => kvp.Key, kvp => kvp.Value) ?? new Dictionary<string, object?>()),
 
-                InternalContinuationRequestEvent e => EventSerialization.CreateContinuationPermissionRequest(
+                ContinuationRequestEvent e => EventSerialization.CreateContinuationPermissionRequest(
                     e.ContinuationId,
                     e.CurrentIteration,
                     e.MaxIterations,

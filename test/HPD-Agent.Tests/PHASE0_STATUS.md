@@ -209,7 +209,7 @@ Total tests: 20
 ## Key Fixes Completed During Phase 0
 
 ### 1. MockPermissionHandler Event Stream Consumption ✅
-**Problem**: Both test and handler tried to consume same `IAsyncEnumerable<InternalAgentEvent>`, causing handler to miss events.
+**Problem**: Both test and handler tried to consume same `IAsyncEnumerable<AgentEvent>`, causing handler to miss events.
 
 **Solution**:
 - Handler exclusively consumes event stream

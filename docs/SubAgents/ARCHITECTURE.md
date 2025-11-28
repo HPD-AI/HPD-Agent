@@ -475,7 +475,7 @@ During execution, SubAgent emits events...
 **When SubAgent emits event (BidirectionalEventCoordinator.cs:5801):**
 
 ```csharp
-public void Emit(InternalAgentEvent evt)
+public void Emit(AgentEvent evt)
 {
     // Step 1: Auto-attach ExecutionContext if not already set
     var eventToEmit = evt;
@@ -745,7 +745,7 @@ if (evt.ExecutionContext == null && _owningAgent?.ExecutionContext != null)
 
 **Unbounded Channels:**
 ```csharp
-_eventChannel = Channel.CreateUnbounded<InternalAgentEvent>(new UnboundedChannelOptions
+_eventChannel = Channel.CreateUnbounded<AgentEvent>(new UnboundedChannelOptions
 {
     SingleWriter = false,  // Multiple Middlewares can emit concurrently
     SingleReader = true,   // Only background drainer reads
@@ -818,7 +818,7 @@ var root = RootAgent;
 | SubAgentFactory | HPD-Agent/SubAgents/SubAgentFactory.cs | 1-60 |
 | SubAgentAttribute | HPD-Agent/SubAgents/SubAgentAttribute.cs | 1-20 |
 | AgentExecutionContext | HPD-Agent/Agent/AgentCore.cs | 6281-6314 |
-| InternalAgentEvent | HPD-Agent/Agent/AgentCore.cs | 6329-6336 |
+| AgentEvent | HPD-Agent/Agent/AgentCore.cs | 6329-6336 |
 | AgentCore.ExecutionContext | HPD-Agent/Agent/AgentCore.cs | 209-212 |
 | Root Initialization | HPD-Agent/Agent/AgentCore.cs | 527-539 |
 | BidirectionalEventCoordinator | HPD-Agent/Agent/AgentCore.cs | 5645-5900 |

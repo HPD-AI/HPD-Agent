@@ -502,7 +502,7 @@ public static partial class NativeExports
 
             // Run agent and collect all events
             var responseText = new StringBuilder();
-            IAsyncEnumerable<InternalAgentEvent> eventStream;
+            IAsyncEnumerable<AgentEvent> eventStream;
 
             if (thread != null)
             {
@@ -519,7 +519,7 @@ public static partial class NativeExports
                 await foreach (var evt in eventStream)
                 {
                     // Collect text deltas
-                    if (evt is InternalTextDeltaEvent textDelta)
+                    if (evt is TextDeltaEvent textDelta)
                     {
                         responseText.Append(textDelta.Text);
                     }
@@ -577,7 +577,7 @@ public static partial class NativeExports
             }
 
             // Run agent and stream events
-            IAsyncEnumerable<InternalAgentEvent> eventStream;
+            IAsyncEnumerable<AgentEvent> eventStream;
 
             if (thread != null)
             {
@@ -594,7 +594,7 @@ public static partial class NativeExports
                 await foreach (var evt in eventStream)
                 {
                     // Serialize event to JSON
-                    var eventJson = JsonSerializer.Serialize(evt, HPDFFIJsonContext.Default.InternalAgentEvent);
+                    var eventJson = JsonSerializer.Serialize(evt, HPDFFIJsonContext.Default.AgentEvent);
                     var eventPtr = MarshalString(eventJson);
 
                     try
@@ -692,7 +692,7 @@ public static partial class NativeExports
 
     /// <summary>
     /// Responds to a permission request from the agent.
-    /// Call this after receiving InternalPermissionRequestEvent via streaming callback.
+    /// Call this after receiving PermissionRequestEvent via streaming callback.
     /// </summary>
     /// <param name="agentHandle">Handle to the agent</param>
     /// <param name="permissionIdPtr">Pointer to UTF-8 encoded permission ID</param>
@@ -725,7 +725,7 @@ public static partial class NativeExports
             // Send response back to the agent
             agent.SendMiddlewareResponse(
                 permissionId,
-                new InternalPermissionResponseEvent(
+                new PermissionResponseEvent(
                     permissionId,
                     "FFI",  // Source name
                     approved == 1,
@@ -913,7 +913,7 @@ public static partial class NativeExports
     /// </summary>
     /// <param name="aguiAgentHandle">Handle to the AGUI agent</param>
     /// <param name="filterIdPtr">Pointer to UTF-8 encoded filter/permission ID</param>
-    /// <param name="responseJsonPtr">Pointer to UTF-8 encoded JSON of InternalAgentEvent response</param>
+    /// <param name="responseJsonPtr">Pointer to UTF-8 encoded JSON of AgentEvent response</param>
     /// <returns>1 on success, 0 on failure</returns>
     [UnmanagedCallersOnly(EntryPoint = "agui_send_filter_response")]
     public static int AguiSendFilterResponse(
@@ -933,7 +933,7 @@ public static partial class NativeExports
             if (string.IsNullOrEmpty(responseJson)) return 0;
 
             // Deserialize response event
-            var response = JsonSerializer.Deserialize(responseJson, HPDFFIJsonContext.Default.InternalAgentEvent);
+            var response = JsonSerializer.Deserialize(responseJson, HPDFFIJsonContext.Default.AgentEvent);
             if (response == null) return 0;
 
             // Send response to agent

@@ -36,20 +36,20 @@ We successfully implemented the **Bidirectional Event-Emitting Filters** system 
 - `FilterEventReader` (internal) - Channel reader for RunAgenticLoopInternal
 
 **Added Methods:**
-- `SendFilterResponse(string, InternalAgentEvent)` - Public API for external handlers
+- `SendFilterResponse(string, AgentEvent)` - Public API for external handlers
 - `WaitForFilterResponseAsync<T>(string, TimeSpan, CancellationToken)` - Internal response waiting
 
 **Added Events:**
-- `InternalPermissionRequestEvent` / `InternalPermissionResponseEvent`
-- `InternalPermissionApprovedEvent` / `InternalPermissionDeniedEvent`
-- `InternalContinuationRequestEvent` / `InternalContinuationResponseEvent`
-- `InternalFilterProgressEvent`
-- `InternalFilterErrorEvent`
+- `PermissionRequestEvent` / `PermissionResponseEvent`
+- `PermissionApprovedEvent` / `PermissionDeniedEvent`
+- `ContinuationRequestEvent` / `ContinuationResponseEvent`
+- `FilterProgressEvent`
+- `FilterErrorEvent`
 - Custom events (user-defined, implement `IFilterEvent`)
 
 **Modified RunAgenticLoopInternal:**
 - Added background event drainer task
-- Added event queue (`ConcurrentQueue<InternalAgentEvent>`)
+- Added event queue (`ConcurrentQueue<AgentEvent>`)
 - Added periodic queue draining at 5 key locations:
   1. Start of each iteration
   2. During LLM streaming
@@ -70,8 +70,8 @@ We successfully implemented the **Bidirectional Event-Emitting Filters** system 
 - `Agent` (internal) - Reference to agent for response coordination
 
 **Added Methods:**
-- `Emit(InternalAgentEvent)` - Synchronous event emission
-- `EmitAsync(InternalAgentEvent, CancellationToken)` - Async event emission
+- `Emit(AgentEvent)` - Synchronous event emission
+- `EmitAsync(AgentEvent, CancellationToken)` - Async event emission
 - `WaitForResponseAsync<T>(string, TimeSpan?, CancellationToken)` - Wait for responses with timeout
 
 ---
@@ -205,14 +205,14 @@ public class MyFilter : IAIFunctionMiddleware
 {
     public async Task InvokeAsync(AiFunctionContext context, Func<AiFunctionContext, Task> next)
     {
-        context.Emit(new InternalFilterProgressEvent(
+        context.Emit(new FilterProgressEvent(
             "MyFilter",
             "Starting...",
             PercentComplete: 0));
 
         await next(context);
 
-        context.Emit(new InternalFilterProgressEvent(
+        context.Emit(new FilterProgressEvent(
             "MyFilter",
             "Done!",
             PercentComplete: 100));
@@ -230,7 +230,7 @@ public class MyPermissionMiddleware : IAIFunctionMiddleware
         var permissionId = Guid.NewGuid().ToString();
 
         // 1. Emit request
-        context.Emit(new InternalPermissionRequestEvent(
+        context.Emit(new PermissionRequestEvent(
             permissionId,
             context.ToolCallRequest.FunctionName,
             "Permission required",
@@ -238,7 +238,7 @@ public class MyPermissionMiddleware : IAIFunctionMiddleware
             arguments: context.ToolCallRequest.Arguments));
 
         // 2. Wait for response
-        var response = await context.WaitForResponseAsync<InternalPermissionResponseEvent>(
+        var response = await context.WaitForResponseAsync<PermissionResponseEvent>(
             permissionId,
             timeout: TimeSpan.FromMinutes(5));
 
@@ -263,23 +263,23 @@ await foreach (var evt in agent.RunStreamingAsync(thread, options))
 {
     switch (evt)
     {
-        case InternalPermissionRequestEvent permReq:
+        case PermissionRequestEvent permReq:
             // Handle permission request (background thread)
             _ = Task.Run(() =>
             {
                 var approved = PromptUser(permReq);
                 agent.SendFilterResponse(permReq.PermissionId,
-                    new InternalPermissionResponseEvent(
+                    new PermissionResponseEvent(
                         permReq.PermissionId,
                         approved));
             });
             break;
 
-        case InternalFilterProgressEvent progress:
+        case FilterProgressEvent progress:
             Console.WriteLine($"[{progress.FilterName}] {progress.Message}");
             break;
 
-        case InternalTextDeltaEvent text:
+        case TextDeltaEvent text:
             Console.Write(text.Text);
             break;
     }

@@ -513,7 +513,7 @@ await agent.RunAsync(Array.Empty<ChatMessage>(), thread);
            state.Iteration);
 
        // Emit state snapshot for observability
-       yield return new InternalStateSnapshotEvent(...);
+       yield return new StateSnapshotEvent(...);
    }
    ```
 
@@ -2135,7 +2135,7 @@ public class CheckpointDebugger
         // Replay execution with observer
         await foreach (var evt in _agent.RunAsync([], thread))
         {
-            if (evt is InternalStateSnapshotEvent snapshot)
+            if (evt is StateSnapshotEvent snapshot)
             {
                 stateObserver(snapshot.CurrentState);
             }

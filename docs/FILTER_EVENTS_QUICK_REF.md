@@ -4,13 +4,13 @@
 
 ```csharp
 // Progress
-context.Emit(new InternalFilterProgressEvent("FilterName", "message", percentComplete));
+context.Emit(new FilterProgressEvent("FilterName", "message", percentComplete));
 
 // Error
-context.Emit(new InternalFilterErrorEvent("FilterName", "error message", exception));
+context.Emit(new FilterErrorEvent("FilterName", "error message", exception));
 
 // Custom (define your own event type)
-public record MyCustomEvent(string FilterName, string Data) : InternalAgentEvent, IFilterEvent;
+public record MyCustomEvent(string FilterName, string Data) : AgentEvent, IFilterEvent;
 context.Emit(new MyCustomEvent("FilterName", "custom data"));
 ```
 
@@ -21,12 +21,12 @@ context.Emit(new MyCustomEvent("FilterName", "custom data"));
 var requestId = Guid.NewGuid().ToString();
 
 // 2. Emit request
-context.Emit(new InternalPermissionRequestEvent(requestId, functionName, description, callId, args));
+context.Emit(new PermissionRequestEvent(requestId, functionName, description, callId, args));
 
 // 3. Wait for response
 try
 {
-    var response = await context.WaitForResponseAsync<InternalPermissionResponseEvent>(
+    var response = await context.WaitForResponseAsync<PermissionResponseEvent>(
         requestId,
         timeout: TimeSpan.FromMinutes(5));
 
@@ -44,19 +44,19 @@ await foreach (var evt in agent.RunStreamingAsync(thread, options))
 {
     switch (evt)
     {
-        case InternalPermissionRequestEvent req:
+        case PermissionRequestEvent req:
             _ = Task.Run(() => {
                 var approved = GetUserInput();
                 agent.SendFilterResponse(req.PermissionId,
-                    new InternalPermissionResponseEvent(req.PermissionId, approved));
+                    new PermissionResponseEvent(req.PermissionId, approved));
             });
             break;
 
-        case InternalFilterProgressEvent progress:
+        case FilterProgressEvent progress:
             Console.WriteLine($"[{progress.FilterName}] {progress.Message}");
             break;
 
-        case InternalTextDeltaEvent text:
+        case TextDeltaEvent text:
             Console.Write(text.Text);
             break;
     }
@@ -67,7 +67,7 @@ await foreach (var evt in agent.RunStreamingAsync(thread, options))
 
 ```csharp
 // Define
-public record MyCustomEvent(string Data) : InternalAgentEvent;
+public record MyCustomEvent(string Data) : AgentEvent;
 
 // Emit
 context.Emit(new MyCustomEvent("value"));
@@ -91,13 +91,13 @@ case MyCustomEvent custom:
 
 | Event | Use Case | Bidirectional? |
 |-------|----------|----------------|
-| `InternalFilterProgressEvent` | Progress tracking | No |
-| `InternalFilterErrorEvent` | Error reporting | No |
+| `FilterProgressEvent` | Progress tracking | No |
+| `FilterErrorEvent` | Error reporting | No |
 | Custom events (implement `IFilterEvent`) | User-defined data | No |
-| `InternalPermissionRequestEvent` | Permission request | Yes (request) |
-| `InternalPermissionResponseEvent` | Permission response | Yes (response) |
-| `InternalContinuationRequestEvent` | Max iterations extension | Yes (request) |
-| `InternalContinuationResponseEvent` | Continuation approval | Yes (response) |
+| `PermissionRequestEvent` | Permission request | Yes (request) |
+| `PermissionResponseEvent` | Permission response | Yes (response) |
+| `ContinuationRequestEvent` | Max iterations extension | Yes (request) |
+| `ContinuationResponseEvent` | Continuation approval | Yes (response) |
 
 ## Error Handling
 
@@ -106,13 +106,13 @@ public async Task InvokeAsync(AiFunctionContext context, Func<AiFunctionContext,
 {
     try
     {
-        context.Emit(new InternalFilterProgressEvent("Filter", "Starting", 0));
+        context.Emit(new FilterProgressEvent("Filter", "Starting", 0));
         await next(context);
-        context.Emit(new InternalFilterProgressEvent("Filter", "Done", 100));
+        context.Emit(new FilterProgressEvent("Filter", "Done", 100));
     }
     catch (Exception ex)
     {
-        context.Emit(new InternalFilterErrorEvent("Filter", ex.Message, ex));
+        context.Emit(new FilterErrorEvent("Filter", ex.Message, ex));
         throw; // Re-throw to maintain error propagation
     }
 }

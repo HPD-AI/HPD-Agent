@@ -19,7 +19,7 @@ The `BidirectionalEventCoordinator` is the core infrastructure that enables requ
 │          BidirectionalEventCoordinator                   │
 │  (Unified infrastructure for filters AND functions)     │
 ├─────────────────────────────────────────────────────────┤
-│  • Channel<InternalAgentEvent> - Event streaming        │
+│  • Channel<AgentEvent> - Event streaming        │
 │  • Emit(event) - Send events to handlers                │
 │  • WaitForResponseAsync<T>() - Block until response     │
 │  • SendResponse(requestId, response) - Unblock waiter   │
@@ -47,11 +47,11 @@ The `BidirectionalEventCoordinator` is the core infrastructure that enables requ
 ### 1. Event Channel
 
 ```csharp
-private readonly Channel<InternalAgentEvent> _eventChannel;
+private readonly Channel<AgentEvent> _eventChannel;
 
 public BidirectionalEventCoordinator()
 {
-    _eventChannel = Channel.CreateUnbounded<InternalAgentEvent>(new UnboundedChannelOptions
+    _eventChannel = Channel.CreateUnbounded<AgentEvent>(new UnboundedChannelOptions
     {
         SingleWriter = false,  // Multiple filters/functions can emit concurrently
         SingleReader = true,   // Main loop polls via TryRead
@@ -68,7 +68,7 @@ public BidirectionalEventCoordinator()
 ### 2. Response Coordination
 
 ```csharp
-private readonly ConcurrentDictionary<string, (TaskCompletionSource<InternalAgentEvent>, CancellationTokenSource)>
+private readonly ConcurrentDictionary<string, (TaskCompletionSource<AgentEvent>, CancellationTokenSource)>
     _responseWaiters = new();
 ```
 
@@ -82,7 +82,7 @@ private readonly ConcurrentDictionary<string, (TaskCompletionSource<InternalAgen
 ```csharp
 private BidirectionalEventCoordinator? _parentCoordinator;
 
-public void Emit(InternalAgentEvent evt)
+public void Emit(AgentEvent evt)
 {
     // Emit to local channel
     _eventChannel.Writer.TryWrite(evt);
@@ -104,7 +104,7 @@ public void Emit(InternalAgentEvent evt)
 ### Event Emission
 
 ```csharp
-public void Emit(InternalAgentEvent evt)
+public void Emit(AgentEvent evt)
 ```
 
 **Used by**:
@@ -124,7 +124,7 @@ public void Emit(InternalAgentEvent evt)
 public async Task<T> WaitForResponseAsync<T>(
     string requestId,
     TimeSpan timeout,
-    CancellationToken cancellationToken) where T : InternalAgentEvent
+    CancellationToken cancellationToken) where T : AgentEvent
 ```
 
 **Used by**:
@@ -133,7 +133,7 @@ public async Task<T> WaitForResponseAsync<T>(
 - Any bidirectional request/response pattern
 
 **Flow**:
-1. Create `TaskCompletionSource<InternalAgentEvent>`
+1. Create `TaskCompletionSource<AgentEvent>`
 2. Register in `_responseWaiters` with requestId
 3. **Block** until response received, timeout, or cancellation
 4. Return typed response event
@@ -141,7 +141,7 @@ public async Task<T> WaitForResponseAsync<T>(
 ### Response Delivery
 
 ```csharp
-public void SendResponse(string requestId, InternalAgentEvent response)
+public void SendResponse(string requestId, AgentEvent response)
 ```
 
 **Used by**:
@@ -215,14 +215,14 @@ public class PermissionMiddleware : IAIFunctionMiddleware
         var requestId = Guid.NewGuid().ToString();
 
         // Emit request (uses coordinator internally)
-        context.Emit(new InternalPermissionRequestEvent(
+        context.Emit(new PermissionRequestEvent(
             requestId,
             SourceName: "PermissionMiddleware",
             context.Function.Name,
             ...));
 
         // Wait for response (uses coordinator internally)
-        var response = await context.WaitForResponseAsync<InternalPermissionResponseEvent>(
+        var response = await context.WaitForResponseAsync<PermissionResponseEvent>(
             requestId,
             timeout: TimeSpan.FromMinutes(5),
             cancellationToken);
@@ -256,14 +256,14 @@ public static AIFunction Create()
         var requestId = Guid.NewGuid().ToString();
 
         // Use same coordinator infrastructure as filters!
-        context.Emit(new InternalClarificationRequestEvent(
+        context.Emit(new ClarificationRequestEvent(
             requestId,
             SourceName: "ClarificationFunction",
             question,
             AgentName: context.AgentName,
             ...));
 
-        var response = await context.WaitForResponseAsync<InternalClarificationResponseEvent>(
+        var response = await context.WaitForResponseAsync<ClarificationResponseEvent>(
             requestId,
             timeout: TimeSpan.FromMinutes(5),
             ct);
@@ -517,7 +517,7 @@ var coordinator = new BidirectionalEventCoordinator();
 coordinator.Emit(new TestEvent());
 
 // Poll channel directly
-var events = new List<InternalAgentEvent>();
+var events = new List<AgentEvent>();
 while (coordinator.EventReader.TryRead(out var evt))
 {
     events.Add(evt);

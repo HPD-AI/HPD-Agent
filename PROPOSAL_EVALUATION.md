@@ -265,7 +265,7 @@ The proposed refactored loop is **overly simplified**. The current implementatio
 **Recommendation**: The actual refactored loop should look like:
 
 ```csharp
-public async IAsyncEnumerable<InternalAgentEvent> RunAgenticLoopInternal(...)
+public async IAsyncEnumerable<AgentEvent> RunAgenticLoopInternal(...)
 {
     var state = AgentLoopState.Initial(userMessages);
     var config = BuildAgentConfiguration();
@@ -276,7 +276,7 @@ public async IAsyncEnumerable<InternalAgentEvent> RunAgenticLoopInternal(...)
     while (!state.IsTerminated)
     {
         // Emit iteration start event
-        yield return new InternalAgentTurnStartedEvent(state.Iteration);
+        yield return new AgentTurnStartedEvent(state.Iteration);
 
         // CRITICAL: Drain filter events before decision
         await foreach (var evt in DrainFilterEventsAsync(cancellationToken))
@@ -307,7 +307,7 @@ public async IAsyncEnumerable<InternalAgentEvent> RunAgenticLoopInternal(...)
     yield return new AgentLoopTerminatedEvent(state.TerminationReason);
 }
 
-private async IAsyncEnumerable<InternalAgentEvent> ExecuteDecisionAsync(
+private async IAsyncEnumerable<AgentEvent> ExecuteDecisionAsync(
     AgentDecision decision,
     AgentLoopState state,
     ChatOptions? options,
@@ -362,7 +362,7 @@ public AgentSnapshot CreateSnapshot()
         LoopState = _currentLoopState ?? AgentLoopState.Initial(Array.Empty<ChatMessage>()),
 
         // Get events from coordinator instead of separate log
-        EventLog = _eventCoordinator.CapturedEvents?.ToList() ?? new List<InternalAgentEvent>(),
+        EventLog = _eventCoordinator.CapturedEvents?.ToList() ?? new List<AgentEvent>(),
 
         Metrics = CalculateMetrics(),
         CapturedAt = DateTime.UtcNow
@@ -375,16 +375,16 @@ But this requires `BidirectionalEventCoordinator` to optionally capture events. 
 ```csharp
 public class BidirectionalEventCoordinator
 {
-    private List<InternalAgentEvent>? _capturedEvents;  // Null by default (no overhead)
+    private List<AgentEvent>? _capturedEvents;  // Null by default (no overhead)
 
     public void EnableEventCapture()
     {
-        _capturedEvents = new List<InternalAgentEvent>();
+        _capturedEvents = new List<AgentEvent>();
     }
 
-    public IReadOnlyList<InternalAgentEvent>? CapturedEvents => _capturedEvents;
+    public IReadOnlyList<AgentEvent>? CapturedEvents => _capturedEvents;
 
-    public override void Emit(InternalAgentEvent evt)
+    public override void Emit(AgentEvent evt)
     {
         _capturedEvents?.Add(evt);
         base.Emit(evt);
@@ -516,7 +516,7 @@ This is critical for safe refactoring.
 **Impact**: High
 
 **Mitigation**:
-- Preserve `IAsyncEnumerable<InternalAgentEvent>` return type
+- Preserve `IAsyncEnumerable<AgentEvent>` return type
 - Events must be yielded progressively (not batched)
 - Verify event order matches current implementation
 - Test bidirectional communication still works
@@ -556,7 +556,7 @@ This is critical for safe refactoring.
 // Events are yielded progressively as they occur
 await foreach (var update in streamingResponse)
 {
-    yield return new InternalTextDeltaEvent(update.Text);
+    yield return new TextDeltaEvent(update.Text);
 }
 ```
 
@@ -569,15 +569,15 @@ foreach (var evt in executionResult.Events)
 
 This would **batch events**, breaking real-time streaming.
 
-**Solution**: Use `IAsyncEnumerable<InternalAgentEvent>` for execution methods:
+**Solution**: Use `IAsyncEnumerable<AgentEvent>` for execution methods:
 
 ```csharp
-private async IAsyncEnumerable<InternalAgentEvent> ExecuteCallLLMAsync(...)
+private async IAsyncEnumerable<AgentEvent> ExecuteCallLLMAsync(...)
 {
     await foreach (var update in _baseClient.CompleteStreamingAsync(...))
     {
         // Yield events progressively
-        yield return new InternalTextDeltaEvent(update.Text);
+        yield return new TextDeltaEvent(update.Text);
     }
 }
 ```
@@ -715,7 +715,7 @@ With these modifications, this will be a **highly successful refactoring** that 
 
 1. ✅ Update `AgentDecisionEngine` to include circuit breaker logic
 2. ✅ Update `AgentLoopState` to include all state properties (message tracking, history optimization, circuit breaker)
-3. ✅ Clarify that execution methods return `IAsyncEnumerable<InternalAgentEvent>` to preserve streaming
+3. ✅ Clarify that execution methods return `IAsyncEnumerable<AgentEvent>` to preserve streaming
 4. ✅ Add Phase 0 for characterization tests
 5. ✅ Add streaming architecture preservation to risks section
 

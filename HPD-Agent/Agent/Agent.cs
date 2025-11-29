@@ -6,12 +6,10 @@ using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json.Serialization;
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
-using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Logging;
 using HPD.Agent.Conversation.Checkpointing;
 using HPD_Agent.Scoping;
@@ -51,13 +49,11 @@ namespace HPD.Agent;
 /// // The agent is stateless and can serve both threads concurrently
 /// </code>
 /// </summary>
-internal sealed class AgentCore
+internal sealed class Agent
 {
     private readonly IChatClient _baseClient;
-    private readonly IChatClient? _summarizerClient;
     private readonly string _name;
     private readonly int _maxFunctionCalls;
-    private readonly IServiceProvider? _serviceProvider; // Used for middleware dependency injection
 
     // Function scope tracking for middleware scoping
     private readonly IReadOnlyDictionary<string, string> _functionToPluginMap;
@@ -78,7 +74,7 @@ internal sealed class AgentCore
     // Used for event bubbling from nested agents to their orchestrator
     // When an agent calls another agent (via AsAIFunction), this tracks the top-level orchestrator
     // Flows automatically through AsyncLocal propagation across nested async calls
-    private static readonly AsyncLocal<AgentCore?> _rootAgent = new();
+    private static readonly AsyncLocal<Agent?> _rootAgent = new();
 
     // AsyncLocal storage for current conversation thread (flows across async calls)
     // Provides access to thread context (project, documents, etc.) throughout the agent execution
@@ -90,7 +86,6 @@ internal sealed class AgentCore
     private readonly AgentTurn _agentTurn;
     private readonly ToolVisibilityManager _scopingManager;
     private readonly BidirectionalEventCoordinator _eventCoordinator;
-    private readonly ErrorHandling.IProviderErrorHandler _providerErrorHandler;
 
     // Unified middleware pipeline
     private readonly AgentMiddlewarePipeline _middlewarePipeline;
@@ -100,11 +95,6 @@ internal sealed class AgentCore
     private readonly ObserverHealthTracker? _observerHealthTracker;
     private readonly ILogger? _observerErrorLogger;
     private readonly Counter<long>? _observerErrorCounter;
-
-    // Caching infrastructure (inline pattern - wraps stream lifecycle)
-    private readonly IDistributedCache? _cache;
-    private readonly CachingConfig? _cachingConfig;
-    private readonly JsonSerializerOptions _jsonOptions;
 
     /// <summary>
     /// Agent configuration object containing all settings
@@ -174,7 +164,7 @@ internal sealed class AgentCore
     /// This is set automatically by RunAgenticLoopInternal when starting execution.
     /// The SubAgent source generator uses this to establish parent-child relationships via SetParent().
     /// </remarks>
-    public static AgentCore? RootAgent
+    public static Agent? RootAgent
     {
         get => _rootAgent.Value;
         internal set => _rootAgent.Value = value;
@@ -288,7 +278,7 @@ internal sealed class AgentCore
     /// <summary>
     /// Initializes a new Agent instance from an AgentConfig object
     /// </summary>
-    public AgentCore(
+    public Agent(
         AgentConfig config,
         IChatClient baseClient,
         ChatOptions? mergedOptions,
@@ -297,27 +287,21 @@ internal sealed class AgentCore
         IReadOnlyDictionary<string, string>? functionToSkillMap = null,
         IReadOnlyList<IAgentMiddleware>? middlewares = null,
         IServiceProvider? serviceProvider = null,
-        IEnumerable<IAgentEventObserver>? observers = null,
-        IChatClient? summarizerClient = null)
+        IEnumerable<IAgentEventObserver>? observers = null)
     {
         Config = config ?? throw new ArgumentNullException(nameof(config));
         _baseClient = baseClient ?? throw new ArgumentNullException(nameof(baseClient));
-        _summarizerClient = summarizerClient;
         _name = config.Name ?? "Agent"; // Default to "Agent" to prevent null dictionary key exceptions
         _maxFunctionCalls = config.MaxAgenticIterations;
-        _providerErrorHandler = providerErrorHandler;
-        // Used for middleware dependency injection (e.g., ILoggerFactory)
-        _serviceProvider = serviceProvider;
 
         // Initialize scope tracking maps for middleware scoping
         _functionToPluginMap = functionToPluginMap ?? new Dictionary<string, string>();
         _functionToSkillMap = functionToSkillMap ?? new Dictionary<string, string>();
 
-        // TEMPORARY: Inject the resolved handler into the config object
+        // Inject the resolved handler into the config object (inline without storing field)
         // so that FunctionCallProcessor can access it without changing its signature yet.
-        // This will be removed when FunctionCallProcessor is refactored.
         if (Config.ErrorHandling == null) Config.ErrorHandling = new ErrorHandlingConfig();
-        Config.ErrorHandling.ProviderHandler = _providerErrorHandler;
+        Config.ErrorHandling.ProviderHandler = providerErrorHandler;
 
 
         // Initialize Microsoft.Extensions.AI compliance metadata
@@ -382,9 +366,6 @@ internal sealed class AgentCore
         // Resolve optional dependencies from service provider
         var loggerFactory = serviceProvider?.GetService(typeof(ILoggerFactory))
             as ILoggerFactory;
-        _cache = serviceProvider?.GetService(typeof(IDistributedCache)) as IDistributedCache;
-        _jsonOptions = global::Microsoft.Extensions.AI.AIJsonUtilities.DefaultOptions;
-        _cachingConfig = config.Caching;
 
         // Initialize event observers
         _observers = observers?.ToList() ?? new List<IAgentEventObserver>();
@@ -392,7 +373,7 @@ internal sealed class AgentCore
         // Initialize observer health tracker if observers are configured
         if (_observers.Count > 0 && loggerFactory != null)
         {
-            _observerErrorLogger = loggerFactory.CreateLogger<AgentCore>();
+            _observerErrorLogger = loggerFactory.CreateLogger<Agent>();
 
             var meterFactory = serviceProvider?.GetService(typeof(IMeterFactory)) as IMeterFactory;
             if (meterFactory != null)
@@ -431,7 +412,7 @@ internal sealed class AgentCore
     /// Agent middlewares applied to the agent lifecycle (message turns, iterations, functions).
     /// These are the unified IAgentMiddleware instances with built-in scoping support.
     /// </summary>
-    public IReadOnlyList<Middleware.IAgentMiddleware> Middlewares =>
+    public IReadOnlyList<IAgentMiddleware> Middlewares =>
         _middlewarePipeline.Middlewares;
 
     /// <summary>
@@ -862,15 +843,6 @@ internal sealed class AgentCore
             // OBSERVABILITY: Start telemetry and logging
             // ═══════════════════════════════════════════════════════
             var turnStopwatch = System.Diagnostics.Stopwatch.StartNew();
-            Activity? telemetryActivity = null;
-            try
-            {
-                // Note: Basic orchestration start logging removed - use Microsoft's LoggingChatClient instead
-            }
-            catch (Exception)
-            {
-                // Observability errors shouldn't break agent execution
-            }
 
 
             // ═══════════════════════════════════════════════════════
@@ -1776,16 +1748,8 @@ internal sealed class AgentCore
             // ═══════════════════════════════════════════════════════
             // OBSERVABILITY: Record completion metrics
             // ═══════════════════════════════════════════════════════
-            try
-            {
-                // Note: Token usage, duration, and finish reason are now tracked by Microsoft's OpenTelemetryChatClient
-
-                telemetryActivity?.Dispose();
-            }
-            catch (Exception)
-            {
-                // Observability errors shouldn't break execution
-            }
+            // Note: Token usage, duration, and finish reason are tracked by Microsoft's OpenTelemetryChatClient
+            // Metrics are tracked by TelemetryEventObserver via observer pattern
 
             // Emit agent completion event
             yield return new AgentCompletionEvent(
@@ -2220,11 +2184,7 @@ internal sealed class AgentCore
 
     #endregion
 
-    #region Circuit Breaker Helper
-    // Unused legacy methods removed during middleware migration:
-    // - ApplyMessageTurnMiddlewares (never called, superseded by middleware pipeline)
-    // - ComputeFunctionSignatureFromContent (never called, circuit breaker moved to middleware)
-
+ 
     /// <summary>
     /// Builds lightweight configuration for decision engine from full agent config.
     /// </summary>
@@ -2250,8 +2210,6 @@ internal sealed class AgentCore
             _maxFunctionCalls,
             availableTools);
     }
-
-    #endregion
 
     #region Testing and Advanced API
 
@@ -2670,63 +2628,6 @@ internal sealed class AgentDecisionEngine
 
         return requests;
     }
-
-    /// <summary>
-    /// Computes deterministic signature for a function call.
-    /// Used by circuit breaker to detect identical repeated calls.
-    /// </summary>
-    /// <param name="request">Tool call request</param>
-    /// <returns>Signature in format: "FunctionName(arg1=value1,arg2=value2,...)" with sorted args</returns>
-    /// <remarks>
-    /// Signature generation:
-    /// - Arguments are sorted alphabetically by key for determinism
-    /// - Values are JSON-serialized for correct comparison (handles nested objects, arrays)
-    /// - Example: "get_weather(city="Seattle",units="celsius")"
-    ///
-    /// Why JSON serialization?
-    /// - Handles complex types (nested objects, arrays)
-    /// - Deterministic (same object always produces same JSON)
-    /// - Type-safe (distinguishes between "42" string and 42 number)
-    /// </remarks>
-    public static string ComputeFunctionSignature(AgentToolCallRequest request)
-    {
-        var sortedArgs = string.Join(",",
-            request.Arguments
-                .OrderBy(kvp => kvp.Key, StringComparer.Ordinal)
-                .Select(kvp =>
-                {
-                    var value = SerializeArgumentValue(kvp.Value);
-                    return $"{kvp.Key}={value}";
-                }));
-
-        return $"{request.Name}({sortedArgs})";
-    }
-
-    /// <summary>
-    /// Serializes an argument value to a deterministic string representation.
-    /// Handles all edge cases: nested objects, arrays, nulls, type differences.
-    /// Uses AOT-safe serialization via AIJsonUtilities.DefaultOptions.
-    /// </summary>
-    /// <param name="value">Argument value (can be any type)</param>
-    /// <returns>Deterministic string representation</returns>
-    private static string SerializeArgumentValue(object? value)
-    {
-        if (value == null)
-            return "null";
-
-        // Use AIJsonUtilities.DefaultOptions for AOT-safe JSON serialization
-        // This handles nested objects, arrays, and all edge cases correctly
-        try
-        {
-            return JsonSerializer.Serialize(value, (JsonTypeInfo<object?>)AIJsonUtilities.DefaultOptions.GetTypeInfo(typeof(object)));
-        }
-        catch (JsonException)
-        {
-            // Fallback for non-serializable types (very rare)
-            // Use type name + hash code for uniqueness
-            return $"\"{value.GetType().Name}:{value.GetHashCode()}\"";
-        }
-    }
 }
 
 /// <summary>
@@ -2988,7 +2889,7 @@ public sealed record AgentLoopState
     /// <para><b>Thread Safety:</b></para>
     /// <para>
     /// This enables stateless middleware instances. State flows through context,
-    /// not stored in middleware fields. This preserves AgentCore's thread-safety
+    /// not stored in middleware fields. This preserves Agent's thread-safety
     /// guarantee for concurrent RunAsync() calls.
     /// </para>
     /// </remarks>
@@ -3898,7 +3799,84 @@ internal class FunctionCallProcessor
         ContainerDetectionInfo containerInfo,
         CancellationToken cancellationToken)
     {
-        // All tools will be processed - permission checks happen in ProcessFunctionCallsAsync via middleware
+        // PHASE 1: Batch permission check via BeforeParallelFunctionsAsync hook
+        // Build function map and collect parallel function information
+        var functionMap = FunctionMapBuilder.BuildMergedMap(_serverConfiguredTools, options?.Tools);
+        var parallelFunctions = new List<ParallelFunctionInfo>();
+
+        foreach (var toolRequest in toolRequests)
+        {
+            if (string.IsNullOrEmpty(toolRequest.Name))
+                continue;
+
+            var function = FunctionMapBuilder.FindFunction(toolRequest.Name, functionMap);
+            if (function == null)
+                continue;
+
+            // Extract plugin/skill metadata (same logic as ProcessFunctionCallsAsync)
+            string? pluginTypeName = null;
+            if (function.AdditionalProperties?.TryGetValue("ParentPlugin", out var parentPluginCtx) == true)
+            {
+                pluginTypeName = parentPluginCtx as string;
+            }
+            else if (function.AdditionalProperties?.TryGetValue("PluginName", out var pluginNameProp) == true)
+            {
+                pluginTypeName = pluginNameProp as string;
+            }
+
+            if (string.IsNullOrEmpty(pluginTypeName) && toolRequest.Name != null)
+            {
+                _functionToPluginMap.TryGetValue(toolRequest.Name, out pluginTypeName);
+            }
+
+            string? skillName = null;
+            bool isSkillContainer = false;
+
+            if (function.AdditionalProperties?.TryGetValue("IsSkill", out var isSkillValueCtx) == true
+                && isSkillValueCtx is bool isSCtx && isSCtx)
+            {
+                isSkillContainer = true;
+            }
+
+            if (string.IsNullOrEmpty(skillName) && !isSkillContainer && toolRequest.Name != null)
+            {
+                _functionToSkillMap.TryGetValue(toolRequest.Name, out skillName);
+            }
+
+            parallelFunctions.Add(new ParallelFunctionInfo(
+                function,
+                toolRequest.CallId,
+                toolRequest.Arguments ?? new Dictionary<string, object?>(),
+                pluginTypeName,
+                skillName));
+        }
+
+        // Create middleware context for batch permission check
+        var batchContext = new AgentMiddlewareContext
+        {
+            AgentName = agentLoopState.AgentName,
+            ConversationId = agentLoopState.ConversationId,
+            Iteration = agentLoopState.Iteration,
+            Messages = currentHistory,
+            Options = options,
+            ParallelFunctions = parallelFunctions,
+            EventCoordinator = _eventCoordinator,
+            CancellationToken = cancellationToken
+        };
+        batchContext.SetOriginalState(agentLoopState);
+
+        // Execute BeforeParallelFunctionsAsync middleware hooks
+        await _middlewarePipeline.ExecuteBeforeParallelFunctionsAsync(
+            batchContext, cancellationToken).ConfigureAwait(false);
+
+        // Apply any state updates from middleware
+        if (batchContext.HasPendingStateUpdates)
+        {
+            agentLoopState = batchContext.GetPendingState() ?? agentLoopState;
+        }
+
+        // All tools will be processed - individual permission checks happen in ProcessFunctionCallsAsync
+        // (those checks will use the BatchPermissionState populated by BeforeParallelFunctionsAsync)
         var approvedTools = toolRequests;
         var deniedTools = new List<(FunctionCallContent Tool, string Reason)>();
 
@@ -4038,7 +4016,7 @@ internal class FunctionCallProcessor
 
     /// <summary>
     /// Heuristic to detect error strings in function results.
-    /// Mirrors the error detection logic used in AgentCore.
+    /// Mirrors the error detection logic used in Agent.
     /// </summary>
     private static bool IsLikelyErrorString(string? s) =>
         !string.IsNullOrEmpty(s) &&
@@ -4150,8 +4128,8 @@ internal class FunctionCallProcessor
                 break;
             }
 
-            // Execute BeforeFunctionAsync middleware hooks (permission check happens here)
-            var shouldExecute = await _middlewarePipeline.ExecuteBeforeFunctionAsync(
+            // Execute BeforeSequentialFunctionAsync middleware hooks (permission check happens here)
+            var shouldExecute = await _middlewarePipeline.ExecuteBeforeSequentialFunctionAsync(
                 middlewareContext, cancellationToken).ConfigureAwait(false);
 
             // If middleware blocked execution (permission denied), record the denial and skip execution
@@ -4182,8 +4160,33 @@ internal class FunctionCallProcessor
                 }
                 else
                 {
-                    // Execute the function with retry logic
-                    await ExecuteWithRetryAsync(middlewareContext, cancellationToken).ConfigureAwait(false);
+                    // Execute the function through middleware pipeline
+                    // This includes retry, timeout, and any custom middleware
+                    middlewareContext.FunctionResult = await _middlewarePipeline.ExecuteFunctionAsync(
+                        middlewareContext,
+                        innerCall: async () =>
+                        {
+                            // Set AsyncLocal function invocation context for ambient access
+                            Agent.CurrentFunctionContext = middlewareContext;
+
+                            try
+                            {
+                                // THIS IS THE ACTUAL FUNCTION EXECUTION (innermost call)
+                                var args = new AIFunctionArguments(middlewareContext.FunctionArguments ?? new Dictionary<string, object?>());
+                                return await middlewareContext.Function.InvokeAsync(args, cancellationToken).ConfigureAwait(false);
+                            }
+                            catch (Exception ex)
+                            {
+                                // Format error for LLM
+                                return FormatErrorForLLM(ex, middlewareContext.Function.Name);
+                            }
+                            finally
+                            {
+                                // Always clear the context after function completes
+                                Agent.CurrentFunctionContext = null;
+                            }
+                        },
+                        cancellationToken).ConfigureAwait(false);
                 }
             }
             catch (Exception ex)
@@ -4225,49 +4228,6 @@ internal class FunctionCallProcessor
         }
 
         return resultMessages;
-    }
-
-    /// <summary>
-    /// Executes a function with provider-aware retry logic and timeout enforcement.
-    /// Delegates to FunctionRetryExecutor for consistent retry behavior.
-    /// </summary>
-    private async Task ExecuteWithRetryAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
-    {
-        if (context.Function is null)
-        {
-            context.FunctionResult = $"Function '{context.Function?.Name ?? "Unknown"}' not found.";
-            return;
-        }
-
-        // Set AsyncLocal function invocation context for ambient access
-        // Store the full middleware context so plugins can access ALL capabilities (Emit, WaitForResponseAsync, UpdateState, etc.)
-        AgentCore.CurrentFunctionContext = context;
-
-        var retryExecutor = new FunctionRetryExecutor(_errorHandlingConfig);
-
-        try
-        {
-            context.FunctionResult = await retryExecutor.ExecuteWithRetryAsync(
-                context.Function,
-                context.FunctionArguments ?? new Dictionary<string, object?>(),
-                context.Function.Name,
-                cancellationToken).ConfigureAwait(false);
-        }
-        catch (TimeoutException ex)
-        {
-            // Function-specific timeout
-            context.FunctionResult = FormatErrorForLLM(ex, context.Function.Name);
-        }
-        catch (Exception ex)
-        {
-            // All retries exhausted or non-retryable error
-            context.FunctionResult = FormatErrorForLLM(ex, context.Function.Name);
-        }
-        finally
-        {
-            // Always clear the context after function completes
-            AgentCore.CurrentFunctionContext = null;
-        }
     }
 
     /// <summary>
@@ -5000,7 +4960,7 @@ internal static class ErrorFormatter
     /// </summary>
     internal static string FormatDetailedError(Exception ex, ErrorHandling.IProviderErrorHandler? errorHandler)
     {
-        var sb = new System.Text.StringBuilder();
+        var sb = new StringBuilder();
 
         // Try to get provider-specific error details
         var providerDetails = errorHandler?.ParseError(ex);
@@ -5104,7 +5064,7 @@ internal class BidirectionalEventCoordinator : IEventCoordinator, IDisposable
     /// <summary>
     /// Execution context for automatic attachment to events.
     /// Used to attach ExecutionContext to events that don't already have it.
-    /// Decoupled from AgentCore for testability and clean architecture.
+    /// Decoupled from Agent for testability and clean architecture.
     /// Can be set after construction via SetExecutionContext() for lazy initialization.
     /// </summary>
     private AgentExecutionContext? _executionContext;
@@ -5428,188 +5388,6 @@ internal class BidirectionalEventCoordinator : IEventCoordinator, IDisposable
 
 
 #endregion
-#region Function Retry Executor
-
-/// <summary>
-/// Handles intelligent retry logic for function execution with provider-aware error handling.
-/// Consolidates retry logic that was previously duplicated in FunctionCallProcessor.
-/// 
-/// Features:
-/// - Provider-specific error parsing and retry delays
-/// - Intelligent backoff: API-specified > Provider-specific > Exponential with jitter
-/// - Timeout enforcement per function call
-/// - Category-based retry limits
-/// </summary>
-internal class FunctionRetryExecutor
-{
-    private readonly ErrorHandlingConfig? _errorConfig;
-
-    public FunctionRetryExecutor(ErrorHandlingConfig? errorConfig)
-    {
-        _errorConfig = errorConfig;
-    }
-
-    /// <summary>
-    /// Executes a function with provider-aware retry logic and timeout enforcement.
-    /// </summary>
-    /// <param name="function">The AIFunction to invoke</param>
-    /// <param name="arguments">The arguments to pass to the function</param>
-    /// <param name="functionName">The function name (for error messages)</param>
-    /// <param name="cancellationToken">Cancellation token</param>
-    /// <returns>The function result as an object</returns>
-    public async Task<object?> ExecuteWithRetryAsync(
-        AIFunction function,
-        IDictionary<string, object?> arguments,
-        string functionName,
-        CancellationToken cancellationToken)
-    {
-        var maxRetries = _errorConfig?.MaxRetries ?? 3;
-        var retryDelay = _errorConfig?.RetryDelay ?? TimeSpan.FromSeconds(1);
-        var functionTimeout = _errorConfig?.SingleFunctionTimeout;
-        var providerHandler = _errorConfig?.ProviderHandler;
-        var customRetryStrategy = _errorConfig?.CustomRetryStrategy;
-
-        Exception? lastException = null;
-
-        for (int attempt = 0; attempt <= maxRetries; attempt++)
-        {
-            try
-            {
-                // Create linked cancellation token for function timeout
-                using var functionCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                if (functionTimeout.HasValue)
-                {
-                    functionCts.CancelAfter(functionTimeout.Value);
-                }
-
-                var args = new AIFunctionArguments(arguments);
-                return await function.InvokeAsync(args, functionCts.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (functionTimeout.HasValue && !cancellationToken.IsCancellationRequested)
-            {
-                // Function-specific timeout (not the overall cancellation)
-                throw new TimeoutException($"Function '{functionName}' timed out after {functionTimeout.Value.TotalSeconds} seconds.");
-            }
-            catch (Exception ex)
-            {
-                lastException = ex;
-
-                // Don't retry if we've exhausted attempts
-                if (attempt >= maxRetries)
-                {
-                    throw new InvalidOperationException(
-                        $"Error invoking function '{functionName}' after {maxRetries + 1} attempts: {ex.Message}",
-                        ex);
-                }
-
-                // Calculate retry delay using priority system
-                var delay = await CalculateRetryDelay(
-                    ex,
-                    attempt,
-                    retryDelay,
-                    customRetryStrategy,
-                    providerHandler,
-                    maxRetries,
-                    functionName,
-                    cancellationToken).ConfigureAwait(false);
-
-                if (!delay.HasValue)
-                {
-                    // Strategy says don't retry
-                    throw new InvalidOperationException(
-                        $"Error invoking function '{functionName}': {ex.Message} (non-retryable)",
-                        ex);
-                }
-
-                await Task.Delay(delay.Value, cancellationToken).ConfigureAwait(false);
-            }
-        }
-
-        // Should never reach here, but include for completeness
-        throw new InvalidOperationException(
-            $"Error invoking function '{functionName}': {lastException?.Message ?? "Unknown error"}",
-            lastException);
-    }
-
-    /// <summary>
-    /// Calculates retry delay using priority system:
-    /// PRIORITY 1: Custom retry strategy
-    /// PRIORITY 2: Provider-aware error handling
-    /// PRIORITY 3: Exponential backoff with jitter
-    /// </summary>
-    private async Task<TimeSpan?> CalculateRetryDelay(
-        Exception exception,
-        int attempt,
-        TimeSpan baseRetryDelay,
-        Func<Exception, int, CancellationToken, Task<TimeSpan?>>? customStrategy,
-        HPD.Agent.ErrorHandling.IProviderErrorHandler? providerHandler,
-        int maxRetries,
-        string functionName,
-        CancellationToken cancellationToken)
-    {
-        // PRIORITY 1: Use custom retry strategy if provided
-        if (customStrategy != null)
-        {
-            var customDelay = await customStrategy(exception, attempt, cancellationToken).ConfigureAwait(false);
-            if (!customDelay.HasValue)
-            {
-                return null; // Custom strategy says don't retry
-            }
-            return ApplyMaxDelayCap(customDelay.Value);
-        }
-
-        // PRIORITY 2: Use provider-aware error handling if available
-        if (providerHandler != null)
-        {
-            var errorDetails = providerHandler.ParseError(exception);
-            if (errorDetails != null)
-            {
-                // Check if per-category retry limits apply
-                var categoryMaxRetries = _errorConfig?.MaxRetriesByCategory?.GetValueOrDefault(errorDetails.Category) ?? maxRetries;
-                if (attempt >= categoryMaxRetries)
-                {
-                    return null; // Exceeded category-specific retry limit
-                }
-
-                // Get provider-calculated delay
-                var maxDelayFromConfig = _errorConfig?.MaxRetryDelay ?? TimeSpan.FromSeconds(30);
-                var backoffMultiplier = _errorConfig?.BackoffMultiplier ?? 2.0;
-                var providerDelay = providerHandler.GetRetryDelay(
-                    errorDetails,
-                    attempt,
-                    baseRetryDelay,
-                    backoffMultiplier,
-                    maxDelayFromConfig);
-
-                if (!providerDelay.HasValue)
-                {
-                    return null; // Provider says this error is not retryable
-                }
-
-                return ApplyMaxDelayCap(providerDelay.Value);
-            }
-        }
-
-        // PRIORITY 3: Fallback to exponential backoff with jitter
-        var baseMs = baseRetryDelay.TotalMilliseconds;
-        var maxDelayMs = baseMs * Math.Pow(2, attempt); // 1x, 2x, 4x, 8x...
-        var jitteredDelayMs = Random.Shared.NextDouble() * maxDelayMs;
-        var delay = TimeSpan.FromMilliseconds(jitteredDelayMs);
-
-        return ApplyMaxDelayCap(delay);
-    }
-
-    /// <summary>
-    /// Applies configured maximum delay cap
-    /// </summary>
-    private TimeSpan ApplyMaxDelayCap(TimeSpan delay)
-    {
-        var maxDelay = _errorConfig?.MaxRetryDelay ?? TimeSpan.FromSeconds(30);
-        return delay > maxDelay ? maxDelay : delay;
-    }
-}
-
-#endregion
 
 
 #region Tool Execution Result Types
@@ -5635,6 +5413,3 @@ internal record ContainerDetectionInfo(
     Dictionary<string, string> SkillInstructions);
 
 #endregion
-
-
-

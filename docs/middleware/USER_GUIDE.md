@@ -145,7 +145,7 @@ Middleware can prevent operations:
 ```csharp
 public class BlockDangerousMiddleware : IAgentMiddleware
 {
-    public Task BeforeFunctionAsync(AgentMiddlewareContext context, CancellationToken ct)
+    public Task BeforeSequentialFunctionAsync(AgentMiddlewareContext context, CancellationToken ct)
     {
         if (context.Function?.Name == "delete_all")
         {
@@ -198,7 +198,7 @@ var response = await context.WaitForResponseAsync<UserApprovalResponse>(
 
 ### Permission Check
 ```csharp
-public Task BeforeFunctionAsync(AgentMiddlewareContext ctx, CancellationToken ct)
+public Task BeforeSequentialFunctionAsync(AgentMiddlewareContext ctx, CancellationToken ct)
 {
     if (!_filter.IsApproved(ctx.Function!))
     {

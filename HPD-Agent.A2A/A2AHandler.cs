@@ -17,13 +17,13 @@ namespace HPD.Agent.A2A;
 /// </summary>
 internal class A2AHandler
 {
-    private readonly AgentCore _agent;
+    private readonly Agent _agent;
     private readonly ITaskManager _taskManager;
 
     // This dictionary will map an A2A taskId to an HPD-Agent Thread (agent is stateless and reusable)
     private readonly ConcurrentDictionary<string, ConversationThread> _activeThreads = new();
 
-    public A2AHandler(AgentCore agent, ITaskManager taskManager)
+    public A2AHandler(Agent agent, ITaskManager taskManager)
     {
         _agent = agent;
         _taskManager = taskManager;

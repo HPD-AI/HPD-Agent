@@ -25,7 +25,7 @@ public interface IAgentMiddleware
     Task AfterIterationAsync(AgentMiddlewareContext context, CancellationToken ct);
 
     // Function (once per tool call)
-    Task BeforeFunctionAsync(AgentMiddlewareContext context, CancellationToken ct);
+    Task BeforeSequentialFunctionAsync(AgentMiddlewareContext context, CancellationToken ct);
     Task AfterFunctionAsync(AgentMiddlewareContext context, CancellationToken ct);
 }
 ```
@@ -280,7 +280,7 @@ public Task AfterIterationAsync(AgentMiddlewareContext ctx, CancellationToken ct
 }
 ```
 
-### BeforeFunctionAsync
+### BeforeSequentialFunctionAsync
 
 Called before a specific function executes.
 
@@ -295,7 +295,7 @@ Called before a specific function executes.
 
 **Example:**
 ```csharp
-public Task BeforeFunctionAsync(AgentMiddlewareContext ctx, CancellationToken ct)
+public Task BeforeSequentialFunctionAsync(AgentMiddlewareContext ctx, CancellationToken ct)
 {
     if (!_permissionFilter.IsApproved(ctx.Function!))
     {

@@ -2,6 +2,7 @@ using Microsoft.Extensions.AI;
 using System.Collections.Immutable;
 using Xunit;
 using HPD.Agent;
+
 namespace HPD_Agent.Tests.Core;
 
 /// <summary>
@@ -203,19 +204,19 @@ public class AgentDecisionEngineTests
     public void ComputeFunctionSignature_SameArgsOrdered_ProducesSameSignature()
     {
         // Arrange: Two requests with identical arguments
-        var request1 = AgentToolCallRequest.Create(
-            "get_weather",
+        var request1 = new FunctionCallContent(
             "call_1",
+            "get_weather",
             new Dictionary<string, object?> { ["city"] = "Seattle", ["units"] = "celsius" });
 
-        var request2 = AgentToolCallRequest.Create(
-            "get_weather",
+        var request2 = new FunctionCallContent(
             "call_2",
+            "get_weather",
             new Dictionary<string, object?> { ["city"] = "Seattle", ["units"] = "celsius" });
 
         // Act
-        var sig1 = AgentDecisionEngine.ComputeFunctionSignature(request1);
-        var sig2 = AgentDecisionEngine.ComputeFunctionSignature(request2);
+        var sig1 = CircuitBreakerMiddleware.ComputeFunctionSignature(request1);
+        var sig2 = CircuitBreakerMiddleware.ComputeFunctionSignature(request2);
 
         // Assert: Should produce identical signatures (call ID doesn't matter)
         Assert.Equal(sig1, sig2);
@@ -225,19 +226,19 @@ public class AgentDecisionEngineTests
     public void ComputeFunctionSignature_DifferentArgValues_ProducesDifferentSignature()
     {
         // Arrange: Two requests with different argument values
-        var request1 = AgentToolCallRequest.Create(
-            "get_weather",
+        var request1 = new FunctionCallContent(
             "call_1",
+            "get_weather",
             new Dictionary<string, object?> { ["city"] = "Seattle" });
 
-        var request2 = AgentToolCallRequest.Create(
-            "get_weather",
+        var request2 = new FunctionCallContent(
             "call_2",
+            "get_weather",
             new Dictionary<string, object?> { ["city"] = "Portland" });
 
         // Act
-        var sig1 = AgentDecisionEngine.ComputeFunctionSignature(request1);
-        var sig2 = AgentDecisionEngine.ComputeFunctionSignature(request2);
+        var sig1 = CircuitBreakerMiddleware.ComputeFunctionSignature(request1);
+        var sig2 = CircuitBreakerMiddleware.ComputeFunctionSignature(request2);
 
         // Assert: Should produce different signatures
         Assert.NotEqual(sig1, sig2);
@@ -247,19 +248,19 @@ public class AgentDecisionEngineTests
     public void ComputeFunctionSignature_ArgumentOrder_DoesNotMatter()
     {
         // Arrange: Two requests with same args in different order
-        var request1 = AgentToolCallRequest.Create(
-            "get_weather",
+        var request1 = new FunctionCallContent(
             "call_1",
+            "get_weather",
             new Dictionary<string, object?> { ["city"] = "Seattle", ["units"] = "celsius", ["days"] = 5 });
 
-        var request2 = AgentToolCallRequest.Create(
-            "get_weather",
+        var request2 = new FunctionCallContent(
             "call_2",
+            "get_weather",
             new Dictionary<string, object?> { ["days"] = 5, ["city"] = "Seattle", ["units"] = "celsius" });
 
         // Act
-        var sig1 = AgentDecisionEngine.ComputeFunctionSignature(request1);
-        var sig2 = AgentDecisionEngine.ComputeFunctionSignature(request2);
+        var sig1 = CircuitBreakerMiddleware.ComputeFunctionSignature(request1);
+        var sig2 = CircuitBreakerMiddleware.ComputeFunctionSignature(request2);
 
         // Assert: Order shouldn't matter (args are sorted alphabetically)
         Assert.Equal(sig1, sig2);

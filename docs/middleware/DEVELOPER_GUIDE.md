@@ -14,7 +14,7 @@ public class SimpleLoggingMiddleware : IAgentMiddleware
         _logger = logger;
     }
 
-    public Task BeforeFunctionAsync(AgentMiddlewareContext context, CancellationToken ct)
+    public Task BeforeSequentialFunctionAsync(AgentMiddlewareContext context, CancellationToken ct)
     {
         _logger.LogInformation("Calling function: {Name}", context.Function?.Name);
         return Task.CompletedTask;
@@ -56,7 +56,7 @@ public class CustomPermissionMiddleware : IAgentMiddleware
 {
     private readonly IPermissionService _service;
 
-    public async Task BeforeFunctionAsync(AgentMiddlewareContext ctx, CancellationToken ct)
+    public async Task BeforeSequentialFunctionAsync(AgentMiddlewareContext ctx, CancellationToken ct)
     {
         var allowed = await _service.CheckPermissionAsync(
             ctx.Function!.Name,
@@ -191,7 +191,7 @@ public class LLMCacheMiddleware : IAgentMiddleware
 ```csharp
 public class ApprovalMiddleware : IAgentMiddleware
 {
-    public async Task BeforeFunctionAsync(AgentMiddlewareContext ctx, CancellationToken ct)
+    public async Task BeforeSequentialFunctionAsync(AgentMiddlewareContext ctx, CancellationToken ct)
     {
         if (ctx.Function!.Metadata.Tags?.Contains("requires_approval") != true)
             return;
@@ -350,7 +350,7 @@ builder
 
 **Check scope in middleware:**
 ```csharp
-public Task BeforeFunctionAsync(AgentMiddlewareContext ctx, CancellationToken ct)
+public Task BeforeSequentialFunctionAsync(AgentMiddlewareContext ctx, CancellationToken ct)
 {
     // Middleware only executes if ShouldExecute returns true
     // based on its scope configuration
@@ -376,7 +376,7 @@ public async Task Middleware_Blocks_Dangerous_Functions()
         FunctionCallId = "123"
     };
 
-    await middleware.BeforeFunctionAsync(context, CancellationToken.None);
+    await middleware.BeforeSequentialFunctionAsync(context, CancellationToken.None);
 
     Assert.True(context.BlockFunctionExecution);
     Assert.Equal("Blocked for safety", context.FunctionResult);
@@ -452,13 +452,13 @@ ctx.UpdateState<State>(s => s with { Count = s.Count + 1 });
 ### ❌ Forgetting Cancellation Token
 ```csharp
 // BAD
-public Task BeforeFunctionAsync(AgentMiddlewareContext ctx, CancellationToken ct)
+public Task BeforeSequentialFunctionAsync(AgentMiddlewareContext ctx, CancellationToken ct)
 {
     return _service.CheckAsync();  // Doesn't pass ct
 }
 
 // GOOD
-public Task BeforeFunctionAsync(AgentMiddlewareContext ctx, CancellationToken ct)
+public Task BeforeSequentialFunctionAsync(AgentMiddlewareContext ctx, CancellationToken ct)
 {
     return _service.CheckAsync(ct);
 }

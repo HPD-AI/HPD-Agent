@@ -4,13 +4,13 @@ using System.Text;
 
 /// <summary>
 /// Generates code for sub-agent registration
-/// Converts SubAgent definitions into AIFunction wrappers that build and invoke AgentCore instances
+/// Converts SubAgent definitions into AIFunction wrappers that build and invoke Agent instances
 /// </summary>
 internal static class SubAgentCodeGenerator
 {
     /// <summary>
     /// Generates AIFunction creation code for a sub-agent
-    /// This wraps the AgentCore invocation similar to Microsoft's AsAIFunction() pattern
+    /// This wraps the Agent invocation similar to Microsoft's AsAIFunction() pattern
     /// </summary>
     public static string GenerateSubAgentFunction(SubAgentInfo subAgent, string pluginName)
     {
@@ -35,7 +35,7 @@ internal static class SubAgentCodeGenerator
         sb.AppendLine($"                var agentBuilder = new AgentBuilder(subAgentDef.AgentConfig);");
         sb.AppendLine();
         sb.AppendLine($"                // Get the current agent (parent) from AsyncLocal context");
-        sb.AppendLine($"                var currentAgent = HPD.Agent.AgentCore.RootAgent;");
+        sb.AppendLine($"                var currentAgent = HPD.Agent.Agent.RootAgent;");
         sb.AppendLine();
         sb.AppendLine($"                // If no provider specified in SubAgent config, inherit parent's chat client");
         sb.AppendLine($"                if (subAgentDef.AgentConfig.Provider == null && currentAgent != null)");

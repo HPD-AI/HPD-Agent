@@ -139,7 +139,7 @@ Add **compile-time schema metadata** to `MiddlewareStateContainer` via source ge
                  │ Deserialization + Resume
                  ▼
 ┌─────────────────────────────────────────────────────┐
-│ AgentCore.RunAsync() (on resume)                    │
+│ Agent.RunAsync() (on resume)                    │
 │ - Detects schema mismatch                           │
 │ - Logs added/removed middleware                     │
 │ - Emits telemetry event                             │
@@ -451,11 +451,11 @@ public sealed partial class MiddlewareStateContainer
 
 ### Phase 4: Runtime Schema Detection & Logging (2-3 hours)
 
-**File:** `HPD-Agent/Agent/AgentCore.cs`
+**File:** `HPD-Agent/Agent/Agent.cs`
 
 #### 4.1: Add Schema Validation Method
 
-**Location:** Add as private static method in `AgentCore` class
+**Location:** Add as private static method in `Agent` class
 
 ```csharp
 /// <summary>
@@ -1126,7 +1126,7 @@ public enum SchemaValidationMode
 - [ ] Write generator unit tests
 
 ### Phase 2: Runtime Detection (2-3 hours)
-- [ ] Add `ValidateAndMigrateSchema()` method to `AgentCore`
+- [ ] Add `ValidateAndMigrateSchema()` method to `Agent`
 - [ ] Integrate into `RunAgenticLoopInternal()`
 - [ ] Add logging (WARN for removed, INFO for added)
 - [ ] Create `SchemaChangedEvent` class

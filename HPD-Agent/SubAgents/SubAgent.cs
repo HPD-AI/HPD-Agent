@@ -23,7 +23,7 @@ public class SubAgent
 
     /// <summary>
     /// Agent configuration - defines the sub-agent's behavior, provider, plugins, etc.
-    /// This is used to build the actual AgentCore instance at runtime.
+    /// This is used to build the actual Agent instance at runtime.
     /// </summary>
     public AgentConfig AgentConfig { get; internal set; } = null!;
 

@@ -13,7 +13,8 @@ namespace HPD.Agent.Middleware;
 ///   └─► [LOOP] BeforeIterationAsync
 ///               └─► LLM Call
 ///               └─► BeforeToolExecutionAsync
-///                     └─► [LOOP] BeforeFunctionAsync
+///                     └─► BeforeParallelFunctionsAsync (if parallel execution)
+///                     └─► [LOOP] BeforeSequentialFunctionAsync
 ///                                  └─► Function Execution
 ///                                  └─► AfterFunctionAsync
 ///               └─► AfterIterationAsync
@@ -50,7 +51,7 @@ namespace HPD.Agent.Middleware;
 /// <code>
 /// public class MyMiddleware : IAgentMiddleware
 /// {
-///     public Task BeforeFunctionAsync(AgentMiddlewareContext context, CancellationToken ct)
+///     public Task BeforeSequentialFunctionAsync(AgentMiddlewareContext context, CancellationToken ct)
 ///     {
 ///         Console.WriteLine($"About to call: {context.Function?.Name}");
 ///         return Task.CompletedTask;
@@ -315,6 +316,82 @@ public interface IAgentMiddleware
     // ═══════════════════════════════════════════════════════════════
 
     /// <summary>
+    /// Called BEFORE a batch of functions executes in parallel.
+    /// Use for: Batch permission checking, resource reservation, parallel execution guards.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Purpose:</b></para>
+    /// <para>
+    /// This hook is called ONCE when multiple functions are about to execute in parallel,
+    /// allowing middleware to handle them as a batch instead of individually.
+    /// This is critical for scenarios like permission systems where you want to request
+    /// approval for all functions at once, rather than showing duplicate permission prompts.
+    /// </para>
+    ///
+    /// <para><b>Execution Flow:</b></para>
+    /// <list type="number">
+    /// <item>System detects parallel function execution</item>
+    /// <item>BeforeParallelFunctionsAsync called ONCE with all functions</item>
+    /// <item>Middleware can populate shared state (e.g., batch permission approvals)</item>
+    /// <item>BeforeSequentialFunctionAsync called for each function (can check shared state)</item>
+    /// <item>Functions execute in parallel</item>
+    /// <item>AfterFunctionAsync called for each function</item>
+    /// </list>
+    ///
+    /// <para><b>At this point:</b></para>
+    /// <list type="bullet">
+    /// <item>ParallelFunctions contains all functions about to execute in parallel</item>
+    /// <item>Can inspect function names, descriptions, arguments</item>
+    /// <item>Can populate middleware state to be checked in BeforeSequentialFunctionAsync</item>
+    /// <item>Can emit batch events (e.g., batch permission request)</item>
+    /// </list>
+    ///
+    /// <para><b>Common Use Cases:</b></para>
+    /// <list type="bullet">
+    /// <item><b>Batch Permissions:</b> Request approval for all functions at once</item>
+    /// <item><b>Resource Allocation:</b> Reserve resources needed for parallel execution</item>
+    /// <item><b>Validation:</b> Check if parallel execution is allowed</item>
+    /// <item><b>Optimization:</b> Pre-fetch data needed by multiple functions</item>
+    /// </list>
+    ///
+    /// <para><b>State Management Pattern:</b></para>
+    /// <code>
+    /// public async Task BeforeParallelFunctionsAsync(context, ct)
+    /// {
+    ///     // Request approval for ALL functions at once
+    ///     var approvals = await RequestBatchApproval(context.ParallelFunctions);
+    ///
+    ///     // Populate state with approvals
+    ///     var batchState = new BatchState { Approvals = approvals };
+    ///     context.UpdateState(s => s.WithBatchState(batchState));
+    /// }
+    ///
+    /// public async Task BeforeSequentialFunctionAsync(context, ct)
+    /// {
+    ///     // Check state populated by batch hook
+    ///     var batchState = context.State.MiddlewareState.BatchState;
+    ///     if (!batchState.Approvals.Contains(context.Function.Name))
+    ///     {
+    ///         context.BlockFunctionExecution = true;
+    ///         context.FunctionResult = "Permission denied";
+    ///     }
+    /// }
+    /// </code>
+    ///
+    /// <para><b>Important Notes:</b></para>
+    /// <list type="bullet">
+    /// <item>Only called for parallel execution - NOT for single/sequential functions</item>
+    /// <item>BeforeSequentialFunctionAsync is STILL called for each function after this</item>
+    /// <item>Use context.UpdateState() to share information with BeforeSequentialFunctionAsync</item>
+    /// <item>If you block execution, do it in BeforeSequentialFunctionAsync, not here</item>
+    /// </list>
+    /// </remarks>
+    /// <param name="context">The middleware context with ParallelFunctions populated</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    Task BeforeParallelFunctionsAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
+        => Task.CompletedTask;
+
+    /// <summary>
     /// Called BEFORE a specific function executes.
     /// Use for: Permission checking, argument validation, per-function guards.
     /// </summary>
@@ -331,8 +408,127 @@ public interface IAgentMiddleware
     /// </remarks>
     /// <param name="context">The middleware context</param>
     /// <param name="cancellationToken">Cancellation token</param>
-    Task BeforeFunctionAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
+    Task BeforeSequentialFunctionAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
         => Task.CompletedTask;
+
+    /// <summary>
+    /// Executes the function call with full control over execution.
+    /// Override for advanced scenarios like retry, caching, timeout, transformation.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Advanced Hook - Most middleware won't need this!</b></para>
+    /// <para>
+    /// This hook gives middleware complete control over function execution, including:
+    /// - Implementing retry logic with backoff
+    /// - Caching function results
+    /// - Transforming arguments or results
+    /// - Wrapping with timeout, telemetry, etc.
+    /// </para>
+    ///
+    /// <para><b>Execution Flow:</b></para>
+    /// <list type="number">
+    /// <item>BeforeSequentialFunctionAsync runs (all middleware)</item>
+    /// <item>ExecuteFunctionAsync chains execute (reverse order, like onion)</item>
+    /// <item>Innermost call invokes actual function</item>
+    /// <item>Result bubbles back through the chain</item>
+    /// <item>AfterFunctionAsync runs (all middleware)</item>
+    /// </list>
+    ///
+    /// <para><b>Default Implementation:</b></para>
+    /// <para>
+    /// By default, this method just calls <c>next()</c> to pass through to the next middleware.
+    /// The innermost call (when no more middleware) invokes the actual function.
+    /// </para>
+    ///
+    /// <para><b>Onion Architecture:</b></para>
+    /// <para>
+    /// Middlewares wrap each other in reverse registration order:
+    /// - Last registered middleware wraps everything (outermost)
+    /// - First registered middleware is closest to the actual function (innermost)
+    /// </para>
+    ///
+    /// <para><b>Examples:</b></para>
+    ///
+    /// <para><b>Example 1: Retry with Backoff</b></para>
+    /// <code>
+    /// public async ValueTask&lt;object?&gt; ExecuteFunctionAsync(
+    ///     AgentMiddlewareContext context,
+    ///     Func&lt;ValueTask&lt;object?&gt;&gt; next,
+    ///     CancellationToken ct)
+    /// {
+    ///     for (int attempt = 0; attempt &lt; 3; attempt++)
+    ///     {
+    ///         try
+    ///         {
+    ///             return await next(); // Call next middleware or function
+    ///         }
+    ///         catch (HttpRequestException) when (attempt &lt; 2)
+    ///         {
+    ///             await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, attempt)), ct);
+    ///         }
+    ///     }
+    /// }
+    /// </code>
+    ///
+    /// <para><b>Example 2: Caching</b></para>
+    /// <code>
+    /// public async ValueTask&lt;object?&gt; ExecuteFunctionAsync(
+    ///     AgentMiddlewareContext context,
+    ///     Func&lt;ValueTask&lt;object?&gt;&gt; next,
+    ///     CancellationToken ct)
+    /// {
+    ///     var cacheKey = GetCacheKey(context.Function.Name, context.FunctionArguments);
+    ///
+    ///     if (_cache.TryGet(cacheKey, out var cached))
+    ///         return cached; // Cache hit - skip execution
+    ///
+    ///     var result = await next(); // Cache miss - execute
+    ///     _cache.Set(cacheKey, result);
+    ///     return result;
+    /// }
+    /// </code>
+    ///
+    /// <para><b>Example 3: Timeout</b></para>
+    /// <code>
+    /// public async ValueTask&lt;object?&gt; ExecuteFunctionAsync(
+    ///     AgentMiddlewareContext context,
+    ///     Func&lt;ValueTask&lt;object?&gt;&gt; next,
+    ///     CancellationToken ct)
+    /// {
+    ///     using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+    ///     cts.CancelAfter(TimeSpan.FromSeconds(30));
+    ///
+    ///     try
+    ///     {
+    ///         return await next();
+    ///     }
+    ///     catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+    ///     {
+    ///         throw new TimeoutException("Function timed out");
+    ///     }
+    /// }
+    /// </code>
+    ///
+    /// <para><b>Important Notes:</b></para>
+    /// <list type="bullet">
+    /// <item>You MUST call <c>next()</c> unless you're completely skipping execution (e.g., cache hit)</item>
+    /// <item>Middleware chains execute in REVERSE order (last registered = outermost)</item>
+    /// <item>For simple guards, use BeforeSequentialFunctionAsync instead</item>
+    /// <item>For simple result transformation, use AfterFunctionAsync instead</item>
+    /// </list>
+    /// </remarks>
+    /// <param name="context">The middleware context with function info</param>
+    /// <param name="next">The next middleware in the chain (or actual function execution)</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>The function result</returns>
+    ValueTask<object?> ExecuteFunctionAsync(
+        AgentMiddlewareContext context,
+        Func<ValueTask<object?>> next,
+        CancellationToken cancellationToken)
+    {
+        // Default: pass through to next middleware
+        return next();
+    }
 
     /// <summary>
     /// Called AFTER a specific function completes.

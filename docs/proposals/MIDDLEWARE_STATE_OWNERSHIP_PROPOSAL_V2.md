@@ -10,9 +10,9 @@ The key difference: instead of `ExportState()`/`ImportState()` methods with inst
 
 ## Core Principle (Unchanged from Original)
 
-> **Middleware state is middleware's concern, not AgentCore's concern.**
+> **Middleware state is middleware's concern, not Agent's concern.**
 
-AgentCore should only:
+Agent should only:
 1. Call middleware hooks at the right time
 2. Persist/restore opaque middleware state during checkpointing
 3. Flow state through context (never store in middleware instances)
@@ -27,7 +27,7 @@ The original proposal stored state in middleware instance fields:
 public class CircuitBreakerMiddleware : IStatefulIterationMiddleware
 {
     // ⚠️ PROBLEM: Instance fields break thread safety
-    // AgentCore is documented as stateless - multiple concurrent RunAsync() 
+    // Agent is documented as stateless - multiple concurrent RunAsync() 
     // calls share the same middleware instances
     private ImmutableDictionary<string, int> _consecutiveCountPerTool;
     
@@ -36,7 +36,7 @@ public class CircuitBreakerMiddleware : IStatefulIterationMiddleware
 }
 ```
 
-This violates `AgentCore`'s thread-safety guarantee documented in the class header:
+This violates `Agent`'s thread-safety guarantee documented in the class header:
 
 > *"This Agent instance is now fully stateless and thread-safe. Multiple concurrent RunAsync() calls on the same instance are supported."*
 
@@ -145,7 +145,7 @@ public class IterationMiddlewareContext
     }
     
     /// <summary>
-    /// Gets pending state updates (called by AgentCore after middleware chain).
+    /// Gets pending state updates (called by Agent after middleware chain).
     /// </summary>
     internal AgentLoopState? GetPendingState() => _pendingState;
 }
@@ -157,7 +157,7 @@ public class IterationMiddlewareContext
 public sealed record AgentLoopState
 {
     // ═══════════════════════════════════════════════════════
-    // CORE LOOP STATE (owned by AgentCore)
+    // CORE LOOP STATE (owned by Agent)
     // ═══════════════════════════════════════════════════════
     
     public required string RunId { get; init; }
@@ -458,10 +458,10 @@ public record CostRecordedEvent(
 
 ---
 
-## AgentCore Integration
+## Agent Integration
 
 ```csharp
-internal sealed class AgentCore
+internal sealed class Agent
 {
     private async IAsyncEnumerable<AgentEvent> RunAgenticLoopInternal(...)
     {
@@ -593,7 +593,7 @@ public void RegisterMiddleware<TMiddleware>() where TMiddleware : IIterationMidd
 
 1. **Thread Safety Preserved** - No mutable instance fields, state flows through context
 2. **Type Safety** - Static abstract ties key to type, extension methods provide typed access
-3. **Clean Ownership** - Middleware defines its state record, AgentCore is agnostic
+3. **Clean Ownership** - Middleware defines its state record, Agent is agnostic
 4. **Extensibility** - Third-party middlewares get first-class state support
 5. **Consistency** - Built-in and custom middlewares use identical pattern
 6. **Testability** - Middlewares are stateless, state can be injected via context
@@ -618,4 +618,4 @@ public void RegisterMiddleware<TMiddleware>() where TMiddleware : IIterationMidd
 
 Implement Phase 1 immediately - it's fully backward compatible and validates the pattern. The infrastructure is small and low-risk.
 
-The core insight remains the same as the original proposal: **middleware state is middleware's concern**. This refinement simply ensures we maintain AgentCore's thread-safety guarantee while providing a more C#-idiomatic API.
+The core insight remains the same as the original proposal: **middleware state is middleware's concern**. This refinement simply ensures we maintain Agent's thread-safety guarantee while providing a more C#-idiomatic API.

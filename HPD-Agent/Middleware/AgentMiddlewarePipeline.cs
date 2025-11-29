@@ -2,6 +2,8 @@ using Microsoft.Extensions.AI;
 
 namespace HPD.Agent.Middleware;
 
+
+#region Agnet Middleware Pipeline
 /// <summary>
 /// Executes middleware hooks in the correct order for each lifecycle phase.
 /// Handles Before* hooks in registration order and After* hooks in reverse order.
@@ -249,11 +251,27 @@ public class AgentMiddlewarePipeline
     // ═══════════════════════════════════════════════════════════════
 
     /// <summary>
-    /// Executes BeforeFunctionAsync on all middlewares in registration order.
+    /// Executes BeforeParallelFunctionsAsync on all middlewares in registration order.
+    /// Called ONCE before multiple functions execute in parallel.
+    /// Allows middlewares to handle batch operations (e.g., batch permission checking).
+    /// </summary>
+    public async Task ExecuteBeforeParallelFunctionsAsync(
+        AgentMiddlewareContext context,
+        CancellationToken cancellationToken)
+    {
+        foreach (var middleware in _middlewares)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await middleware.BeforeParallelFunctionsAsync(context, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Executes BeforeSequentialFunctionAsync on all middlewares in registration order.
     /// Filters middlewares by scope - only executes those that apply to the current function context.
     /// </summary>
     /// <returns>True if function should execute, false if blocked by middleware</returns>
-    public async Task<bool> ExecuteBeforeFunctionAsync(
+    public async Task<bool> ExecuteBeforeSequentialFunctionAsync(
         AgentMiddlewareContext context,
         CancellationToken cancellationToken)
     {
@@ -264,7 +282,7 @@ public class AgentMiddlewarePipeline
                 continue;
 
             cancellationToken.ThrowIfCancellationRequested();
-            await middleware.BeforeFunctionAsync(context, cancellationToken).ConfigureAwait(false);
+            await middleware.BeforeSequentialFunctionAsync(context, cancellationToken).ConfigureAwait(false);
 
             // If any middleware blocks execution, stop the chain immediately
             // This is different from iteration-level hooks where we continue
@@ -277,6 +295,62 @@ public class AgentMiddlewarePipeline
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Executes the function call through the middleware pipeline with full control.
+    /// Middleware chains execute in REVERSE order (last registered = outermost layer).
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Onion Architecture:</b></para>
+    /// <para>
+    /// Middlewares wrap each other in reverse registration order:
+    /// - Last registered middleware wraps everything (outermost)
+    /// - First registered middleware is closest to the actual function (innermost)
+    /// </para>
+    ///
+    /// <para><b>Example Flow:</b></para>
+    /// <code>
+    /// // Registration order: [Permissions, Retry, Telemetry]
+    /// // Execution order: Telemetry → Retry → Permissions → Function
+    ///
+    /// Telemetry.ExecuteFunctionAsync(next: () =>
+    ///   Retry.ExecuteFunctionAsync(next: () =>
+    ///     Permissions.ExecuteFunctionAsync(next: () =>
+    ///       actualFunctionExecution()
+    ///     )
+    ///   )
+    /// )
+    /// </code>
+    /// </remarks>
+    /// <param name="context">The middleware context with function info</param>
+    /// <param name="innerCall">The innermost operation (actual function execution)</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>The function result after passing through all middleware</returns>
+    public ValueTask<object?> ExecuteFunctionAsync(
+        AgentMiddlewareContext context,
+        Func<ValueTask<object?>> innerCall,
+        CancellationToken cancellationToken)
+    {
+        // Build the pipeline chain in reverse order (last registered = outermost)
+        Func<ValueTask<object?>> pipeline = innerCall;
+
+        for (int i = _middlewares.Count - 1; i >= 0; i--)
+        {
+            var middleware = _middlewares[i];
+
+            // Check if middleware should execute based on scope
+            if (!middleware.ShouldExecute(context))
+                continue;
+
+            var currentPipeline = pipeline;
+
+            // Wrap the current pipeline with this middleware's ExecuteFunctionAsync
+            pipeline = () => middleware.ExecuteFunctionAsync(context, currentPipeline, cancellationToken);
+        }
+
+        // Execute the outermost middleware (which will call the next, and so on)
+        return pipeline();
     }
 
     /// <summary>
@@ -333,21 +407,16 @@ public class AgentMiddlewarePipeline
         CancellationToken cancellationToken)
     {
         // Run Before* hooks
-        var shouldExecute = await ExecuteBeforeFunctionAsync(context, cancellationToken)
+        var shouldExecute = await ExecuteBeforeSequentialFunctionAsync(context, cancellationToken)
             .ConfigureAwait(false);
 
         if (shouldExecute)
         {
-            try
-            {
-                // Execute the actual function
-                context.FunctionResult = await executeFunction().ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                context.FunctionException = ex;
-                context.FunctionResult = $"Error: {ex.Message}";
-            }
+            // Execute the actual function
+            // Note: Exception handling is delegated to middleware (e.g., ErrorFormattingMiddleware)
+            // or to the Agent.cs FormatErrorForLLM() fallback.
+            // This ensures consistent, security-aware error formatting.
+            context.FunctionResult = await executeFunction().ConfigureAwait(false);
         }
         // If blocked, FunctionResult should already be set by the blocking middleware
 
@@ -421,3 +490,5 @@ public static class AgentMiddlewarePipelineExtensions
     public static AgentMiddlewarePipeline ToPipeline(this IReadOnlyList<IAgentMiddleware> middlewares)
         => new AgentMiddlewarePipeline(middlewares);
 }
+    
+#endregion

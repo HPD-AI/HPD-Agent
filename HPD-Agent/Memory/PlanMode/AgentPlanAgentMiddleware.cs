@@ -132,7 +132,7 @@ public class AgentPlanAgentMiddleware : IAgentMiddleware
 
     /// <summary>
     /// Gets default plan mode instructions explaining how to use plan tools.
-    /// Moved from AgentCore to make plan mode fully middleware-based.
+    /// Moved from Agent to make plan mode fully middleware-based.
     /// </summary>
     private static string GetDefaultPlanModeInstructions()
     {

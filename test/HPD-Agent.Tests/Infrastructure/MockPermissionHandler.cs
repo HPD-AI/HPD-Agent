@@ -6,7 +6,7 @@ using HPD.Agent;
 /// </summary>
 public sealed class MockPermissionHandler : IDisposable
 {
-    private readonly AgentCore _agent;
+    private readonly Agent _agent;
     private readonly Task _handlerTask;
     private readonly CancellationTokenSource _cts = new();
     private readonly List<PermissionRequestEvent> _capturedRequests = new();
@@ -24,7 +24,7 @@ public sealed class MockPermissionHandler : IDisposable
         string? DenialReason = null,
         PermissionChoice Choice = PermissionChoice.Ask);
 
-        internal MockPermissionHandler(AgentCore agent, IAsyncEnumerable<AgentEvent> eventStream)
+        internal MockPermissionHandler(Agent agent, IAsyncEnumerable<AgentEvent> eventStream)
     {
         _agent = agent;
         _handlerTask = Task.Run(async () => await HandleEventsAsync(eventStream));

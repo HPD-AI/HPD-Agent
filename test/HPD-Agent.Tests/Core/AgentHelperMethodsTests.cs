@@ -17,7 +17,7 @@ public class AgentHelperMethodsTests
         IList<FunctionCallContent> toolRequests,
         ChatOptions? options)
     {
-        var agentType = typeof(AgentCore);
+        var agentType = typeof(Agent);
 #pragma warning disable IL2065
         var method = agentType.GetMethod("MiddlewareContainerResults", 
             BindingFlags.NonPublic | BindingFlags.Static);

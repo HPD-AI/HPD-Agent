@@ -1,7 +1,7 @@
 using Microsoft.Extensions.AI;
 using System.Threading.Channels;
 using System.Runtime.CompilerServices;
-using CoreAgent = HPD.Agent.AgentCore;
+using CoreAgent = HPD.Agent.Agent;
 
 namespace HPD.Agent.AGUI;
 

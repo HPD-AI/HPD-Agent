@@ -35,7 +35,7 @@ The HPD-Agent event handling system is built on a **push-based Observer Pattern*
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
-│                         AgentCore                              │
+│                         Agent                              │
 │  ┌──────────────────────────────────────────────────────────┐ │
 │  │        BidirectionalEventCoordinator                      │ │
 │  │  ┌────────────────────────────────────────────────────┐  │ │
@@ -80,7 +80,7 @@ The HPD-Agent event handling system is built on a **push-based Observer Pattern*
 
 | Component | Responsibility |
 |-----------|---------------|
-| `AgentCore` | Emits events during execution, coordinates observers |
+| `Agent` | Emits events during execution, coordinates observers |
 | `BidirectionalEventCoordinator` | Thread-safe event channel, response coordination, bubbling |
 | `IAgentEventObserver` | Base interface for event handlers |
 | `IEventHandler` | Friendly alias for `IAgentEventObserver` |
@@ -415,9 +415,9 @@ Event 22: Success → failures=7, successes=3 → RE-ENABLED
 ### AsyncLocal Agent Tracking
 
 ```csharp
-private static readonly AsyncLocal<AgentCore?> _currentAgent = new();
+private static readonly AsyncLocal<Agent?> _currentAgent = new();
 
-public static void SetCurrentAgent(AgentCore agent)
+public static void SetCurrentAgent(Agent agent)
 {
     _currentAgent.Value = agent;
 }
@@ -665,9 +665,9 @@ await foreach (var _ in agent.RunAsync(messages, thread: thread))
 
 ## Internal Implementation Details
 
-### AgentCore Event Emission Points
+### Agent Event Emission Points
 
-Events are emitted at **52 distinct locations** in `AgentCore.cs`:
+Events are emitted at **52 distinct locations** in `Agent.cs`:
 
 | Location | Event Type | Frequency |
 |----------|-----------|-----------|
@@ -733,7 +733,7 @@ if (_observerFailureCounts.TryGetValue(observer, out var failures) && failures >
 
 - **[User Guide](./USER_GUIDE.md)** - Learn event handling patterns and best practices
 - **[API Reference](./API_REFERENCE.md)** - Complete event type reference
-- **[BidirectionalEventCoordinator Source](../../HPD-Agent/Agent/AgentCore.cs#L6300)** - Core implementation
+- **[BidirectionalEventCoordinator Source](../../HPD-Agent/Agent/Agent.cs#L6300)** - Core implementation
 - **[ConsoleEventHandler Source](../../HPD-Agent/Observability/ConsoleEventHandler.cs)** - Reference implementation
 - **[TelemetryEventObserver Source](../../HPD-Agent/Observability/TelemetryEventObserver.cs)** - Production telemetry example
 

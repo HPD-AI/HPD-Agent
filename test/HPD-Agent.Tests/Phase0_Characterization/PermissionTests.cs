@@ -17,7 +17,7 @@ public class PermissionTests : AgentTestBase
     /// <summary>
     /// Helper to create agent with permission filtering enabled.
     /// </summary>
-    private AgentCore CreateAgentWithPermissions(FakeChatClient client, params AIFunction[] tools)
+    private Agent CreateAgentWithPermissions(FakeChatClient client, params AIFunction[] tools)
     {
         var config = DefaultConfig();
         config.Provider ??= new ProviderConfig();
@@ -233,5 +233,174 @@ public class PermissionTests : AgentTestBase
         // Tool results should reflect approval/denial
         var toolResults = capturedEvents.OfType<ToolCallResultEvent>().ToList();
         toolResults.Should().HaveCountGreaterOrEqualTo(1, "at least approved tool should have result");
+    }
+
+    /// <summary>
+    /// Test 4: Parallel function execution with batch permission checking.
+    /// Verifies that BeforeParallelFunctionsAsync is called and permissions are checked once upfront.
+    /// </summary>
+    [Fact]
+    public async Task CurrentBehavior_ParallelFunctions_BatchPermissionCheck()
+    {
+        // Arrange
+        var fakeLLM = new FakeChatClient();
+
+        // LLM requests multiple tools at once (parallel execution)
+        fakeLLM.EnqueueToolCall("ParallelTool1", "call_1", new Dictionary<string, object?> { ["data"] = "a" });
+        fakeLLM.EnqueueToolCall("ParallelTool2", "call_2", new Dictionary<string, object?> { ["data"] = "b" });
+        fakeLLM.EnqueueToolCall("ParallelTool3", "call_3", new Dictionary<string, object?> { ["data"] = "c" });
+
+        // Final response
+        fakeLLM.EnqueueTextResponse("All tools executed in parallel");
+
+        // Create three tools requiring permission
+        var tool1 = HPDAIFunctionFactory.Create(
+            async (args, ct) => "ParallelTool1 result",
+            new HPDAIFunctionFactoryOptions
+            {
+                Name = "ParallelTool1",
+                Description = "First parallel tool",
+                RequiresPermission = true
+            });
+
+        var tool2 = HPDAIFunctionFactory.Create(
+            async (args, ct) => "ParallelTool2 result",
+            new HPDAIFunctionFactoryOptions
+            {
+                Name = "ParallelTool2",
+                Description = "Second parallel tool",
+                RequiresPermission = true
+            });
+
+        var tool3 = HPDAIFunctionFactory.Create(
+            async (args, ct) => "ParallelTool3 result",
+            new HPDAIFunctionFactoryOptions
+            {
+                Name = "ParallelTool3",
+                Description = "Third parallel tool",
+                RequiresPermission = true
+            });
+
+        var agent = CreateAgentWithPermissions(fakeLLM, tool1, tool2, tool3);
+        var messages = CreateSimpleConversation("Use all three tools in parallel");
+
+        // Set up mock permission handler - approve all
+        var eventStream = agent.RunAgenticLoopAsync(messages, cancellationToken: TestCancellationToken);
+
+        using var permissionHandler = new MockPermissionHandler(agent, eventStream)
+            .AutoApproveAll();
+
+        // Act - Wait for handler to complete (it consumes the event stream)
+        await permissionHandler.WaitForCompletionAsync(TimeSpan.FromSeconds(10));
+
+        // Get captured events from handler
+        var capturedEvents = permissionHandler.CapturedEvents;
+
+        // Assert - Three permission requests (one per tool in batch check)
+        permissionHandler.CapturedRequests.Should().HaveCount(3,
+            "BeforeParallelFunctionsAsync should check permission for each tool sequentially");
+
+        // All should be approved
+        var permissionApproved = capturedEvents.OfType<PermissionApprovedEvent>().ToList();
+        permissionApproved.Should().HaveCount(3, "all three tools should be approved");
+
+        // No denials
+        var permissionDenied = capturedEvents.OfType<PermissionDeniedEvent>().ToList();
+        permissionDenied.Should().BeEmpty("no tools should be denied");
+
+        // All tools should execute successfully
+        var toolResults = capturedEvents.OfType<ToolCallResultEvent>().ToList();
+        toolResults.Should().HaveCount(3, "all three tools should execute");
+
+        toolResults.Should().Contain(t => t.Result.Contains("ParallelTool1 result"), "tool1 should execute");
+        toolResults.Should().Contain(t => t.Result.Contains("ParallelTool2 result"), "tool2 should execute");
+        toolResults.Should().Contain(t => t.Result.Contains("ParallelTool3 result"), "tool3 should execute");
+    }
+
+    /// <summary>
+    /// Test 5: Parallel function execution with mixed approvals/denials.
+    /// Verifies that BeforeParallelFunctionsAsync correctly handles some approvals and some denials.
+    /// </summary>
+    [Fact]
+    public async Task CurrentBehavior_ParallelFunctions_MixedApprovalsDenials()
+    {
+        // Arrange
+        var fakeLLM = new FakeChatClient();
+
+        // LLM requests multiple tools at once (parallel execution)
+        fakeLLM.EnqueueToolCall("ParallelTool1", "call_1", new Dictionary<string, object?> { ["data"] = "a" });
+        fakeLLM.EnqueueToolCall("ParallelTool2", "call_2", new Dictionary<string, object?> { ["data"] = "b" });
+        fakeLLM.EnqueueToolCall("ParallelTool3", "call_3", new Dictionary<string, object?> { ["data"] = "c" });
+
+        // Final response
+        fakeLLM.EnqueueTextResponse("Some tools executed, some were denied");
+
+        // Create three tools requiring permission
+        var tool1 = HPDAIFunctionFactory.Create(
+            async (args, ct) => "ParallelTool1 result",
+            new HPDAIFunctionFactoryOptions
+            {
+                Name = "ParallelTool1",
+                Description = "First parallel tool",
+                RequiresPermission = true
+            });
+
+        var tool2 = HPDAIFunctionFactory.Create(
+            async (args, ct) => "ParallelTool2 result",
+            new HPDAIFunctionFactoryOptions
+            {
+                Name = "ParallelTool2",
+                Description = "Second parallel tool",
+                RequiresPermission = true
+            });
+
+        var tool3 = HPDAIFunctionFactory.Create(
+            async (args, ct) => "ParallelTool3 result",
+            new HPDAIFunctionFactoryOptions
+            {
+                Name = "ParallelTool3",
+                Description = "Third parallel tool",
+                RequiresPermission = true
+            });
+
+        var agent = CreateAgentWithPermissions(fakeLLM, tool1, tool2, tool3);
+        var messages = CreateSimpleConversation("Use all three tools in parallel");
+
+        // Set up mock permission handler - approve some, deny others
+        var eventStream = agent.RunAgenticLoopAsync(messages, cancellationToken: TestCancellationToken);
+
+        using var permissionHandler = new MockPermissionHandler(agent, eventStream);
+        permissionHandler.EnqueueResponse(approved: true);  // Approve Tool1
+        permissionHandler.EnqueueResponse(approved: false, denialReason: "User denied Tool2"); // Deny Tool2
+        permissionHandler.EnqueueResponse(approved: true);  // Approve Tool3
+
+        // Act - Wait for handler to complete (it consumes the event stream)
+        await permissionHandler.WaitForCompletionAsync(TimeSpan.FromSeconds(10));
+
+        // Get captured events from handler
+        var capturedEvents = permissionHandler.CapturedEvents;
+
+        // Assert - Three permission requests
+        permissionHandler.CapturedRequests.Should().HaveCount(3,
+            "BeforeParallelFunctionsAsync should check permission for each tool");
+
+        // Two approvals, one denial
+        var permissionApproved = capturedEvents.OfType<PermissionApprovedEvent>().ToList();
+        permissionApproved.Should().HaveCount(2, "two tools should be approved");
+
+        var permissionDenied = capturedEvents.OfType<PermissionDeniedEvent>().ToList();
+        permissionDenied.Should().ContainSingle("one tool should be denied");
+
+        // Tool results should reflect mixed outcomes
+        var toolResults = capturedEvents.OfType<ToolCallResultEvent>().ToList();
+        toolResults.Should().HaveCount(3, "all three tools should have results (approved execute, denied get denial message)");
+
+        // Tool1 and Tool3 should have successful results
+        toolResults.Should().Contain(t => t.Result.Contains("ParallelTool1 result"), "tool1 should execute");
+        toolResults.Should().Contain(t => t.Result.Contains("ParallelTool3 result"), "tool3 should execute");
+
+        // Tool2 should have denial message
+        toolResults.Should().Contain(t => t.Result.Contains("denied", StringComparison.OrdinalIgnoreCase),
+            "tool2 should have denial message");
     }
 }

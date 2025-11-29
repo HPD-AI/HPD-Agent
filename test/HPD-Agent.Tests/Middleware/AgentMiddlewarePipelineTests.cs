@@ -273,7 +273,7 @@ public class AgentMiddlewarePipelineTests
             return Task.CompletedTask;
         }
 
-        public Task BeforeFunctionAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
+        public Task BeforeSequentialFunctionAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
             => Task.CompletedTask;
 
         public Task AfterFunctionAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
@@ -312,7 +312,7 @@ public class AgentMiddlewarePipelineTests
         public Task AfterIterationAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
             => Task.CompletedTask;
 
-        public Task BeforeFunctionAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
+        public Task BeforeSequentialFunctionAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
             => Task.CompletedTask;
 
         public Task AfterFunctionAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
@@ -344,7 +344,7 @@ public class AgentMiddlewarePipelineTests
         public Task AfterIterationAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
             => Task.CompletedTask;
 
-        public Task BeforeFunctionAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
+        public Task BeforeSequentialFunctionAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
             => Task.CompletedTask;
 
         public Task AfterFunctionAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
@@ -391,7 +391,7 @@ public class AgentMiddlewarePipelineTests
             return Task.CompletedTask;
         }
 
-        public Task BeforeFunctionAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
+        public Task BeforeSequentialFunctionAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
             => Task.CompletedTask;
 
         public Task AfterFunctionAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
@@ -430,7 +430,7 @@ public class AgentMiddlewarePipelineTests
             return Task.CompletedTask;
         }
 
-        public Task BeforeFunctionAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
+        public Task BeforeSequentialFunctionAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
             => Task.CompletedTask;
 
         public Task AfterFunctionAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
@@ -456,7 +456,7 @@ public class AgentMiddlewarePipelineTests
         public Task AfterIterationAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
             => Task.CompletedTask;
 
-        public Task BeforeFunctionAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
+        public Task BeforeSequentialFunctionAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
             => Task.CompletedTask;
 
         public Task AfterFunctionAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)

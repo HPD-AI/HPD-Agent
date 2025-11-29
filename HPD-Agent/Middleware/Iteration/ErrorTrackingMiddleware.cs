@@ -11,7 +11,7 @@ namespace HPD.Agent;
 /// <para><b>STATELESS MIDDLEWARE:</b></para>
 /// <para>
 /// This middleware is stateless - all state flows through the context via
-/// <see cref="ErrorTrackingState"/>. This preserves AgentCore's thread-safety
+/// <see cref="ErrorTrackingState"/>. This preserves Agent's thread-safety
 /// guarantee for concurrent RunAsync() calls.
 /// </para>
 ///
@@ -161,7 +161,7 @@ public class ErrorTrackingMiddleware : IAgentMiddleware
     }
 
     /// <summary>
-    /// Default error detection logic matching the original AgentCore implementation.
+    /// Default error detection logic matching the original Agent implementation.
     /// </summary>
     private static bool IsDefaultError(FunctionResultContent result)
     {

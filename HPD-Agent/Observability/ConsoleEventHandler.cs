@@ -43,7 +43,7 @@ namespace HPD.Agent;
 /// </remarks>
 public class ConsoleEventHandler : IEventHandler
 {
-    private AgentCore? _agent;
+    private Agent? _agent;
 
     // Track display state
     private bool _isFirstReasoningChunk = true;
@@ -62,7 +62,7 @@ public class ConsoleEventHandler : IEventHandler
     /// Creates a new console event handler with a reference to the agent.
     /// Use this constructor when you've already built the agent.
     /// </summary>
-    internal ConsoleEventHandler(AgentCore agent)
+    internal ConsoleEventHandler(Agent agent)
     {
         _agent = agent;
     }
@@ -73,7 +73,7 @@ public class ConsoleEventHandler : IEventHandler
     /// Required for bidirectional events (permissions, continuations) to work.
     /// </summary>
     /// <param name="agent">The agent instance</param>
-    internal void SetAgent(AgentCore agent)
+    internal void SetAgent(Agent agent)
     {
         _agent = agent;
     }

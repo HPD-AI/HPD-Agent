@@ -576,7 +576,7 @@ Similar migration pattern.
 ### Tasks
 
 #### 4.1: Add Property to AgentLoopState
-**File:** `HPD-Agent/Agent/AgentCore.cs` (line ~2903)
+**File:** `HPD-Agent/Agent/Agent.cs` (line ~2903)
 
 **BEFORE:**
 ```csharp
@@ -612,7 +612,7 @@ public ImmutableDictionary<string, object> MiddlewareStates { get; init; }
 ---
 
 #### 4.2: Update AgentLoopState.Initial()
-**File:** `HPD-Agent/Agent/AgentCore.cs` (line ~2919)
+**File:** `HPD-Agent/Agent/Agent.cs` (line ~2919)
 
 ```csharp
 public static AgentLoopState Initial(...) => new()
@@ -817,7 +817,7 @@ rm HPD-Agent/Middleware/State/ContinuationPermissionState.cs
 ---
 
 #### 7.2: Remove Deprecated Properties
-**File:** `HPD-Agent/Agent/AgentCore.cs`
+**File:** `HPD-Agent/Agent/Agent.cs`
 
 Remove:
 ```csharp

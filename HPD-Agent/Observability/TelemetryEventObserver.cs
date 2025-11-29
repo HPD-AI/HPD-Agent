@@ -1,15 +1,14 @@
-using System.Diagnostics;
 using System.Diagnostics.Metrics;
 
 namespace HPD.Agent;
 
 /// <summary>
-/// Observes agent events and emits OpenTelemetry metrics/traces.
-/// Replaces AgentTelemetryService with event-driven approach.
+/// Observes agent events and emits OpenTelemetry metrics.
+/// Metrics provide aggregated statistics for dashboards and alerting.
+/// Note: Distributed tracing is handled separately via ActivitySource in Agent.
 /// </summary>
 public class TelemetryEventObserver : IAgentEventObserver, IDisposable
 {
-    private readonly ActivitySource _activitySource;
     private readonly Meter _meter;
 
     // Counters
@@ -55,8 +54,6 @@ public class TelemetryEventObserver : IAgentEventObserver, IDisposable
 
     public TelemetryEventObserver(string sourceName = "HPD.Agent")
     {
-
-        _activitySource = new ActivitySource(sourceName);
         _meter = new Meter(sourceName);
 
         // Initialize counters
@@ -475,7 +472,6 @@ public class TelemetryEventObserver : IAgentEventObserver, IDisposable
 
     public void Dispose()
     {
-        _activitySource?.Dispose();
         _meter?.Dispose();
     }
 }

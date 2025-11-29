@@ -18,7 +18,7 @@ namespace HPD.Agent;
 /// <para>
 /// This middleware implements <see cref="IAgentMiddleware"/> and is stateless -
 /// all state flows through the context via <see cref="TotalErrorThresholdStateData"/>.
-/// This preserves AgentCore's thread-safety guarantee for concurrent RunAsync() calls.
+/// This preserves Agent's thread-safety guarantee for concurrent RunAsync() calls.
 /// </para>
 ///
 /// <para><b>Error tracking happens in AfterIterationAsync:</b></para>

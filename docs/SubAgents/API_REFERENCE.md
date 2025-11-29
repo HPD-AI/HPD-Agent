@@ -469,7 +469,7 @@ var threadMode = (string)func.AdditionalProperties["ThreadMode"];      // "State
 **Setup (Generated Code):**
 ```csharp
 // When SubAgent is invoked, generated code:
-var currentAgent = AgentCore.RootAgent;
+var currentAgent = Agent.RootAgent;
 if (currentAgent != null)
 {
     // 1. Link event coordinators
@@ -499,13 +499,13 @@ Events emitted by SubAgent automatically:
 
 ### AsyncLocal Context Flow
 
-**AgentCore provides AsyncLocal storage:**
+**Agent provides AsyncLocal storage:**
 
 ```csharp
-internal sealed class AgentCore
+internal sealed class Agent
 {
     // Current agent in execution chain (flows across async calls)
-    public static AgentCore? RootAgent { get; internal set; }
+    public static Agent? RootAgent { get; internal set; }
 
     // Current conversation thread
     public static ConversationThread? CurrentThread { get; internal set; }
@@ -517,9 +517,9 @@ internal sealed class AgentCore
 
 **Usage in Middleware:**
 ```csharp
-var currentAgent = AgentCore.RootAgent;
-var thread = AgentCore.CurrentThread;
-var funcContext = AgentCore.CurrentFunctionContext;
+var currentAgent = Agent.RootAgent;
+var thread = Agent.CurrentThread;
+var funcContext = Agent.CurrentFunctionContext;
 ```
 
 These flow automatically through nested async SubAgent calls.

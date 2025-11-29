@@ -16,6 +16,7 @@ using HPD.Agent;
 [JsonSerializable(typeof(ValidationErrorResponse))]
 [JsonSerializable(typeof(ValidationError))]
 [JsonSerializable(typeof(List<ValidationError>))]
+[JsonSerializable(typeof(ContainerInvocationErrorResponse))]
 
 // --- Common primitive and collection types for AI function return values ---
 [JsonSerializable(typeof(string))]

@@ -6,7 +6,7 @@
 
 ## Executive Summary
 
-This proposal outlines a refactoring plan to extract hardcoded logic from `AgentCore` into proper middleware, and add new middleware capabilities inspired by LangChain's architecture while maintaining HPD-Agent's cleaner separation of concerns.
+This proposal outlines a refactoring plan to extract hardcoded logic from `Agent` into proper middleware, and add new middleware capabilities inspired by LangChain's architecture while maintaining HPD-Agent's cleaner separation of concerns.
 
 ## Current State Analysis
 
@@ -38,7 +38,7 @@ This proposal outlines a refactoring plan to extract hardcoded logic from `Agent
 
 ---
 
-## Phase 1: Extract Hardcoded Logic from AgentCore
+## Phase 1: Extract Hardcoded Logic from Agent
 
 ### 1.1 CircuitBreakerIterationMiddleware
 
@@ -223,7 +223,7 @@ public class ErrorTrackingIterationMiddleware : IIterationMiddleware
 
 **Actual Method Name:** `MiddlewareContainerResults` (not `FilterContainerResults`)
 
-**Current Location:** `AgentCore.cs` line 1935
+**Current Location:** `Agent.cs` line 1935
 
 ```csharp
 private static List<AIContent> MiddlewareContainerResults(
@@ -542,7 +542,7 @@ Based on evaluator feedback:
 
 ### Step 1: Add Middleware Without Breaking Changes
 - Add new middleware interfaces and implementations
-- Keep existing hardcoded logic in AgentCore
+- Keep existing hardcoded logic in Agent
 - Add feature flags to switch between old/new behavior
 
 ### Step 2: Gradual Migration
@@ -551,8 +551,8 @@ Based on evaluator feedback:
 - Add deprecation warnings
 
 ### Step 3: Remove Hardcoded Logic
-- Remove hardcoded circuit breaker from AgentCore
-- Remove hardcoded error tracking from AgentCore
+- Remove hardcoded circuit breaker from Agent
+- Remove hardcoded error tracking from Agent
 - Middleware becomes the only implementation
 
 ---

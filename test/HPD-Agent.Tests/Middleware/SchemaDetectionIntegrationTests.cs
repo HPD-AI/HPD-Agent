@@ -13,7 +13,7 @@ namespace HPD.Agent.Tests.Middleware;
 
 /// <summary>
 /// Integration tests for middleware state schema detection during checkpoint resume.
-/// Tests the runtime validation logic in AgentCore.ValidateAndMigrateSchema().
+/// Tests the runtime validation logic in Agent.ValidateAndMigrateSchema().
 /// </summary>
 public class SchemaDetectionIntegrationTests : AgentTestBase
 {
@@ -159,7 +159,7 @@ public class SchemaDetectionIntegrationTests : AgentTestBase
     // HELPER METHODS
     // ═══════════════════════════════════════════════════════
 
-    private AgentCore CreateTestAgentWithLogging()
+    private Agent CreateTestAgentWithLogging()
     {
         var client = new FakeChatClient();
         client.EnqueueTextResponse("Test response");
@@ -169,7 +169,7 @@ public class SchemaDetectionIntegrationTests : AgentTestBase
         var providerRegistry = new TestProviderRegistry(client);
 
         // Create service provider with ILoggerFactory registered
-        // This is required because AgentCore retrieves ILoggerFactory from the service provider
+        // This is required because Agent retrieves ILoggerFactory from the service provider
         var services = new ServiceCollection();
         services.AddSingleton<ILoggerFactory>(loggerFactory);
         var serviceProvider = services.BuildServiceProvider();

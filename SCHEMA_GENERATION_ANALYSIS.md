@@ -36,7 +36,7 @@ var schemaJson = JsonSerializer.Serialize(schema, HPDJsonContext.Default.JsonSch
    - **AOT-compatible**
 
 3. **`AIJsonUtilities.DefaultOptions`** - You're already using this!
-   - Used in `AgentCore.cs:366` for serialization
+   - Used in `Agent.cs:366` for serialization
    - Used in `AgentBuilder.cs:479` for logging client
    - Source-generated for AOT compatibility
 
@@ -210,9 +210,9 @@ Automatically extracts from attributes:
 
 ### ✅ Already Using AIJsonUtilities
 
-1. **AgentCore.cs:366** - Serialization options
-2. **AgentCore.cs:3414** - State serialization
-3. **AgentCore.cs:3445** - State deserialization
+1. **Agent.cs:366** - Serialization options
+2. **Agent.cs:3414** - State serialization
+3. **Agent.cs:3445** - State deserialization
 4. **AgentBuilder.cs:479** - Logging client JSON options
 
 ### ❌ NOT Using AIJsonUtilities

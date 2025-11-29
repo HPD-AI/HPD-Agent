@@ -786,7 +786,7 @@ The source-generated container approach is **proven** (Microsoft.Extensions.AI u
 - `HPD-Agent.SourceGenerator/MiddlewareStateGenerator.cs` (source generator)
 
 ### Modified Files (4)
-- `HPD-Agent/Agent/AgentCore.cs` (AgentLoopState.MiddlewareState property)
+- `HPD-Agent/Agent/Agent.cs` (AgentLoopState.MiddlewareState property)
 - `HPD-Agent/Middleware/Iteration/CircuitBreakerMiddleware.cs`
 - `HPD-Agent/Middleware/Iteration/ErrorTrackingMiddleware.cs`
 - `HPD-Agent/Permissions/ContinuationPermissionMiddleware.cs`

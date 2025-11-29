@@ -613,7 +613,7 @@ await foreach (var evt in agent.RunAsync("Do something complex"))
 
 **Solution**: Check that:
 1. Middleware is added to `_IterationMiddleWares` list in AgentBuilder
-2. AgentCore constructor receives the Middlewares
+2. Agent constructor receives the Middlewares
 3. Both `BeforeIterationAsync()` and `AfterIterationAsync()` are implemented
 4. Middlewares are being called in `RunAgenticLoopInternal` (lines 985-997, 1166-1171)
 
@@ -732,4 +732,4 @@ For full technical details, see [`ITERATION_Middleware_LIFECYCLE_PATTERN.md`](/P
 - **Architecture Proposal**: `/Proposals/ITERATION_Middleware_ARCHITECTURE.md`
 - **Implementation**: `/HPD-Agent/Middlewares/Iteration/`
 - **Related Middlewares**: `/HPD-Agent/Middlewares/PromptMiddlewareing/`
-- **AgentCore Integration**: `/HPD-Agent/Agent/AgentCore.cs` (lines 967-1177)
+- **Agent Integration**: `/HPD-Agent/Agent/Agent.cs` (lines 967-1177)

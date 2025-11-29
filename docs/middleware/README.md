@@ -136,7 +136,7 @@ middleware.ForFunction("read_file");  // One function
 
 ### Permission Check
 ```csharp
-public Task BeforeFunctionAsync(AgentMiddlewareContext ctx, CancellationToken ct)
+public Task BeforeSequentialFunctionAsync(AgentMiddlewareContext ctx, CancellationToken ct)
 {
     if (!IsApproved(ctx.Function!))
     {

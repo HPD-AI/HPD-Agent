@@ -3,11 +3,11 @@ namespace HPD.Agent;
 /// <summary>
 /// Abstraction for bidirectional event coordination.
 /// Enables middlewares to emit events and wait for responses
-/// without knowing about AgentCore internals.
+/// without knowing about Agent internals.
 /// </summary>
 /// <remarks>
 /// <para>
-/// This interface decouples middleware from AgentCore, enabling:
+/// This interface decouples middleware from Agent, enabling:
 /// - Clean middleware architecture (no agent reference needed)
 /// - Easy unit testing (mock the interface)
 /// - Future implementations (e.g., distributed event coordination)

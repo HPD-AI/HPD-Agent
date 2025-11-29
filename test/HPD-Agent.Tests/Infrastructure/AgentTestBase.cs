@@ -20,7 +20,7 @@ public abstract class AgentTestBase : IAsyncDisposable, IDisposable
     /// Creates an agent with default configuration.
     /// All operations use TestCancellationToken for clean shutdown.
     /// </summary>
-    internal AgentCore CreateAgent(
+    internal Agent CreateAgent(
         AgentConfig? config = null,
         IChatClient? client = null,
         params AIFunction[] tools)
@@ -199,6 +199,6 @@ public abstract class AgentTestBase : IAsyncDisposable, IDisposable
     /// </summary>
     protected virtual void ClearAsyncLocalState()
     {
-        AgentCore.CurrentFunctionContext = null;
+        Agent.CurrentFunctionContext = null;
     }
 }

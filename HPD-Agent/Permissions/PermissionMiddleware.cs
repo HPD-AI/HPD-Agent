@@ -1,5 +1,6 @@
 using HPD.Agent.Middleware;
 using HPD_Agent.Permissions;
+using Microsoft.Extensions.AI;
 
 namespace HPD.Agent.Permissions;
 
@@ -10,7 +11,7 @@ namespace HPD.Agent.Permissions;
 /// <remarks>
 /// <para><b>How It Works:</b></para>
 /// <para>
-/// This middleware uses the <see cref="IAgentMiddleware.BeforeFunctionAsync"/> hook to check
+/// This middleware uses the <see cref="IAgentMiddleware.BeforeSequentialFunctionAsync"/> hook to check
 /// permissions before each function executes. If a function requires permission and the user
 /// hasn't granted it, the middleware blocks execution and sets the result to the denial reason.
 /// </para>
@@ -81,11 +82,75 @@ public class PermissionMiddleware : IAgentMiddleware
     }
 
     /// <summary>
+    /// Handles batch permission checking for parallel function execution.
+    /// Mimics the old PermissionManager.CheckPermissionsAsync behavior:
+    /// loops through each function and checks permission sequentially.
+    /// Results are stored in BatchPermissionState for BeforeSequentialFunctionAsync to check.
+    /// </summary>
+    public async Task BeforeParallelFunctionsAsync(
+        AgentMiddlewareContext context,
+        CancellationToken cancellationToken)
+    {
+        var parallelFunctions = context.ParallelFunctions;
+        if (parallelFunctions == null || parallelFunctions.Count == 0)
+            return;
+
+        var batchState = context.State.MiddlewareState.BatchPermission ?? new BatchPermissionStateData();
+
+        // Loop through each function and check permission individually
+        // This matches the old PermissionManager.CheckPermissionsAsync behavior
+        foreach (var funcInfo in parallelFunctions)
+        {
+            var function = funcInfo.Function;
+            var functionName = funcInfo.Name;
+
+            // Check if permission is required (attribute + overrides)
+            var attributeRequiresPermission = function is HPDAIFunctionFactory.HPDAIFunction hpdFunction
+                && hpdFunction.HPDOptions.RequiresPermission;
+
+            var effectiveRequiresPermission = _overrideRegistry?.GetEffectivePermissionRequirement(
+                functionName, attributeRequiresPermission)
+                ?? attributeRequiresPermission;
+
+            // No permission required - auto-approve
+            if (!effectiveRequiresPermission)
+            {
+                batchState = batchState.RecordApproval(functionName);
+                continue;
+            }
+
+            // Check individual permission using the same logic as BeforeSequentialFunctionAsync
+            var permissionResult = await CheckSinglePermissionAsync(
+                context,
+                function,
+                functionName,
+                funcInfo.CallId,
+                funcInfo.Arguments,
+                cancellationToken).ConfigureAwait(false);
+
+            if (permissionResult.IsApproved)
+            {
+                batchState = batchState.RecordApproval(functionName);
+            }
+            else
+            {
+                batchState = batchState.RecordDenial(functionName, permissionResult.DenialReason);
+            }
+        }
+
+        // Update state with all batch approvals/denials
+        context.UpdateState(s => s with
+        {
+            MiddlewareState = s.MiddlewareState.WithBatchPermission(batchState)
+        });
+    }
+
+    /// <summary>
     /// Checks permissions before a function executes.
     /// Blocks execution if permission is required but not granted.
     /// For parallel execution, checks batch state first to avoid duplicate permission requests.
     /// </summary>
-    public async Task BeforeFunctionAsync(
+    public async Task BeforeSequentialFunctionAsync(
         AgentMiddlewareContext context,
         CancellationToken cancellationToken)
     {
@@ -281,6 +346,120 @@ public class PermissionMiddleware : IAgentMiddleware
             // Block execution with denial reason
             context.BlockFunctionExecution = true;
             context.FunctionResult = denialReason;
+        }
+    }
+
+    /// <summary>
+    /// Helper method that checks permission for a single function.
+    /// Returns approval status and denial reason (if denied).
+    /// Used by BeforeParallelFunctionsAsync to batch check permissions.
+    /// </summary>
+    private async Task<(bool IsApproved, string DenialReason)> CheckSinglePermissionAsync(
+        AgentMiddlewareContext context,
+        AIFunction function,
+        string functionName,
+        string callId,
+        IDictionary<string, object?> arguments,
+        CancellationToken cancellationToken)
+    {
+        var conversationId = context.ConversationId;
+
+        // Check stored permissions (conversation-scoped first, then global)
+        if (_storage != null)
+        {
+            PermissionChoice? storedChoice = null;
+
+            if (!string.IsNullOrEmpty(conversationId))
+            {
+                storedChoice = await _storage.GetStoredPermissionAsync(functionName, conversationId)
+                    .ConfigureAwait(false);
+            }
+
+            storedChoice ??= await _storage.GetStoredPermissionAsync(functionName, conversationId: null)
+                .ConfigureAwait(false);
+
+            if (storedChoice == PermissionChoice.AlwaysAllow)
+            {
+                return (true, string.Empty);
+            }
+
+            if (storedChoice == PermissionChoice.AlwaysDeny)
+            {
+                return (false, $"Execution of '{functionName}' was denied by a stored user preference.");
+            }
+        }
+
+        // Request permission via bidirectional events
+        var permissionId = Guid.NewGuid().ToString();
+
+        context.Emit(new PermissionRequestEvent(
+            permissionId,
+            _middlewareName,
+            functionName,
+            function.Description ?? "No description available",
+            callId,
+            arguments));
+
+        // Wait for response from external handler
+        PermissionResponseEvent response;
+        try
+        {
+            response = await context.WaitForResponseAsync<PermissionResponseEvent>(
+                permissionId,
+                TimeSpan.FromMinutes(5))
+                .ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            context.Emit(new PermissionDeniedEvent(
+                permissionId,
+                _middlewareName,
+                "Permission request timed out after 5 minutes"));
+
+            return (false, "Permission request timed out. Please respond to permission requests promptly.");
+        }
+        catch (OperationCanceledException)
+        {
+            context.Emit(new PermissionDeniedEvent(
+                permissionId,
+                _middlewareName,
+                "Permission request was cancelled"));
+
+            return (false, "Permission request was cancelled.");
+        }
+
+        // Process response
+        if (response.Approved)
+        {
+            // Emit approval event for observability
+            context.Emit(new PermissionApprovedEvent(permissionId, _middlewareName));
+
+            // Store persistent choice if requested
+            if (_storage != null && response.Choice != PermissionChoice.Ask)
+            {
+                await _storage.SavePermissionAsync(
+                    functionName,
+                    response.Choice,
+                    conversationId)
+                    .ConfigureAwait(false);
+            }
+
+            return (true, string.Empty);
+        }
+        else
+        {
+            // Determine denial reason
+            var denialReason = response.Reason
+                ?? _config?.Messages?.PermissionDeniedDefault
+                ?? "Permission denied by user.";
+
+            // Emit denial event for observability
+            context.Emit(new PermissionDeniedEvent(
+                permissionId,
+                _middlewareName,
+                denialReason));
+
+            return (false, denialReason);
         }
     }
 }

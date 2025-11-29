@@ -87,7 +87,7 @@ FunctionCallProcessor.ExecuteInParallelAsync()
 - 2 record types (`PermissionResult`, `PermissionBatchResult`)
 - Separate context construction per function
 
-All of this could be a single middleware with a `BeforeFunctionAsync` hook.
+All of this could be a single middleware with a `BeforeSequentialFunctionAsync` hook.
 
 ---
 
@@ -182,7 +182,7 @@ public interface IAgentMiddleware
     /// - Set BlockFunctionExecution = true to prevent THIS function from running
     /// - Set FunctionResult to provide a result without execution
     /// </remarks>
-    Task BeforeFunctionAsync(AgentMiddlewareContext context, CancellationToken ct)
+    Task BeforeSequentialFunctionAsync(AgentMiddlewareContext context, CancellationToken ct)
         => Task.CompletedTask;
 
     /// <summary>
@@ -415,7 +415,7 @@ internal class PermissionMiddleware : IPermissionMiddleware
 ```csharp
 public class PermissionMiddleware : IAgentMiddleware
 {
-    public async Task BeforeFunctionAsync(
+    public async Task BeforeSequentialFunctionAsync(
         AgentMiddlewareContext context,
         CancellationToken ct)
     {
@@ -595,7 +595,7 @@ public class LoggingMiddleware : IAgentMiddleware
 {
     private readonly ConcurrentDictionary<string, Stopwatch> _timers = new();
 
-    public Task BeforeFunctionAsync(AgentMiddlewareContext context, CancellationToken ct)
+    public Task BeforeSequentialFunctionAsync(AgentMiddlewareContext context, CancellationToken ct)
     {
         var callId = context.FunctionCallId ?? Guid.NewGuid().ToString();
         _logger.LogInformation("Calling {Function}", context.Function?.Name);
@@ -645,7 +645,7 @@ User Message Arrives
             │                                               │
             ├─► FOR EACH TOOL CALL ◄───────────────────┐    │
             │       │                                  │    │
-            │       ├─► [BeforeFunctionAsync] ─── All  │    │
+            │       ├─► [BeforeSequentialFunctionAsync] ─── All  │    │
             │       │       │                          │    │
             │       │       └─► Check BlockFunctionExecution
             │       │                                  │    │
@@ -673,10 +673,10 @@ var agent = new AgentBuilder()
     .WithMiddleware(new CircuitBreakerMiddleware()) // Runs 3rd
     .Build();
 
-// BeforeFunctionAsync execution order:
-// 1. LoggingMiddleware.BeforeFunctionAsync
-// 2. PermissionMiddleware.BeforeFunctionAsync  <-- Can block here
-// 3. CircuitBreakerMiddleware.BeforeFunctionAsync
+// BeforeSequentialFunctionAsync execution order:
+// 1. LoggingMiddleware.BeforeSequentialFunctionAsync
+// 2. PermissionMiddleware.BeforeSequentialFunctionAsync  <-- Can block here
+// 3. CircuitBreakerMiddleware.BeforeSequentialFunctionAsync
 
 // AfterFunctionAsync execution order (reverse for "unwinding"):
 // 1. CircuitBreakerMiddleware.AfterFunctionAsync
@@ -709,7 +709,7 @@ var agent = new AgentBuilder()
 
 | Delete | Lines | Reason |
 |--------|-------|--------|
-| `PermissionManager` | ~140 | Logic moves to `PermissionMiddleware.BeforeFunctionAsync` |
+| `PermissionManager` | ~140 | Logic moves to `PermissionMiddleware.BeforeSequentialFunctionAsync` |
 | `PermissionResult` | ~15 | No longer needed |
 | `PermissionBatchResult` | ~10 | No longer needed |
 
@@ -749,7 +749,7 @@ var agent = new AgentBuilder()
 
 **Files to update:**
 
-1. `PermissionMiddleware` → Implement `IAgentMiddleware.BeforeFunctionAsync`
+1. `PermissionMiddleware` → Implement `IAgentMiddleware.BeforeSequentialFunctionAsync`
 2. `CircuitBreakerIterationMiddleware` → Implement `IAgentMiddleware` hooks
 3. `ContinuationPermissionIterationMiddleware` → Implement `IAgentMiddleware.BeforeIterationAsync`
 4. `ErrorTrackingIterationMiddleware` → Implement `IAgentMiddleware.AfterIterationAsync`
@@ -759,11 +759,11 @@ var agent = new AgentBuilder()
 
 **Estimated effort:** 6-8 hours
 
-### Phase 3: Update AgentCore Integration
+### Phase 3: Update Agent Integration
 
 **Files to update:**
 
-1. `AgentCore.cs`
+1. `Agent.cs`
    - Replace multiple middleware lists with single `List<IAgentMiddleware>`
    - Update `RunAgenticLoopInternal` to call unified hooks
    - Remove `PermissionManager` integration
@@ -788,7 +788,7 @@ var agent = new AgentBuilder()
 3. `IAIFunctionMiddleware` from `AiFunctionOrchestrationContext.cs`
 4. `AIFunctionInvocationContext` from `AiFunctionOrchestrationContext.cs`
 5. `IPermissionMiddleware.cs`
-6. `PermissionManager` section from `AgentCore.cs`
+6. `PermissionManager` section from `Agent.cs`
 7. Old `MiddlewareChain` builder methods
 
 **Estimated effort:** 2-3 hours
@@ -820,7 +820,7 @@ var agent = new AgentBuilder()
 |-------|--------|
 | Phase 1: Create Infrastructure | 4-6 hours |
 | Phase 2: Migrate Middlewares | 6-8 hours |
-| Phase 3: Update AgentCore | 8-10 hours |
+| Phase 3: Update Agent | 8-10 hours |
 | Phase 4: Delete Old Code | 2-3 hours |
 | Phase 5: Update Tests | 6-8 hours |
 | Phase 6: Documentation | 3-4 hours |
@@ -908,7 +908,7 @@ namespace HPD.Agent.Middleware;
 ///   └─► [LOOP] BeforeIterationAsync
 ///               └─► LLM Call
 ///               └─► BeforeToolExecutionAsync
-///                     └─► [LOOP] BeforeFunctionAsync
+///                     └─► [LOOP] BeforeSequentialFunctionAsync
 ///                                  └─► Function Execution
 ///                                  └─► AfterFunctionAsync
 ///               └─► AfterIterationAsync
@@ -969,7 +969,7 @@ public interface IAgentMiddleware
     /// Called BEFORE a specific function executes.
     /// Use for: Permission checking, argument validation, per-function guards.
     /// </summary>
-    Task BeforeFunctionAsync(AgentMiddlewareContext context, CancellationToken ct)
+    Task BeforeSequentialFunctionAsync(AgentMiddlewareContext context, CancellationToken ct)
         => Task.CompletedTask;
 
     /// <summary>

@@ -242,12 +242,17 @@ public sealed record CachedReduction
 
     /// <summary>
     /// Computes a deterministic hash of messages for integrity checking.
+    /// Uses Microsoft's AIJsonUtilities.HashDataToString for proper content normalization.
     /// </summary>
     private static string ComputeMessageHash(IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages)
     {
-        using var sha256 = System.Security.Cryptography.SHA256.Create();
-        var combined = string.Join("|", messages.Select(m => $"{m.Role}:{m.Text ?? string.Empty}"));
-        var hashBytes = sha256.ComputeHash(System.Text.Encoding.UTF8.GetBytes(combined));
-        return Convert.ToBase64String(hashBytes);
+        // Use Microsoft's official hashing utility instead of custom SHA256
+        // Benefits:
+        // - Handles JSON normalization automatically (property order, whitespace)
+        // - Properly handles AIContent polymorphism (TextContent, FunctionCallContent, etc.)
+        // - More robust than string concatenation (e.g., role:text collision: "user:hello|assistant" vs "user|hello:assistant")
+        return Microsoft.Extensions.AI.AIJsonUtilities.HashDataToString(
+            messages.ToArray(),
+            Microsoft.Extensions.AI.AIJsonUtilities.DefaultOptions);
     }
 }

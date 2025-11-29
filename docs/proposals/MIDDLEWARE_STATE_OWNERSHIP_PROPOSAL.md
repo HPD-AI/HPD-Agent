@@ -24,11 +24,11 @@ public sealed record AgentLoopState
 1. Custom middleware cannot persist state across iterations
 2. Built-in middleware uses a different pattern than custom middleware would
 3. Adding new middleware features requires modifying `AgentLoopState`
-4. No clear ownership - state lives in AgentCore but logic lives in middleware
+4. No clear ownership - state lives in Agent but logic lives in middleware
 
 ## Proposed Solution: Middleware Owns Its State
 
-Each middleware instance owns and manages its own state. AgentCore only:
+Each middleware instance owns and manages its own state. Agent only:
 1. Calls middleware hooks at the right time
 2. Persists/restores opaque middleware state during checkpointing
 
@@ -37,7 +37,7 @@ Each middleware instance owns and manages its own state. AgentCore only:
 ```csharp
 /// <summary>
 /// Extended interface for middlewares that need to persist state across iterations.
-/// State is owned by the middleware and opaquely serialized by AgentCore.
+/// State is owned by the middleware and opaquely serialized by Agent.
 /// </summary>
 public interface IStatefulIterationMiddleware : IIterationMiddleWare
 {
@@ -50,14 +50,14 @@ public interface IStatefulIterationMiddleware : IIterationMiddleWare
 
     /// <summary>
     /// Exports the middleware's current state for persistence.
-    /// Called by AgentCore during checkpointing.
+    /// Called by Agent during checkpointing.
     /// </summary>
     /// <returns>Serializable state object, or null if no state to persist</returns>
     object? ExportState();
 
     /// <summary>
     /// Imports previously persisted state.
-    /// Called by AgentCore when restoring from a checkpoint.
+    /// Called by Agent when restoring from a checkpoint.
     /// </summary>
     /// <param name="state">The state object previously returned by ExportState</param>
     void ImportState(object? state);
@@ -224,7 +224,7 @@ public class CircuitBreakerIterationMiddleware : IStatefulIterationMiddleware
                 isIdentical ? _consecutiveCountPerTool.GetValueOrDefault(toolName, 0) + 1 : 1);
         }
 
-        // Signal state export (AgentCore will call ExportState)
+        // Signal state export (Agent will call ExportState)
         context.Properties["MiddlewareStateChanged"] = true;
 
         return Task.CompletedTask;
@@ -309,10 +309,10 @@ public record CostState
 }
 ```
 
-### AgentCore Integration
+### Agent Integration
 
 ```csharp
-public partial class AgentCore
+public partial class Agent
 {
     private readonly List<IIterationMiddleWare> _iterationMiddlewares;
 
@@ -372,7 +372,7 @@ public partial class AgentCore
 ### Phase 1: Add New Interface (Non-Breaking)
 1. Add `IStatefulIterationMiddleware` interface
 2. Add `MiddlewareStates` to `AgentLoopState`
-3. Add AgentCore integration for state sync/restore
+3. Add Agent integration for state sync/restore
 4. Update built-in middlewares to implement new interface
 5. Keep old `AgentLoopState` fields for backward compatibility
 
@@ -402,7 +402,7 @@ public record CircuitBreakerState
 
 ### Type Resolution for Deserialization
 ```csharp
-// AgentCore needs to know which types to deserialize to
+// Agent needs to know which types to deserialize to
 public interface IStatefulIterationMiddleware
 {
     // ... existing members ...
@@ -422,7 +422,7 @@ public class CircuitBreakerMiddleware : IStatefulIterationMiddleware
 
 ## Benefits
 
-1. **Clean Ownership** - Middleware owns its state, not AgentCore
+1. **Clean Ownership** - Middleware owns its state, not Agent
 2. **Extensibility** - Custom middlewares get first-class state support
 3. **Consistency** - Built-in and custom middlewares use same pattern
 4. **Type Safety** - Each middleware defines its own strongly-typed state
@@ -449,5 +449,5 @@ public class CircuitBreakerMiddleware : IStatefulIterationMiddleware
 **Implement in Phase 1** (non-breaking) to validate the pattern with built-in middlewares.
 Then evaluate whether to proceed with Phases 2-3 based on adoption and feedback.
 
-The key insight is that **middleware state is middleware's concern**, not AgentCore's concern.
-AgentCore should only facilitate persistence, not define the shape of middleware state.
+The key insight is that **middleware state is middleware's concern**, not Agent's concern.
+Agent should only facilitate persistence, not define the shape of middleware state.

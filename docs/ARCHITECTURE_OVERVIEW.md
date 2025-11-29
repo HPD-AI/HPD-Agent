@@ -528,7 +528,7 @@ Three-level versioning system:
 
 ### Runtime Migration
 
-When resuming from a checkpoint, `AgentCore.ValidateAndMigrateSchema()` automatically:
+When resuming from a checkpoint, `Agent.ValidateAndMigrateSchema()` automatically:
 
 1. **Pre-versioning upgrade** - If `SchemaSignature == null`:
    - Logs: `"Resuming from checkpoint created before schema versioning. Upgrading to current schema."`

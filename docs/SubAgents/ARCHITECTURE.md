@@ -64,7 +64,7 @@ The SubAgent system enables hierarchical agent composition through a **compile-t
 │    │ - Calls method to get SubAgent def               │          │
 │    │ - Creates AgentBuilder from config               │          │
 │    │ - Registers plugins                              │          │
-│    │ - Builds AgentCore                               │          │
+│    │ - Builds Agent                               │          │
 │    │ - Links to parent (SetParent)                    │          │
 │    │ - Creates ExecutionContext                       │          │
 │    │ - Manages thread lifecycle                       │          │
@@ -83,13 +83,13 @@ The SubAgent system enables hierarchical agent composition through a **compile-t
 │  ┌──────────────────────────────────────┐                       │
 │  │ Orchestrator (Root)                  │                       │
 │  │ - ExecutionContext (Depth 0)         │                       │
-│  │ - AgentCore.RootAgent = this         │                       │
+│  │ - Agent.RootAgent = this         │                       │
 │  └──────────────────────────────────────┘                       │
 │           ↓ (calls WeatherExpert)                               │
 │  ┌──────────────────────────────────────┐                       │
 │  │ Generated Wrapper                    │                       │
 │  │ 1. Get SubAgent definition           │                       │
-│  │ 2. Build new AgentCore               │                       │
+│  │ 2. Build new Agent               │                       │
 │  │ 3. SetParent(orchestrator)           │ ← Event bubbling      │
 │  │ 4. Create ExecutionContext           │ ← Attribution         │
 │  │ 5. Get/Create thread                 │ ← Thread mode         │
@@ -127,7 +127,7 @@ HPD-Agent/
 │   ├── SubAgentFactory.cs             # Factory with validation
 │   └── SubAgentThreadMode.cs          # Thread mode enum
 ├── Agent/
-│   ├── AgentCore.cs                   # Core execution engine
+│   ├── Agent.cs                   # Core execution engine
 │   │   ├── ExecutionContext property
 │   │   ├── RootAgent (AsyncLocal)
 │   │   ├── BidirectionalEventCoordinator
@@ -222,7 +222,7 @@ async Task<string> InvokeSubAgentAsync(string query, CancellationToken ct)
     var agent = agentBuilder.BuildCoreAgent();
 
     // 5. SET UP EVENT BUBBLING (Parent-Child Linking)
-    var currentAgent = AgentCore.RootAgent;
+    var currentAgent = Agent.RootAgent;
     if (currentAgent != null)
     {
         agent.EventCoordinator.SetParent(currentAgent.EventCoordinator);
@@ -339,10 +339,10 @@ var orchestrator = new AgentBuilder(config)
     .Build();
 ```
 
-**Step 2:** AgentCore initialization (AgentCore.cs:262)
+**Step 2:** Agent initialization (Agent.cs:262)
 
 ```csharp
-public AgentCore(AgentConfig config, ...)
+public Agent(AgentConfig config, ...)
 {
     // ...
     _eventCoordinator = new BidirectionalEventCoordinator(this);  // ← Pass 'this'
@@ -350,7 +350,7 @@ public AgentCore(AgentConfig config, ...)
 }
 ```
 
-**Step 3:** RunAsync starts (AgentCore.cs:518)
+**Step 3:** RunAsync starts (Agent.cs:518)
 
 ```csharp
 public async IAsyncEnumerable<AgentResponse> RunAsync(...)
@@ -405,7 +405,7 @@ public async IAsyncEnumerable<AgentResponse> RunAsync(...)
 
 ```csharp
 // Remember: Generated code is executing here
-var currentAgent = AgentCore.RootAgent;  // ← Gets orchestrator from AsyncLocal
+var currentAgent = Agent.RootAgent;  // ← Gets orchestrator from AsyncLocal
 ```
 
 **Step 3:** Build SubAgent
@@ -521,7 +521,7 @@ orchestrator.OnEventAsync(async evt =>
 });
 ```
 
-**Background Drainer (AgentCore.cs):**
+**Background Drainer (Agent.cs):**
 ```csharp
 // Continuously reads from _eventChannel
 while (await _eventCoordinator.EventReader.WaitToReadAsync(cancellationToken))
@@ -640,7 +640,7 @@ await agent.RunAsync(thread, messages);
 
 ### Why AsyncLocal for RootAgent?
 
-**Chosen:** AsyncLocal<AgentCore?>
+**Chosen:** AsyncLocal<Agent?>
 
 **Rationale:**
 1. **Automatic Flow**: Context flows through nested async calls
@@ -817,13 +817,13 @@ var root = RootAgent;
 | SubAgent Class | HPD-Agent/SubAgents/SubAgent.cs | 1-30 |
 | SubAgentFactory | HPD-Agent/SubAgents/SubAgentFactory.cs | 1-60 |
 | SubAgentAttribute | HPD-Agent/SubAgents/SubAgentAttribute.cs | 1-20 |
-| AgentExecutionContext | HPD-Agent/Agent/AgentCore.cs | 6281-6314 |
-| AgentEvent | HPD-Agent/Agent/AgentCore.cs | 6329-6336 |
-| AgentCore.ExecutionContext | HPD-Agent/Agent/AgentCore.cs | 209-212 |
-| Root Initialization | HPD-Agent/Agent/AgentCore.cs | 527-539 |
-| BidirectionalEventCoordinator | HPD-Agent/Agent/AgentCore.cs | 5645-5900 |
-| Emit with Auto-Attach | HPD-Agent/Agent/AgentCore.cs | 5801-5820 |
-| SetParent with Cycle Detection | HPD-Agent/Agent/AgentCore.cs | 5722-5778 |
+| AgentExecutionContext | HPD-Agent/Agent/Agent.cs | 6281-6314 |
+| AgentEvent | HPD-Agent/Agent/Agent.cs | 6329-6336 |
+| Agent.ExecutionContext | HPD-Agent/Agent/Agent.cs | 209-212 |
+| Root Initialization | HPD-Agent/Agent/Agent.cs | 527-539 |
+| BidirectionalEventCoordinator | HPD-Agent/Agent/Agent.cs | 5645-5900 |
+| Emit with Auto-Attach | HPD-Agent/Agent/Agent.cs | 5801-5820 |
+| SetParent with Cycle Detection | HPD-Agent/Agent/Agent.cs | 5722-5778 |
 | SubAgentAnalyzer | HPD-Agent.SourceGenerator/SourceGeneration/SubAgentAnalyzer.cs | 1-200 |
 | SubAgentCodeGenerator | HPD-Agent.SourceGenerator/SourceGeneration/SubAgentCodeGenerator.cs | 1-158 |
 | ExecutionContext Generation | HPD-Agent.SourceGenerator/SourceGeneration/SubAgentCodeGenerator.cs | 64-92 |

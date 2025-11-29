@@ -26,6 +26,10 @@ namespace HPD.Agent.Middleware;
 ///   <description>+ Response, ToolCalls</description>
 /// </item>
 /// <item>
+///   <term>BeforeParallelFunctions</term>
+///   <description>+ ParallelFunctions (list of all functions about to execute)</description>
+/// </item>
+/// <item>
 ///   <term>BeforeFunction</term>
 ///   <description>+ Function, FunctionCallId, FunctionArguments</description>
 /// </item>
@@ -98,7 +102,7 @@ public class AgentMiddlewareContext
     public AgentLoopState State => _pendingState ?? _originalState;
 
     /// <summary>
-    /// Sets the original state. Called by AgentCore when creating the context.
+    /// Sets the original state. Called by Agent when creating the context.
     /// </summary>
     internal void SetOriginalState(AgentLoopState state)
     {
@@ -117,7 +121,7 @@ public class AgentMiddlewareContext
     }
 
     /// <summary>
-    /// Gets pending state updates (called by AgentCore after middleware chain).
+    /// Gets pending state updates (called by Agent after middleware chain).
     /// Returns null if no updates were scheduled.
     /// </summary>
     internal AgentLoopState? GetPendingState() => _pendingState;
@@ -272,8 +276,15 @@ public class AgentMiddlewareContext
 
     // ═══════════════════════════════════════════════════════════════
     // FUNCTION LEVEL
-    // Available in: BeforeFunction, AfterFunction
+    // Available in: BeforeParallelFunctions, BeforeFunction, AfterFunction
     // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Information about functions being executed in parallel.
+    /// Populated ONLY in BeforeParallelFunctionsAsync when multiple functions execute in parallel.
+    /// Null for sequential/single function execution.
+    /// </summary>
+    public IReadOnlyList<ParallelFunctionInfo>? ParallelFunctions { get; set; }
 
     /// <summary>
     /// The function being invoked.
@@ -387,12 +398,12 @@ public class AgentMiddlewareContext
     public bool IsIterationFailure => IterationException != null;
 
     // ═══════════════════════════════════════════════════════════════
-    // CONTEXT LIFECYCLE METHODS (Internal - called by AgentCore)
+    // CONTEXT LIFECYCLE METHODS (Internal - called by Agent)
     // ═══════════════════════════════════════════════════════════════
 
     /// <summary>
     /// Prepares context for function-level hooks.
-    /// Called by AgentCore before invoking BeforeFunction.
+    /// Called by Agent before invoking BeforeFunction.
     /// </summary>
     internal void EnterFunctionContext(
         AIFunction function,
@@ -409,7 +420,7 @@ public class AgentMiddlewareContext
 
     /// <summary>
     /// Clears function-level context after AfterFunction completes.
-    /// Called by AgentCore after invoking AfterFunction.
+    /// Called by Agent after invoking AfterFunction.
     /// </summary>
     internal void ExitFunctionContext()
     {
@@ -426,7 +437,7 @@ public class AgentMiddlewareContext
 
     /// <summary>
     /// Resets iteration-level state for a new iteration.
-    /// Called by AgentCore at the start of each iteration.
+    /// Called by Agent at the start of each iteration.
     /// </summary>
     internal void ResetForNextIteration()
     {
@@ -437,4 +448,31 @@ public class AgentMiddlewareContext
         SkipLLMCall = false;
         SkipToolExecution = false;
     }
+}
+
+/// <summary>
+/// Information about a function that will execute in parallel.
+/// Used in BeforeParallelFunctionsAsync to provide batch context.
+/// </summary>
+/// <param name="Function">The AI function definition</param>
+/// <param name="CallId">Unique identifier for this function call</param>
+/// <param name="Arguments">Arguments that will be passed to the function</param>
+/// <param name="PluginName">Name of the plugin containing this function, if any</param>
+/// <param name="SkillName">Name of the skill that invoked this function, if any</param>
+public record ParallelFunctionInfo(
+    AIFunction Function,
+    string CallId,
+    IDictionary<string, object?> Arguments,
+    string? PluginName = null,
+    string? SkillName = null)
+{
+    /// <summary>
+    /// Convenience property for function name.
+    /// </summary>
+    public string Name => Function.Name;
+
+    /// <summary>
+    /// Convenience property for function description.
+    /// </summary>
+    public string? Description => Function.Description;
 }

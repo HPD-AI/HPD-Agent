@@ -89,7 +89,7 @@ await foreach (var _ in agent.RunAsync("Hello!", thread)) { }
 │  └──────────────────────────┬──────────────────────────────┘   │
 │                             │                                   │
 │  ┌─────────────────────────────────────────────────────────┐   │
-│  │  AgentCore (Event-Driven Engine)                        │   │
+│  │  Agent (Event-Driven Engine)                        │   │
 │  │                                                          │   │
 │  │  • Emits AgentEvent stream                      │   │
 │  │  • Middleware pipeline (permissions, continuations)     │   │

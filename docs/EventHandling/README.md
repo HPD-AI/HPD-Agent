@@ -104,8 +104,8 @@ var agent = new AgentBuilder(config)
 
 ### For Advanced Users
 1. Read **[Architecture](./ARCHITECTURE.md)** - Understand system internals
-2. Explore **[BidirectionalEventCoordinator](../../HPD-Agent/Agent/AgentCore.cs#L6300)** - Core implementation
-3. Review **[Event Definitions](../../HPD-Agent/Agent/AgentCore.cs#L6368)** - All event type definitions
+2. Explore **[BidirectionalEventCoordinator](../../HPD-Agent/Agent/Agent.cs#L6300)** - Core implementation
+3. Review **[Event Definitions](../../HPD-Agent/Agent/Agent.cs#L6368)** - All event type definitions
 
 ---
 
@@ -223,7 +223,7 @@ var agent = new AgentBuilder(config)
 
 - **Total Event Types**: 58
 - **Built-in Event Handlers**: 3 (Console, Logging, Telemetry)
-- **Event Emission Points in AgentCore**: 52 locations
+- **Event Emission Points in Agent**: 52 locations
 - **Event Overhead per Event**: ~0.3ms (negligible)
 - **Memory per Event**: ~100 bytes
 - **Code Reduction vs. Manual Loops**: 95% (300 lines → 15 lines)

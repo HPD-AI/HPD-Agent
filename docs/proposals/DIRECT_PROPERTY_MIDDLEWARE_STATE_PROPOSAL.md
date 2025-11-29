@@ -121,7 +121,7 @@ context.UpdateState(s => s with {                            ← Simple record '
 
 **BEFORE:**
 ```csharp
-// HPD-Agent/Agent/AgentCore.cs (line 2902-2904)
+// HPD-Agent/Agent/Agent.cs (line 2902-2904)
 [JsonIgnore]
 public ImmutableDictionary<string, object> MiddlewareStates { get; init; }
     = ImmutableDictionary<string, object>.Empty;
@@ -368,7 +368,7 @@ public partial class AgentStateJsonContext : JsonSerializerContext
 
 **Updated Serialization:**
 ```csharp
-// HPD-Agent/Agent/AgentCore.cs (AgentLoopState.Serialize())
+// HPD-Agent/Agent/Agent.cs (AgentLoopState.Serialize())
 public string Serialize()
 {
     var stateWithETag = this with { ETag = Guid.NewGuid().ToString() };
@@ -696,7 +696,7 @@ The migration is straightforward with clear benefits and manageable risks. The t
 - `docs/middleware/MIGRATION_GUIDE_V2.md`
 
 ### Modified Files (5)
-- `HPD-Agent/Agent/AgentCore.cs` (AgentLoopState record)
+- `HPD-Agent/Agent/Agent.cs` (AgentLoopState record)
 - `HPD-Agent/Middleware/AgentMiddlewareContext.cs` (remove generic UpdateState)
 - `HPD-Agent/Middleware/Iteration/CircuitBreakerMiddleware.cs`
 - `HPD-Agent/Middleware/Iteration/ErrorTrackingMiddleware.cs`

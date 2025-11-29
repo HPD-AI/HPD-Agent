@@ -264,7 +264,7 @@ public class LoggingMiddleware : IAgentMiddleware
     // ═══════════════════════════════════════════════════════════════
 
     /// <inheritdoc/>
-    public Task BeforeFunctionAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
+    public Task BeforeSequentialFunctionAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
     {
         if (!_options.LogFunction) return Task.CompletedTask;
 

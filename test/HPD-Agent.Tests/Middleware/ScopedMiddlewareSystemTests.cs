@@ -24,7 +24,7 @@ public class ScopedMiddlewareSystemTests
             return Task.CompletedTask;
         }
 
-        public Task BeforeFunctionAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
+        public Task BeforeSequentialFunctionAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
         {
             WasCalled = true;
             return Task.CompletedTask;
@@ -204,7 +204,7 @@ public class ScopedMiddlewareSystemTests
         );
 
         // Act
-        await pipeline.ExecuteBeforeFunctionAsync(context, CancellationToken.None);
+        await pipeline.ExecuteBeforeSequentialFunctionAsync(context, CancellationToken.None);
 
         // Assert - all 4 middlewares should have executed
         Assert.True(globalMiddleware.WasCalled);
@@ -243,7 +243,7 @@ public class ScopedMiddlewareSystemTests
         );
 
         // Act
-        await pipeline.ExecuteBeforeFunctionAsync(context, CancellationToken.None);
+        await pipeline.ExecuteBeforeSequentialFunctionAsync(context, CancellationToken.None);
 
         // Assert - only global middleware should execute
         Assert.True(globalMiddleware.WasCalled);

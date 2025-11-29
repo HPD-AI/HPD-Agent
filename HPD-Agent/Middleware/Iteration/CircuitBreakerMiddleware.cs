@@ -13,7 +13,7 @@ namespace HPD.Agent;
 /// <para><b>STATELESS MIDDLEWARE:</b></para>
 /// <para>
 /// This middleware is stateless - all state flows through the context via
-/// <see cref="CircuitBreakerState"/>. This preserves AgentCore's thread-safety
+/// <see cref="CircuitBreakerState"/>. This preserves Agent's thread-safety
 /// guarantee for concurrent RunAsync() calls.
 /// </para>
 ///
@@ -144,7 +144,7 @@ public class CircuitBreakerMiddleware : IAgentMiddleware
     /// <summary>
     /// Computes a deterministic signature for a function call.
     /// </summary>
-    private static string ComputeFunctionSignature(FunctionCallContent toolCall)
+    internal static string ComputeFunctionSignature(FunctionCallContent toolCall)
     {
         var name = toolCall.Name ?? "_unknown";
 

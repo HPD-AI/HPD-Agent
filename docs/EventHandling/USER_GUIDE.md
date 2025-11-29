@@ -278,9 +278,9 @@ public class BasicTelemetryHandler : IEventHandler
 ```csharp
 public class InteractiveHandler : IEventHandler
 {
-    private AgentCore? _agent;
+    private Agent? _agent;
 
-    internal void SetAgent(AgentCore agent) => _agent = agent;
+    internal void SetAgent(Agent agent) => _agent = agent;
 
     public bool ShouldProcess(AgentEvent evt)
         => evt is PermissionRequestEvent
@@ -665,9 +665,9 @@ public class ReasoningHandler : IEventHandler
 ```csharp
 public class PermissionHandler : IEventHandler
 {
-    private AgentCore? _agent;
+    private Agent? _agent;
 
-    internal void SetAgent(AgentCore agent) => _agent = agent;
+    internal void SetAgent(Agent agent) => _agent = agent;
 
     public bool ShouldProcess(AgentEvent evt)
         => evt is PermissionRequestEvent;

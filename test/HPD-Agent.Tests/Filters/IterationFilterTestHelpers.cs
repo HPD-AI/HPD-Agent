@@ -1,32 +1,28 @@
 using HPD.Agent;
+using HPD.Agent.Middleware;
 using Microsoft.Extensions.AI;
 
 namespace HPD.Agent.Tests.Filters;
 
 /// <summary>
-/// Helper methods for creating test iteration filter contexts.
+/// Helper methods for creating test middleware contexts.
 /// </summary>
-internal static class IterationMiddleWareTestHelpers
+internal static class MiddlewareTestHelpers
 {
     /// <summary>
-    /// Creates a basic iteration filter context for testing.
+    /// Creates a basic agent middleware context for testing.
     /// </summary>
-    public static IterationMiddleWareContext CreateContext(int iteration = 0)
+    public static AgentMiddlewareContext CreateContext(int iteration = 0)
     {
-        var state = AgentLoopState.Initial(
-            messages: new List<ChatMessage>(),
-            runId: "test-run-id",
-            conversationId: "test-conv-id",
-            agentName: "TestAgent");
-
-        return new IterationMiddleWareContext
+        var context = new AgentMiddlewareContext
         {
             Iteration = iteration,
             AgentName = "TestAgent",
             Messages = new List<ChatMessage>(),
             Options = new ChatOptions(),
-            State = state,
+            ConversationId = "test-conv-id",
             CancellationToken = CancellationToken.None
         };
+        return context;
     }
 }

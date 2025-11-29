@@ -37,6 +37,15 @@ public static class TestAgentFactory
             config.Provider.DefaultChatOptions.Tools = tools.Cast<Microsoft.Extensions.AI.AITool>().ToList();
         }
 
+        // Register standard iteration middlewares for loop protection
+        // These are essential for preventing infinite loops in tests
+        var maxConsecutiveCalls = config.AgenticLoop?.MaxConsecutiveFunctionCalls ?? 5;
+        if (maxConsecutiveCalls > 0)
+        {
+            builder.WithCircuitBreaker(maxConsecutiveCalls);
+        }
+        builder.WithErrorTracking(maxConsecutiveErrors: 3);
+
         // Build and return core agent (not protocol-wrapped)
         // Use the internal BuildCoreAsync method to get the core agent directly
         return builder.BuildCoreAsync(CancellationToken.None).GetAwaiter().GetResult();

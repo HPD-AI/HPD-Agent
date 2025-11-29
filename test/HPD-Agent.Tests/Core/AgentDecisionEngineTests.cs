@@ -66,18 +66,17 @@ public class AgentDecisionEngineTests
     [Fact]
     public void DecideNextAction_MaxConsecutiveFailures_ReturnsTerminate()
     {
-        // Arrange: State with consecutive failures at limit
+        // Arrange: State already terminated by ErrorTrackingIterationMiddleware
+        // NOTE: Consecutive failure checking is now handled by middleware, not the decision engine
         var state = AgentLoopState.Initial(new List<ChatMessage>(), "test-run-id", "test-conversation-id", "TestAgent")
-            .WithFailure()  // 1st failure
-            .WithFailure()  // 2nd failure
-            .WithFailure(); // 3rd failure
+            .Terminate("Maximum consecutive failures (3) exceeded");
 
         var config = AgentConfiguration.Default(maxConsecutiveFailures: 3);
 
         // Act
         var decision = _engine.DecideNextAction(state, lastResponse: null, config);
 
-        // Assert: Should terminate due to consecutive failures
+        // Assert: Should terminate due to state being terminated
         var terminate = Assert.IsType<AgentDecision.Terminate>(decision);
         Assert.Contains("consecutive failures", terminate.Reason);
     }
@@ -125,13 +124,10 @@ public class AgentDecisionEngineTests
     [Fact]
     public void DecideNextAction_CircuitBreakerTriggered_ReturnsTerminate()
     {
-        // Arrange: State with repeated identical tool calls
+        // Arrange: State already terminated by CircuitBreakerIterationMiddleware
+        // NOTE: Circuit breaker checking is now handled by middleware, not the decision engine
         var state = AgentLoopState.Initial(new List<ChatMessage>(), "test-run-id", "test-conversation-id", "TestAgent")
-            .RecordToolCall("get_weather", "signature1")  // 1st call
-            .RecordToolCall("get_weather", "signature1")  // 2nd call (same signature)
-            .RecordToolCall("get_weather", "signature1")  // 3rd call (same signature)
-            .RecordToolCall("get_weather", "signature1")  // 4th call (same signature)
-            .RecordToolCall("get_weather", "signature1")  // 5th call (same signature) - should trigger
+            .Terminate("Circuit breaker: 'get_weather' with same arguments would be called 5 times consecutively")
             .NextIteration();
 
         var config = AgentConfiguration.Default(maxConsecutiveFunctionCalls: 5);
@@ -147,7 +143,7 @@ public class AgentDecisionEngineTests
         // Act
         var decision = _engine.DecideNextAction(state, lastResponse, config);
 
-        // Assert: Circuit breaker should fire
+        // Assert: Should terminate due to state being terminated
         var terminate = Assert.IsType<AgentDecision.Terminate>(decision);
         Assert.Contains("circuit breaker", terminate.Reason, StringComparison.OrdinalIgnoreCase);
     }

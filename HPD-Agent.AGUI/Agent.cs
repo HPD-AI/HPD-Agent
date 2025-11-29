@@ -1,5 +1,4 @@
 using Microsoft.Extensions.AI;
-using HPD.Agent.Internal.MiddleWare;
 using System.Threading.Channels;
 using System.Runtime.CompilerServices;
 using CoreAgent = HPD.Agent.AgentCore;

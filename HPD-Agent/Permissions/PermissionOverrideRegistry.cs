@@ -6,7 +6,7 @@ namespace HPD_Agent.Permissions;
 /// Allows users to force or disable permission checks for specific functions,
 /// regardless of the [RequiresPermission] attribute value.
 /// </summary>
-internal class PermissionOverrideRegistry
+public class PermissionOverrideRegistry
 {
     private readonly ConcurrentDictionary<string, bool> _functionOverrides = new();
 

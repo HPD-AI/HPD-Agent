@@ -25,6 +25,9 @@ var agent = new AgentBuilder(config)
     .WithLogging()
     .WithPlanMode()
     .WithPermissions()
+    .WithCircuitBreaker(maxConsecutiveCalls: 3)
+    .WithErrorTracking(maxConsecutiveErrors: 3)
+    .WithTotalErrorThreshold(maxTotalErrors: 10)
     .BuildCoreAgent();
 
 eventHandler.SetAgent(agent);

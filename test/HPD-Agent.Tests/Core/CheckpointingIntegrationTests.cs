@@ -345,11 +345,13 @@ public class CheckpointingIntegrationTests : AgentTestBase
         var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.FullHistory);
         var client = new FakeChatClient();
         client.EnqueueToolCall("TestTool", "call-1");
+        client.EnqueueToolCall("TestTool", "call-2");
         client.EnqueueTextResponse("Done");
 
         var config = DefaultConfig();
         config.ThreadStore = checkpointer;
         config.CheckpointFrequency = CheckpointFrequency.PerIteration;
+        config.AgenticLoop.MaxConsecutiveFunctionCalls = 0; // Disable CircuitBreaker for this test
 
         var testTool = HPDAIFunctionFactory.Create(
             async (args, ct) => await Task.FromResult("tool result"),
@@ -373,7 +375,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
         var history = await checkpointer.GetCheckpointHistoryAsync(thread.Id);
         Assert.True(history.Count >= 2);
 
-        var earlierCheckpointId = history[^1].CheckpointId; // Oldest checkpoint
+        var earlierCheckpointId = history.MinBy(c => c.State.Iteration)!.CheckpointId; // Oldest checkpoint
 
         // Act: Load earlier checkpoint
         var restoredThread = await checkpointer.LoadThreadAtCheckpointAsync(
@@ -384,7 +386,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
         Assert.NotNull(restoredThread);
         Assert.NotNull(restoredThread.ExecutionState);
         // Earlier checkpoint should have lower iteration number
-        Assert.True(restoredThread.ExecutionState.Iteration < history[0].State.Iteration);
+        Assert.True(restoredThread.ExecutionState.Iteration < history.MaxBy(c => c.State.Iteration)!.State.Iteration);
     }
 
     // ═══════════════════════════════════════════════════════

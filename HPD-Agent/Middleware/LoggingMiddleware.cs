@@ -1,0 +1,411 @@
+using System.Collections.Concurrent;
+using System.Text;
+using System.Text.Json;
+using HPD.Agent.Middleware;
+using Microsoft.Extensions.Logging;
+
+namespace HPD.Agent.Middleware;
+
+/// <summary>
+/// Configuration options for the unified logging middleware.
+/// Control what gets logged at each lifecycle stage.
+/// </summary>
+public class LoggingMiddlewareOptions
+{
+    /// <summary>
+    /// Log at message turn level (before/after user message processing).
+    /// Includes: agent name, message count, instructions.
+    /// </summary>
+    public bool LogMessageTurn { get; set; } = true;
+
+    /// <summary>
+    /// Log at iteration level (before/after each LLM call).
+    /// Includes: iteration number, tool call count, response preview.
+    /// </summary>
+    public bool LogIteration { get; set; } = false;
+
+    /// <summary>
+    /// Log at function level (before/after each function execution).
+    /// Includes: function name, arguments, results, timing.
+    /// </summary>
+    public bool LogFunction { get; set; } = true;
+
+    /// <summary>
+    /// Include timing information for function calls.
+    /// Only applies when LogFunction is true.
+    /// </summary>
+    public bool IncludeTiming { get; set; } = true;
+
+    /// <summary>
+    /// Include full arguments in function logs.
+    /// When false, only logs function name.
+    /// </summary>
+    public bool IncludeArguments { get; set; } = true;
+
+    /// <summary>
+    /// Include full results in function logs.
+    /// When false, only logs success/failure.
+    /// </summary>
+    public bool IncludeResults { get; set; } = true;
+
+    /// <summary>
+    /// Include full instructions in message turn logs.
+    /// When false, only logs instruction length.
+    /// </summary>
+    public bool IncludeInstructions { get; set; } = true;
+
+    /// <summary>
+    /// Maximum length for logged strings (arguments, results, instructions).
+    /// 0 = unlimited.
+    /// </summary>
+    public int MaxStringLength { get; set; } = 1000;
+
+    /// <summary>
+    /// Prefix for all log messages.
+    /// </summary>
+    public string LogPrefix { get; set; } = "[HPD-Agent]";
+
+    /// <summary>
+    /// Creates default options that log message turns and functions with full details.
+    /// </summary>
+    public static LoggingMiddlewareOptions Default => new();
+
+    /// <summary>
+    /// Creates minimal options that only log function names (no args/results).
+    /// </summary>
+    public static LoggingMiddlewareOptions Minimal => new()
+    {
+        LogMessageTurn = false,
+        LogIteration = false,
+        LogFunction = true,
+        IncludeArguments = false,
+        IncludeResults = false,
+        IncludeTiming = true
+    };
+
+    /// <summary>
+    /// Creates verbose options that log everything.
+    /// </summary>
+    public static LoggingMiddlewareOptions Verbose => new()
+    {
+        LogMessageTurn = true,
+        LogIteration = true,
+        LogFunction = true,
+        IncludeArguments = true,
+        IncludeResults = true,
+        IncludeTiming = true,
+        IncludeInstructions = true,
+        MaxStringLength = 0 // unlimited
+    };
+}
+
+/// <summary>
+/// Unified logging middleware that consolidates all logging concerns.
+/// Configurable to log at message turn, iteration, and/or function levels.
+/// </summary>
+/// <remarks>
+/// <para>Replaces the following separate middlewares:</para>
+/// <list type="bullet">
+/// <item><c>LoggingAIFunctionMiddleware</c> - Old IAIFunctionMiddleware for function logging</item>
+/// <item><c>FunctionLoggingMiddleware</c> - IAgentMiddleware for function logging with timing</item>
+/// <item><c>PromptLoggingAgentMiddleware</c> - IAgentMiddleware for instruction logging</item>
+/// </list>
+///
+/// <para><b>Usage:</b></para>
+/// <code>
+/// // Default logging (message turns + functions)
+/// builder.WithMiddleware(new LoggingMiddleware(loggerFactory));
+///
+/// // Minimal logging (just function names with timing)
+/// builder.WithMiddleware(new LoggingMiddleware(loggerFactory, LoggingMiddlewareOptions.Minimal));
+///
+/// // Verbose logging (everything)
+/// builder.WithMiddleware(new LoggingMiddleware(loggerFactory, LoggingMiddlewareOptions.Verbose));
+///
+/// // Custom configuration
+/// builder.WithMiddleware(new LoggingMiddleware(loggerFactory, new LoggingMiddlewareOptions
+/// {
+///     LogFunction = true,
+///     LogIteration = true,
+///     IncludeArguments = false,
+///     MaxStringLength = 500
+/// }));
+/// </code>
+/// </remarks>
+public class LoggingMiddleware : IAgentMiddleware
+{
+    private readonly ILogger? _logger;
+    private readonly LoggingMiddlewareOptions _options;
+    private readonly ConcurrentDictionary<string, System.Diagnostics.Stopwatch> _timers = new();
+    private static int _turnCounter = 0;
+    private static int _iterationCounter = 0;
+
+    /// <summary>
+    /// Creates a new logging middleware with default options.
+    /// </summary>
+    /// <param name="loggerFactory">Optional logger factory. If not provided, writes to Console.</param>
+    public LoggingMiddleware(ILoggerFactory? loggerFactory = null)
+        : this(loggerFactory, LoggingMiddlewareOptions.Default)
+    {
+    }
+
+    /// <summary>
+    /// Creates a new logging middleware with custom options.
+    /// </summary>
+    /// <param name="loggerFactory">Optional logger factory. If not provided, writes to Console.</param>
+    /// <param name="options">Configuration options for what to log.</param>
+    public LoggingMiddleware(ILoggerFactory? loggerFactory, LoggingMiddlewareOptions options)
+    {
+        _logger = loggerFactory?.CreateLogger<LoggingMiddleware>();
+        _options = options ?? LoggingMiddlewareOptions.Default;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // MESSAGE TURN LEVEL
+    // ═══════════════════════════════════════════════════════════════
+
+    /// <inheritdoc/>
+    public Task BeforeMessageTurnAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
+    {
+        if (!_options.LogMessageTurn) return Task.CompletedTask;
+
+        var turnNumber = Interlocked.Increment(ref _turnCounter);
+        var sb = new StringBuilder();
+
+        sb.AppendLine("═══════════════════════════════════════════════════════");
+        sb.AppendLine($"{_options.LogPrefix} MESSAGE TURN #{turnNumber} - START");
+        sb.AppendLine($"  Agent: {context.AgentName}");
+        sb.AppendLine($"  Messages: {context.Messages?.Count ?? 0}");
+        sb.AppendLine($"  ConversationId: {context.ConversationId}");
+
+        if (_options.IncludeInstructions && !string.IsNullOrEmpty(context.Options?.Instructions))
+        {
+            var instructions = TruncateString(context.Options.Instructions);
+            sb.AppendLine($"  Instructions: {instructions}");
+        }
+        else if (context.Options?.Instructions != null)
+        {
+            sb.AppendLine($"  Instructions: ({context.Options.Instructions.Length} chars)");
+        }
+
+        sb.AppendLine("═══════════════════════════════════════════════════════");
+
+        LogMessage(sb.ToString());
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc/>
+    public Task AfterMessageTurnAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
+    {
+        if (!_options.LogMessageTurn) return Task.CompletedTask;
+
+        var sb = new StringBuilder();
+
+        sb.AppendLine("═══════════════════════════════════════════════════════");
+        sb.AppendLine($"{_options.LogPrefix} MESSAGE TURN - END");
+        sb.AppendLine($"  Agent: {context.AgentName}");
+        sb.AppendLine($"  Final response: {(context.Response != null ? "Yes" : "No")}");
+        sb.AppendLine("═══════════════════════════════════════════════════════");
+
+        LogMessage(sb.ToString());
+        return Task.CompletedTask;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // ITERATION LEVEL
+    // ═══════════════════════════════════════════════════════════════
+
+    /// <inheritdoc/>
+    public Task BeforeIterationAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
+    {
+        if (!_options.LogIteration) return Task.CompletedTask;
+
+        var iterationNumber = Interlocked.Increment(ref _iterationCounter);
+        var sb = new StringBuilder();
+
+        sb.AppendLine("───────────────────────────────────────────────────────");
+        sb.AppendLine($"{_options.LogPrefix} ITERATION #{iterationNumber} (Agent iteration: {context.Iteration})");
+        sb.AppendLine($"  Agent: {context.AgentName}");
+        sb.AppendLine($"  Messages to LLM: {context.Messages?.Count ?? 0}");
+        sb.AppendLine("───────────────────────────────────────────────────────");
+
+        LogMessage(sb.ToString());
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc/>
+    public Task AfterIterationAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
+    {
+        if (!_options.LogIteration) return Task.CompletedTask;
+
+        var sb = new StringBuilder();
+
+        sb.AppendLine("───────────────────────────────────────────────────────");
+        sb.AppendLine($"{_options.LogPrefix} ITERATION END (Agent iteration: {context.Iteration})");
+        sb.AppendLine($"  Tool calls executed: {context.ToolResults?.Count() ?? 0}");
+
+        if (context.ToolResults?.Any() == true)
+        {
+            var errors = context.ToolResults.Count(r => r.Exception != null);
+            if (errors > 0)
+            {
+                sb.AppendLine($"  Errors: {errors}");
+            }
+        }
+
+        sb.AppendLine("───────────────────────────────────────────────────────");
+
+        LogMessage(sb.ToString());
+        return Task.CompletedTask;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // FUNCTION LEVEL
+    // ═══════════════════════════════════════════════════════════════
+
+    /// <inheritdoc/>
+    public Task BeforeFunctionAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
+    {
+        if (!_options.LogFunction) return Task.CompletedTask;
+
+        var functionName = context.Function?.Name ?? "<unknown>";
+        var callId = context.FunctionCallId ?? Guid.NewGuid().ToString();
+
+        // Start timing if enabled
+        if (_options.IncludeTiming)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            _timers[callId] = stopwatch;
+        }
+
+        var sb = new StringBuilder();
+        sb.Append($"{_options.LogPrefix}[PRE] {functionName}");
+
+        if (_options.IncludeArguments)
+        {
+            var args = FormatArgs(context.FunctionArguments);
+            sb.Append($" | Args: {TruncateString(args)}");
+        }
+
+        LogMessage(sb.ToString());
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc/>
+    public Task AfterFunctionAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
+    {
+        if (!_options.LogFunction) return Task.CompletedTask;
+
+        var functionName = context.Function?.Name ?? "<unknown>";
+        var callId = context.FunctionCallId ?? "";
+        var exception = context.FunctionException;
+
+        // Get elapsed time
+        long elapsedMs = 0;
+        if (_options.IncludeTiming && _timers.TryRemove(callId, out var stopwatch))
+        {
+            stopwatch.Stop();
+            elapsedMs = stopwatch.ElapsedMilliseconds;
+        }
+
+        var sb = new StringBuilder();
+
+        if (exception != null)
+        {
+            sb.Append($"{_options.LogPrefix}[POST] {functionName} FAILED");
+            if (_options.IncludeTiming)
+            {
+                sb.Append($" ({elapsedMs}ms)");
+            }
+            sb.Append($" | Error: {exception.Message}");
+        }
+        else
+        {
+            sb.Append($"{_options.LogPrefix}[POST] {functionName} OK");
+            if (_options.IncludeTiming)
+            {
+                sb.Append($" ({elapsedMs}ms)");
+            }
+            if (_options.IncludeResults)
+            {
+                var result = FormatResult(context.FunctionResult);
+                sb.Append($" | Result: {TruncateString(result)}");
+            }
+        }
+
+        LogMessage(sb.ToString());
+        return Task.CompletedTask;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // HELPER METHODS
+    // ═══════════════════════════════════════════════════════════════
+
+    private void LogMessage(string message)
+    {
+        if (_logger != null)
+        {
+            _logger.LogInformation("{Message}", message);
+        }
+        else
+        {
+            Console.WriteLine(message);
+        }
+    }
+
+    private string TruncateString(string? value)
+    {
+        if (value == null) return "<null>";
+        if (_options.MaxStringLength <= 0) return value;
+        if (value.Length <= _options.MaxStringLength) return value;
+
+        return value.Substring(0, _options.MaxStringLength) + "...";
+    }
+
+    private static string FormatArgs(object? args)
+    {
+        if (args == null) return "<null>";
+        if (args is System.Collections.IDictionary dict)
+        {
+            var items = new StringBuilder();
+            foreach (var key in dict.Keys)
+            {
+                items.Append($"{key}: {dict[key]}, ");
+            }
+            return items.Length > 0 ? items.ToString().TrimEnd(',', ' ') : "<empty>";
+        }
+        return args.ToString() ?? "<unknown>";
+    }
+
+    private static string FormatResult(object? result)
+    {
+        if (result == null) return "<null>";
+
+        // If it's a ValidationErrorResponse, serialize it to JSON for readability
+        if (result is ValidationErrorResponse validationError)
+        {
+            try
+            {
+                return JsonSerializer.Serialize(validationError, HPDJsonContext.Default.ValidationErrorResponse);
+            }
+            catch
+            {
+                return result.ToString() ?? "<unknown>";
+            }
+        }
+
+        // For other objects, try JSON serialization first, fall back to ToString()
+        try
+        {
+            return JsonSerializer.Serialize(result, new JsonSerializerOptions
+            {
+                WriteIndented = false,
+                DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+            });
+        }
+        catch
+        {
+            return result.ToString() ?? "<unknown>";
+        }
+    }
+}

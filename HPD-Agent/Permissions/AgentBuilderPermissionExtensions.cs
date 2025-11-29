@@ -25,8 +25,9 @@ public static class AgentBuilderPermissionExtensions
         IPermissionStorage? permissionStorage = null)
     {
         var storage = permissionStorage ?? new InMemoryPermissionStorage();
-        var Middleware = new PermissionMiddleware(storage, builder.Config, overrideRegistry: builder._permissionOverrides);
-        return builder.WithPermissionMiddleware(Middleware);
+        var middleware = new HPD.Agent.Permissions.PermissionMiddleware(storage, builder.Config, overrideRegistry: builder._permissionOverrides);
+        builder._middlewares.Add(middleware);
+        return builder;
     }
 
     /// <summary>
@@ -34,8 +35,9 @@ public static class AgentBuilderPermissionExtensions
     /// </summary>
     public static AgentBuilder WithAutoApprovePermissions(this AgentBuilder builder)
     {
-        var Middleware = new AutoApprovePermissionMiddleware();
-        return builder.WithPermissionMiddleware(Middleware);
+        var middleware = new HPD.Agent.Permissions.AutoApprovePermissionMiddleware();
+        builder._middlewares.Add(middleware);
+        return builder;
     }
 
     /// <summary>

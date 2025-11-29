@@ -518,6 +518,68 @@ Decorate classes with `[HPDSkill]` attribute
 
 ---
 
+## Type-Safe Middleware State Management
+
+HPD-Agent provides a sophisticated `IMiddlewareState` system that gives it a significant advantage over Microsoft's Extensions AI framework for stateful middleware development.
+
+### The Problem with Microsoft's Approach
+Microsoft's framework lacks built-in middleware state management:
+- No standardized way to persist state across agent iterations
+- Developers must use ad-hoc solutions (string-keyed dictionaries, mutable fields)
+- Thread-safety is manual and error-prone
+- No compile-time guarantees for state access
+
+### HPD-Agent's Solution: IMiddlewareState
+```csharp
+public interface IMiddlewareState
+{
+    static abstract string Key { get; }
+    static abstract IMiddlewareState CreateDefault();
+}
+```
+
+**Key Features:**
+- **Type-Safe Access**: `context.State.GetState<CircuitBreakerState>()` instead of `context.State["stringKey"]`
+- **Immutable Records**: State updates use `with` expressions, preventing accidental mutations
+- **Thread-Safe**: Stateless middleware + context-flowing state supports concurrent `RunAsync()` calls
+- **Self-Describing**: Each state type defines its own key and factory
+- **Serializable**: Built-in JSON support for checkpointing
+
+### Example: Circuit Breaker State
+```csharp
+public sealed record CircuitBreakerState : IMiddlewareState
+{
+    public static string Key => "HPD.Agent.CircuitBreaker";
+    public static IMiddlewareState CreateDefault() => new CircuitBreakerState();
+
+    public ImmutableDictionary<string, string> LastSignaturePerTool { get; init; }
+        = ImmutableDictionary<string, string>.Empty;
+
+    public CircuitBreakerState RecordToolCall(string toolName, string signature) => this with
+    {
+        // Immutable update logic
+    };
+}
+```
+
+**Usage in Middleware:**
+```csharp
+var state = context.State.GetState<CircuitBreakerState>();
+var predictedCount = state.GetPredictedCount(toolName, signature);
+context.UpdateState<CircuitBreakerState>(s => s.RecordToolCall(toolName, signature));
+```
+
+### Competitive Advantages
+- **Developer Experience**: Eliminates string-key bugs; IntelliSense works perfectly
+- **Reliability**: Immutable state prevents race conditions in concurrent scenarios
+- **Maintainability**: Clean, self-documenting code with compile-time safety
+- **Extensibility**: Add new state types without modifying core infrastructure
+- **Performance**: Efficient immutable collections with minimal overhead
+
+This pattern makes HPD-Agent middleware production-ready, while Microsoft's approach requires significant boilerplate and carries higher risk of bugs.
+
+---
+
 ## Related Documentation
 
 - [Runtime Provider Switching](RUNTIME_PROVIDER_SWITCHING.md)

@@ -30,15 +30,15 @@ public class HistoryReductionStateTests
     }
 
     /// <summary>
-    /// Creates a sample HistoryReductionState for testing.
+    /// Creates a sample CachedReduction for testing.
     /// </summary>
-    private static HistoryReductionState CreateSampleReduction(
+    private static CachedReduction CreateSampleReduction(
         List<ChatMessage> messages,
         int summarizedUpToIndex = 90,
         int targetMessageCount = 20,
         int reductionThreshold = 5)
     {
-        return HistoryReductionState.Create(
+        return CachedReduction.Create(
             messages,
             "Summary of old messages",
             summarizedUpToIndex,
@@ -61,7 +61,7 @@ public class HistoryReductionStateTests
         var reductionThreshold = 5;
 
         // Act
-        var reduction = HistoryReductionState.Create(
+        var reduction = CachedReduction.Create(
             messages,
             summaryContent,
             summarizedUpToIndex,
@@ -86,7 +86,7 @@ public class HistoryReductionStateTests
         var messages = new List<ChatMessage>();
 
         // Act
-        var reduction = HistoryReductionState.Create(
+        var reduction = CachedReduction.Create(
             messages,
             "Empty summary",
             0,
@@ -423,7 +423,7 @@ public class HistoryReductionStateTests
         var messages = CreateTestMessages(10);
 
         // Act
-        var act = () => HistoryReductionState.Create(
+        var act = () => CachedReduction.Create(
             messages,
             null!, // Null summary
             5,
@@ -441,7 +441,7 @@ public class HistoryReductionStateTests
         var messages = CreateTestMessages(10);
 
         // Act
-        var reduction = HistoryReductionState.Create(
+        var reduction = CachedReduction.Create(
             messages,
             "", // Empty summary
             5,
@@ -457,7 +457,7 @@ public class HistoryReductionStateTests
     {
         // Arrange
         var messages = new List<ChatMessage>();
-        var reduction = HistoryReductionState.Create(messages, "Empty", 0, 20, 5);
+        var reduction = CachedReduction.Create(messages, "Empty", 0, 20, 5);
 
         // Act
         var reduced = reduction.ApplyToMessages(messages).ToList();
@@ -472,7 +472,7 @@ public class HistoryReductionStateTests
     {
         // Arrange
         var messages = CreateTestMessages(10);
-        var reduction = HistoryReductionState.Create(messages, "Summary", 0, 20, 5);
+        var reduction = CachedReduction.Create(messages, "Summary", 0, 20, 5);
 
         // Act
         var isValid = reduction.ValidateIntegrity(messages);

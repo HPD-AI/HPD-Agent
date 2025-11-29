@@ -1,5 +1,6 @@
 // Simple test to verify middleware registration fix
 using HPD.Agent;
+using HPD.Agent.Middleware;
 using Microsoft.Extensions.Logging;
 
 var loggerFactory = LoggerFactory.Create(builder =>
@@ -21,46 +22,39 @@ try
 {
     var agent = new AgentBuilder()
         .WithProvider("openai", "gpt-4o-mini", apiKey)
-        .WithLogging(loggerFactory, includeFunctionInvocations: true)
+        .WithLogging(loggerFactory) // Uses unified LoggingMiddleware
         .BuildCoreAgent();
 
     Console.WriteLine("✅ Agent created successfully!");
 
     // Check if middlewares are registered
-    var scopedManager = agent.ScopedFunctionMiddlewareManager;
-    if (scopedManager == null)
+    var middlewares = agent.AgentMiddlewares;
+    Console.WriteLine($"\n📊 Agent middlewares registered: {middlewares.Count}");
+
+    if (middlewares.Count == 0)
     {
-        Console.WriteLine("❌ ScopedFunctionMiddlewareManager is null!");
+        Console.WriteLine("❌ NO agent middlewares registered! The fix didn't work.");
         return 1;
     }
 
-    var globalMiddlewares = scopedManager.GetGlobalMiddlewares();
-    Console.WriteLine($"\n📊 Global middlewares registered: {globalMiddlewares.Count}");
-
-    if (globalMiddlewares.Count == 0)
-    {
-        Console.WriteLine("❌ NO global middlewares registered! The fix didn't work.");
-        return 1;
-    }
-
-    foreach (var middleware in globalMiddlewares)
+    foreach (var middleware in middlewares)
     {
         Console.WriteLine($"   ✓ {middleware.GetType().Name}");
     }
 
-    // Check if LoggingAIFunctionMiddleware is present
-    bool hasLoggingMiddleware = globalMiddlewares.Any(m =>
+    // Check if LoggingMiddleware is present
+    bool hasLoggingMiddleware = middlewares.Any(m =>
         m.GetType().Name.Contains("Logging"));
 
     if (hasLoggingMiddleware)
     {
-        Console.WriteLine("\n✅ SUCCESS! LoggingAIFunctionMiddleware is registered!");
-        Console.WriteLine("✅ The middleware fix is working correctly!");
+        Console.WriteLine("\n✅ SUCCESS! LoggingMiddleware is registered!");
+        Console.WriteLine("✅ The unified middleware fix is working correctly!");
         return 0;
     }
     else
     {
-        Console.WriteLine("\n❌ FAILED! LoggingAIFunctionMiddleware was not found!");
+        Console.WriteLine("\n❌ FAILED! LoggingMiddleware was not found!");
         return 1;
     }
 }

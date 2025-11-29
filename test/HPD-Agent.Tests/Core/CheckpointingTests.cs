@@ -61,8 +61,7 @@ public class CheckpointingTests : AgentTestBase
             .NextIteration()
             .NextIteration()
             .WithExpandedPlugin("PluginA")
-            .WithExpandedPlugin("PluginB")
-            .WithFailure();
+            .WithExpandedPlugin("PluginB");
 
         var json = originalState.Serialize();
 
@@ -71,7 +70,6 @@ public class CheckpointingTests : AgentTestBase
 
         // Assert: All properties should match
         Assert.Equal(originalState.Iteration, restoredState.Iteration);
-        Assert.Equal(originalState.ConsecutiveFailures, restoredState.ConsecutiveFailures);
         Assert.Equal(originalState.RunId, restoredState.RunId);
         Assert.Equal(originalState.ConversationId, restoredState.ConversationId);
         Assert.Equal(originalState.AgentName, restoredState.AgentName);

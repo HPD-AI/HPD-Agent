@@ -1,5 +1,5 @@
 using HPD.Agent;
-using HPD.Agent.Internal.MiddleWare;
+using HPD.Agent.Middleware;
 using Microsoft.Extensions.Logging;
 
 class MiddlewareTest
@@ -15,27 +15,23 @@ class MiddlewareTest
 
         try
         {
-            // Create a simple agent with logging middleware
+            // Create a simple agent with logging middleware (using unified LoggingMiddleware)
             var agent = new AgentBuilder()
                 .WithProvider("openai", "gpt-4o-mini", Environment.GetEnvironmentVariable("OPENAI_API_KEY"))
-                .WithLogging(loggerFactory, includeFunctionInvocations: true)
+                .WithLogging(loggerFactory) // Uses unified LoggingMiddleware
                 .WithPlugin<TestPlugin>()
                 .Build();
 
             Console.WriteLine("✅ Agent created successfully!");
-            Console.WriteLine($"Global middlewares count: {agent.Config.ToString()}");
+            Console.WriteLine($"Config: {agent.Config.ToString()}");
 
-            // Check if middlewares are registered
-            var scopedManager = agent.ScopedFunctionMiddlewareManager;
-            if (scopedManager != null)
+            // Check if unified middlewares are registered
+            var agentMiddlewares = agent.AgentMiddlewares;
+            Console.WriteLine($"✅ Agent middlewares registered: {agentMiddlewares.Count}");
+
+            foreach (var middleware in agentMiddlewares)
             {
-                var globalMiddlewares = scopedManager.GetGlobalMiddlewares();
-                Console.WriteLine($"✅ Global middlewares registered: {globalMiddlewares.Count}");
-
-                foreach (var middleware in globalMiddlewares)
-                {
-                    Console.WriteLine($"   - {middleware.GetType().Name}");
-                }
+                Console.WriteLine($"   - {middleware.GetType().Name}");
             }
 
             Console.WriteLine("\n✅ Middleware registration test PASSED!");

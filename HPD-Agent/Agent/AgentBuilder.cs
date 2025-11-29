@@ -1,5 +1,5 @@
 using HPD.Agent.Providers;
-using HPD.Agent.Internal.MiddleWare;
+using HPD.Agent.Middleware;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -11,6 +11,7 @@ using FluentValidation;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Caching.Distributed;
 using System.Text.Json;
+using System.Linq;
 using HPD_Agent.Memory.Agent.PlanMode;
 
 namespace HPD.Agent;
@@ -23,7 +24,7 @@ namespace HPD.Agent;
 internal record AgentBuildDependencies(
     IChatClient ClientToUse,
     ChatOptions? MergedOptions,
-    HPD.Agent.ErrorHandling.IProviderErrorHandler ErrorHandler,
+    ErrorHandling.IProviderErrorHandler ErrorHandler,
     IChatClient? SummarizerClient = null);
 
 /// <summary>
@@ -47,13 +48,12 @@ public class AgentBuilder
     internal HPD_Agent.Skills.DocumentStore.IInstructionDocumentStore? _documentStore;
     // Track explicitly registered plugins (for scoping manager)
     internal readonly HashSet<string> _explicitlyRegisteredPlugins = new(StringComparer.OrdinalIgnoreCase);
-    internal readonly ScopedFunctionMiddlewareManager _ScopedFunctionMiddlewareManager = new();
-    internal readonly BuilderScopeContext _scopeContext = new();
-    internal readonly List<IPromptMiddleware> _PromptMiddlewares = new();
-    internal readonly List<IPermissionMiddleware> _PermissionMiddlewares = new(); // Permission Middlewares
-    internal readonly List<IMessageTurnMiddleware> _MessageTurnMiddlewares = new(); // Message turn Middlewares
-    internal readonly List<IIterationMiddleWare> _IterationMiddleWares = new(); // Iteration Middlewares
+    internal readonly List<Middleware.IAgentMiddleware> _middlewares = new(); // Unified middleware list
     internal readonly HPD_Agent.Permissions.PermissionOverrideRegistry _permissionOverrides = new(); // Permission overrides
+
+    // Function scope tracking for middleware scoping
+    internal readonly Dictionary<string, string> _functionToPluginMap = new(); // functionName -> pluginTypeName
+    internal readonly Dictionary<string, string> _functionToSkillMap = new(); // functionName -> skillName
 
     // Internal observers for agent-level observability (developer-only, hidden from users)
     private readonly List<IAgentEventObserver> _observers = new();
@@ -403,31 +403,30 @@ public class AgentBuilder
     }
 
     /// <summary>
-    /// Enables dual-layer structured logging for complete observability:
+    /// Enables comprehensive structured logging for observability:
     /// <list type="bullet">
     /// <item><description><b>LLM-level (Microsoft):</b> LLM invocation logging (requests/responses/errors)</description></item>
     /// <item><description><b>Agent-level (HPD):</b> Decision logging, state snapshots, circuit breaker warnings</description></item>
-    /// <item><description><b>Function-level (Optional):</b> Function invocation logging via Middleware</description></item>
+    /// <item><description><b>Unified Middleware:</b> Configurable logging at message turn, iteration, and function levels</description></item>
     /// </list>
     /// </summary>
     /// <param name="enableSensitiveData">Include prompts/responses at Trace level (default: false)</param>
-    /// <param name="includeFunctionInvocations">Also log function invocations via LoggingAIFunctionMiddleware (default: true)</param>
-    /// <param name="configureFunctionMiddleware">Optional callback to configure the function logging Middleware</param>
+    /// <param name="options">Optional logging middleware options. If null, uses default options (message turn + function logging).</param>
     /// <returns>The builder for chaining</returns>
     /// <remarks>
     /// <para>
-    /// This method automatically registers both layers of logging:
+    /// This method automatically registers multiple layers of logging:
     /// <list type="number">
     /// <item><description>Microsoft's <c>LoggingChatClient</c> middleware for LLM invocation logging</description></item>
-    /// <item><description>HPD's <c>AgentLoggingService</c> for agent orchestration logging</description></item>
-    /// <item><description>(Optional) <c>LoggingAIFunctionMiddleware</c> for function call logging</description></item>
+    /// <item><description>HPD's <c>LoggingEventObserver</c> for agent orchestration logging</description></item>
+    /// <item><description>Unified <c>LoggingMiddleware</c> for configurable agent lifecycle logging</description></item>
     /// </list>
     /// </para>
     /// <para><b>Requirements:</b> Call <c>WithServiceProvider()</c> with an <c>ILoggerFactory</c> registered.</para>
     /// <para><b>Log Levels:</b></para>
     /// <list type="bullet">
     /// <item><description><c>Debug</c> - LLM invocations, agent decisions, completions</description></item>
-    /// <item><description><c>Information</c> - Agent completion summaries</description></item>
+    /// <item><description><c>Information</c> - Agent completion summaries, middleware logging</description></item>
     /// <item><description><c>Warning</c> - Circuit breaker triggers, missing dependencies</description></item>
     /// <item><description><c>Trace</c> - Full message/response content (sensitive data)</description></item>
     /// <item><description><c>Error</c> - LLM errors, agent errors</description></item>
@@ -435,27 +434,38 @@ public class AgentBuilder
     /// </remarks>
     /// <example>
     /// <code>
+    /// // Default logging (message turns + functions)
     /// var agent = new AgentBuilder()
-    ///     .WithServiceProvider(services)  // ILoggerFactory required
-    ///     .WithLogging(
-    ///         enableSensitiveData: false,  // Don't log prompts/responses
-    ///         includeFunctionInvocations: true,
-    ///         configureFunctionMiddleware: Middleware => {
-    ///             Middleware.LogParameters = true;
-    ///             Middleware.LogResults = false;
-    ///         })
+    ///     .WithServiceProvider(services)
+    ///     .WithLogging()
     ///     .WithOpenAI(apiKey, "gpt-4")
     ///     .Build();
     ///
-    /// // Automatically logs:
-    /// // - LLM requests/responses (Microsoft)
-    /// // - Agent decisions, iterations (HPD)
-    /// // - Function calls with parameters (Middleware)
+    /// // Minimal logging (just function names with timing)
+    /// var agent = new AgentBuilder()
+    ///     .WithLogging(options: LoggingMiddlewareOptions.Minimal)
+    ///     .Build();
+    ///
+    /// // Verbose logging (everything)
+    /// var agent = new AgentBuilder()
+    ///     .WithLogging(options: LoggingMiddlewareOptions.Verbose)
+    ///     .Build();
+    ///
+    /// // Custom configuration
+    /// var agent = new AgentBuilder()
+    ///     .WithLogging(options: new LoggingMiddlewareOptions
+    ///     {
+    ///         LogFunction = true,
+    ///         LogIteration = true,
+    ///         IncludeArguments = false,
+    ///         MaxStringLength = 500
+    ///     })
+    ///     .Build();
     /// </code>
     /// </example>
     public AgentBuilder WithLogging(
         bool enableSensitiveData = false,
-        bool includeFunctionInvocations = true)
+        LoggingMiddlewareOptions? options = null)
     {
         // 1. Register Microsoft's LoggingChatClient middleware (user-facing LLM observability)
         // This provides LLM-level invocation logging (requests/responses)
@@ -490,14 +500,36 @@ public class AgentBuilder
             _observers.Add(loggingObserver);
         }
 
-        // 3. Optionally add function invocation logging Middleware
-        if (includeFunctionInvocations)
-        {
-            var functionMiddleware = new LoggingAIFunctionMiddleware(_logger);
-            this.WithMiddleware(functionMiddleware);
-        }
+        // 3. Add unified LoggingMiddleware with configurable options
+        var loggingOptions = options ?? LoggingMiddlewareOptions.Default;
+        var loggingMiddleware = new LoggingMiddleware(_logger, loggingOptions);
+        _middlewares.Add(loggingMiddleware);
 
         return this;
+    }
+
+    /// <summary>
+    /// Enables logging with an explicit logger factory.
+    /// Use this when you want to configure logging without using dependency injection.
+    /// </summary>
+    /// <param name="loggerFactory">The logger factory to use for all logging.</param>
+    /// <param name="options">Optional logging middleware options. If null, uses default options.</param>
+    /// <returns>The builder for chaining</returns>
+    /// <example>
+    /// <code>
+    /// var loggerFactory = LoggerFactory.Create(b => b.AddConsole());
+    /// var agent = new AgentBuilder()
+    ///     .WithLogging(loggerFactory)
+    ///     .WithProvider("openai", "gpt-4", apiKey)
+    ///     .Build();
+    /// </code>
+    /// </example>
+    public AgentBuilder WithLogging(
+        ILoggerFactory loggerFactory,
+        LoggingMiddlewareOptions? options = null)
+    {
+        _logger = loggerFactory;
+        return WithLogging(enableSensitiveData: false, options: options);
     }
 
     /// <summary>
@@ -770,12 +802,10 @@ public class AgentBuilder
             _config!,
             buildData.ClientToUse,
             buildData.MergedOptions,
-            _PromptMiddlewares,
-            _ScopedFunctionMiddlewareManager!,
             buildData.ErrorHandler,
-            _PermissionMiddlewares,
-            _MessageTurnMiddlewares,
-            _IterationMiddleWares,
+            _functionToPluginMap,
+            _functionToSkillMap,
+            _middlewares,
             _serviceProvider,
             _observers,
             buildData.SummarizerClient);
@@ -798,39 +828,27 @@ public class AgentBuilder
         // Set global config for source-generated code to access
         AgentConfig.GlobalConfig = _config;
 
-        // Note: Skill instruction injection is now handled by SkillInstructionIterationMiddleWare
-        // (runs before each LLM call during the agentic loop, not at message turn start)
-
-        // Register PromptLoggingMiddleware LAST to capture final instructions after all Middlewares
-        // Always register - falls back to Console.WriteLine if no logger available
-        var logger = _logger?.CreateLogger<HPD.Agent.Internal.MiddleWare.PromptLoggingMiddleware>();
-        _PromptMiddlewares.Add(new HPD.Agent.Internal.MiddleWare.PromptLoggingMiddleware(logger));
-
-        // ═══════════════════════════════════════════════════════
-        // AUTO-REGISTER ITERATION MiddlewareS
-        // ═══════════════════════════════════════════════════════
-
-        // Register SkillInstructionIterationMiddleWare if skills are registered
-        // CRITICAL: Must run BEFORE IterationLoggingMiddleware so skill instructions are visible in logs
-        if (_pluginManager.GetPluginRegistrations().Any())
-        {
-            _IterationMiddleWares.Add(new HPD.Agent.Internal.MiddleWare.SkillInstructionIterationMiddleWare());
-        }
-
-        // Register IterationLoggingMiddleware - always register (falls back to Console.Error if no logger)
-        // CRITICAL: Must run AFTER SkillInstructionIterationMiddleWare to capture injected skill instructions
-        // DISABLED for testing
-        //var iterationLogger = _logger?.CreateLogger<HPD.Agent.Internal.Middlewares.IterationLoggingMiddleware>();
-        //_IterationMiddleWares.Add(new HPD.Agent.Internal.Middlewares.IterationLoggingMiddleware(iterationLogger));
-
-        // Register ContinuationPermissionIterationMiddleWare if enabled
+        // Register ContinuationPermissionMiddleware if enabled
         // This requests user permission when iteration limit is reached
         // Only register if we have a reasonable iteration limit set
         if (_config!.MaxAgenticIterations > 0 && _config.MaxAgenticIterations < 1000)
         {
-            _IterationMiddleWares.Add(new ContinuationPermissionIterationMiddleWare(
+            _middlewares.Add(new ContinuationPermissionMiddleware(
                 maxIterations: _config.MaxAgenticIterations,
                 extensionAmount: _config.ContinuationExtensionAmount));
+        }
+
+        // Register HistoryReductionMiddleware if enabled
+        // This reduces conversation history to manage context window size
+        if (_config.HistoryReduction?.Enabled == true)
+        {
+            var chatReducer = CreateChatReducer(buildData.ClientToUse, _config, buildData.SummarizerClient);
+            _middlewares.Add(new HistoryReductionMiddleware
+            {
+                ChatReducer = chatReducer,
+                Config = _config.HistoryReduction,
+                SystemInstructions = _config.SystemInstructions
+            });
         }
 
         // Create protocol-agnostic core agent
@@ -838,12 +856,10 @@ public class AgentBuilder
             _config!,
             buildData.ClientToUse,
             buildData.MergedOptions,
-            _PromptMiddlewares,
-            _ScopedFunctionMiddlewareManager!,
             buildData.ErrorHandler,
-            _PermissionMiddlewares,
-            _MessageTurnMiddlewares,
-            _IterationMiddleWares,
+            _functionToPluginMap,
+            _functionToSkillMap,
+            _middlewares,
             _serviceProvider,
             _observers,
             buildData.SummarizerClient);
@@ -865,12 +881,10 @@ public class AgentBuilder
             _config,
             buildData.ClientToUse,
             buildData.MergedOptions,
-            _PromptMiddlewares,
-            _ScopedFunctionMiddlewareManager,
             buildData.ErrorHandler,
-            _PermissionMiddlewares,
-            _MessageTurnMiddlewares,
-            _IterationMiddleWares,
+            _functionToPluginMap,
+            _functionToSkillMap,
+            _middlewares,
             _serviceProvider,
             null,
             buildData.SummarizerClient);
@@ -1541,7 +1555,8 @@ public class AgentBuilder
                 var functions = registration.ToAIFunctions(ctx ?? _defaultContext);
                 foreach (var function in functions)
                 {
-                    _ScopedFunctionMiddlewareManager.RegisterFunctionPlugin(function.Name, pluginName);
+                    // Register function-to-plugin mapping for middleware scoping
+                    _functionToPluginMap[function.Name] = pluginName;
 
                     // Register skill mappings
                     var isSkill = function.AdditionalProperties?.TryGetValue("IsSkill", out var isSkillValue) == true
@@ -1561,7 +1576,7 @@ public class AgentBuilder
                                 {
                                     var functionName = parts[1];
                                     // Map the referenced function to this skill
-                                    _ScopedFunctionMiddlewareManager.RegisterFunctionSkill(functionName, function.Name);
+                                    _functionToSkillMap[functionName] = function.Name;
                                 }
                             }
                         }
@@ -1684,8 +1699,6 @@ public class AgentBuilder
     /// <summary>
     /// Internal access to scoped Middleware manager for extension methods
     /// </summary>
-    internal ScopedFunctionMiddlewareManager ScopedFunctionMiddlewareManager => _ScopedFunctionMiddlewareManager;
-
     /// <summary>
     /// Internal access to plugin manager for extension methods
     /// </summary>
@@ -1706,19 +1719,13 @@ public class AgentBuilder
     internal Dictionary<string, IPluginMetadataContext?> PluginContexts => _pluginContexts;
 
     /// <summary>
-    /// Internal access to scope context for extension methods
+    /// Internal access to unified middlewares for extension methods
     /// </summary>
-    internal BuilderScopeContext ScopeContext => _scopeContext;
-
-    /// <summary>
-    /// Internal access to prompt Middlewares for extension methods
-    /// </summary>
-    internal List<IPromptMiddleware> PromptMiddlewares => _PromptMiddlewares;
+    internal List<Middleware.IAgentMiddleware> Middlewares => _middlewares;
 
     /// <summary>
     /// Internal access to permission Middlewares for extension methods
     /// </summary>
-    internal List<IPermissionMiddleware> PermissionMiddlewares => _PermissionMiddlewares;
 
     /// <summary>
     /// Internal access to MCP client manager for extension methods (stored as object to avoid circular reference)
@@ -1868,6 +1875,61 @@ public class AgentBuilder
 
         return null;
     }
+
+    /// <summary>
+    /// Creates a chat reducer based on the HistoryReductionConfig strategy.
+    /// Returns null if history reduction is not enabled.
+    /// </summary>
+    private static IChatReducer? CreateChatReducer(
+        IChatClient baseClient,
+        AgentConfig config,
+        IChatClient? summarizerClient)
+    {
+        var historyConfig = config.HistoryReduction;
+
+        if (historyConfig == null || !historyConfig.Enabled)
+        {
+            return null;
+        }
+
+        return historyConfig.Strategy switch
+        {
+            HistoryReductionStrategy.MessageCounting =>
+                new MessageCountingChatReducer(historyConfig.TargetMessageCount),
+
+            HistoryReductionStrategy.Summarizing =>
+                CreateSummarizingReducer(baseClient, historyConfig, summarizerClient),
+
+            _ => throw new ArgumentException($"Unknown history reduction strategy: {historyConfig.Strategy}")
+        };
+    }
+
+    /// <summary>
+    /// Creates a SummarizingChatReducer with custom configuration.
+    /// Supports using a separate, cheaper model for summarization (cost optimization).
+    /// </summary>
+    private static SummarizingChatReducer CreateSummarizingReducer(
+        IChatClient baseClient,
+        HistoryReductionConfig historyConfig,
+        IChatClient? summarizerClient)
+    {
+        // Determine which chat client to use for summarization
+        // If a custom summarizer client was provided, use it
+        // Otherwise, fall back to the base client
+        var clientForSummarization = summarizerClient ?? baseClient;
+
+        var reducer = new SummarizingChatReducer(
+            clientForSummarization,
+            historyConfig.TargetMessageCount,
+            historyConfig.SummarizationThreshold);
+
+        if (!string.IsNullOrEmpty(historyConfig.CustomSummarizationPrompt))
+        {
+            reducer.SummarizationPrompt = historyConfig.CustomSummarizationPrompt;
+        }
+
+        return reducer;
+    }
 }
 
 
@@ -1879,138 +1941,50 @@ public class AgentBuilder
 internal static class AgentBuilderMiddlewareExtensions
 {
     /// <summary>
-    /// Adds Function Invocation Middlewares that apply to all tool calls in conversations
+    /// Adds a unified agent middleware instance.
+    /// Supports scoping via extension methods (.AsGlobal(), .ForPlugin(), .ForSkill(), .ForFunction()).
     /// </summary>
-    public static AgentBuilder WithFunctionInvokationMiddlewares(this AgentBuilder builder, params IAIFunctionMiddleware[] Middlewares)
+    /// <param name="builder">The agent builder</param>
+    /// <param name="middleware">The unified middleware to add</param>
+    /// <returns>The builder for chaining</returns>
+    public static AgentBuilder WithMiddleware(this AgentBuilder builder, Middleware.IAgentMiddleware middleware)
     {
-        if (Middlewares != null)
+        if (middleware != null)
         {
-            foreach (var Middleware in Middlewares)
+            builder.Middlewares.Add(middleware);
+        }
+        return builder;
+    }
+
+    /// <summary>
+    /// Adds a unified agent middleware by type (will be instantiated).
+    /// </summary>
+    /// <typeparam name="T">The middleware type</typeparam>
+    /// <param name="builder">The agent builder</param>
+    /// <returns>The builder for chaining</returns>
+    public static AgentBuilder WithMiddleware<T>(this AgentBuilder builder)
+        where T : Middleware.IAgentMiddleware, new()
+        => builder.WithMiddleware(new T());
+
+    /// <summary>
+    /// Adds multiple unified agent middlewares.
+    /// </summary>
+    /// <param name="builder">The agent builder</param>
+    /// <param name="middlewares">The middlewares to add</param>
+    /// <returns>The builder for chaining</returns>
+    public static AgentBuilder WithMiddlewares(this AgentBuilder builder, params Middleware.IAgentMiddleware[] middlewares)
+    {
+        if (middlewares != null)
+        {
+            foreach (var middleware in middlewares)
             {
-                builder.ScopedFunctionMiddlewareManager.AddMiddleware(Middleware, builder.ScopeContext.CurrentScope, builder.ScopeContext.CurrentTarget);
+                builder.WithMiddleware(middleware);
             }
         }
         return builder;
     }
 
-    /// <summary>
-    /// Adds an Function Invocation Middleware by type (will be instantiated)
-    /// </summary>
-    public static AgentBuilder WithFunctionInvocationMiddleware<T>(this AgentBuilder builder) where T : IAIFunctionMiddleware, new()
-    {
-        var Middleware = new T();
-        builder.ScopedFunctionMiddlewareManager.AddMiddleware(Middleware, builder.ScopeContext.CurrentScope, builder.ScopeContext.CurrentTarget);
-        return builder;
-    }
 
-    /// <summary>
-    /// Adds an function Middleware instance
-    /// </summary>
-    public static AgentBuilder WithMiddleware(this AgentBuilder builder, IAIFunctionMiddleware Middleware)
-    {
-        if (Middleware != null)
-        {
-            builder.ScopedFunctionMiddlewareManager.AddMiddleware(Middleware, builder.ScopeContext.CurrentScope, builder.ScopeContext.CurrentTarget);
-        }
-        return builder;
-    }
-
-    /// <summary>
-    /// Adds a permission Middleware instance
-    /// </summary>
-    public static AgentBuilder WithPermissionMiddleware(this AgentBuilder builder, IPermissionMiddleware Middleware)
-    {
-        if (Middleware != null)
-        {
-            builder.PermissionMiddlewares.Add(Middleware);
-        }
-        return builder;
-    }
-
-    /// <summary>
-    /// Adds a prompt Middleware instance
-    /// </summary>
-    public static AgentBuilder WithPromptMiddleware(this AgentBuilder builder, IPromptMiddleware Middleware)
-    {
-        if (Middleware != null)
-        {
-            builder.PromptMiddlewares.Add(Middleware);
-        }
-        return builder;
-    }
-
-    /// <summary>
-    /// Adds a prompt Middleware by type (will be instantiated)
-    /// </summary>
-    public static AgentBuilder WithPromptMiddleware<T>(this AgentBuilder builder) where T : IPromptMiddleware, new()
-        => builder.WithPromptMiddleware(new T());
-
-    /// <summary>
-    /// Adds multiple prompt Middlewares
-    /// </summary>
-    public static AgentBuilder WithPromptMiddlewares(this AgentBuilder builder, params IPromptMiddleware[] Middlewares)
-    {
-        if (Middlewares != null)
-        {
-            foreach (var f in Middlewares)
-                builder.PromptMiddlewares.Add(f);
-        }
-        return builder;
-    }
-
-    /// <summary>
-    /// Adds a message turn Middleware to process completed turns
-    /// </summary>
-    public static AgentBuilder WithMessageTurnMiddleware(this AgentBuilder builder, IMessageTurnMiddleware Middleware)
-    {
-        builder._MessageTurnMiddlewares.Add(Middleware);
-        return builder;
-    }
-
-    /// <summary>
-    /// Adds a message turn Middleware of the specified type (creates new instance)
-    /// </summary>
-    public static AgentBuilder WithMessageTurnMiddleware<T>(this AgentBuilder builder) where T : IMessageTurnMiddleware, new()
-    {
-        builder._MessageTurnMiddlewares.Add(new T());
-        return builder;
-    }
-
-    /// <summary>
-    /// Adds multiple message turn Middlewares
-    /// </summary>
-    public static AgentBuilder WithMessageTurnMiddlewares(this AgentBuilder builder, params IMessageTurnMiddleware[] Middlewares)
-    {
-        if (Middlewares != null)
-        {
-            foreach (var f in Middlewares)
-                builder._MessageTurnMiddlewares.Add(f);
-        }
-        return builder;
-    }
-
-    /// <summary>
-    /// Adds an iteration Middleware to run before each LLM call in the agentic loop (internal use only).
-    /// Iteration Middlewares provide access to iteration state and can modify messages/options dynamically.
-    /// </summary>
-    /// <remarks>
-    /// This is an internal API used by the agent core to register built-in Middlewares.
-    /// External users should use public Middleware APIs instead.
-    /// </remarks>
-    internal static AgentBuilder WithIterationMiddleWare(this AgentBuilder builder, IIterationMiddleWare Middleware)
-    {
-        builder._IterationMiddleWares.Add(Middleware);
-        return builder;
-    }
-
-    /// <summary>
-    /// Adds an iteration Middleware of the specified type (creates new instance) (internal use only).
-    /// </summary>
-    internal static AgentBuilder WithIterationMiddleWare<T>(this AgentBuilder builder) where T : IIterationMiddleWare, new()
-    {
-        builder._IterationMiddleWares.Add(new T());
-        return builder;
-    }
 
     /// <summary>
     /// Adds circuit breaker middleware to prevent infinite loops from repeated identical tool calls.
@@ -2035,11 +2009,11 @@ internal static class AgentBuilderMiddlewareExtensions
     /// </example>
     public static AgentBuilder WithCircuitBreaker(this AgentBuilder builder, int maxConsecutiveCalls = 3)
     {
-        var middleware = new CircuitBreakerIterationMiddleware
+        var middleware = new CircuitBreakerMiddleware
         {
             MaxConsecutiveCalls = maxConsecutiveCalls
         };
-        builder._IterationMiddleWares.Add(middleware);
+        builder.Middlewares.Add(middleware);
         return builder;
     }
 
@@ -2060,11 +2034,11 @@ internal static class AgentBuilderMiddlewareExtensions
     ///     .Build();
     /// </code>
     /// </example>
-    public static AgentBuilder WithCircuitBreaker(this AgentBuilder builder, Action<CircuitBreakerIterationMiddleware> configure)
+    public static AgentBuilder WithCircuitBreaker(this AgentBuilder builder, Action<CircuitBreakerMiddleware> configure)
     {
-        var middleware = new CircuitBreakerIterationMiddleware();
+        var middleware = new CircuitBreakerMiddleware();
         configure(middleware);
-        builder._IterationMiddleWares.Add(middleware);
+        builder.Middlewares.Add(middleware);
         return builder;
     }
 
@@ -2084,11 +2058,11 @@ internal static class AgentBuilderMiddlewareExtensions
     /// </example>
     public static AgentBuilder WithErrorTracking(this AgentBuilder builder, int maxConsecutiveErrors = 3)
     {
-        var middleware = new ErrorTrackingIterationMiddleware
+        var middleware = new ErrorTrackingMiddleware
         {
             MaxConsecutiveErrors = maxConsecutiveErrors
         };
-        builder._IterationMiddleWares.Add(middleware);
+        builder.Middlewares.Add(middleware);
         return builder;
     }
 
@@ -2111,11 +2085,71 @@ internal static class AgentBuilderMiddlewareExtensions
     ///     .Build();
     /// </code>
     /// </example>
-    public static AgentBuilder WithErrorTracking(this AgentBuilder builder, Action<ErrorTrackingIterationMiddleware> configure)
+    public static AgentBuilder WithErrorTracking(this AgentBuilder builder, Action<ErrorTrackingMiddleware> configure)
     {
-        var middleware = new ErrorTrackingIterationMiddleware();
+        var middleware = new ErrorTrackingMiddleware();
         configure(middleware);
-        builder._IterationMiddleWares.Add(middleware);
+        builder.Middlewares.Add(middleware);
+        return builder;
+    }
+
+    /// <summary>
+    /// Adds total error threshold middleware to protect against gradual degradation.
+    /// Tracks total errors across all iterations (regardless of type) and stops when threshold is exceeded.
+    /// This complements ErrorTracking (consecutive same errors) and CircuitBreaker (identical calls).
+    /// </summary>
+    /// <param name="builder">The agent builder</param>
+    /// <param name="maxTotalErrors">Maximum total errors before termination (default: 10)</param>
+    /// <returns>The builder for chaining</returns>
+    /// <remarks>
+    /// Use this middleware when you want to protect against:
+    /// - Different types of errors occurring progressively
+    /// - Total degradation from mixed failure scenarios
+    /// - Agents that keep trying despite multiple different problems
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// var agent = new AgentBuilder()
+    ///     .WithErrorTracking(maxConsecutiveErrors: 3)           // 3 consecutive same errors
+    ///     .WithCircuitBreaker(maxConsecutiveCalls: 3)           // 3 identical tool calls
+    ///     .WithTotalErrorThreshold(maxTotalErrors: 10)          // 10 total errors (any type)
+    ///     .Build();
+    /// </code>
+    /// </example>
+    public static AgentBuilder WithTotalErrorThreshold(this AgentBuilder builder, int maxTotalErrors = 10)
+    {
+        var middleware = new TotalErrorThresholdMiddleware
+        {
+            MaxTotalErrors = maxTotalErrors
+        };
+        builder.Middlewares.Add(middleware);
+        return builder;
+    }
+
+    /// <summary>
+    /// Adds total error threshold middleware with custom configuration.
+    /// </summary>
+    /// <param name="builder">The agent builder</param>
+    /// <param name="configure">Action to configure the total error threshold middleware</param>
+    /// <returns>The builder for chaining</returns>
+    /// <example>
+    /// <code>
+    /// var agent = new AgentBuilder()
+    ///     .WithTotalErrorThreshold(config =>
+    ///     {
+    ///         config.MaxTotalErrors = 15;
+    ///         config.CustomErrorDetector = result =>
+    ///             result.Exception != null ||
+    ///             result.Result?.ToString()?.Contains("CRITICAL") == true;
+    ///     })
+    ///     .Build();
+    /// </code>
+    /// </example>
+    public static AgentBuilder WithTotalErrorThreshold(this AgentBuilder builder, Action<TotalErrorThresholdMiddleware> configure)
+    {
+        var middleware = new TotalErrorThresholdMiddleware();
+        configure(middleware);
+        builder.Middlewares.Add(middleware);
         return builder;
     }
 
@@ -2147,11 +2181,9 @@ internal static class AgentBuilderMiddlewareExtensions
     /// </example>
     public static AgentBuilder WithPIIProtection(this AgentBuilder builder)
     {
-        var middleware = new PIIPromptMiddleware
-        {
-            AgentName = builder.AgentName
-        };
-        builder._PromptMiddlewares.Insert(0, middleware); // Run first to sanitize input early
+        var middleware = new PIIMiddleware();
+        // Insert at the beginning so PII is sanitized before other middlewares see the messages
+        builder.Middlewares.Insert(0, middleware);
         return builder;
     }
 
@@ -2186,14 +2218,12 @@ internal static class AgentBuilderMiddlewareExtensions
     ///     .Build();
     /// </code>
     /// </example>
-    public static AgentBuilder WithPIIProtection(this AgentBuilder builder, Action<PIIPromptMiddleware> configure)
+    public static AgentBuilder WithPIIProtection(this AgentBuilder builder, Action<PIIMiddleware> configure)
     {
-        var middleware = new PIIPromptMiddleware
-        {
-            AgentName = builder.AgentName
-        };
+        var middleware = new PIIMiddleware();
         configure(middleware);
-        builder._PromptMiddlewares.Insert(0, middleware); // Run first to sanitize input early
+        // Insert at the beginning so PII is sanitized before other middlewares see the messages
+        builder.Middlewares.Insert(0, middleware);
         return builder;
     }
 }
@@ -2240,11 +2270,11 @@ public static class AgentBuilderMemoryExtensions
         // Use MemoryId if provided, otherwise fall back to agent name
         var memoryId = options.MemoryId ?? builder.AgentName;
         var plugin = new DynamicMemoryPlugin(store, memoryId, builder.Logger?.CreateLogger<DynamicMemoryPlugin>());
-        var Middleware = new DynamicMemoryMiddleware(store, options, builder.Logger?.CreateLogger<DynamicMemoryMiddleware>());
+        var middleware = new DynamicMemoryAgentMiddleware(store, options, builder.Logger?.CreateLogger<DynamicMemoryAgentMiddleware>());
 
         // Register plugin and Middleware directly without cross-extension dependencies
         RegisterDynamicMemoryPlugin(builder, plugin);
-        RegisterDynamicMemoryMiddleware(builder, Middleware);
+        builder.Middlewares.Add(middleware);
 
         return builder;
     }
@@ -2257,17 +2287,8 @@ public static class AgentBuilderMemoryExtensions
     {
         builder.PluginManager.RegisterPlugin(plugin);
         var pluginName = typeof(DynamicMemoryPlugin).Name;
-        builder.ScopeContext.SetPluginScope(pluginName);
+        // Scoping is now done via middleware extension methods (.ForPlugin(), .ForSkill(), etc.)
         builder.PluginContexts[pluginName] = null; // No special context needed for memory plugin
-    }
-
-    /// <summary>
-    /// Registers the memory Middleware directly with the builder's Middleware manager
-    /// Avoids dependency on AgentBuilderMiddlewareExtensions
-    /// </summary>
-    private static void RegisterDynamicMemoryMiddleware(AgentBuilder builder, DynamicMemoryMiddleware Middleware)
-    {
-        builder.PromptMiddlewares.Add(Middleware);
     }
 
     /// <summary>
@@ -2469,12 +2490,12 @@ public static class AgentBuilderMemoryExtensions
 
         if (options.Strategy == MemoryStrategy.FullTextInjection)
         {
-            var Middleware = new StaticMemoryMiddleware(
+            var middleware = new StaticMemoryAgentMiddleware(
                 options.Store,
                 knowledgeId,
                 options.MaxTokens,
-                builder.Logger?.CreateLogger<StaticMemoryMiddleware>());
-            builder.WithPromptMiddleware(Middleware);
+                builder.Logger?.CreateLogger<StaticMemoryAgentMiddleware>());
+            builder.Middlewares.Add(middleware);
         }
         else if (options.Strategy == MemoryStrategy.IndexedRetrieval)
         {
@@ -2484,15 +2505,6 @@ public static class AgentBuilderMemoryExtensions
         }
 
         return builder;
-    }
-
-    /// <summary>
-    /// Registers the knowledge Middleware directly with the builder's Middleware manager.
-    /// Avoids dependency on AgentBuilderMiddlewareExtensions.
-    /// </summary>
-    private static void RegisterStaticMemoryMiddleware(AgentBuilder builder, StaticMemoryMiddleware Middleware)
-    {
-        builder.PromptMiddlewares.Add(Middleware);
     }
 
     /// <summary>
@@ -2530,26 +2542,29 @@ public static class AgentBuilderMemoryExtensions
                 builder.Logger?.CreateLogger<InMemoryAgentPlanStore>());
         }
 
-        // Create plugin and Middleware with store
-        var plugin = new AgentPlanPlugin(store, builder.Logger?.CreateLogger<AgentPlanPlugin>());
-        var Middleware = new AgentPlanMiddleware(store, builder.Logger?.CreateLogger<AgentPlanMiddleware>());
-
-        // Register plugin directly
-        builder.PluginManager.RegisterPlugin(plugin);
-        var pluginName = typeof(AgentPlanPlugin).Name;
-        builder.ScopeContext.SetPluginScope(pluginName);
-        builder.PluginContexts[pluginName] = null;
-
-        // Register Middleware directly
-        builder.PromptMiddlewares.Add(Middleware);
-
-        // Update config for backwards compatibility
+        // Create config
         var config = new PlanModeConfig
         {
             Enabled = options.Enabled,
             CustomInstructions = options.CustomInstructions
         };
         builder.Config.PlanMode = config;
+
+        // Create plugin and middleware with store and config
+        var plugin = new AgentPlanPlugin(store, builder.Logger?.CreateLogger<AgentPlanPlugin>());
+        var middleware = new AgentPlanAgentMiddleware(
+            store,
+            config, // Pass config so middleware can inject instructions
+            builder.Logger?.CreateLogger<AgentPlanAgentMiddleware>());
+
+        // Register plugin directly
+        builder.PluginManager.RegisterPlugin(plugin);
+        var pluginName = typeof(AgentPlanPlugin).Name;
+        // Scoping is now done via middleware extension methods (.ForPlugin(), .ForSkill(), etc.)
+        builder.PluginContexts[pluginName] = null;
+
+        // Register middleware directly
+        builder.Middlewares.Add(middleware);
 
         return builder;
     }
@@ -2572,7 +2587,7 @@ public static class AgentBuilderPluginExtensions
     {
         builder.PluginManager.RegisterPlugin<T>();
         var pluginName = typeof(T).Name;
-        builder.ScopeContext.SetPluginScope(pluginName);
+        // Scoping is now done via middleware extension methods (.ForPlugin(), .ForSkill(), etc.)
         builder.PluginContexts[pluginName] = context;
         
         // Track this as explicitly registered
@@ -2592,7 +2607,7 @@ public static class AgentBuilderPluginExtensions
     {
         builder.PluginManager.RegisterPlugin(instance);
         var pluginName = typeof(T).Name;
-        builder.ScopeContext.SetPluginScope(pluginName);
+        // Scoping is now done via middleware extension methods (.ForPlugin(), .ForSkill(), etc.)
         builder.PluginContexts[pluginName] = context;
         
         // Track this as explicitly registered
@@ -2612,7 +2627,7 @@ public static class AgentBuilderPluginExtensions
     {
         builder.PluginManager.RegisterPlugin(pluginType);
         var pluginName = pluginType.Name;
-        builder.ScopeContext.SetPluginScope(pluginName);
+        // Scoping is now done via middleware extension methods (.ForPlugin(), .ForSkill(), etc.)
         builder.PluginContexts[pluginName] = context;
         
         // Track this as explicitly registered
@@ -2681,7 +2696,7 @@ public static class AgentBuilderPluginExtensions
 
             // Set up scope context and plugin context
             var pluginName = registration.PluginType.Name;
-            builder.ScopeContext.SetPluginScope(pluginName);
+            // Scoping is now done via middleware extension methods (.ForPlugin(), .ForSkill(), etc.)
             builder.PluginContexts[pluginName] = context;
         }
 

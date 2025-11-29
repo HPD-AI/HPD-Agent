@@ -80,8 +80,7 @@ public static class ClarificationFunction
             {
                 response = await context.WaitForResponseAsync<ClarificationResponseEvent>(
                     requestId,
-                    timeout: effectiveTimeout,
-                    cancellationToken);
+                    timeout: effectiveTimeout);
             }
             catch (TimeoutException)
             {

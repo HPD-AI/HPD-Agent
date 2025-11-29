@@ -260,7 +260,7 @@ Saves a permission preference for a function.
 
 Interface for custom permission middleware implementations.
 
-**Namespace:** `HPD.Agent.Internal.MiddleWare`
+**Namespace:** `HPD.Agent.MiddleWare`
 
 ```csharp
 public interface IPermissionMiddleware

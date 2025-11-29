@@ -1,25 +1,43 @@
 using System;
-using HPD.Agent.Internal.MiddleWare;
 using HPD.Agent;
+using HPD.Agent.Middleware;
 using System.Threading.Tasks;
 
+namespace HPD.Agent.Permissions;
+
 /// <summary>
-/// Auto-approve permission Middleware for testing and automation scenarios.
+/// Auto-approve permission middleware for testing and automation scenarios.
 /// Automatically approves all function executions that require permission.
 /// </summary>
-internal class AutoApprovePermissionMiddleware : IPermissionMiddleware
+/// <remarks>
+/// <para><b>Use Case:</b></para>
+/// <para>
+/// This middleware is useful for automated testing, CI/CD pipelines, or scenarios where
+/// you want to bypass permission checks entirely. Simply don't block execution for any function.
+/// </para>
+///
+/// <para><b>WARNING:</b></para>
+/// <para>
+/// Do NOT use this in production environments where user consent is required.
+/// It bypasses ALL permission checks.
+/// </para>
+/// </remarks>
+/// <example>
+/// <code>
+/// var agent = new AgentBuilder()
+///     .WithMiddleware(new AutoApprovePermissionMiddleware())
+///     .Build();
+/// </code>
+/// </example>
+public class AutoApprovePermissionMiddleware : IAgentMiddleware
 {
-    public async Task InvokeAsync(FunctionInvocationContext context, Func<FunctionInvocationContext, Task> next)
+    /// <summary>
+    /// Called before each function executes. Always allows execution (no permission check).
+    /// </summary>
+    public Task BeforeFunctionAsync(AgentMiddlewareContext context, CancellationToken cancellationToken)
     {
-        // Check if function requires permission
-        if (context.Function is not HPDAIFunctionFactory.HPDAIFunction hpdFunction ||
-            !hpdFunction.HPDOptions.RequiresPermission)
-        {
-            await next(context);
-            return;
-        }
-
-        // Auto-approve all permission requests
-        await next(context);
+        // Auto-approve all functions by doing nothing
+        // (default behavior is to allow execution)
+        return Task.CompletedTask;
     }
 }

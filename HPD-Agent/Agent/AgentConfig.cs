@@ -627,19 +627,15 @@ public class ErrorHandlingConfig
 
 /// <summary>
 /// Configuration for document handling behavior.
+/// NOTE: This config is legacy and will be deprecated in favor of DocumentHandlingOptions.
+/// Use WithDocumentHandling() middleware extension instead.
 /// </summary>
 public class DocumentHandlingConfig
 {
     /// <summary>
-    /// Strategy for how documents should be processed and included in prompts.
-    /// Default is FullTextInjection.
-    /// </summary>
-    public ConversationDocumentHandling Strategy { get; set; } = ConversationDocumentHandling.FullTextInjection;
-
-    /// <summary>
     /// Custom document tag format for message injection.
     /// Uses string.Format with {0} = filename, {1} = extracted text.
-    /// If null, uses default format from ConversationDocumentHelper.
+    /// If null, uses default format from DocumentHelper.
     /// </summary>
     public string? DocumentTagFormat { get; set; }
 

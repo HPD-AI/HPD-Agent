@@ -70,6 +70,9 @@ public class AgentBuilder
     // AIContextProvider factory (protocol-specific, stored as object for extensibility)
     internal object? _contextProviderFactory;
 
+    // Text extraction utility for document processing (shared instance)
+    internal HPD_Agent.TextExtraction.TextExtractionUtility? _textExtractor;
+
     /// <summary>
     /// Creates a new builder with default configuration.
     /// Provider assemblies are automatically discovered via ProviderAutoDiscovery ModuleInitializer.
@@ -2898,10 +2901,11 @@ public static class AgentBuilderMemoryExtensions
 
         if (options.Store == null)
         {
-            var textExtractor = new HPD_Agent.TextExtraction.TextExtractionUtility();
+            // Reuse shared text extractor instance if available, otherwise create new one
+            builder._textExtractor ??= new HPD_Agent.TextExtraction.TextExtractionUtility();
             options.Store = new JsonStaticMemoryStore(
                 options.StorageDirectory,
-                textExtractor,
+                builder._textExtractor,
                 builder.Logger?.CreateLogger<JsonStaticMemoryStore>());
         }
 

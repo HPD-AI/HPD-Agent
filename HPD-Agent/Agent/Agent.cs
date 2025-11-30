@@ -583,7 +583,6 @@ internal sealed class Agent
 
     private async IAsyncEnumerable<AgentEvent> RunAgenticLoopInternal(
         PreparedTurn turn,
-        string[]? documentPaths,
         List<ChatMessage> turnHistory,
         TaskCompletionSource<IReadOnlyList<ChatMessage>> historyCompletionSource,
         TaskCompletionSource<ReductionMetadata?> reductionCompletionSource,
@@ -636,12 +635,9 @@ internal sealed class Agent
         IReadOnlyList<ChatMessage> messages = turn.MessagesForLLM;
         var newInputMessages = turn.NewInputMessages;
 
-        // Process documents if provided (modifies messages in-place)
-        if (documentPaths?.Length > 0)
-        {
-            var processedMessages = await AgentDocumentProcessor.ProcessDocumentsAsync(messages, documentPaths, Config, cancellationToken).ConfigureAwait(false);
-            messages = processedMessages.ToList();
-        }
+        // NOTE: Document processing is now handled by DocumentHandlingMiddleware
+        // Documents should be attached to messages using ChatMessageDocumentExtensions.WithDocuments()
+        // and processed via middleware pipeline before reaching this point.
 
         // Create linked cancellation token for turn timeout
         using var turnCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -2246,7 +2242,6 @@ internal sealed class Agent
 
         await foreach (var evt in RunAgenticLoopInternal(
             turn,
-            documentPaths: null,
             turnHistory,
             historyCompletionSource,
             reductionCompletionSource,
@@ -2303,7 +2298,6 @@ internal sealed class Agent
 
         var internalStream = RunAgenticLoopInternal(
             turn,
-            documentPaths: null,
             turnHistory,
             historyCompletionSource,
             reductionCompletionSource,
@@ -2410,7 +2404,6 @@ internal sealed class Agent
         // ═══════════════════════════════════════════════════════════════════════════
         var internalStream = RunAgenticLoopInternal(
             turn,  // ✅ PreparedTurn contains MessagesForLLM, NewInputMessages, and Options
-            documentPaths: null,
             turnHistory,
             historyCompletionSource,
             reductionCompletionSource,
@@ -4853,97 +4846,9 @@ internal class StreamingTurnResult
 
 #region Document Processing Helper
 
-/// <summary>
-/// Helper methods for document processing in Agent
-/// </summary>
-internal static class AgentDocumentProcessor
-{
-    /// <summary>
-    /// Processes documents and modifies messages to include document content
-    /// </summary>
-    public static async Task<IEnumerable<ChatMessage>> ProcessDocumentsAsync(
-        IEnumerable<ChatMessage> messages,
-        string[] documentPaths,
-        AgentConfig? config,
-        CancellationToken cancellationToken)
-    {
-        if (documentPaths == null || documentPaths.Length == 0)
-        {
-            return messages;
-        }
-
-        // Get document handling configuration
-        var docConfig = config?.DocumentHandling;
-        var strategy = docConfig?.Strategy ?? ConversationDocumentHandling.FullTextInjection;
-
-        // Only FullTextInjection is supported for now
-        if (strategy != ConversationDocumentHandling.FullTextInjection)
-        {
-            throw new NotImplementedException($"Document handling strategy '{strategy}' is not yet implemented. Only FullTextInjection is currently supported.");
-        }
-
-        // Process document uploads
-        var textExtractor = new HPD_Agent.TextExtraction.TextExtractionUtility();
-        var uploads = await ConversationDocumentHelper.ProcessUploadsAsync(documentPaths, textExtractor, cancellationToken).ConfigureAwait(false);
-
-        // Modify the last user message with document content
-        return ModifyLastUserMessageWithDocuments(messages, uploads, docConfig?.DocumentTagFormat);
-    }
-
-    /// <summary>
-    /// Modifies the last user message to include document content
-    /// </summary>
-    private static IEnumerable<ChatMessage> ModifyLastUserMessageWithDocuments(
-        IEnumerable<ChatMessage> messages,
-        ConversationDocumentUpload[] uploads,
-        string? customTagFormat = null)
-    {
-        var messagesList = messages.ToList();
-        if (messagesList.Count == 0 || uploads.Length == 0)
-        {
-            return messagesList;
-        }
-
-        // Find the last user message
-        var lastUserMessageIndex = -1;
-        for (int i = messagesList.Count - 1; i >= 0; i--)
-        {
-            if (messagesList[i].Role == ChatRole.User)
-            {
-                lastUserMessageIndex = i;
-                break;
-            }
-        }
-
-        if (lastUserMessageIndex == -1)
-        {
-            return messagesList;
-        }
-
-        var lastUserMessage = messagesList[lastUserMessageIndex];
-        var originalText = ContentExtractor.ExtractText(lastUserMessage);
-
-        // Format message with documents
-        var formattedMessage = ConversationDocumentHelper.FormatMessageWithDocuments(
-            originalText, uploads, customTagFormat);
-
-        // Append document content to existing contents instead of replacing
-        // This preserves images, audio, and other non-text content
-        var newContents = lastUserMessage.Contents.ToList();
-        newContents.Add(new TextContent(formattedMessage));
-
-        // Preserve AdditionalProperties if present
-        var newMessage = new ChatMessage(ChatRole.User, newContents);
-        if (lastUserMessage.AdditionalProperties != null)
-        {
-            newMessage.AdditionalProperties = new AdditionalPropertiesDictionary(lastUserMessage.AdditionalProperties);
-        }
-
-        messagesList[lastUserMessageIndex] = newMessage;
-
-        return messagesList;
-    }
-}
+// NOTE: AgentDocumentProcessor class removed - document processing is now handled by
+// DocumentHandlingMiddleware in HPD.Agent.Middleware.Document namespace.
+// See FullTextExtractionStrategy for the middleware-based implementation.
 
 #endregion
 

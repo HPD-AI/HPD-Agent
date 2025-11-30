@@ -464,12 +464,14 @@ internal static class SkillAnalyzer
             documentId = ExtractStringLiteral(args[2].Expression, semanticModel);
         }
 
-        // If documentId not provided, it will be auto-derived at runtime
-        // For source generation, we store the explicit ID if provided
+        // If documentId not provided, derive it from filename at source generation time
+        // This mirrors the runtime behavior of SkillOptions.AddDocumentFromFile
+        var effectiveDocumentId = documentId ?? DeriveDocumentIdFromFilePath(filePath);
+
         var uploadInfo = new DocumentUploadInfo
         {
             FilePath = filePath,
-            DocumentId = documentId ?? string.Empty,  // Empty means auto-derive
+            DocumentId = effectiveDocumentId,
             Description = description,
             SourceType = DocumentSourceType.FilePath
         };
@@ -512,13 +514,15 @@ internal static class SkillAnalyzer
             documentId = ExtractStringLiteral(args[2].Expression, semanticModel);
         }
 
-        // If documentId not provided, it will be auto-derived at runtime
-        // For source generation, we store the explicit ID if provided
+        // If documentId not provided, derive it from URL at source generation time
+        // This mirrors the runtime behavior of SkillOptions.AddDocumentFromUrl
+        var effectiveDocumentId = documentId ?? DeriveDocumentIdFromUrl(url!);
+
         var uploadInfo = new DocumentUploadInfo
         {
-            Url = url,
-            DocumentId = documentId ?? string.Empty,  // Empty means auto-derive
-            Description = description,
+            Url = url!,
+            DocumentId = effectiveDocumentId,
+            Description = description!,
             SourceType = DocumentSourceType.Url
         };
 
@@ -546,4 +550,48 @@ internal static class SkillAnalyzer
 
     // TODO: Phase 2.5 - Add diagnostic reporting support
     // For now, diagnostics are skipped to get basic functionality working
+
+    /// <summary>
+    /// Derives document ID from file path (mirrors SkillOptions.DeriveDocumentId)
+    /// "./docs/debugging-workflow.md" -> "debugging-workflow"
+    /// </summary>
+    private static string DeriveDocumentIdFromFilePath(string filePath)
+    {
+        // Get filename without extension
+        var fileName = System.IO.Path.GetFileNameWithoutExtension(filePath);
+
+        // Normalize to lowercase-kebab-case
+        return fileName.ToLowerInvariant()
+            .Replace(" ", "-")
+            .Replace("_", "-");
+    }
+
+    /// <summary>
+    /// Derives document ID from URL (mirrors SkillOptions.DeriveDocumentIdFromUrl)
+    /// "https://docs.company.com/sops/financial-health.md" -> "financial-health"
+    /// </summary>
+    private static string DeriveDocumentIdFromUrl(string url)
+    {
+        try
+        {
+            var uri = new System.Uri(url);
+            var fileName = System.IO.Path.GetFileNameWithoutExtension(uri.LocalPath);
+
+            if (string.IsNullOrWhiteSpace(fileName))
+            {
+                // If no filename, use host: "https://example.com" -> "example-com"
+                fileName = uri.Host.Replace(".", "-");
+            }
+
+            // Normalize to lowercase-kebab-case
+            return fileName.ToLowerInvariant()
+                .Replace(" ", "-")
+                .Replace("_", "-");
+        }
+        catch
+        {
+            // Fallback for invalid URLs
+            return url.GetHashCode().ToString("X8").ToLowerInvariant();
+        }
+    }
 }

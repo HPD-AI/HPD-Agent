@@ -142,6 +142,13 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
         // Check for [Scope] attribute
         var (hasScopeAttribute, scopeDescription, postExpansionInstructions) = GetScopeAttribute(classDecl);
 
+        // Check if the class has a parameterless constructor (either explicit or implicit)
+        var hasParameterlessConstructor = HasParameterlessConstructor(classDecl);
+
+        // Check if the class is publicly accessible (for PluginRegistry.All inclusion)
+        // A class is publicly accessible if it's public and not nested inside a non-public class
+        var isPubliclyAccessible = IsClassPubliclyAccessible(classDecl);
+
         // Build description
         var description = BuildPluginDescription(functions.Count, skills.Count, subAgents.Count);
 
@@ -155,8 +162,59 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
             SubAgents = subAgents!,
             HasScopeAttribute = hasScopeAttribute,
             ScopeDescription = scopeDescription,
-            PostExpansionInstructions = postExpansionInstructions
+            PostExpansionInstructions = postExpansionInstructions,
+            HasParameterlessConstructor = hasParameterlessConstructor,
+            IsPubliclyAccessible = isPubliclyAccessible
         };
+    }
+
+    /// <summary>
+    /// Checks if a class has a parameterless constructor (either explicit or implicit).
+    /// A class has an implicit parameterless constructor if it has NO explicit constructors.
+    /// A class has an explicit parameterless constructor if it declares one.
+    /// </summary>
+    private static bool HasParameterlessConstructor(ClassDeclarationSyntax classDecl)
+    {
+        var constructors = classDecl.Members
+            .OfType<ConstructorDeclarationSyntax>()
+            .ToList();
+
+        // If no explicit constructors, compiler generates implicit parameterless constructor
+        if (!constructors.Any())
+            return true;
+
+        // Check if any explicit constructor is parameterless
+        return constructors.Any(c => c.ParameterList.Parameters.Count == 0);
+    }
+
+    /// <summary>
+    /// Checks if a class is publicly accessible from outside the assembly.
+    /// A class must be:
+    /// 1. Declared with 'public' modifier
+    /// 2. Not nested inside a non-public class
+    /// Private/internal classes (e.g., test fixtures) are excluded from PluginRegistry.All
+    /// but are still processed for individual Registration files.
+    /// </summary>
+    private static bool IsClassPubliclyAccessible(ClassDeclarationSyntax classDecl)
+    {
+        // Check if this class has the public modifier
+        if (!classDecl.Modifiers.Any(SyntaxKind.PublicKeyword))
+            return false;
+
+        // Check if nested inside another class that's not public
+        var parent = classDecl.Parent;
+        while (parent != null)
+        {
+            if (parent is ClassDeclarationSyntax parentClass)
+            {
+                // If parent class is not public, this class is not publicly accessible
+                if (!parentClass.Modifiers.Any(SyntaxKind.PublicKeyword))
+                    return false;
+            }
+            parent = parent.Parent;
+        }
+
+        return true;
     }
 
     private static string BuildPluginDescription(int functionCount, int skillCount, int subAgentCount)
@@ -213,6 +271,13 @@ namespace HPD_Agent.Diagnostics {{
                 var scopeDescription = group.FirstOrDefault(p => p!.HasScopeAttribute)?.ScopeDescription;
                 var postExpansionInstructions = group.FirstOrDefault(p => p!.HasScopeAttribute)?.PostExpansionInstructions;
 
+                // All partial class parts must have parameterless constructor for the plugin to be AOT-instantiable
+                // (If any part declares a constructor with parameters, no implicit parameterless constructor is generated)
+                var hasParameterlessConstructor = group.All(p => p!.HasParameterlessConstructor);
+
+                // All partial class parts must be publicly accessible for the plugin to be in the registry
+                var isPubliclyAccessible = group.All(p => p!.IsPubliclyAccessible);
+
                 return new PluginInfo
                 {
                     Name = first.Name,
@@ -223,7 +288,9 @@ namespace HPD_Agent.Diagnostics {{
                     SubAgents = allSubAgents,
                     HasScopeAttribute = hasScopeAttribute,
                     ScopeDescription = scopeDescription,
-                    PostExpansionInstructions = postExpansionInstructions
+                    PostExpansionInstructions = postExpansionInstructions,
+                    HasParameterlessConstructor = hasParameterlessConstructor,
+                    IsPubliclyAccessible = isPubliclyAccessible
                 };
             })
             .ToList();
@@ -281,8 +348,100 @@ namespace HPD_Agent.Diagnostics {{
             var source = GeneratePluginRegistration(plugin);
             context.AddSource($"{plugin.Name}Registration.g.cs", source);
         }
+
+        // NEW: Generate plugin registry catalog for AOT-compatible plugin discovery
+        if (pluginGroups.Any())
+        {
+            var registrySource = GeneratePluginRegistry(pluginGroups);
+            context.AddSource("PluginRegistry.g.cs", registrySource);
+        }
     }
-    
+
+    /// <summary>
+    /// Generates the PluginRegistry.All array that serves as a catalog of all plugins in the assembly.
+    /// This eliminates reflection in hot paths by providing direct delegate references.
+    /// Only plugins with parameterless constructors and public accessibility are included.
+    /// </summary>
+    private static string GeneratePluginRegistry(List<PluginInfo> plugins)
+    {
+        // Filter to only include plugins that can be instantiated via the registry:
+        // 1. Must have parameterless constructor (plugins requiring DI use reflection fallback)
+        // 2. Must be publicly accessible (private/internal test classes are excluded)
+        var instantiablePlugins = plugins
+            .Where(p => p.HasParameterlessConstructor && p.IsPubliclyAccessible)
+            .OrderBy(p => p.Name)
+            .ToList();
+
+        var sb = new StringBuilder();
+
+        sb.AppendLine("// <auto-generated/>");
+        sb.AppendLine("#pragma warning disable");
+        sb.AppendLine();
+        sb.AppendLine("using System;");
+        sb.AppendLine("using System.Collections.Generic;");
+        sb.AppendLine("using Microsoft.Extensions.AI;");
+        sb.AppendLine("using HPD.Agent;  // For PluginFactory and IPluginMetadataContext types");
+        sb.AppendLine();
+        sb.AppendLine("namespace HPD.Agent.Generated");
+        sb.AppendLine("{");
+        sb.AppendLine("    /// <summary>");
+        sb.AppendLine("    /// AOT-compatible catalog of all plugins in this assembly.");
+        sb.AppendLine("    /// Generated by HPDPluginSourceGenerator.");
+        sb.AppendLine("    /// Provides direct delegate references eliminating reflection in hot paths.");
+        sb.AppendLine($"    /// Contains {instantiablePlugins.Count} plugins (plugins requiring DI are excluded).");
+        sb.AppendLine("    /// </summary>");
+        sb.AppendLine("    [System.CodeDom.Compiler.GeneratedCodeAttribute(\"HPDPluginSourceGenerator\", \"1.0.0.0\")]");
+        sb.AppendLine("    public static class PluginRegistry");
+        sb.AppendLine("    {");
+        sb.AppendLine("        /// <summary>");
+        sb.AppendLine("        /// Catalog of all plugins in this assembly that have parameterless constructors.");
+        sb.AppendLine("        /// AgentBuilder automatically discovers and uses this at construction time.");
+        sb.AppendLine("        /// </summary>");
+        sb.AppendLine("        public static readonly PluginFactory[] All = new PluginFactory[]");
+        sb.AppendLine("        {");
+
+        foreach (var plugin in instantiablePlugins)
+        {
+            var ns = string.IsNullOrEmpty(plugin.Namespace) ? "" : $"{plugin.Namespace}.";
+            var fullTypeName = $"{ns}{plugin.Name}";
+
+            sb.AppendLine($"            new PluginFactory(");
+            sb.AppendLine($"                \"{plugin.Name}\",");
+            sb.AppendLine($"                typeof({fullTypeName}),");
+            sb.AppendLine($"                () => new {fullTypeName}(),  // Direct instantiation (AOT-safe)");
+
+            // Handle skill-only containers (no instance parameter)
+            if (!plugin.RequiresInstance)
+            {
+                sb.AppendLine($"                (_, ctx) => {plugin.Name}Registration.CreatePlugin(ctx),");
+            }
+            else
+            {
+                sb.AppendLine($"                (instance, ctx) => {plugin.Name}Registration.CreatePlugin(({fullTypeName})instance, ctx),");
+            }
+
+            // Add GetReferencedPlugins if plugin has skills
+            if (plugin.Skills.Any())
+            {
+                sb.AppendLine($"                {plugin.Name}Registration.GetReferencedPlugins,");
+                sb.AppendLine($"                {plugin.Name}Registration.GetReferencedFunctions");
+            }
+            else
+            {
+                sb.AppendLine($"                () => Array.Empty<string>(),");
+                sb.AppendLine($"                () => new Dictionary<string, string[]>()");
+            }
+
+            sb.AppendLine($"            ),");
+        }
+
+        sb.AppendLine("        };");
+        sb.AppendLine("    }");
+        sb.AppendLine("}");
+
+        return sb.ToString();
+    }
+
     private static string GenerateCreatePluginMethod(PluginInfo plugin)
     {
         var unconditionalFunctions = plugin.Functions.Where(f => !f.IsConditional).ToList();

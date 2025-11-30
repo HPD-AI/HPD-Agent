@@ -1,10 +1,10 @@
 {
-  "DocumentId": "05-financialhealthdashboard-sop",
-  "Name": "05-financialhealthdashboard-sop",
-  "Description": "Complete framework for comprehensive financial analysis",
-  "SizeBytes": 19860,
-  "ContentHash": "sha256:24b081c499b3f2e015068428b76fb66fd1cf4d75bfd1e9fbb40edc172fa066e3",
-  "Version": 1,
-  "CreatedAt": "2025-11-21T02:26:46.255101Z",
-  "LastModified": "2025-11-21T02:26:46.255101Z"
+  "documentId": "05-financialhealthdashboard-sop",
+  "name": "05-financialhealthdashboard-sop",
+  "description": "Interpretation framework and benchmarks",
+  "sizeBytes": 19860,
+  "contentHash": "sha256:24b081c499b3f2e015068428b76fb66fd1cf4d75bfd1e9fbb40edc172fa066e3",
+  "version": 1,
+  "createdAt": "2025-11-30T13:12:03.457633Z",
+  "lastModified": "2025-11-30T13:12:03.457644Z"
 }

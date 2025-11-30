@@ -53,8 +53,8 @@ public class Phase5DocumentLinkingTests : IDisposable
         var builder = new AgentBuilder()
             .WithProvider("openai", "gpt-4");
 
-        // Register plugin via reflection (simulating auto-registration)
-        builder._pluginManager.RegisterPlugin(testPlugin);
+        // Register plugin via instance registration
+        builder._instanceRegistrations.Add(new PluginInstanceRegistration(testPlugin, "TestPluginWithDocumentUpload"));
 
         // Note: We can't fully test Build() without a real provider,
         // but we can verify the document store field gets set

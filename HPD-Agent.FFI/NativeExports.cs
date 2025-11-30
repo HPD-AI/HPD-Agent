@@ -107,7 +107,8 @@ public static partial class NativeExports
     /// <param name="pluginsJsonPtr">Pointer to JSON string containing plugin definitions</param>
     /// <returns>Handle to the created Agent, or IntPtr.Zero on failure</returns>
     [UnmanagedCallersOnly(EntryPoint = "create_agent_with_plugins")]
-    [RequiresUnreferencedCode("Agent creation uses plugin registration methods that require reflection.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "FFI boundary - AgentBuilder uses reflection for C# plugin discovery, but FFI only adds native functions manually")]
+    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "FFI boundary - AgentBuilder uses reflection for C# plugin discovery, but FFI only adds native functions manually")]
     public static IntPtr CreateAgentWithPlugins(IntPtr configJsonPtr, IntPtr pluginsJsonPtr)
     {
         try

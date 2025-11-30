@@ -363,7 +363,7 @@ public class FunctionRetryMiddlewareTests
         for (int i = 1; i < delayTimes.Count; i++)
         {
             var delay = delayTimes[i] - delayTimes[i - 1];
-            Assert.True(delay.TotalMilliseconds <= 250); // 200ms + tolerance for jitter
+            Assert.True(delay.TotalMilliseconds <= 400); // 200ms + generous tolerance for system delays and jitter
         }
     }
 

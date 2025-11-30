@@ -109,36 +109,4 @@ public abstract class ChatMessageStore
 
     #endregion
 
-    #region Token Counting (Shared Logic - Works for ALL Storage Backends)
-
-    /// <summary>
-    /// Calculates the total token count for all messages in the store.
-    /// Only includes tokens reported by LLM providers - no estimation.
-    /// Messages without provider token counts contribute 0 to the total.
-    /// </summary>
-    public virtual async Task<int> GetTotalTokenCountAsync(CancellationToken cancellationToken = default)
-    {
-        var messages = await LoadMessagesAsync(cancellationToken);
-        return messages.CalculateTotalTokens();
-    }
-
-    /// <summary>
-    /// Gets detailed token statistics for the message store.
-    /// Useful for debugging and monitoring context window usage.
-    /// </summary>
-    public virtual async Task<TokenStatistics> GetTokenStatisticsAsync(CancellationToken cancellationToken = default)
-    {
-        var messages = await LoadMessagesAsync(cancellationToken);
-        var systemMessages = messages.Where(m => m.Role == ChatRole.System).ToList();
-
-        return new TokenStatistics
-        {
-            TotalMessages = messages.Count,
-            TotalTokens = messages.CalculateTotalTokens(),
-            SystemMessageCount = systemMessages.Count,
-            SystemMessageTokens = systemMessages.CalculateTotalTokens()
-        };
-    }
-
-    #endregion
 }

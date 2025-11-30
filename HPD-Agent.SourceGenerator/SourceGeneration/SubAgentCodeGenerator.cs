@@ -43,12 +43,12 @@ internal static class SubAgentCodeGenerator
         sb.AppendLine($"                    agentBuilder.WithChatClient(currentAgent.BaseClient);");
         sb.AppendLine($"                }}");
         sb.AppendLine();
-        sb.AppendLine($"                // Register plugins if any are specified");
+        sb.AppendLine($"                // Register plugins if any are specified (uses AOT-compatible catalog)");
         sb.AppendLine($"                if (subAgentDef.PluginTypes != null && subAgentDef.PluginTypes.Length > 0)");
         sb.AppendLine($"                {{");
         sb.AppendLine($"                    foreach (var pluginType in subAgentDef.PluginTypes)");
         sb.AppendLine($"                    {{");
-        sb.AppendLine($"                        agentBuilder.PluginManager.RegisterPlugin(pluginType);");
+        sb.AppendLine($"                        agentBuilder.WithPlugin(pluginType);");
         sb.AppendLine($"                    }}");
         sb.AppendLine($"                }}");
         sb.AppendLine();

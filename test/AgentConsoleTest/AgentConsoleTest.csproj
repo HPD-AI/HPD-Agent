@@ -24,9 +24,9 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.0" />
 
     <!-- OpenTelemetry packages for observability -->
-    <PackageReference Include="OpenTelemetry" Version="1.10.0" />
-    <PackageReference Include="OpenTelemetry.Exporter.Console" Version="1.10.0" />
-    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.10.0" />
+    <PackageReference Include="OpenTelemetry" Version="1.14.0" />
+    <PackageReference Include="OpenTelemetry.Exporter.Console" Version="1.14.0" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.14.0" />
   </ItemGroup>
 
   <ItemGroup>

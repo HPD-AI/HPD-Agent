@@ -6,6 +6,8 @@ using System.Collections.Generic;
 /// Skills teach Claude how to approach financial analysis tasks optimally
 /// Each skill recommends best approaches while providing tactical alternatives
 /// </summary>
+
+[Collapse("Financial Analysis Skills")]
 public class FinancialAnalysisSkills
 {
     /// <summary>

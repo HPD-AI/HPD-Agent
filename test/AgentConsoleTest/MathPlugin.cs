@@ -37,7 +37,7 @@ public class MathPluginMetadataContext : IPluginMetadataContext
     public IEnumerable<string> GetPropertyNames() => _properties.Keys;
 }
 
-
+[Collapse("Math Plugin")]
 public class MathPlugin
 {
     [AIFunction<MathPluginMetadataContext>]

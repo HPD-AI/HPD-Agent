@@ -51,6 +51,8 @@ public class FinancialAnalysisPluginMetadataContext : IPluginMetadataContext
     public IEnumerable<string> GetPropertyNames() => _properties.Keys;
 }
 
+
+[Collapse("Financial Analysis Plugin")]
 public class FinancialAnalysisPlugin
 {
     // ==================== COMMON-SIZE ANALYSIS ====================

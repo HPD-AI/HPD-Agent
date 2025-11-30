@@ -36,6 +36,22 @@ internal class PluginInfo
     public bool RequiresContext => Functions.Any(f => f.RequiresContext);
 
     /// <summary>
+    /// Whether this plugin has a parameterless constructor.
+    /// Only plugins with parameterless constructors can be included in the PluginRegistry.All catalog.
+    /// Plugins without parameterless constructors (e.g., those requiring DI) must be registered through
+    /// special extension methods like WithDynamicMemory() or WithPlanMode().
+    /// </summary>
+    public bool HasParameterlessConstructor { get; set; } = true;
+
+    /// <summary>
+    /// Whether this plugin class is publicly accessible.
+    /// Only publicly accessible classes can be included in the PluginRegistry.All catalog.
+    /// Private/internal classes (e.g., test fixtures) are still processed for individual Registration files
+    /// but are excluded from the registry.
+    /// </summary>
+    public bool IsPubliclyAccessible { get; set; } = true;
+
+    /// <summary>
     /// Whether this container has the [Scope] attribute
     /// </summary>
     public bool HasScopeAttribute { get; set; }

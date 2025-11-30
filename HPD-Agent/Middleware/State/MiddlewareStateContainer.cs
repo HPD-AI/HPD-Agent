@@ -151,7 +151,7 @@ public sealed partial class MiddlewareStateContainer
     /// T4: Update state - _states[key] = TState instance (concrete type again)
     /// </para>
     /// </remarks>
-    protected TState? GetState<TState>(string key) where TState : class
+    private TState? GetState<TState>(string key) where TState : class
     {
         // Fast path: Check deserialization cache first (post-checkpoint scenario)
         if (_deserializedCache.IsValueCreated &&

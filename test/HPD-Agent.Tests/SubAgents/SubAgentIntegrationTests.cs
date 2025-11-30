@@ -41,14 +41,22 @@ public class SubAgentIntegrationTests
     // ===== P0: Plugin Registration =====
 
     [Fact]
-    public void SubAgentPlugin_CanBeRegistered_ViaPluginSystem()
+    public void CrossAssemblyPluginLoading_LoadsRegistryFromPluginAssembly()
     {
-        // Arrange & Act
-        var registration = PluginRegistration.FromType<TestIntegrationSubAgents>();
+        // This test verifies that the cross-assembly plugin loading mechanism works.
+        // When WithPlugin<T>() is called, it should load the PluginRegistry from T's assembly
+        // if not already loaded.
 
-        // Assert
-        Assert.NotNull(registration);
-        Assert.Equal("TestIntegrationSubAgents", registration.PluginType.Name);
+        // Arrange - Create a builder
+        var builder = new AgentBuilder();
+
+        // Act - Attempt to load a plugin registry from the test assembly
+        // Even though there's no plugin, it should not throw - just find nothing
+        builder.LoadPluginRegistryFromAssembly(typeof(TestIntegrationSubAgents).Assembly);
+
+        // Assert - The assembly was tracked as loaded (even if no plugins found)
+        // This verifies the cross-assembly loading mechanism is working
+        Assert.Contains(typeof(TestIntegrationSubAgents).Assembly, builder._loadedAssemblies);
     }
 
     [Fact]

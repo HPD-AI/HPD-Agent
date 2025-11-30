@@ -155,7 +155,7 @@ public class InMemoryDynamicMemoryStore : DynamicMemoryStore
     /// <summary>
     /// Deserialize an in-memory store from a snapshot.
     /// </summary>
-    internal static InMemoryDynamicMemoryStore Deserialize(DynamicMemoryStoreSnapshot snapshot)
+    internal new static InMemoryDynamicMemoryStore Deserialize(DynamicMemoryStoreSnapshot snapshot)
     {
         // Deep copy from snapshot
         var memories = snapshot.Memories.ToDictionary(

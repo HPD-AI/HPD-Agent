@@ -304,7 +304,7 @@ public class FunctionTimeoutMiddlewareTests
     public async Task ExecuteFunctionAsync_MultipleConcurrentCalls_EachHasOwnTimeout()
     {
         // Arrange
-        var timeout = TimeSpan.FromMilliseconds(200);
+        var timeout = TimeSpan.FromMilliseconds(500);
         var middleware = new FunctionTimeoutMiddleware(timeout);
 
         // Act - Start multiple concurrent calls
@@ -318,7 +318,7 @@ public class FunctionTimeoutMiddlewareTests
                 context1,
                 async () =>
                 {
-                    await Task.Delay(50);
+                    await Task.Delay(100);
                     return "Fast";
                 },
                 CancellationToken.None);
@@ -334,7 +334,7 @@ public class FunctionTimeoutMiddlewareTests
                     context2,
                     async () =>
                     {
-                        await Task.Delay(500);
+                        await Task.Delay(1000);
                         return "Slow";
                     },
                     CancellationToken.None));

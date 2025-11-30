@@ -245,7 +245,7 @@ public class JsonStaticMemoryStore : StaticMemoryStore
     /// <summary>
     /// Deserialize a JSON store from a snapshot.
     /// </summary>
-    internal static JsonStaticMemoryStore Deserialize(StaticMemoryStoreSnapshot snapshot)
+    internal new static JsonStaticMemoryStore Deserialize(StaticMemoryStoreSnapshot snapshot)
     {
         // Extract storage directory from configuration
         var storageDirectory = snapshot.Configuration?.GetValueOrDefault("StorageDirectory") as string

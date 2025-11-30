@@ -1,13 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.AI;
 using System.Reflection;
-using System;
-using System.Threading;
-using System.Threading.Tasks;
-using System.Collections.Generic;
-using System.Linq;
 
 /// A modern, unified AIFunctionFactory that prioritizes delegate-based invocation 
 /// for performance and AOT-compatibility.

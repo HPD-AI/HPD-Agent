@@ -22,6 +22,8 @@ var eventHandler = new ConsoleEventHandler();
 var agent = new AgentBuilder(config)
     .WithObserver(eventHandler)
     .WithPlugin<MathPlugin>()
+    .WithPlugin<FinancialAnalysisPlugin>()
+    .WithPlugin<FinancialAnalysisSkills>()
     .WithLogging()
     .WithPlanMode()
     .WithPermissions()

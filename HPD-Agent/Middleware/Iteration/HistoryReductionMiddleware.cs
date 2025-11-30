@@ -105,13 +105,11 @@ public class HistoryReductionMiddleware : IAgentMiddleware
 
         // Try cache first
         CachedReduction? activeReduction = null;
-        bool usedCache = false;
 
         if (hrState?.LastReduction != null && hrState.LastReduction.IsValidFor(conversationMessages.Count))
         {
             // ✅ CACHE HIT: Reuse existing reduction
             activeReduction = hrState.LastReduction;
-            usedCache = true;
 
             // Apply cached reduction to messages
             var reducedMessages = activeReduction.ApplyToMessages(conversationMessages, systemMessage: null).ToList();

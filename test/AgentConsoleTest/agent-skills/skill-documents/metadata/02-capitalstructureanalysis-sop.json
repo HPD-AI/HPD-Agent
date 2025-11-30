@@ -1,10 +1,10 @@
 {
-  "DocumentId": "02-capitalstructureanalysis-sop",
-  "Name": "02-capitalstructureanalysis-sop",
-  "Description": "Step-by-step procedure for analyzing capital structure and leverage",
-  "SizeBytes": 10138,
-  "ContentHash": "sha256:e47f249dea7d42cc2a3a3eab41090d8314990fe89c7c329572c63c3e108d3636",
-  "Version": 1,
-  "CreatedAt": "2025-11-21T02:26:46.250677Z",
-  "LastModified": "2025-11-21T02:26:46.250677Z"
+  "documentId": "02-capitalstructureanalysis-sop",
+  "name": "02-capitalstructureanalysis-sop",
+  "description": "Leverage benchmarks and risk assessment",
+  "sizeBytes": 10138,
+  "contentHash": "sha256:e47f249dea7d42cc2a3a3eab41090d8314990fe89c7c329572c63c3e108d3636",
+  "version": 1,
+  "createdAt": "2025-11-30T13:12:03.467634Z",
+  "lastModified": "2025-11-30T13:12:03.467634Z"
 }

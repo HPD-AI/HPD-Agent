@@ -96,10 +96,7 @@ public class FileSystemInstructionStore : InstructionDocumentStoreBase
 
         try
         {
-            var json = JsonSerializer.Serialize(metadata, new JsonSerializerOptions
-            {
-                WriteIndented = true
-            });
+            var json = JsonSerializer.Serialize(metadata, HPDJsonContext.Default.GlobalDocumentInfo);
 
             await File.WriteAllTextAsync(filePath, json, ct);
             _logger.LogDebug("Wrote metadata for document {DocumentId}", documentId);
@@ -123,7 +120,7 @@ public class FileSystemInstructionStore : InstructionDocumentStoreBase
         try
         {
             var json = await File.ReadAllTextAsync(filePath, ct);
-            return JsonSerializer.Deserialize<GlobalDocumentInfo>(json);
+            return JsonSerializer.Deserialize(json, HPDJsonContext.Default.GlobalDocumentInfo);
         }
         catch (Exception ex)
         {

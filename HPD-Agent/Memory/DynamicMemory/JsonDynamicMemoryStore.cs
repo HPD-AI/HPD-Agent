@@ -152,7 +152,7 @@ public class JsonDynamicMemoryStore : DynamicMemoryStore
     /// <summary>
     /// Deserialize a JSON store from a snapshot.
     /// </summary>
-    internal static JsonDynamicMemoryStore Deserialize(DynamicMemoryStoreSnapshot snapshot)
+    internal new static JsonDynamicMemoryStore Deserialize(DynamicMemoryStoreSnapshot snapshot)
     {
         // Extract storage directory from configuration
         var storageDirectory = snapshot.Configuration?.GetValueOrDefault("StorageDirectory") as string

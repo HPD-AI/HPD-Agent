@@ -152,7 +152,7 @@ public class InMemoryStaticMemoryStore : StaticMemoryStore
     /// <summary>
     /// Deserialize an in-memory store from a snapshot.
     /// </summary>
-    internal static InMemoryStaticMemoryStore Deserialize(StaticMemoryStoreSnapshot snapshot)
+    internal new static InMemoryStaticMemoryStore Deserialize(StaticMemoryStoreSnapshot snapshot)
     {
         // Deep copy from snapshot
         var documents = snapshot.Documents.ToDictionary(

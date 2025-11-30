@@ -45,7 +45,7 @@ internal class InMemoryConversationThreadStore : IConversationThreadStore
             // LatestOnly: Simple lookup
             if (_checkpoints.TryGetValue(threadId, out var snapshotJson))
             {
-                var snapshot = JsonSerializer.Deserialize<ConversationThreadSnapshot>(snapshotJson.GetRawText());
+                var snapshot = JsonSerializer.Deserialize(snapshotJson.GetRawText(), HPDJsonContext.Default.ConversationThreadSnapshot);
                 if (snapshot != null)
                 {
                     var thread = ConversationThread.Deserialize(snapshot, null);
@@ -81,7 +81,7 @@ internal class InMemoryConversationThreadStore : IConversationThreadStore
         {
             // LatestOnly: UPSERT (overwrite) - store as JsonElement
             var snapshot = thread.Serialize(null);
-            var snapshotJson = System.Text.Json.JsonSerializer.SerializeToElement(snapshot);
+            var snapshotJson = System.Text.Json.JsonSerializer.SerializeToElement(snapshot, HPDJsonContext.Default.ConversationThreadSnapshot);
             _checkpoints[thread.Id] = snapshotJson;
         }
         else
@@ -233,7 +233,7 @@ internal class InMemoryConversationThreadStore : IConversationThreadStore
             var toRemove = new List<string>();
             foreach (var kvp in _checkpoints)
             {
-                var snapshot = JsonSerializer.Deserialize<ConversationThreadSnapshot>(kvp.Value.GetRawText());
+                var snapshot = JsonSerializer.Deserialize(kvp.Value.GetRawText(), HPDJsonContext.Default.ConversationThreadSnapshot);
                 if (snapshot != null && snapshot.LastActivity < cutoff)
                 {
                     toRemove.Add(kvp.Key);
@@ -280,7 +280,7 @@ internal class InMemoryConversationThreadStore : IConversationThreadStore
             var toRemove = new List<string>();
             foreach (var kvp in _checkpoints)
             {
-                var snapshot = JsonSerializer.Deserialize<ConversationThreadSnapshot>(kvp.Value.GetRawText());
+                var snapshot = JsonSerializer.Deserialize(kvp.Value.GetRawText(), HPDJsonContext.Default.ConversationThreadSnapshot);
                 if (snapshot != null && snapshot.LastActivity < cutoff)
                 {
                     toRemove.Add(kvp.Key);

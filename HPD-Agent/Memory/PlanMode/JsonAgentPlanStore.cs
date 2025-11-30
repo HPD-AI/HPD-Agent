@@ -55,7 +55,7 @@ public class JsonAgentPlanStore : AgentPlanStore
                 try
                 {
                     var json = File.ReadAllText(file);
-                    var plan = JsonSerializer.Deserialize<AgentPlan>(json, JsonOptions);
+                    var plan = JsonSerializer.Deserialize(json, HPDJsonContext.Default.AgentPlan);
                     if (plan != null)
                     {
                         var conversationId = Path.GetFileNameWithoutExtension(file);
@@ -89,7 +89,7 @@ public class JsonAgentPlanStore : AgentPlanStore
         try
         {
             var filePath = GetPlanFilePath(conversationId);
-            var json = JsonSerializer.Serialize(plan, JsonOptions);
+            var json = JsonSerializer.Serialize(plan, HPDJsonContext.Default.AgentPlan);
             await File.WriteAllTextAsync(filePath, json, cancellationToken);
             _logger?.LogDebug("Saved plan {PlanId} for conversation {ConversationId} to {File}", plan.Id, conversationId, filePath);
         }

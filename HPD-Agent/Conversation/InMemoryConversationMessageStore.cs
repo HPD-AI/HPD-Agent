@@ -40,10 +40,15 @@ internal sealed class InMemoryConversationMessageStore : ChatMessageStore
     {
         if (serializedState.ValueKind is JsonValueKind.Object)
         {
-            var state = serializedState.Deserialize<StoreState>(jsonSerializerOptions);
-            if (state?.Messages != null)
+            // Extract messages array directly instead of deserializing wrapper (AOT-compatible)
+            if (serializedState.TryGetProperty("messages", out var messagesElement) ||
+                serializedState.TryGetProperty("Messages", out messagesElement))
             {
-                _messages.AddRange(state.Messages);
+                var messages = messagesElement.Deserialize(HPDJsonContext.Default.ListChatMessage);
+                if (messages != null)
+                {
+                    _messages.AddRange(messages);
+                }
             }
         }
     }
@@ -78,8 +83,17 @@ internal sealed class InMemoryConversationMessageStore : ChatMessageStore
 
     public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
-        var state = new StoreState { Messages = _messages.ToList() };
-        return JsonSerializer.SerializeToElement(state, jsonSerializerOptions);
+        // Serialize messages directly using HPDJsonContext (AOT-compatible)
+        var messagesList = _messages.ToList();
+        var element = JsonSerializer.SerializeToElement(messagesList, HPDJsonContext.Default.ListChatMessage);
+        
+        // Wrap in object with "Messages" property for backwards compatibility
+        var jsonObject = new System.Text.Json.Nodes.JsonObject
+        {
+            ["Messages"] = System.Text.Json.Nodes.JsonNode.Parse(element.GetRawText())
+        };
+        
+        return JsonSerializer.SerializeToElement(jsonObject, HPDJsonContext.Default.JsonObject);
     }
 
     #endregion

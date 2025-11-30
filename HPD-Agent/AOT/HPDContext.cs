@@ -77,6 +77,25 @@ using HPD.Agent;
 [JsonSerializable(typeof(IList<Microsoft.Extensions.AI.ChatMessage>))]
 [JsonSerializable(typeof(IEnumerable<Microsoft.Extensions.AI.ChatMessage>))]
 
+// --- Conversation storage and serialization types ---
+[JsonSerializable(typeof(ConversationThreadSnapshot))]
+[JsonSerializable(typeof(HistoryReductionStateData))]
+[JsonSerializable(typeof(CachedReduction))]
+
+// --- Plan mode types ---
+[JsonSerializable(typeof(AgentPlan))]
+[JsonSerializable(typeof(PlanStep))]
+[JsonSerializable(typeof(PlanStepStatus))]
+[JsonSerializable(typeof(List<PlanStep>))]
+[JsonSerializable(typeof(List<string>))]
+
+// --- Document store types ---
+[JsonSerializable(typeof(HPD_Agent.Skills.DocumentStore.GlobalDocumentInfo))]
+
+// --- Internal storage state types (nested classes) ---
+// Note: Nested classes need full type paths for AOT
+// These are internal implementation details but need serialization support
+
 public partial class HPDJsonContext : JsonSerializerContext
 {
 }

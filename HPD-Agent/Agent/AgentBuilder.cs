@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging;
 using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
 using System.Collections.Immutable;
+using System.Reflection;
 using FluentValidation;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Caching.Distributed;
@@ -42,8 +43,13 @@ public class AgentBuilder
     // Fields that are NOT part of the serializable config remain
     internal IChatClient? _baseClient;
     internal IConfiguration? _configuration;
-    internal readonly PluginManager _pluginManager = new();
     internal IPluginMetadataContext? _defaultContext;
+
+    /// <summary>
+    /// Instance-based registrations for DI-required plugins (e.g., AgentPlanPlugin, DynamicMemoryPlugin).
+    /// These plugins cannot be instantiated via the catalog because they require constructor parameters.
+    /// </summary>
+    internal readonly List<PluginInstanceRegistration> _instanceRegistrations = new();
     // store individual plugin contexts
     internal readonly Dictionary<string, IPluginMetadataContext?> _pluginContexts = new();
     // Phase 5: Document store for skill instruction documents
@@ -73,14 +79,51 @@ public class AgentBuilder
     // Text extraction utility for document processing (shared instance)
     internal HPD_Agent.TextExtraction.TextExtractionUtility? _textExtractor;
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // AOT-COMPATIBLE PLUGIN REGISTRY (Phase: AOT Plugin Registry Hybrid)
+    // ═══════════════════════════════════════════════════════════════════════════
+    // These fields enable reflection-free plugin instantiation in hot paths.
+    // The source generator creates a PluginRegistry.All array with direct delegates.
+
+    /// <summary>
+    /// Plugin catalog loaded from generated PluginRegistry.All.
+    /// Starts with the calling assembly's registry and lazily loads additional assemblies
+    /// when plugins from other assemblies are requested via WithPlugin&lt;T&gt;().
+    /// </summary>
+    internal readonly Dictionary<string, PluginFactory> _availablePlugins = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Tracks which assemblies have already been scanned for plugin registries.
+    /// Used to avoid repeated reflection calls for the same assembly.
+    /// </summary>
+    internal readonly HashSet<Assembly> _loadedAssemblies = new();
+
+    /// <summary>
+    /// Selected plugins for this agent (from WithPlugin calls).
+    /// Only plugins in this list will have their functions created during Build().
+    /// </summary>
+    internal readonly List<PluginFactory> _selectedPluginFactories = new();
+
+    /// <summary>
+    /// Function filters for Phase 4.5 selective registration.
+    /// Maps plugin name -> array of function names to include.
+    /// When a plugin is auto-registered as a skill dependency, only these functions are included.
+    /// </summary>
+    internal readonly Dictionary<string, string[]> _pluginFunctionFilters = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>
     /// Creates a new builder with default configuration.
     /// Provider assemblies are automatically discovered via ProviderAutoDiscovery ModuleInitializer.
     /// </summary>
     public AgentBuilder()
     {
+        // Capture calling assembly FIRST, before any method calls
+        // GetCallingAssembly() returns the immediate caller, not transitive
+        var callingAssembly = Assembly.GetCallingAssembly();
+
         _config = new AgentConfig();
         _providerRegistry = new ProviderRegistry();
+        LoadPluginRegistryFromAssembly(callingAssembly);
         RegisterDiscoveredProviders();
     }
 
@@ -90,18 +133,27 @@ public class AgentBuilder
     /// </summary>
     public AgentBuilder(AgentConfig config)
     {
+        // Capture calling assembly FIRST, before any method calls
+        var callingAssembly = Assembly.GetCallingAssembly();
+
         _config = config ?? throw new ArgumentNullException(nameof(config));
         _providerRegistry = new ProviderRegistry();
+        LoadPluginRegistryFromAssembly(callingAssembly);
         RegisterDiscoveredProviders();
     }
 
     /// <summary>
     /// Creates a builder with custom provider registry (for testing).
+    /// Optionally accepts an assembly hint for plugin registry discovery.
     /// </summary>
     public AgentBuilder(AgentConfig config, IProviderRegistry providerRegistry)
     {
+        // Capture calling assembly FIRST
+        var callingAssembly = Assembly.GetCallingAssembly();
+
         _config = config;
         _providerRegistry = providerRegistry;
+        LoadPluginRegistryFromAssembly(callingAssembly);
     }
 
     /// <summary>
@@ -125,6 +177,179 @@ public class AgentBuilder
     }
 
     /// <summary>
+    /// Loads plugins from the generated PluginRegistry.All in the specified assembly
+    /// and merges them into the _availablePlugins dictionary.
+    /// Uses minimal reflection (one GetType call per assembly) to discover the catalog.
+    /// Thread-safe: tracks loaded assemblies to avoid duplicate processing.
+    /// </summary>
+    /// <param name="assembly">The assembly to search for the generated PluginRegistry</param>
+    internal void LoadPluginRegistryFromAssembly(Assembly assembly)
+    {
+        // Skip if already loaded
+        if (!_loadedAssemblies.Add(assembly))
+        {
+            return;
+        }
+
+        try
+        {
+            // ONE reflection call: Look for generated registry in the specified assembly
+            // This type name is a constant known at compile time, making it AOT-safe
+            var registryType = assembly.GetType("HPD.Agent.Generated.PluginRegistry");
+
+            if (registryType == null)
+            {
+                // No registry found - no plugins available from this assembly
+                return;
+            }
+
+            // Get the All field (static readonly array - NOT a property!)
+            var allField = registryType.GetField("All", BindingFlags.Public | BindingFlags.Static);
+            if (allField == null)
+            {
+                return;
+            }
+
+            // Get the PluginFactory array
+            var factories = allField.GetValue(null) as PluginFactory[];
+            if (factories == null || factories.Length == 0)
+            {
+                return;
+            }
+
+            // Add to dictionary (new plugins from this assembly)
+            foreach (var factory in factories)
+            {
+                // Use TryAdd to avoid overwriting if plugin with same name already exists
+                _availablePlugins.TryAdd(factory.Name, factory);
+            }
+        }
+        catch (Exception ex)
+        {
+            // Log warning but don't crash - no plugins from this assembly
+            _logger?.CreateLogger<AgentBuilder>()
+                .LogWarning(ex, "Failed to load PluginRegistry.All from assembly {Assembly}", assembly.FullName);
+        }
+    }
+
+    /// <summary>
+    /// Creates AIFunctions from selected plugins using the catalog (zero reflection in hot path).
+    /// Also handles instance-based registrations for DI plugins.
+    /// Phase 4.5: Applies function filters for selective registration.
+    /// </summary>
+    /// <returns>List of AIFunctions from all selected plugins</returns>
+    [RequiresUnreferencedCode("Instance-based registrations for DI plugins use reflection.")]
+    private List<AIFunction> CreateFunctionsFromCatalog()
+    {
+        var allFunctions = new List<AIFunction>();
+
+        // Process catalog-based plugins (zero reflection in hot path)
+        foreach (var factory in _selectedPluginFactories)
+        {
+            try
+            {
+                _pluginContexts.TryGetValue(factory.Name, out var ctx);
+
+                // Create plugin instance (ZERO REFLECTION - direct delegate call!)
+                var instance = factory.CreateInstance();
+
+                // Call CreateFunctions delegate (ZERO REFLECTION!)
+                var functions = factory.CreateFunctions(instance, ctx ?? _defaultContext);
+
+                // Phase 4.5: Apply function filter if this plugin has selective registration
+                if (_pluginFunctionFilters.TryGetValue(factory.Name, out var functionFilter))
+                {
+                    // Only include functions that are in the filter
+                    functions = functions
+                        .Where(f => functionFilter.Contains(f.Name))
+                        .ToList();
+                }
+
+                allFunctions.AddRange(functions);
+            }
+            catch (Exception ex)
+            {
+                _logger?.CreateLogger<AgentBuilder>()
+                    .LogWarning(ex, "Failed to create functions for plugin {PluginName}", factory.Name);
+            }
+        }
+
+        // Process instance-based registrations (for DI plugins like AgentPlanPlugin, DynamicMemoryPlugin)
+        foreach (var registration in _instanceRegistrations)
+        {
+            try
+            {
+                _pluginContexts.TryGetValue(registration.PluginTypeName, out var ctx);
+                var functions = CreateFunctionsFromInstance(registration, ctx ?? _defaultContext);
+
+                // Apply function filter if set
+                if (registration.FunctionFilter != null && registration.FunctionFilter.Length > 0)
+                {
+                    functions = functions
+                        .Where(f => registration.FunctionFilter.Contains(f.Name))
+                        .ToList();
+                }
+
+                allFunctions.AddRange(functions);
+            }
+            catch (Exception ex)
+            {
+                _logger?.CreateLogger<AgentBuilder>()
+                    .LogWarning(ex, "Failed to create functions for instance plugin {PluginName}", registration.PluginTypeName);
+            }
+        }
+
+        return allFunctions;
+    }
+
+    /// <summary>
+    /// Creates AIFunctions from an instance-based plugin registration.
+    /// Uses the generated Registration class to create functions from the provided instance.
+    /// This is used for DI plugins that cannot be instantiated via the catalog.
+    /// </summary>
+    [RequiresUnreferencedCode("Uses reflection to call generated Registration class for DI plugins.")]
+    private List<AIFunction> CreateFunctionsFromInstance(PluginInstanceRegistration registration, IPluginMetadataContext? context)
+    {
+        var instance = registration.Instance;
+        var instanceType = instance.GetType();
+
+        // Look up the generated Registration class
+        var registrationTypeName = $"{registration.PluginTypeName}Registration";
+        var registrationType = instanceType.Assembly.GetType(registrationTypeName);
+
+        if (registrationType == null)
+        {
+            throw new InvalidOperationException(
+                $"Generated registration class {registrationTypeName} not found for DI plugin. " +
+                $"Ensure the plugin has [Function] or [Skill] attributes and the source generator ran successfully.");
+        }
+
+        var createPluginMethod = registrationType.GetMethod("CreatePlugin", BindingFlags.Public | BindingFlags.Static);
+        if (createPluginMethod == null)
+        {
+            throw new InvalidOperationException(
+                $"CreatePlugin method not found in {registrationTypeName}.");
+        }
+
+        // Invoke CreatePlugin with the instance
+        var parameters = createPluginMethod.GetParameters();
+        object? result;
+
+        if (parameters.Length == 1)
+        {
+            // Skill-only container: CreatePlugin(IPluginMetadataContext? context)
+            result = createPluginMethod.Invoke(null, new object?[] { context });
+        }
+        else
+        {
+            // Regular plugin: CreatePlugin(TPlugin instance, IPluginMetadataContext? context)
+            result = createPluginMethod.Invoke(null, new object?[] { instance, context });
+        }
+
+        return result as List<AIFunction> ?? new List<AIFunction>();
+    }
+
+    /// <summary>
     /// Creates a new builder from a JSON configuration file.
     /// </summary>
     /// <param name="jsonFilePath">Path to the JSON file containing AgentConfig data.</param>
@@ -134,6 +359,9 @@ public class AgentBuilder
     [System.Diagnostics.CodeAnalysis.RequiresUnreferencedCode("Provider assembly loading uses reflection in non-AOT scenarios")]
     public AgentBuilder(string jsonFilePath)
     {
+        // Capture calling assembly FIRST, before any method calls
+        var callingAssembly = Assembly.GetCallingAssembly();
+
         if (string.IsNullOrWhiteSpace(jsonFilePath))
             throw new ArgumentException("JSON file path cannot be null or empty.", nameof(jsonFilePath));
 
@@ -141,13 +369,14 @@ public class AgentBuilder
             throw new FileNotFoundException($"Configuration file not found: {jsonFilePath}");
 
         _providerRegistry = new ProviderRegistry();
+        LoadPluginRegistryFromAssembly(callingAssembly);
 
         try
         {
             var jsonContent = File.ReadAllText(jsonFilePath);
             _config = JsonSerializer.Deserialize<AgentConfig>(jsonContent, HPDJsonContext.Default.AgentConfig)
                 ?? throw new JsonException("Failed to deserialize AgentConfig from JSON - result was null.");
-            
+
             RegisterDiscoveredProviders();
         }
         catch (JsonException)
@@ -946,11 +1175,13 @@ public class AgentBuilder
         // Auto-register document retrieval plugin if document store is present
         if (_documentStore != null)
         {
-            _pluginManager.RegisterPlugin<HPD_Agent.Skills.DocumentStore.DocumentRetrievalPlugin>();
+            var pluginName = "DocumentRetrievalPlugin";
+            if (_availablePlugins.TryGetValue(pluginName, out var factory) &&
+                !_selectedPluginFactories.Any(f => f.Name.Equals(pluginName, StringComparison.OrdinalIgnoreCase)))
+            {
+                _selectedPluginFactories.Add(factory);
+            }
         }
-
-        // Auto-register plugins referenced by skills
-        AutoRegisterPluginsFromSkills();
 
         // === TESTING BYPASS: If BaseClient is already set, skip provider resolution ===
         // This allows tests to inject fake clients without configuring a real provider
@@ -1159,15 +1390,14 @@ public class AgentBuilder
         // Dynamic Memory registration is handled by WithDynamicMemory() extension method
         // No need to register here in Build() - the extension already adds Middleware and plugin
 
-        // Create plugin functions using per-plugin contexts and merge with default options
-        var pluginFunctions = new List<AIFunction>();
-        foreach (var registration in _pluginManager.GetPluginRegistrations())
-        {
-            var pluginName = registration.PluginType.Name;
-            _pluginContexts.TryGetValue(pluginName, out var ctx);
-            var functions = registration.ToAIFunctions(ctx ?? _defaultContext);
-            pluginFunctions.AddRange(functions);
-        }
+        // ═══════════════════════════════════════════════════════════════════════════
+        // CREATE PLUGIN FUNCTIONS (AOT-Compatible - Zero Reflection in Hot Path)
+        // ═══════════════════════════════════════════════════════════════════════════
+        // All plugins are registered via the catalog (PluginRegistry.All) using direct delegate calls.
+        // Instance-based plugins (requiring DI) use their own direct delegate calls.
+        // No reflection fallback - the catalog is required.
+
+        var pluginFunctions = CreateFunctionsFromCatalog();
 
         // Middleware out container functions if scoping is disabled
         // Container functions are only needed when scoping is enabled for the two-turn expansion flow
@@ -1274,25 +1504,17 @@ public class AgentBuilder
         logger?.LogInformation("Starting skill document processing");
 
         // ========== PHASE 1: Collect skill containers ==========
+        // Use the catalog-based function creation (same as Build() uses)
         var skillContainers = new List<AIFunction>();
-        foreach (var registration in _pluginManager.GetPluginRegistrations())
+        var allFunctions = CreateFunctionsFromCatalog();
+
+        // Filter to only skill containers
+        foreach (var function in allFunctions)
         {
-            try
+            if (function.AdditionalProperties?.TryGetValue("IsSkill", out var isSkill) == true &&
+                isSkill is bool isSkillBool && isSkillBool)
             {
-                _pluginContexts.TryGetValue(registration.PluginType.Name, out var ctx);
-                var functions = registration.ToAIFunctions(ctx ?? _defaultContext);
-
-                // Middleware to only skill containers
-                var skills = functions.Where(f =>
-                    f.AdditionalProperties?.TryGetValue("IsSkill", out var isSkill) == true &&
-                    isSkill is bool isSkillBool && isSkillBool);
-
-                skillContainers.AddRange(skills);
-            }
-            catch (Exception ex)
-            {
-                logger?.LogWarning(ex, "Failed to extract skill containers from plugin {PluginType}",
-                    registration.PluginType.Name);
+                skillContainers.Add(function);
             }
         }
 
@@ -1394,29 +1616,56 @@ public class AgentBuilder
 
             try
             {
-                // ✅ Step 1: Resolve the file path with proper error handling
-                var resolvedPath = ResolveDocumentPath(filePath, skillName);
-
-                // ✅ Step 2: Read file content (this is AgentBuilder's responsibility)
                 string content;
-                try
+
+                // ✅ Step 1: Check if this is a URL or a file path
+                if (IsUrl(filePath))
                 {
-                    content = await File.ReadAllTextAsync(resolvedPath, cancellationToken)
-                        .ConfigureAwait(false);
+                    // Fetch content from URL
+                    try
+                    {
+                        using var httpClient = new HttpClient();
+                        httpClient.Timeout = TimeSpan.FromSeconds(30);
+                        content = await httpClient.GetStringAsync(filePath, cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+                    catch (HttpRequestException httpEx)
+                    {
+                        throw new InvalidOperationException(
+                            $"Failed to fetch document from URL '{filePath}' for skill '{skillName}': {httpEx.Message}",
+                            httpEx);
+                    }
+                    catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+                    {
+                        throw new InvalidOperationException(
+                            $"Timeout fetching document from URL '{filePath}' for skill '{skillName}'");
+                    }
                 }
-                catch (FileNotFoundException)
+                else
                 {
-                    throw new FileNotFoundException(
-                        $"Document file '{filePath}' not found for skill '{skillName}'. " +
-                        $"Searched at: {resolvedPath}. " +
-                        $"Current working directory: {Directory.GetCurrentDirectory()}",
-                        filePath);
-                }
-                catch (Exception fileEx) when (fileEx is not OperationCanceledException)
-                {
-                    throw new InvalidOperationException(
-                        $"Failed to read document file '{filePath}' for skill '{skillName}': {fileEx.Message}",
-                        fileEx);
+                    // ✅ Step 1b: Resolve the file path with proper error handling
+                    var resolvedPath = ResolveDocumentPath(filePath, skillName);
+
+                    // ✅ Step 2: Read file content (this is AgentBuilder's responsibility)
+                    try
+                    {
+                        content = await File.ReadAllTextAsync(resolvedPath, cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+                    catch (FileNotFoundException)
+                    {
+                        throw new FileNotFoundException(
+                            $"Document file '{filePath}' not found for skill '{skillName}'. " +
+                            $"Searched at: {resolvedPath}. " +
+                            $"Current working directory: {Directory.GetCurrentDirectory()}",
+                            filePath);
+                    }
+                    catch (Exception fileEx) when (fileEx is not OperationCanceledException)
+                    {
+                        throw new InvalidOperationException(
+                            $"Failed to read document file '{filePath}' for skill '{skillName}': {fileEx.Message}",
+                            fileEx);
+                    }
                 }
 
                 // ✅ Step 3: Pass content (not path) to store
@@ -1431,8 +1680,8 @@ public class AgentBuilder
 
                 uploadedDocuments.Add(documentId);
                 logger?.LogInformation(
-                    "Uploaded document {DocumentId} from {FilePath} (resolved to {ResolvedPath}) for skill {SkillName}",
-                    documentId, filePath, resolvedPath, skillName);
+                    "Uploaded document {DocumentId} from {Source} for skill {SkillName}",
+                    documentId, filePath, skillName);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -1524,6 +1773,16 @@ public class AgentBuilder
     #region Helper Methods
 
     /// <summary>
+    /// Checks if a path is a URL (http:// or https://).
+    /// </summary>
+    private static bool IsUrl(string path)
+    {
+        return !string.IsNullOrEmpty(path) &&
+               (path.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                path.StartsWith("https://", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
     /// Resolves a document file path relative to the current working directory.
     /// This separates concerns: AgentBuilder resolves paths, Store handles persistence.
     /// </summary>
@@ -1567,53 +1826,43 @@ public class AgentBuilder
 
 
     /// <summary>
-    /// Registers function-to-plugin mappings for scoped Middleware support
+    /// Registers function-to-plugin mappings for scoped Middleware support.
+    /// Uses the already-created functions list (no reflection needed).
     /// </summary>
-    [RequiresUnreferencedCode("This method uses reflection to call generated plugin registration code.")]
     private void RegisterFunctionPluginMappings(List<AIFunction> pluginFunctions)
     {
-        // Map functions to plugins for scoped Middleware support, using per-plugin contexts
-        var pluginRegistrations = _pluginManager.GetPluginRegistrations();
-        foreach (var registration in pluginRegistrations)
+        foreach (var function in pluginFunctions)
         {
-            try
+            // Get plugin name from function's additional properties (set by source generator)
+            var pluginName = function.AdditionalProperties?.TryGetValue("PluginName", out var pn) == true
+                ? pn as string ?? "Unknown"
+                : "Unknown";
+
+            // Register function-to-plugin mapping for middleware scoping
+            _functionToPluginMap[function.Name] = pluginName;
+
+            // Register skill mappings
+            var isSkill = function.AdditionalProperties?.TryGetValue("IsSkill", out var isSkillValue) == true
+                          && isSkillValue is bool s && s;
+
+            if (isSkill)
             {
-                var pluginName = registration.PluginType.Name;
-                _pluginContexts.TryGetValue(pluginName, out var ctx);
-                var functions = registration.ToAIFunctions(ctx ?? _defaultContext);
-                foreach (var function in functions)
+                // Extract referenced functions and map them to this skill
+                if (function.AdditionalProperties?.TryGetValue("ReferencedFunctions", out var refFuncsValue) == true
+                    && refFuncsValue is string[] referencedFunctions)
                 {
-                    // Register function-to-plugin mapping for middleware scoping
-                    _functionToPluginMap[function.Name] = pluginName;
-
-                    // Register skill mappings
-                    var isSkill = function.AdditionalProperties?.TryGetValue("IsSkill", out var isSkillValue) == true
-                                  && isSkillValue is bool s && s;
-
-                    if (isSkill)
+                    foreach (var refFunc in referencedFunctions)
                     {
-                        // Extract referenced functions and map them to this skill
-                        if (function.AdditionalProperties?.TryGetValue("ReferencedFunctions", out var refFuncsValue) == true
-                            && refFuncsValue is string[] referencedFunctions)
+                        // Format: "PluginName.FunctionName"
+                        var parts = refFunc.Split('.');
+                        if (parts.Length == 2)
                         {
-                            foreach (var refFunc in referencedFunctions)
-                            {
-                                // Format: "PluginName.FunctionName"
-                                var parts = refFunc.Split('.');
-                                if (parts.Length == 2)
-                                {
-                                    var functionName = parts[1];
-                                    // Map the referenced function to this skill
-                                    _functionToSkillMap[functionName] = function.Name;
-                                }
-                            }
+                            var functionName = parts[1];
+                            // Map the referenced function to this skill
+                            _functionToSkillMap[functionName] = function.Name;
                         }
                     }
                 }
-            }
-            catch (Exception)
-            {
-                // Ignore errors during mapping - Middlewares will still work at global/function level
             }
         }
     }
@@ -1727,10 +1976,6 @@ public class AgentBuilder
     /// <summary>
     /// Internal access to scoped Middleware manager for extension methods
     /// </summary>
-    /// <summary>
-    /// Internal access to plugin manager for extension methods
-    /// </summary>
-    internal PluginManager PluginManager => _pluginManager;
 
     /// <summary>
     /// Internal access to default plugin context for extension methods
@@ -1787,121 +2032,6 @@ public class AgentBuilder
         // Enable auto tool mode if not already set
         if (_config.Provider.DefaultChatOptions.ToolMode == null)
             _config.Provider.DefaultChatOptions.ToolMode = ChatToolMode.Auto;
-    }
-
-    /// <summary>
-    /// Auto-registers plugins that are referenced by skills
-    /// This enables type-safe skill references without manual plugin registration
-    /// </summary>
-    [RequiresUnreferencedCode("Auto-registration uses reflection to discover and register plugins.")]
-    private void AutoRegisterPluginsFromSkills()
-    {
-        // Get all currently registered plugins
-        var registeredPluginNames = new HashSet<string>(
-            _pluginManager.GetPluginRegistrations()
-                .Select(r => r.PluginType.Name),
-            StringComparer.OrdinalIgnoreCase);
-
-        // Discover referenced plugins from all registered plugins
-        var referencedPlugins = DiscoverReferencedPlugins(_pluginManager.GetPluginRegistrations());
-
-        // Auto-register any referenced plugins that aren't already registered
-        foreach (var pluginName in referencedPlugins)
-        {
-            if (!registeredPluginNames.Contains(pluginName))
-            {
-                _logger?.CreateLogger<AgentBuilder>()
-                    .LogInformation("Auto-registering plugin '{PluginName}' (referenced by skills)", pluginName);
-
-                var pluginType = FindPluginTypeByName(pluginName);
-                if (pluginType == null)
-                {
-                    _logger?.CreateLogger<AgentBuilder>()
-                        .LogWarning("Plugin '{PluginName}' is referenced by skills but could not be found. Ensure the plugin assembly is referenced.", pluginName);
-                    continue;
-                }
-
-                // Register the plugin
-                _pluginManager.RegisterPlugin(pluginType);
-                registeredPluginNames.Add(pluginName);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Discovers all plugins referenced by skills in registered plugins
-    /// </summary>
-    private HashSet<string> DiscoverReferencedPlugins(IEnumerable<PluginRegistration> registrations)
-    {
-        var referencedPlugins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var registration in registrations)
-        {
-            // Call generated GetReferencedPlugins() method if it exists
-            // Generated registration classes are in the global namespace
-            var registrationType = registration.PluginType.Assembly.GetType(
-                $"{registration.PluginType.Name}Registration");
-
-            if (registrationType == null)
-                continue;
-
-            var method = registrationType.GetMethod(
-                "GetReferencedPlugins",
-                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-
-            if (method == null)
-                continue;
-
-            try
-            {
-                var plugins = method.Invoke(null, null) as string[];
-                if (plugins != null)
-                {
-                    foreach (var plugin in plugins)
-                    {
-                        referencedPlugins.Add(plugin);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger?.CreateLogger<AgentBuilder>()
-                    .LogWarning(ex, "Failed to call GetReferencedPlugins() for {PluginType}", registration.PluginType.Name);
-            }
-        }
-
-        return referencedPlugins;
-    }
-
-    /// <summary>
-    /// Finds a plugin type by name searching all loaded assemblies
-    /// </summary>
-    private Type? FindPluginTypeByName(string pluginName)
-    {
-        // Search all loaded assemblies for the plugin type
-        var assemblies = AppDomain.CurrentDomain.GetAssemblies();
-
-        foreach (var assembly in assemblies)
-        {
-            try
-            {
-                var types = assembly.GetTypes();
-                var pluginType = types.FirstOrDefault(t =>
-                    t.Name.Equals(pluginName, StringComparison.OrdinalIgnoreCase) &&
-                    t.IsClass &&
-                    t.IsPublic);
-
-                if (pluginType != null)
-                    return pluginType;
-            }
-            catch (System.Reflection.ReflectionTypeLoadException)
-            {
-                // Skip assemblies we can't load
-                continue;
-            }
-        }
-
-        return null;
     }
 
     /// <summary>
@@ -2722,14 +2852,13 @@ public static class AgentBuilderMemoryExtensions
     }
 
     /// <summary>
-    /// Registers the memory plugin directly with the builder's plugin manager
-    /// Avoids dependency on AgentBuilderPluginExtensions
+    /// Registers the memory plugin directly with the builder's instance registrations.
+    /// Uses AOT-compatible instance registration (generated Registration class for function creation).
     /// </summary>
     private static void RegisterDynamicMemoryPlugin(AgentBuilder builder, DynamicMemoryPlugin plugin)
     {
-        builder.PluginManager.RegisterPlugin(plugin);
         var pluginName = typeof(DynamicMemoryPlugin).Name;
-        // Scoping is now done via middleware extension methods (.ForPlugin(), .ForSkill(), etc.)
+        builder._instanceRegistrations.Add(new PluginInstanceRegistration(plugin, pluginName));
         builder.PluginContexts[pluginName] = null; // No special context needed for memory plugin
     }
 
@@ -3000,10 +3129,9 @@ public static class AgentBuilderMemoryExtensions
             config, // Pass config so middleware can inject instructions
             builder.Logger?.CreateLogger<AgentPlanAgentMiddleware>());
 
-        // Register plugin directly
-        builder.PluginManager.RegisterPlugin(plugin);
+        // Register plugin directly (instance-based for DI plugins)
         var pluginName = typeof(AgentPlanPlugin).Name;
-        // Scoping is now done via middleware extension methods (.ForPlugin(), .ForSkill(), etc.)
+        builder._instanceRegistrations.Add(new PluginInstanceRegistration(plugin, pluginName));
         builder.PluginContexts[pluginName] = null;
 
         // Register middleware directly
@@ -3024,282 +3152,151 @@ public static class AgentBuilderPluginExtensions
 {
     /// <summary>
     /// Registers a plugin by type with optional execution context.
-    /// Phase 4: Auto-registers referenced plugins from skills via GetReferencedPlugins().
+    /// AOT-Compatible: Uses generated PluginRegistry.All catalog (zero reflection in hot path).
+    /// Automatically loads plugin registry from the assembly where T is defined if not already loaded.
+    /// Auto-registers referenced plugins from skills via GetReferencedPlugins().
     /// </summary>
+    /// <exception cref="InvalidOperationException">Thrown if plugin is not found in any loaded registry.</exception>
     public static AgentBuilder WithPlugin<T>(this AgentBuilder builder, IPluginMetadataContext? context = null) where T : class, new()
     {
-        builder.PluginManager.RegisterPlugin<T>();
         var pluginName = typeof(T).Name;
-        // Scoping is now done via middleware extension methods (.ForPlugin(), .ForSkill(), etc.)
-        builder.PluginContexts[pluginName] = context;
-        
-        // Track this as explicitly registered
+        var pluginAssembly = typeof(T).Assembly;
+
+        // Try to find in already loaded plugins
+        if (!builder._availablePlugins.TryGetValue(pluginName, out var factory))
+        {
+            // Not found - try loading the assembly where T is defined
+            builder.LoadPluginRegistryFromAssembly(pluginAssembly);
+
+            // Try again after loading
+            if (!builder._availablePlugins.TryGetValue(pluginName, out factory))
+            {
+                throw new InvalidOperationException(
+                    $"Plugin '{pluginName}' not found in PluginRegistry.All. " +
+                    $"Ensure the plugin class has [Function] or [Skill] attributes and the source generator ran successfully.");
+            }
+        }
+
+        // AOT-compatible path: Use catalog
+        builder._selectedPluginFactories.Add(factory);
+
+        // Track as explicitly registered (for ToolVisibilityManager)
         builder._explicitlyRegisteredPlugins.Add(pluginName);
 
-        // Phase 4: Auto-register referenced plugins
-        AutoRegisterReferencedPlugins(builder, typeof(T));
+        // Store context
+        builder.PluginContexts[pluginName] = context;
+
+        // Auto-discover skill dependencies using catalog (zero reflection)
+        AutoRegisterDependenciesFromFactory(builder, factory);
 
         return builder;
     }
 
     /// <summary>
-    /// Registers a plugin using an instance with optional execution context.
-    /// Phase 4: Auto-registers referenced plugins from skills via GetReferencedPlugins().
+    /// Registers a plugin using a pre-created instance with optional execution context.
+    /// Used for DI-required plugins (e.g., AgentPlanPlugin, DynamicMemoryPlugin).
+    /// The instance's generated Registration class is used for function creation (AOT-compatible).
     /// </summary>
     public static AgentBuilder WithPlugin<T>(this AgentBuilder builder, T instance, IPluginMetadataContext? context = null) where T : class
     {
-        builder.PluginManager.RegisterPlugin(instance);
         var pluginName = typeof(T).Name;
-        // Scoping is now done via middleware extension methods (.ForPlugin(), .ForSkill(), etc.)
+
+        // Register as instance registration (will use generated Registration class for function creation)
+        builder._instanceRegistrations.Add(new PluginInstanceRegistration(instance, pluginName));
         builder.PluginContexts[pluginName] = context;
-        
+
         // Track this as explicitly registered
         builder._explicitlyRegisteredPlugins.Add(pluginName);
 
-        // Phase 4: Auto-register referenced plugins
-        AutoRegisterReferencedPlugins(builder, typeof(T));
+        // Auto-register dependencies if plugin is in catalog (for skill dependencies)
+        // First try to load the assembly where the instance type is defined
+        builder.LoadPluginRegistryFromAssembly(instance.GetType().Assembly);
+        if (builder._availablePlugins.TryGetValue(pluginName, out var factory))
+        {
+            AutoRegisterDependenciesFromFactory(builder, factory);
+        }
 
         return builder;
     }
 
     /// <summary>
     /// Registers a plugin by Type with optional execution context.
-    /// Phase 4: Auto-registers referenced plugins from skills via GetReferencedPlugins().
+    /// AOT-Compatible: Uses generated PluginRegistry.All catalog (zero reflection in hot path).
+    /// Automatically loads plugin registry from the assembly where pluginType is defined if not already loaded.
+    /// Auto-registers referenced plugins from skills via GetReferencedPlugins().
     /// </summary>
+    /// <exception cref="InvalidOperationException">Thrown if plugin is not found in any loaded registry.</exception>
     public static AgentBuilder WithPlugin(this AgentBuilder builder, Type pluginType, IPluginMetadataContext? context = null)
     {
-        builder.PluginManager.RegisterPlugin(pluginType);
         var pluginName = pluginType.Name;
-        // Scoping is now done via middleware extension methods (.ForPlugin(), .ForSkill(), etc.)
-        builder.PluginContexts[pluginName] = context;
-        
-        // Track this as explicitly registered
+        var pluginAssembly = pluginType.Assembly;
+
+        // Try to find in already loaded plugins
+        if (!builder._availablePlugins.TryGetValue(pluginName, out var factory))
+        {
+            // Not found - try loading the assembly where pluginType is defined
+            builder.LoadPluginRegistryFromAssembly(pluginAssembly);
+
+            // Try again after loading
+            if (!builder._availablePlugins.TryGetValue(pluginName, out factory))
+            {
+                throw new InvalidOperationException(
+                    $"Plugin '{pluginName}' not found in PluginRegistry.All. " +
+                    $"Ensure the plugin class has [Function] or [Skill] attributes and the source generator ran successfully.");
+            }
+        }
+
+        // AOT-compatible path: Use catalog
+        builder._selectedPluginFactories.Add(factory);
+
+        // Track as explicitly registered (for ToolVisibilityManager)
         builder._explicitlyRegisteredPlugins.Add(pluginName);
 
-        // Phase 4: Auto-register referenced plugins
-        AutoRegisterReferencedPlugins(builder, pluginType);
+        // Store context
+        builder.PluginContexts[pluginName] = context;
+
+        // Auto-discover skill dependencies using catalog (zero reflection)
+        AutoRegisterDependenciesFromFactory(builder, factory);
 
         return builder;
     }
 
     /// <summary>
-    /// Registers all plugins from a shared PluginManager instance.
-    /// This allows you to create a plugin registry once and reuse it across multiple agents.
-    /// Particularly useful with Skills-Only Mode where plugins must be registered for validation
-    /// but you want to create multiple agents with different skill configurations.
+    /// Auto-registers plugins referenced by skills using the plugin catalog (zero reflection).
+    /// Phase 4.5: Also stores function filters for selective registration.
     /// </summary>
-    /// <param name="builder">The agent builder instance</param>
-    /// <param name="pluginManager">A PluginManager instance containing pre-registered plugins</param>
-    /// <param name="context">Optional execution context to apply to all plugins</param>
-    /// <returns>The builder for method chaining</returns>
-    /// <example>
-    /// <code>
-    /// // Create shared plugin registry
-    /// var sharedPlugins = new PluginManager()
-    ///     .RegisterPlugin&lt;FileSystemPlugin&gt;()
-    ///     .RegisterPlugin&lt;WebSearchPlugin&gt;()
-    ///     .RegisterPlugin&lt;DataAnalysisPlugin&gt;();
-    ///
-    /// // Reuse across multiple agents with different skills
-    /// var dataAgent = new AgentBuilder()
-    ///     .WithPlugins(sharedPlugins)
-    ///     .AddSkill("DataScience", skill =>
-    ///         skill.WithFunctionReferences("DataAnalysisPlugin.Analyze"))
-    ///     .EnableSkillsOnlyMode()
-    ///     .Build();
-    ///
-    /// var webAgent = new AgentBuilder()
-    ///     .WithPlugins(sharedPlugins)
-    ///     .AddSkill("WebResearch", skill =>
-    ///         skill.WithFunctionReferences("WebSearchPlugin.Search"))
-    ///     .EnableSkillsOnlyMode()
-    ///     .Build();
-    /// </code>
-    /// </example>
-    public static AgentBuilder WithPlugins(this AgentBuilder builder, PluginManager pluginManager, IPluginMetadataContext? context = null)
+    private static void AutoRegisterDependenciesFromFactory(AgentBuilder builder, PluginFactory factory)
     {
-        if (pluginManager == null)
-            throw new ArgumentNullException(nameof(pluginManager));
+        var dependencies = factory.GetReferencedPlugins();
 
-        // Get all registrations from the provided PluginManager
-        var registrations = pluginManager.GetPluginRegistrations();
+        // Phase 4.5: Get function-specific references for selective registration
+        var referencedFunctions = factory.GetReferencedFunctions();
 
-        // Register each plugin in the builder's internal PluginManager
-        foreach (var registration in registrations)
+        foreach (var depName in dependencies)
         {
-            // Register the plugin (either by type or instance)
-            if (registration.IsInstance)
+            // Check if already selected
+            if (builder._selectedPluginFactories.Any(f => f.Name.Equals(depName, StringComparison.OrdinalIgnoreCase)))
+                continue;
+
+            // Look up in catalog
+            if (builder._availablePlugins!.TryGetValue(depName, out var depFactory))
             {
-                builder.PluginManager.RegisterPlugin(registration.GetOrCreateInstance());
-            }
-            else
-            {
-                builder.PluginManager.RegisterPlugin(registration.PluginType);
-            }
+                builder._selectedPluginFactories.Add(depFactory);
+                // Note: Dependencies are NOT added to _explicitlyRegisteredPlugins
+                // This distinction matters for ToolVisibilityManager
 
-            // Set up scope context and plugin context
-            var pluginName = registration.PluginType.Name;
-            // Scoping is now done via middleware extension methods (.ForPlugin(), .ForSkill(), etc.)
-            builder.PluginContexts[pluginName] = context;
-        }
-
-        return builder;
-    }
-
-    /// <summary>
-    /// Phase 4: Auto-registers plugins referenced by skills via GetReferencedPlugins() method.
-    /// Uses reflection to discover the static GetReferencedPlugins() method generated by the source generator.
-    /// Recursively registers referenced plugins to ensure all dependencies are available.
-    /// </summary>
-    /// <param name="builder">The agent builder instance</param>
-    /// <param name="pluginType">The plugin type to check for skill references</param>
-    private static void AutoRegisterReferencedPlugins(AgentBuilder builder, Type pluginType)
-    {
-        // Use a HashSet to track plugins being processed to prevent infinite loops
-        var processingStack = new HashSet<string>();
-        AutoRegisterReferencedPluginsRecursive(builder, pluginType, processingStack);
-    }
-
-    /// <summary>
-    /// Recursive implementation of auto-registration with circular reference detection.
-    /// </summary>
-    private static void AutoRegisterReferencedPluginsRecursive(
-        AgentBuilder builder,
-        Type pluginType,
-        HashSet<string> processingStack)
-    {
-        var pluginTypeName = pluginType.Name;
-
-        // Detect circular references
-        if (processingStack.Contains(pluginTypeName))
-        {
-            // Circular reference detected, but this is not an error - just skip
-            return;
-        }
-
-        // Add to processing stack
-        processingStack.Add(pluginTypeName);
-
-        try
-        {
-            // Phase 4.5: Try to get function-specific references first
-            var referencedFunctionsMethod = pluginType.GetMethod(
-                "GetReferencedFunctions",
-                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-
-            Dictionary<string, string[]>? functionMap = null;
-            if (referencedFunctionsMethod != null)
-            {
-                functionMap = referencedFunctionsMethod.Invoke(null, null) as Dictionary<string, string[]>;
-            }
-
-            // Check if plugin has GetReferencedPlugins() method
-            var method = pluginType.GetMethod(
-                "GetReferencedPlugins",
-                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-
-            if (method == null)
-            {
-                // No GetReferencedPlugins() method - this plugin has no skill references
-                return;
-            }
-
-            // Invoke GetReferencedPlugins() to get referenced plugin type names
-            var referencedPluginNames = method.Invoke(null, null) as string[];
-
-            if (referencedPluginNames == null || referencedPluginNames.Length == 0)
-            {
-                // No referenced plugins
-                return;
-            }
-
-            // Get currently registered plugin types for deduplication
-            var registeredTypes = builder.PluginManager.GetRegisteredPluginTypes();
-
-            // Register each referenced plugin
-            foreach (var referencedPluginName in referencedPluginNames)
-            {
-                // Check if already registered by name
-                if (registeredTypes.Any(t => t.Name == referencedPluginName))
+                // Phase 4.5: Store function filter if specific functions are referenced
+                if (referencedFunctions.TryGetValue(depName, out var functionNames) && functionNames.Length > 0)
                 {
-                    // Already registered, skip
-                    continue;
+                    builder._pluginFunctionFilters[depName] = functionNames;
                 }
 
-                // Resolve type from name
-                var referencedPluginType = ResolvePluginType(pluginType, referencedPluginName);
-
-                if (referencedPluginType == null)
-                {
-                    // Could not resolve type - log warning but don't fail
-                    // In production, you might want to use ILogger here
-                    System.Diagnostics.Debug.WriteLine(
-                        $"Warning: Could not resolve referenced plugin type '{referencedPluginName}' " +
-                        $"from plugin '{pluginTypeName}'. Ensure the plugin type is accessible.");
-                    continue;
-                }
-
-                // Phase 4.5: Register with function Middleware if available
-                if (functionMap != null && functionMap.TryGetValue(referencedPluginName, out var functionNames))
-                {
-                    // Register only specific functions
-                    builder.PluginManager.RegisterPluginFunctions(referencedPluginType, functionNames);
-                }
-                else
-                {
-                    // Fallback: register entire plugin
-                    builder.PluginManager.RegisterPlugin(referencedPluginType);
-                }
-
-                // Recursively register plugins referenced by this plugin
-                AutoRegisterReferencedPluginsRecursive(builder, referencedPluginType, processingStack);
+                // Recurse for transitive dependencies
+                AutoRegisterDependenciesFromFactory(builder, depFactory);
             }
-        }
-        finally
-        {
-            // Remove from processing stack
-            processingStack.Remove(pluginTypeName);
         }
     }
 
-    /// <summary>
-    /// Resolves a plugin type name to a Type object.
-    /// Searches in the same assembly and namespace as the source plugin.
-    /// </summary>
-    private static Type? ResolvePluginType(Type sourcePluginType, string pluginTypeName)
-    {
-        // Try 1: Same assembly, same namespace
-        var sourceNamespace = sourcePluginType.Namespace;
-        var fullTypeName = string.IsNullOrEmpty(sourceNamespace)
-            ? pluginTypeName
-            : $"{sourceNamespace}.{pluginTypeName}";
-
-        var resolvedType = sourcePluginType.Assembly.GetType(fullTypeName);
-        if (resolvedType != null)
-            return resolvedType;
-
-        // Try 2: Same assembly, no namespace (short name)
-        resolvedType = sourcePluginType.Assembly.GetType(pluginTypeName);
-        if (resolvedType != null)
-            return resolvedType;
-
-        // Try 3: Search all types in the assembly
-        resolvedType = sourcePluginType.Assembly.GetTypes()
-            .FirstOrDefault(t => t.Name == pluginTypeName);
-        if (resolvedType != null)
-            return resolvedType;
-
-        // Try 4: Search all loaded assemblies (last resort)
-        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
-        {
-            resolvedType = assembly.GetTypes()
-                .FirstOrDefault(t => t.Name == pluginTypeName);
-            if (resolvedType != null)
-                return resolvedType;
-        }
-
-        return null;
-    }
 }
 
 #endregion

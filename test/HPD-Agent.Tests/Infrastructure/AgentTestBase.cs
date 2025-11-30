@@ -23,9 +23,10 @@ public abstract class AgentTestBase : IAsyncDisposable, IDisposable
     internal Agent CreateAgent(
         AgentConfig? config = null,
         IChatClient? client = null,
+        int? circuitBreakerThreshold = 5,
         params AIFunction[] tools)
     {
-        return TestAgentFactory.Create(config, client, tools);
+        return TestAgentFactory.Create(config, client, circuitBreakerThreshold, tools);
     }
 
     /// <summary>
@@ -58,7 +59,6 @@ public abstract class AgentTestBase : IAsyncDisposable, IDisposable
         },
         AgenticLoop = new AgenticLoopConfig
         {
-            MaxConsecutiveFunctionCalls = 5,
             MaxTurnDuration = TimeSpan.FromMinutes(1)
         },
         ErrorHandling = new ErrorHandlingConfig

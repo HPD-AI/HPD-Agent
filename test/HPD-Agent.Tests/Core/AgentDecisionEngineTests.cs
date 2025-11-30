@@ -72,7 +72,7 @@ public class AgentDecisionEngineTests
         var state = AgentLoopState.Initial(new List<ChatMessage>(), "test-run-id", "test-conversation-id", "TestAgent")
             .Terminate("Maximum consecutive failures (3) exceeded");
 
-        var config = AgentConfiguration.Default(maxConsecutiveFailures: 3);
+        var config = AgentConfiguration.Default();
 
         // Act
         var decision = _engine.DecideNextAction(state, lastResponse: null, config);
@@ -131,7 +131,7 @@ public class AgentDecisionEngineTests
             .Terminate("Circuit breaker: 'get_weather' with same arguments would be called 5 times consecutively")
             .NextIteration();
 
-        var config = AgentConfiguration.Default(maxConsecutiveFunctionCalls: 5);
+        var config = AgentConfiguration.Default();
 
         var toolCall = new FunctionCallContent(
             callId: "call_456",

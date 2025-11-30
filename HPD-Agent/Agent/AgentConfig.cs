@@ -820,11 +820,6 @@ public class AgenticLoopConfig
     public TimeSpan? MaxTurnDuration { get; set; } = TimeSpan.FromMinutes(5);
 
     /// <summary>
-    /// Max times the same function can be called consecutively before circuit breaker triggers (default: 5)
-    /// </summary>
-    public int? MaxConsecutiveFunctionCalls { get; set; } = 5;
-
-    /// <summary>
     /// Maximum number of functions to execute in parallel (default: null = unlimited).
     /// Useful for limiting resource consumption when functions are CPU-intensive,
     /// respecting external API rate limits, or matching database connection pool sizes.

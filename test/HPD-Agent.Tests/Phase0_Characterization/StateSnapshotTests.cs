@@ -127,7 +127,6 @@ public class StateSnapshotTests : AgentTestBase
             description: "A tool that always fails");
 
         var config = DefaultConfig();
-        config.AgenticLoop!.MaxConsecutiveFunctionCalls = 3;
         // Ensure provider is configured
         config.Provider ??= new ProviderConfig();
         config.Provider.ProviderKey = "test";
@@ -136,6 +135,7 @@ public class StateSnapshotTests : AgentTestBase
         var agent = CreateAgent(
             config: config,
             client: fakeLLM,
+            circuitBreakerThreshold: 3,
             tools: [failingTool]);
 
         var messages = CreateSimpleConversation("Use the failing tool");

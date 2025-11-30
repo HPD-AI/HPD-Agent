@@ -585,7 +585,6 @@ internal sealed class Agent
         PreparedTurn turn,
         List<ChatMessage> turnHistory,
         TaskCompletionSource<IReadOnlyList<ChatMessage>> historyCompletionSource,
-        TaskCompletionSource<ReductionMetadata?> reductionCompletionSource,
         ConversationThread? thread = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
@@ -628,10 +627,9 @@ internal sealed class Agent
         // EXTRACT PREPARED STATE (Option 2 Pattern)
         // ═══════════════════════════════════════════════════════
         // PreparedTurn contains:
-        // - MessagesForLLM: Full history + new input (optionally reduced)
+        // - MessagesForLLM: Full history + new input (optionally reduced by middleware)
         // - NewInputMessages: Only the NEW messages (for persistence)
         // - Options: Merged options with system instructions
-        // - ActiveReduction: Reduction state (if applied)
         IReadOnlyList<ChatMessage> messages = turn.MessagesForLLM;
         var newInputMessages = turn.NewInputMessages;
 
@@ -688,7 +686,6 @@ internal sealed class Agent
             // ═══════════════════════════════════════════════════════════════════════════
 
             AgentLoopState state;
-            ReductionMetadata? reductionMetadata = null;
             IEnumerable<ChatMessage> effectiveMessages;
             ChatOptions? effectiveOptions;
 
@@ -715,10 +712,6 @@ internal sealed class Agent
 
                 // Use options from PreparedTurn (already merged and Middlewareed)
                 effectiveOptions = turn.Options;
-
-                // No reduction on resume (messages were already reduced in original run)
-                reductionMetadata = null;
-                reductionCompletionSource.TrySetResult(null);
 
                 restoreStopwatch.Stop();
 
@@ -794,13 +787,10 @@ internal sealed class Agent
 
                 // Note: History reduction is now handled by HistoryReductionMiddleware
                 // Events are emitted from the middleware directly
-                reductionMetadata = null;  // No longer tracked here
-
-                // Set reduction metadata immediately (null since handled by middleware)
-                reductionCompletionSource.TrySetResult(reductionMetadata);
+                // Reduction metadata is in state.MiddlewareState.HistoryReduction (if reduced)
 
                 // ✅ NOTE: state.CurrentMessages contains FULL history (unreduced)
-                // ✅ NOTE: state.ActiveReduction contains reduction metadata (if reduced)
+                // ✅ NOTE: Reduction metadata is in state.MiddlewareState.HistoryReduction (if reduced)
                 // ✅ NOTE: effectiveMessages contains REDUCED history (for LLM calls only)
                 // ✅ NOTE: All preparation done in PrepareTurnAsync - no duplicate work!
             }
@@ -968,20 +958,10 @@ internal sealed class Agent
                         // Option 2: Use full history (simpler, current default)
 
                         // For now, use full history (includes tool results from previous iterations)
-                        // Future enhancement: Re-apply reduction on every iteration for very long conversations
+                        // Future enhancement: HistoryReductionMiddleware could re-apply reduction
+                        // on every iteration for very long conversations
                         messagesToSend = state.CurrentMessages;
                         messageCountToSend = state.CurrentMessages.Count;
-
-                        // Future optimization (commented out for now):
-                        // if (state.ActiveReduction != null && Config.HistoryReduction?.Enabled == true)
-                        // {
-                        //     // Re-apply reduction to include new tool results
-                        //     var systemMsg = state.CurrentMessages.FirstOrDefault(m => m.Role == ChatRole.System);
-                        //     messagesToSend = state.ActiveReduction.ApplyToMessages(
-                        //         state.CurrentMessages.Where(m => m.Role != ChatRole.System),
-                        //         systemMsg);
-                        //     messageCountToSend = messagesToSend.Count();
-                        // }
                     }
 
                     // Apply plugin scoping if enabled
@@ -1735,12 +1715,6 @@ internal sealed class Agent
             orchestrationActivity?.SetTag("agent.termination_reason", state.TerminationReason ?? "completed");
             orchestrationActivity?.SetTag("agent.was_terminated", state.IsTerminated);
 
-            if (reductionMetadata != null)
-            {
-                orchestrationActivity?.SetTag("agent.history_reduction_occurred", true);
-                orchestrationActivity?.SetTag("agent.history_messages_removed", reductionMetadata.MessagesRemovedCount);
-            }
-
             // ═══════════════════════════════════════════════════════
             // OBSERVABILITY: Record completion metrics
             // ═══════════════════════════════════════════════════════
@@ -2238,13 +2212,11 @@ internal sealed class Agent
 
         var turnHistory = new List<ChatMessage>();
         var historyCompletionSource = new TaskCompletionSource<IReadOnlyList<ChatMessage>>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var reductionCompletionSource = new TaskCompletionSource<ReductionMetadata?>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         await foreach (var evt in RunAgenticLoopInternal(
             turn,
             turnHistory,
             historyCompletionSource,
-            reductionCompletionSource,
             thread: null,
             cancellationToken))
         {
@@ -2294,13 +2266,11 @@ internal sealed class Agent
 
         var turnHistory = new List<ChatMessage>();
         var historyCompletionSource = new TaskCompletionSource<IReadOnlyList<ChatMessage>>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var reductionCompletionSource = new TaskCompletionSource<ReductionMetadata?>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var internalStream = RunAgenticLoopInternal(
             turn,
             turnHistory,
             historyCompletionSource,
-            reductionCompletionSource,
             thread: null,
             cancellationToken);
 
@@ -2397,7 +2367,6 @@ internal sealed class Agent
 
         var turnHistory = new List<ChatMessage>();
         var historyCompletionSource = new TaskCompletionSource<IReadOnlyList<ChatMessage>>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var reductionCompletionSource = new TaskCompletionSource<ReductionMetadata?>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         // ═══════════════════════════════════════════════════════════════════════════
         // EXECUTE AGENTIC LOOP with PreparedTurn
@@ -2406,7 +2375,6 @@ internal sealed class Agent
             turn,  // ✅ PreparedTurn contains MessagesForLLM, NewInputMessages, and Options
             turnHistory,
             historyCompletionSource,
-            reductionCompletionSource,
             thread: thread,  // ← CRITICAL: Pass thread for persistence and checkpointing
             cancellationToken);
 
@@ -2508,17 +2476,21 @@ internal sealed class AgentDecisionEngine
     /// </summary>
     /// <param name="state">Current immutable state</param>
     /// <param name="lastResponse">Response from last LLM call (null on first iteration)</param>
-    /// <param name="config">Agent configuration (max iterations, circuit breaker settings, etc.)</param>
+    /// <param name="config">Agent configuration (max iterations, available tools, etc.)</param>
     /// <returns>Decision for what action to take next</returns>
     /// <remarks>
     /// Decision priority (checked in this order):
-    /// 1. Termination conditions (already terminated, max iterations, too many failures)
+    /// 1. Termination conditions (already terminated - set by middleware or external signal)
     /// 2. First iteration (must call LLM)
     /// 3. Extract tool requests from LLM response
     /// 4. No tools = completion
-    /// 5. Circuit breaker check (prevent infinite loops)
-    /// 6. Unknown tools check (optional)
-    /// 7. Execute tools
+    /// 5. Unknown tools check (optional)
+    /// 6. Execute tools
+    ///
+    /// Note: Error tracking and circuit breaker logic are now handled by middleware:
+    /// - ErrorTrackingIterationMiddleware: Tracks consecutive failures, signals termination
+    /// - CircuitBreakerIterationMiddleware: Prevents infinite loops, signals termination
+    /// Middleware signals termination via state.IsTerminated (checked in step 1).
     /// </remarks>
     public AgentDecision DecideNextAction(
         AgentLoopState state,
@@ -2668,10 +2640,10 @@ internal abstract record AgentDecision
     /// <summary>
     /// Decision: Terminate agent execution with specified reason.
     /// Can be triggered by:
-    /// - Max iterations reached
-    /// - Circuit breaker triggered
-    /// - Too many consecutive errors
-    /// - External termination (e.g., permission denied)
+    /// - Max iterations reached (checked by middleware)
+    /// - Circuit breaker triggered (via CircuitBreakerIterationMiddleware)
+    /// - Too many consecutive errors (via ErrorTrackingIterationMiddleware)
+    /// - External termination (e.g., permission denied via middleware)
     /// </summary>
     /// <param name="Reason">Human-readable termination reason</param>
     public sealed record Terminate(string Reason) : AgentDecision;
@@ -2811,29 +2783,14 @@ public sealed record AgentLoopState
     // ═══════════════════════════════════════════════════════
 
     /// <summary>
-    /// Active history reduction state for this execution (cache-aware).
-    /// When set, indicates that history has been reduced and contains reduction metadata.
-    /// Used to apply reduction to messages sent to LLM while preserving full history in storage.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// This is the NEW first-class reduction tracking. It replaces the old __summary__ marker approach.
-    /// Reduction state is external metadata, NOT embedded in messages.
-    /// </para>
-    /// <para>
-    /// <b>Usage:</b>
-    /// - Fresh run (iteration 0): Check if thread.LastReduction.IsValidFor() → cache hit
-    /// - If valid: Set ActiveReduction and use ApplyToMessages() for LLM calls
-    /// - If invalid: Run reduction, create new HistoryReductionStateData, store in thread.LastReduction
-    /// </para>
-    /// </remarks>
-    public HistoryReductionStateData? ActiveReduction { get; init; }
-
-    /// <summary>
     /// Whether the LLM service manages conversation history server-side.
     /// When true, we only send delta messages (significant token savings).
     /// Detected automatically when service returns a ConversationId.
     /// </summary>
+    /// <remarks>
+    /// Note: History reduction is now handled by HistoryReductionMiddleware,
+    /// which stores its state in MiddlewareState.HistoryReduction.
+    /// </remarks>
     public required bool InnerClientTracksHistory { get; init; }
 
     /// <summary>
@@ -3019,23 +2976,6 @@ public sealed record AgentLoopState
             InnerClientTracksHistory = false,
             MessagesSentToInnerClient = 0
         };
-
-    /// <summary>
-    /// Sets or updates the active history reduction state.
-    /// Call this after creating a new reduction or loading from cache.
-    /// </summary>
-    /// <param name="reduction">History reduction state to apply</param>
-    /// <returns>New state with updated reduction</returns>
-    public AgentLoopState WithReduction(HistoryReductionStateData reduction) =>
-        this with { ActiveReduction = reduction };
-
-    /// <summary>
-    /// Clears the active history reduction state.
-    /// Useful for testing or when reduction is no longer valid.
-    /// </summary>
-    /// <returns>New state without reduction</returns>
-    public AgentLoopState ClearReduction() =>
-        this with { ActiveReduction = null };
 
     /// <summary>
     /// Sets the last assistant message ID (for event correlation).
@@ -3251,13 +3191,6 @@ internal sealed record AgentConfiguration
     public required int MaxIterations { get; init; }
 
     /// <summary>
-    /// Maximum consecutive failures before termination.
-    /// Failures = iterations where all tool executions failed.
-    /// Prevents infinite retry loops.
-    /// </summary>
-    public required int MaxConsecutiveFailures { get; init; }
-
-    /// <summary>
     /// Whether to terminate on unknown tool requests (vs. pass through for multi-agent scenarios).
     ///
     /// When true: If LLM requests a tool that doesn't exist, terminate immediately.
@@ -3270,18 +3203,6 @@ internal sealed record AgentConfiguration
     /// Used to detect unknown tool requests when TerminateOnUnknownCalls is true.
     /// </summary>
     public required IReadOnlySet<string> AvailableTools { get; init; }
-
-    /// <summary>
-    /// Maximum times a function can be called consecutively with identical arguments.
-    /// Null = no circuit breaker (not recommended).
-    ///
-    /// Circuit breaker prevents infinite loops where the LLM repeatedly calls
-    /// the same tool with identical arguments (e.g., failed API calls).
-    ///
-    /// Example: If set to 3, and the LLM calls "get_weather(city=Seattle)"
-    /// three times in a row, the circuit breaker triggers and terminates.
-    /// </summary>
-    public int? MaxConsecutiveFunctionCalls { get; init; }
 
     /// <summary>
     /// Factory method: Create configuration from AgentConfig.
@@ -3299,10 +3220,8 @@ internal sealed record AgentConfiguration
         return new AgentConfiguration
         {
             MaxIterations = maxIterations,
-            MaxConsecutiveFailures = config?.ErrorHandling?.MaxRetries ?? 3,
             TerminateOnUnknownCalls = config?.AgenticLoop?.TerminateOnUnknownCalls ?? false,
-            AvailableTools = availableTools,
-            MaxConsecutiveFunctionCalls = config?.AgenticLoop?.MaxConsecutiveFunctionCalls
+            AvailableTools = availableTools
         };
     }
 
@@ -3310,25 +3229,19 @@ internal sealed record AgentConfiguration
     /// Factory method: Create default configuration for testing.
     /// </summary>
     /// <param name="maxIterations">Maximum iterations (default: 10)</param>
-    /// <param name="maxConsecutiveFailures">Max consecutive failures (default: 3)</param>
-    /// <param name="maxConsecutiveFunctionCalls">Circuit breaker threshold (default: 5)</param>
     /// <param name="availableTools">Available tool names (default: empty)</param>
     /// <param name="terminateOnUnknownCalls">Whether to terminate on unknown tools (default: false)</param>
     /// <returns>Configuration with sensible defaults for testing</returns>
     public static AgentConfiguration Default(
         int maxIterations = 10,
-        int maxConsecutiveFailures = 3,
-        int? maxConsecutiveFunctionCalls = 5,
         IReadOnlySet<string>? availableTools = null,
         bool terminateOnUnknownCalls = false)
     {
         return new AgentConfiguration
         {
             MaxIterations = maxIterations,
-            MaxConsecutiveFailures = maxConsecutiveFailures,
             TerminateOnUnknownCalls = terminateOnUnknownCalls,
-            AvailableTools = availableTools ?? new HashSet<string>(),
-            MaxConsecutiveFunctionCalls = maxConsecutiveFunctionCalls
+            AvailableTools = availableTools ?? new HashSet<string>()
         };
     }
 }
@@ -4386,7 +4299,7 @@ internal class FunctionCallProcessor
 /// <remarks>
 /// <para>
 /// <b>Design Philosophy:</b> "Functional Core, Imperative Shell"
-/// - <b>Preparation</b> (MessageProcessor.PrepareTurnAsync): Load history, apply reduction, merge options, Middleware messages → PreparedTurn
+/// - <b>Preparation</b> (MessageProcessor.PrepareTurnAsync): Load history, merge options, apply middleware → PreparedTurn
 /// - <b>Execution</b> (RunAgenticLoopInternal): LLM calls, tool invocations, checkpointing, persistence
 /// </para>
 /// <para>
@@ -4395,7 +4308,7 @@ internal class FunctionCallProcessor
 /// <item>Clean separation: Preparation logic isolated from execution logic</item>
 /// <item>Type safety: Strongly typed properties vs scattered variables</item>
 /// <item>Testability: PreparedTurn can be constructed and tested without I/O</item>
-/// <item>Cache awareness: ActiveReduction enables reduction cache hits</item>
+/// <item>Middleware integration: HistoryReductionMiddleware handles reduction with caching</item>
 /// <item>Microsoft alignment: Similar to ChatClientAgent.PrepareThreadAndMessagesAsync pattern</item>
 /// </list>
 /// </para>
@@ -4790,57 +4703,9 @@ internal class AgentTurn
 
 #region Streaming Turn Result
 
-/// <summary>
-/// Metadata about history reduction that occurred during a turn.
-/// Contains information needed by Conversation to apply the reduction to storage.
-/// </summary>
-internal record ReductionMetadata
-{
-    /// <summary>
-    /// The summary text content generated by the reducer.
-    /// This is extracted from the summary message returned by the reducer.
-    /// </summary>
-    public string? SummaryText { get; init; }
-
-    /// <summary>
-    /// Number of messages that were removed during reduction.
-    /// Used to calculate the reduction state for caching.
-    /// </summary>
-    public int MessagesRemovedCount { get; init; }
-}
-
-/// <summary>
-/// Generic streaming result for protocol adapters.
-/// Contains final history and reduction metadata after streaming completes.
-/// Protocol-specific event streaming is handled by protocol adapters (AGUI, Microsoft, etc.)
-/// </summary>
-internal class StreamingTurnResult
-{
-    /// <summary>
-    /// Task that completes with the final turn history once streaming is done
-    /// </summary>
-    public Task<IReadOnlyList<ChatMessage>> FinalHistory { get; }
-
-    /// <summary>
-    /// Task that completes with reduction metadata if history reduction occurred during this turn.
-    /// Null if no reduction was performed.
-    /// </summary>
-    public Task<ReductionMetadata?> ReductionTask { get; }
-
-    /// <summary>
-    /// Initializes a new instance of StreamingTurnResult
-    /// </summary>
-    /// <param name="finalHistory">Task that provides the final turn history</param>
-    /// <param name="reductionTask">Task that provides the reduction metadata</param>
-    public StreamingTurnResult(
-        Task<IReadOnlyList<ChatMessage>> finalHistory,
-        Task<ReductionMetadata?> reductionTask)
-    {
-        FinalHistory = finalHistory ?? throw new ArgumentNullException(nameof(finalHistory));
-        ReductionTask = reductionTask ?? Task.FromResult<ReductionMetadata?>(null);
-    }
-}
-
+// NOTE: ReductionMetadata and StreamingTurnResult classes removed - history reduction is now handled by
+// HistoryReductionMiddleware in HPD.Agent.Middleware namespace.
+// Reduction metadata is stored in MiddlewareStateContainer.HistoryReduction.
 
 #endregion
 

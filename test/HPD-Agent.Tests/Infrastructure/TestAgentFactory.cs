@@ -15,11 +15,13 @@ public static class TestAgentFactory
     /// </summary>
     /// <param name="config">Optional agent configuration (uses defaults if not provided)</param>
     /// <param name="chatClient">Optional chat client (uses FakeChatClient if not provided)</param>
+    /// <param name="circuitBreakerThreshold">Circuit breaker threshold (null = disabled, default = 5)</param>
     /// <param name="tools">Optional tools to register</param>
     /// <returns>Configured Agent instance ready for testing</returns>
     internal static Agent Create(
         AgentConfig? config = null,
         IChatClient? chatClient = null,
+        int? circuitBreakerThreshold = 5,
         params AIFunction[] tools)
     {
         // Use defaults if not provided
@@ -39,10 +41,9 @@ public static class TestAgentFactory
 
         // Register standard iteration middlewares for loop protection
         // These are essential for preventing infinite loops in tests
-        var maxConsecutiveCalls = config.AgenticLoop?.MaxConsecutiveFunctionCalls ?? 5;
-        if (maxConsecutiveCalls > 0)
+        if (circuitBreakerThreshold.HasValue && circuitBreakerThreshold.Value > 0)
         {
-            builder.WithCircuitBreaker(maxConsecutiveCalls);
+            builder.WithCircuitBreaker(circuitBreakerThreshold.Value);
         }
         builder.WithErrorTracking(maxConsecutiveErrors: 3);
 
@@ -68,7 +69,6 @@ public static class TestAgentFactory
             },
             AgenticLoop = new AgenticLoopConfig
             {
-                MaxConsecutiveFunctionCalls = 5,
                 MaxTurnDuration = TimeSpan.FromMinutes(1)
             },
             ErrorHandling = new ErrorHandlingConfig

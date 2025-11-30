@@ -185,7 +185,7 @@ public class AgentBuilder
 
     /// <summary>
     /// Sets the document store for skill instruction documents.
-    /// Phase 5: Required for skills that use AddDocument() or AddDocumentFromFile().
+    /// Phase 5: Required for skills that use AddDocument(), AddDocumentFromFile(), or AddDocumentFromUrl().
     /// Documents are uploaded and validated during Build().
     /// </summary>
     /// <param name="documentStore">Document store implementation (InMemoryInstructionStore, FileSystemInstructionStore, etc.)</param>
@@ -1310,29 +1310,17 @@ public class AgentBuilder
         {
             var skillName = skillContainer.Name ?? "Unknown";
 
-            // Collect document uploads (AddDocumentFromFile)
-            if (skillContainer.AdditionalProperties?.TryGetValue("DocumentUploads", out var uploadsObj) == true &&
-                uploadsObj is Array uploadsArray)
+            // Collect document uploads using type-safe SkillDocuments property
+            if (skillContainer is HPDAIFunctionFactory.HPDAIFunction hpdFunction &&
+                hpdFunction.SkillDocuments?.Any() == true)
             {
-                foreach (var upload in uploadsArray)
+                foreach (var doc in hpdFunction.SkillDocuments)
                 {
-                    // Source generator creates Dictionary<string, string> for uploads
-                    if (upload is Dictionary<string, string> uploadDict)
+                    // Handle both file-based and URL-based documents
+                    var filePath = doc.FilePath ?? doc.Url;
+                    if (!string.IsNullOrEmpty(filePath) && !string.IsNullOrEmpty(doc.Description))
                     {
-                        if (uploadDict.TryGetValue("FilePath", out var filePath) &&
-                            uploadDict.TryGetValue("DocumentId", out var documentId) &&
-                            uploadDict.TryGetValue("Description", out var description) &&
-                            !string.IsNullOrEmpty(filePath) &&
-                            !string.IsNullOrEmpty(description))
-                        {
-                            // If documentId is empty, auto-derive from filePath
-                            if (string.IsNullOrEmpty(documentId))
-                            {
-                                documentId = DeriveDocumentId(filePath);
-                            }
-
-                            documentUploads.Add((skillName, documentId, filePath, description));
-                        }
+                        documentUploads.Add((skillName, doc.DocumentId, filePath, doc.Description));
                     }
                 }
             }

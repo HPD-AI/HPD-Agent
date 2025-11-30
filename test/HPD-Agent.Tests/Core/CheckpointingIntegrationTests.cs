@@ -317,7 +317,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
             async (args, ct) => await Task.FromResult("tool result"),
             new HPDAIFunctionFactoryOptions { Name = "TestTool", Description = "Test tool" });
 
-        var agent = CreateAgent(config, client, testTool);
+        var agent = CreateAgent(config, client, tools: testTool);
         var thread = new ConversationThread();
 
         // Act: Run agent (will do 2 iterations)
@@ -351,13 +351,12 @@ public class CheckpointingIntegrationTests : AgentTestBase
         var config = DefaultConfig();
         config.ThreadStore = checkpointer;
         config.CheckpointFrequency = CheckpointFrequency.PerIteration;
-        config.AgenticLoop.MaxConsecutiveFunctionCalls = 0; // Disable CircuitBreaker for this test
 
         var testTool = HPDAIFunctionFactory.Create(
             async (args, ct) => await Task.FromResult("tool result"),
             new HPDAIFunctionFactoryOptions { Name = "TestTool", Description = "Test tool" });
 
-        var agent = CreateAgent(config, client, testTool);
+        var agent = CreateAgent(config, client, circuitBreakerThreshold: null, testTool);
         var thread = new ConversationThread();
 
         await foreach (var evt in agent.RunAsync(
@@ -466,7 +465,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
             async (args, ct) => await Task.FromResult("step1 result"),
             new HPDAIFunctionFactoryOptions { Name = "Step1", Description = "First step" });
 
-        var agent1 = CreateAgent(config, client1, step1Tool);
+        var agent1 = CreateAgent(config, client1, tools: step1Tool);
         var thread = new ConversationThread();
 
         // Run until first iteration completes
@@ -500,7 +499,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
         var client2 = new FakeChatClient();
         client2.EnqueueTextResponse("Process completed after recovery");
 
-        var agent2 = CreateAgent(config, client2, step1Tool);
+        var agent2 = CreateAgent(config, client2, tools: step1Tool);
 
         // Load checkpoint
         var recoveredThread = await checkpointer.LoadThreadAsync(thread.Id);
@@ -553,7 +552,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
             async (args, ct) => await Task.FromResult("Breaking: Test passed!"),
             new HPDAIFunctionFactoryOptions { Name = "GetNews", Description = "Get news" });
 
-        var agent = CreateAgent(config, client, weatherTool, newsTool);
+        var agent = CreateAgent(config, client, tools: [weatherTool, newsTool]);
         var thread = new ConversationThread();
 
         // Act: Run agent with parallel function calls
@@ -597,7 +596,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
             async (args, ct) => await Task.FromResult("step1 result"),
             new HPDAIFunctionFactoryOptions { Name = "Step1", Description = "First step" });
 
-        var agent1 = CreateAgent(config, client1, step1Tool);
+        var agent1 = CreateAgent(config, client1, tools: step1Tool);
         var thread = new ConversationThread();
 
         // Run until first iteration
@@ -643,7 +642,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
         var client2 = new FakeChatClient();
         client2.EnqueueTextResponse("Completed");
 
-        var agent2 = CreateAgent(config, client2, step1Tool);
+        var agent2 = CreateAgent(config, client2, tools: step1Tool);
 
         // Load checkpoint
         var recoveredThread = await checkpointer.LoadThreadAsync(thread.Id);
@@ -689,7 +688,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
             async (args, ct) => await Task.FromResult("tool result"),
             new HPDAIFunctionFactoryOptions { Name = "TestTool", Description = "Test tool" });
 
-        var agent = CreateAgent(config, client, testTool);
+        var agent = CreateAgent(config, client, tools: testTool);
         var thread = new ConversationThread();
 
         // Act: Run agent
@@ -737,7 +736,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
             async (args, ct) => await Task.FromResult("tool result"),
             new HPDAIFunctionFactoryOptions { Name = "TestTool", Description = "Test tool" });
 
-        var agent = CreateAgent(config, client, testTool);
+        var agent = CreateAgent(config, client, tools: testTool);
         var thread = new ConversationThread();
 
         // Act: Run agent

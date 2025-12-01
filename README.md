@@ -1,11 +1,11 @@
 # HPD.Agent.Framework
 ```
-                    ██╗  ██╗██████╗ ██████╗       █████╗  ██████╗ ███████╗███╗   ██╗████████╗
-                    ██║  ██║██╔══██╗██╔══██╗     ██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝
-                    ███████║██████╔╝██║  ██║█████╗███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║   
-                    ██╔══██║██╔═══╝ ██║  ██║╚════╝██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║   
-                    ██║  ██║██║     ██████╔╝      ██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║   
-                    ╚═╝  ╚═╝╚═╝     ╚═════╝       ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝   
+            ██╗  ██╗██████╗ ██████╗       █████╗  ██████╗ ███████╗███╗   ██╗████████╗
+            ██║  ██║██╔══██╗██╔══██╗     ██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝
+            ███████║██████╔╝██║  ██║█████╗███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║   
+            ██╔══██║██╔═══╝ ██║  ██║╚════╝██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║   
+            ██║  ██║██║     ██████╔╝      ██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║   
+            ╚═╝  ╚═╝╚═╝     ╚═════╝       ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝   
 ```
 The HPD Agent Framework is a battery first agentic framework designed to enable you to create reliable agents as quickly as possible.
 
@@ -15,7 +15,7 @@ The single philosophy driving this library: ***"Make Simple Things Simple, Make 
 - **Native AOT First**
 - **Configuration First** 
 - **Provider Agnostic**
-- **Event Streaming First** - No built non streaming mechanisms due to the event architecture
+- **Event Streaming First**
 
 ## Built-In Features
 - **Custom Event Protocol** - Standardizes how AI agents connect to UI
@@ -53,6 +53,52 @@ var agent = await new AgentBuilder()
 await foreach (var _ in agent.RunAsync("Hello!")) { }
 ```
 
+## Advanced Example
+
+```csharp
+using HPD.Agent;
+using HPD.Agent.Providers.OpenAI;
+
+var agent = await new AgentBuilder()
+    .WithProvider("openai", "gpt-4o")
+    .WithName("ResearchAssistant")
+    .WithInstructions("You are a research assistant with access to tools and knowledge.")
+    // Plugins & Tools
+    .WithPlugin<WebSearchPlugin>()
+    .WithPlugin<FileSystemPlugin>()
+    .WithToolScoping()                              // Reduces tool context for better performance
+    // Middleware
+    .WithPermissions()                              // Require approval for sensitive operations
+    .WithPIIProtection()                            // Filter sensitive data
+    .WithHistoryReduction(config => {
+        config.Strategy = HistoryReductionStrategy.Summarizing;
+        config.TargetMessageCount = 30;
+    })
+    .WithCircuitBreaker(maxConsecutiveCalls: 5)
+    .WithFunctionRetry()
+    // Memory
+    .WithStaticMemory(opts => {
+        opts.StorageDirectory = "./knowledge";
+        opts.AddDocument("./docs/company-policies.md");
+    })
+    .WithDynamicMemory(opts => {
+        opts.StorageDirectory = "./memory";
+        opts.EnableAutoEviction = true;
+    })
+    .WithPlanMode()                                 // Enable planning capabilities
+    // Observability
+    .WithLogging(loggerFactory)
+    .WithTelemetry()
+    .WithEventHandler(new ConsoleEventHandler())
+
+    .Build();
+
+await foreach (var evt in agent.RunAsync("Research the latest AI trends"))
+{
+    // Process streaming events
+}
+```
+
 ## Future Features
 - **Audio TTS->LLM->STT Support**
 - **Streaming Structured Output**
@@ -60,6 +106,7 @@ await foreach (var _ in agent.RunAsync("Hello!")) { }
 - **Evaluators**
 - **Graph Support**
 - **A2A and AGUI Support**
+- **Prompt Template**
 
 ## Future Language Support(Not Guaranteed)
 - **Python**

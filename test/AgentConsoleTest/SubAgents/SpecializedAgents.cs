@@ -95,6 +95,6 @@ You have access to FileSystemPlugin tools to read code files when needed.",
                     ModelName = "google/gemini-2.0-flash-exp:free"
                 }
             },
-            pluginTypes: typeof(HPD.Agent.Plugins.FileSystem.FileSystemPlugin));
+            Plugins: typeof(HPD.Agent.Plugins.FileSystem.FileSystemPlugin));
     }
 }

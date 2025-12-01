@@ -17,8 +17,10 @@ internal static class ProviderAutoDiscovery
     /// Module initializer that runs when HPD-Agent assembly is first loaded.
     /// Attempts to load provider assemblies to trigger their ModuleInitializers.
     /// </summary>
+#pragma warning disable CA2255 // ModuleInitializer is intentionally used in library for auto-discovery
     [ModuleInitializer]
     public static void Initialize()
+#pragma warning restore CA2255
     {
         lock (_lock)
         {
@@ -103,15 +105,26 @@ internal static class ProviderAutoDiscovery
         {
             // Get the directory containing HPD-Agent assembly
             var hpdAgentAssembly = typeof(AgentBuilder).Assembly;
+#pragma warning disable IL3000 // Intentional fallback handling for single-file apps
             var assemblyPath = hpdAgentAssembly.Location;
+#pragma warning restore IL3000
             
             if (string.IsNullOrEmpty(assemblyPath))
             {
-                // In some scenarios (like single-file publish), Location may be empty
-                // Fall back to the entry assembly's directory
+                // In single-file publish, Location is empty. Use AppContext.BaseDirectory
+                assemblyPath = AppContext.BaseDirectory;
+            }
+
+            if (string.IsNullOrEmpty(assemblyPath))
+            {
+                // Final fallback: try entry assembly
                 var entryAssembly = Assembly.GetEntryAssembly();
                 if (entryAssembly != null)
+                {
+#pragma warning disable IL3000 // Intentional fallback handling for single-file apps
                     assemblyPath = entryAssembly.Location;
+#pragma warning restore IL3000
+                }
             }
 
             if (string.IsNullOrEmpty(assemblyPath))

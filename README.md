@@ -36,8 +36,6 @@ The single philosophy driving this library: ***"Make Simple Things Simple, Make 
 - **MCP Support** - Supports MCP
 - **Custom Event Handling Presets** - Custom Event UI handling for normal Chat conversations, telemetry etc
 
-# Not ready for proper nuget release yet
-
 ## Quick Start
 
 ```csharp

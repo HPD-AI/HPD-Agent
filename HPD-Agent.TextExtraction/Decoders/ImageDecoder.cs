@@ -13,7 +13,6 @@ namespace HPD_Agent.TextExtraction.Decoders
 {
     /// <summary>
     /// Image decoder with OCR support
-    /// Currently uses Kernel Memory's IOcrEngine - can be swapped for other implementations
     /// </summary>
     public sealed class ImageDecoder : IContentDecoder, IOcrDecoder
     {

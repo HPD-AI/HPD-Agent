@@ -30,7 +30,7 @@ The single philosophy driving this library: ***"Make Simple Things Simple, Make 
 - **Observability** - Built-in event system for logging, telemetry, and debugging
 - **Planning** - Built-in plan mode for complex tasks
 - **SubAgents** - Built-in support for nested agent orchestration
-- **MCP Support** - Supports MCP
+- **MCP Support** - Supports MCP with Scoping/Collapsing Mechanism
 - **Custom Event Handling Presets** - Custom Event UI handling for normal Chat conversations, telemetry etc
 
 ## Quick Start
@@ -101,5 +101,6 @@ await foreach (var evt in agent.RunAsync("Research the latest AI trends"))
 - Microsoft.Extensions.AI 10.0.0+
 
 ## License
+
 
 Proprietary - See LICENSE file.

@@ -18,7 +18,6 @@ The single philosophy driving this library: ***"Make Simple Things Simple, Make 
 - **Event Streaming First**
 
 ## Built-In Features
-- **Custom Event Protocol** - Standardizes how AI agents connect to UI
 - **Middleware** - Extensible middleware system for customizing agent behavior
 - **Durable Execution** - Checkpointing and conversation thread persistence
 - **PII Filtering** - Remove sensitive information before it reaches the LLM
@@ -95,21 +94,6 @@ await foreach (var evt in agent.RunAsync("Research the latest AI trends"))
     // Process streaming events
 }
 ```
-
-## Future Features
-- **Audio TTS->LLM->STT Support**
-- **Streaming Structured Output**
-- **Dedicated Observability Platform**
-- **Evaluators**
-- **Graph Support**
-- **A2A and AGUI Support**
-- **Prompt Template**
-
-## Future Language Support(Not Guaranteed)
-- **Python**
-- **Rust**
-- **Swift**
-
 
 ## Requirements
 

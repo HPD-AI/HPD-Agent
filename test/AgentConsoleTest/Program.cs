@@ -1,4 +1,5 @@
 ﻿using HPD.Agent;
+using HPD_Agent.MCP;
 
 Console.WriteLine("🚀 HPD-Agent Console Test\n");
 
@@ -29,6 +30,8 @@ var agent = await new AgentBuilder(config)
     .WithCircuitBreaker(maxConsecutiveCalls: 3)
     .WithErrorTracking(maxConsecutiveErrors: 3)
     .WithTotalErrorThreshold(maxTotalErrors: 10)
+    .WithMCP("./MCP.json")
+    .WithLogging()
     .Build();
 
 eventHandler.SetAgent(agent);

@@ -1,110 +1,93 @@
-using System.Text.Json;
 using HPD.Agent;
+using HPD.Agent.Serialization;
 
 /// <summary>
-/// Event handler that formats agent events as Server-Sent Events (SSE)
+/// Event handler that formats agent events as Server-Sent Events (SSE).
+/// Uses the standard AgentEventSerializer for consistent JSON output.
 /// </summary>
+/// <remarks>
+/// This handler uses the framework's standard event serialization,
+/// providing consistent SCREAMING_SNAKE_CASE type discriminators and
+/// a version field for future compatibility.
+///
+/// Output format:
+/// <code>
+/// data: {"version":"1.0","type":"TEXT_DELTA","text":"Hello","messageId":"msg-123"}
+/// </code>
+/// </remarks>
 public class SseEventHandler : IAgentEventHandler
 {
     private readonly StreamWriter _writer;
-    private readonly JsonSerializerOptions _jsonOptions;
 
     public SseEventHandler(StreamWriter writer)
     {
         _writer = writer;
-        _jsonOptions = new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver()
-        };
     }
 
     public async Task OnEventAsync(AgentEvent evt, CancellationToken cancellationToken = default)
     {
-        string? eventType = null;
-        object? eventData = null;
+        // Use standard serializer - all events are handled automatically!
+        var json = AgentEventSerializer.ToJson(evt);
 
+        // Log for debugging
+        var typeName = AgentEventSerializer.GetEventTypeName(evt);
+        LogEvent(evt, typeName);
+
+        // Send as SSE
+        await _writer.WriteAsync($"data: {json}\n\n");
+        await _writer.FlushAsync(cancellationToken);
+    }
+
+    private static void LogEvent(AgentEvent evt, string typeName)
+    {
         switch (evt)
         {
             case TextDeltaEvent textDelta:
                 var textPreview = textDelta.Text?.Length > 50 ? textDelta.Text.Substring(0, 50) : textDelta.Text;
-                Console.WriteLine($"[SSE] 📤 Sending text_delta: {textPreview}...");
-                eventType = "text_delta";
-                eventData = new { text = textDelta.Text };
+                Console.WriteLine($"[SSE] Sending {typeName}: {textPreview}...");
                 break;
 
             case Reasoning reasoning when reasoning.Phase == ReasoningPhase.Delta:
                 var reasoningPreview = reasoning.Text?.Length > 50 ? reasoning.Text.Substring(0, 50) : reasoning.Text;
-                Console.WriteLine($"[SSE] 📤 Sending reasoning_delta: {reasoningPreview}...");
-                eventType = "reasoning_delta";
-                eventData = new { text = reasoning.Text };
+                Console.WriteLine($"[SSE] Sending {typeName}: {reasoningPreview}...");
                 break;
 
             case ToolCallStartEvent toolStart:
-                Console.WriteLine($"[SSE] 📤 Sending tool_call_start: {toolStart.Name} (ID: {toolStart.CallId})");
-                eventType = "tool_call_start";
-                eventData = new { name = toolStart.Name, call_id = toolStart.CallId };
+                Console.WriteLine($"[SSE] Sending {typeName}: {toolStart.Name} (ID: {toolStart.CallId})");
                 break;
 
             case ToolCallResultEvent toolResult:
-                Console.WriteLine($"[SSE] 📤 Sending tool_call_result: {toolResult.CallId}");
-                eventType = "tool_call_result";
-                eventData = new { call_id = toolResult.CallId };
+                Console.WriteLine($"[SSE] Sending {typeName}: {toolResult.CallId}");
                 break;
 
             case AgentTurnStartedEvent turnStart:
-                Console.WriteLine($"[SSE] 📤 Sending agent_turn_started: iteration {turnStart.Iteration}");
-                eventType = "agent_turn_started";
-                eventData = new { iteration = turnStart.Iteration };
+                Console.WriteLine($"[SSE] Sending {typeName}: iteration {turnStart.Iteration}");
                 break;
 
             case AgentTurnFinishedEvent turnFinished:
-                Console.WriteLine($"[SSE] 📤 Sending agent_turn_finished: iteration {turnFinished.Iteration}");
-                eventType = "agent_turn_finished";
-                eventData = new { iteration = turnFinished.Iteration };
+                Console.WriteLine($"[SSE] Sending {typeName}: iteration {turnFinished.Iteration}");
                 break;
 
             case MessageTurnFinishedEvent:
-                Console.WriteLine($"[SSE] 📤 Sending message_turn_finished");
-                eventType = "message_turn_finished";
-                eventData = new { };
+                Console.WriteLine($"[SSE] Sending {typeName}");
                 break;
 
             case PermissionRequestEvent permReq:
-                Console.WriteLine($"[SSE] 📤 Sending permission_request: {permReq.FunctionName}");
-                eventType = "permission_request";
-                eventData = new
-                {
-                    permission_id = permReq.PermissionId,
-                    function_name = permReq.FunctionName,
-                    description = permReq.Description,
-                    call_id = permReq.CallId,
-                    arguments = permReq.Arguments
-                };
+                Console.WriteLine($"[SSE] Sending {typeName}: {permReq.FunctionName}");
                 break;
 
             case PermissionApprovedEvent permApproved:
-                Console.WriteLine($"[SSE] 📤 Sending permission_approved: {permApproved.PermissionId}");
-                eventType = "permission_approved";
-                eventData = new { permission_id = permApproved.PermissionId };
+                Console.WriteLine($"[SSE] Sending {typeName}: {permApproved.PermissionId}");
                 break;
 
             case PermissionDeniedEvent permDenied:
-                Console.WriteLine($"[SSE] 📤 Sending permission_denied: {permDenied.Reason}");
-                eventType = "permission_denied";
-                eventData = new
-                {
-                    permission_id = permDenied.PermissionId,
-                    reason = permDenied.Reason
-                };
+                Console.WriteLine($"[SSE] Sending {typeName}: {permDenied.Reason}");
                 break;
-        }
 
-        if (eventType != null && eventData != null)
-        {
-            var eventJson = JsonSerializer.Serialize(new { type = eventType, data = eventData }, _jsonOptions);
-            await _writer.WriteAsync($"data: {eventJson}\n\n");
-            await _writer.FlushAsync(cancellationToken);
+            default:
+                // All other events are logged with their type name
+                Console.WriteLine($"[SSE] Sending {typeName}");
+                break;
         }
     }
 }

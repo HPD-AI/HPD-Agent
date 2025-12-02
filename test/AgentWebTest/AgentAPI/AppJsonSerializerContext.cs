@@ -10,6 +10,8 @@ using System.Text.Json.Serialization;
 [JsonSerializable(typeof(StreamMessage))]
 [JsonSerializable(typeof(StreamMessage[]))]
 [JsonSerializable(typeof(PermissionResponseRequest))]
+[JsonSerializable(typeof(SuccessResponse))]
+[JsonSerializable(typeof(ErrorResponse))]
 internal partial class AppJsonSerializerContext : JsonSerializerContext
 {
 }

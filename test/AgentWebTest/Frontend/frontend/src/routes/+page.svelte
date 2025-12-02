@@ -1,5 +1,6 @@
 <script lang="ts">
     import { onMount } from 'svelte';
+    import { AgentClient, type PermissionRequestEvent, type PermissionChoice } from '@hpd/hpd-agent-client';
 
     const API_BASE = 'http://localhost:5135';
 
@@ -9,12 +10,13 @@
         thinking?: string;
     }
 
-    interface PermissionRequest {
-        permission_id: string;
-        function_name: string;
-        description: string;
-        call_id: string;
-        arguments: any;
+    interface PendingPermission {
+        permissionId: string;
+        functionName: string;
+        description?: string;
+        callId: string;
+        arguments?: Record<string, unknown>;
+        resolve: (response: { approved: boolean; choice?: PermissionChoice; reason?: string }) => void;
     }
 
     let conversationId: string | null = null;
@@ -23,8 +25,11 @@
     let isLoading = false;
     let streamingContent = '';
     let currentThinking = '';
-    let pendingPermission: PermissionRequest | null = null;
+    let pendingPermission: PendingPermission | null = null;
     let showPermissionDialog = false;
+
+    // Create the client
+    const client = new AgentClient(API_BASE);
 
     onMount(async () => {
         const saved = localStorage.getItem('conversationId');
@@ -66,116 +71,87 @@
         currentThinking = '';
 
         try {
-            const res = await fetch(`${API_BASE}/agent/conversations/${conversationId}/stream`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ messages: [{ content: userMsg }] })
-            });
+            await client.stream(
+                conversationId,
+                [{ content: userMsg }],
+                {
+                    // Content handlers
+                    onTextDelta: (text) => {
+                        console.log('Text delta:', text);
+                        streamingContent += text;
+                        currentThinking = '';
+                        updateLastMessage();
+                    },
 
-            // If conversation not found, create a new one and retry
-            if (res.status === 404) {
-                await createConversation();
-                currentMessage = userMsg; // Restore message
-                messages = messages.slice(0, -2); // Remove the placeholder messages
-                await sendMessage();
-                return;
-            }
-
-            const reader = res.body?.getReader();
-            if (!reader) throw new Error('No reader');
-
-            const decoder = new TextDecoder();
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                const chunk = decoder.decode(value);
-                const lines = chunk.split('\n');
-
-                for (const line of lines) {
-                    if (!line.startsWith('data: ')) continue;
-
-                    try {
-                        const event = JSON.parse(line.substring(6));
-
-                        // 🐛 DEBUG: Log all events
-                        console.log('📨 SSE Event:', event.type, event.data);
-
-                        switch (event.type) {
-                            case 'text_delta':
-                                console.log('✍️ Text delta:', event.data.text);
-                                streamingContent += event.data.text;
-                                currentThinking = '';
-                                updateLastMessage();
-                                break;
-
-                            case 'reasoning_delta':
-                                console.log('💭 Reasoning:', event.data.text?.substring(0, 100));
-                                currentThinking = event.data.text;
-                                updateLastMessage();
-                                break;
-
-                            case 'tool_call_start':
-                                console.log('🔧 Tool call:', event.data.name);
-                                currentThinking = `Using ${event.data.name}...`;
-                                updateLastMessage();
-                                break;
-
-                            case 'tool_call_result':
-                                console.log('✅ Tool result:', event.data.call_id);
-                                break;
-
-                            case 'permission_request':
-                                console.log('🔐 Permission request:', event.data.function_name);
-                                pendingPermission = event.data;
-                                showPermissionDialog = true;
-                                currentThinking = `Waiting for permission to use ${event.data.function_name}...`;
-                                updateLastMessage();
-                                break;
-
-                            case 'permission_approved':
-                                console.log('✅ Permission approved:', event.data.permission_id);
-                                currentThinking = '';
-                                updateLastMessage();
-                                break;
-
-                            case 'permission_denied':
-                                console.log('❌ Permission denied:', event.data.reason);
-                                currentThinking = '';
-                                updateLastMessage();
-                                break;
-
-                            case 'agent_turn_started':
-                                console.log('🔄 Agent turn started:', event.data.iteration);
-                                break;
-
-                            case 'agent_turn_finished':
-                                console.log('✓ Agent turn finished:', event.data.iteration);
-                                break;
-
-                            case 'complete':
-                            case 'message_turn_finished':
-                                console.log('🏁 Message complete');
-                                isLoading = false;
-                                break;
-
-                            case 'error':
-                                console.error('❌ Error:', event.data.message);
-                                streamingContent = `Error: ${event.data.message}`;
-                                updateLastMessage();
-                                isLoading = false;
-                                break;
-
-                            default:
-                                console.warn('⚠️ Unknown event type:', event.type, event);
+                    // Reasoning handlers
+                    onReasoning: (text, phase) => {
+                        if (phase === 'Delta') {
+                            console.log('Reasoning:', text?.substring(0, 100));
+                            currentThinking = text;
+                            updateLastMessage();
                         }
-                    } catch (e) {
-                        console.error('Parse error:', e);
+                    },
+
+                    // Tool handlers
+                    onToolCallStart: (_callId, name) => {
+                        console.log('Tool call:', name);
+                        currentThinking = `Using ${name}...`;
+                        updateLastMessage();
+                    },
+
+                    onToolCallResult: (callId) => {
+                        console.log('Tool result:', callId);
+                    },
+
+                    // Permission handler - async, waits for user response
+                    onPermissionRequest: async (request: PermissionRequestEvent) => {
+                        console.log('Permission request:', request.functionName);
+                        currentThinking = `Waiting for permission to use ${request.functionName}...`;
+                        updateLastMessage();
+
+                        // Return a promise that resolves when user responds
+                        return new Promise((resolve) => {
+                            pendingPermission = {
+                                permissionId: request.permissionId,
+                                functionName: request.functionName,
+                                description: request.description,
+                                callId: request.callId,
+                                arguments: request.arguments,
+                                resolve
+                            };
+                            showPermissionDialog = true;
+                        });
+                    },
+
+                    // Lifecycle handlers
+                    onTurnStart: (iteration) => {
+                        console.log('Agent turn started:', iteration);
+                    },
+
+                    onTurnEnd: (iteration) => {
+                        console.log('Agent turn finished:', iteration);
+                    },
+
+                    onComplete: () => {
+                        console.log('Message complete');
+                        isLoading = false;
+                    },
+
+                    onError: (message) => {
+                        console.error('Error:', message);
+                        streamingContent = `Error: ${message}`;
+                        updateLastMessage();
+                        isLoading = false;
+                    },
+
+                    // Raw event access for debugging
+                    onEvent: (event) => {
+                        console.log(`[v${event.version}] ${event.type}:`, event);
                     }
                 }
-            }
+            );
         } catch (error) {
+            console.error('Stream error:', error);
             streamingContent = `Error: ${error}`;
             updateLastMessage();
         } finally {
@@ -191,26 +167,20 @@
         messages = [...messages.slice(0, -1), lastMsg];
     }
 
-    async function respondToPermission(approved: boolean, choice: 'ask' | 'allow_always' | 'deny_always' = 'ask') {
-        if (!pendingPermission || !conversationId) return;
+    function respondToPermission(approved: boolean, choice: PermissionChoice = 'ask') {
+        if (!pendingPermission) return;
 
-        try {
-            await fetch(`${API_BASE}/agent/conversations/${conversationId}/permissions/respond`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    permissionId: pendingPermission.permission_id,
-                    approved,
-                    choice,
-                    reason: approved ? null : 'User denied permission'
-                })
-            });
+        // Resolve the promise that the SDK is waiting on
+        pendingPermission.resolve({
+            approved,
+            choice,
+            reason: approved ? undefined : 'User denied permission'
+        });
 
-            showPermissionDialog = false;
-            pendingPermission = null;
-        } catch (error) {
-            console.error('Failed to send permission response:', error);
-        }
+        showPermissionDialog = false;
+        currentThinking = '';
+        updateLastMessage();
+        pendingPermission = null;
     }
 
     function handleKeypress(e: KeyboardEvent) {
@@ -229,7 +199,7 @@
             <p class="text-sm text-gray-500">{messages.length} messages</p>
         </div>
         <button
-            on:click={createConversation}
+            onclick={createConversation}
             class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-md text-sm"
         >
             New Chat
@@ -251,7 +221,7 @@
 
                     {#if message.thinking}
                         <div class="text-xs italic opacity-60 mb-2">
-                            💭 {message.thinking}
+                            {message.thinking}
                         </div>
                     {/if}
 
@@ -273,13 +243,13 @@
         <div class="flex gap-2 max-w-4xl mx-auto">
             <input
                 bind:value={currentMessage}
-                on:keypress={handleKeypress}
+                onkeypress={handleKeypress}
                 placeholder="Type a message..."
                 disabled={isLoading}
                 class="flex-1 px-4 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
             />
             <button
-                on:click={sendMessage}
+                onclick={sendMessage}
                 disabled={isLoading || !currentMessage.trim()}
                 class="px-6 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50"
             >
@@ -295,7 +265,7 @@
         <div class="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
             <h3 class="text-lg font-semibold mb-2">Permission Required</h3>
             <p class="text-gray-700 mb-1">
-                Agent wants to call: <span class="font-mono font-semibold">{pendingPermission.function_name}</span>
+                Agent wants to call: <span class="font-mono font-semibold">{pendingPermission.functionName}</span>
             </p>
             <p class="text-sm text-gray-600 mb-4">{pendingPermission.description || 'No description available'}</p>
 
@@ -309,13 +279,13 @@
             <div class="flex flex-col gap-2">
                 <div class="flex gap-2">
                     <button
-                        on:click={() => respondToPermission(true, 'ask')}
+                        onclick={() => respondToPermission(true, 'ask')}
                         class="flex-1 px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600"
                     >
                         Allow Once
                     </button>
                     <button
-                        on:click={() => respondToPermission(true, 'allow_always')}
+                        onclick={() => respondToPermission(true, 'allow_always')}
                         class="flex-1 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
                     >
                         Always Allow
@@ -323,13 +293,13 @@
                 </div>
                 <div class="flex gap-2">
                     <button
-                        on:click={() => respondToPermission(false, 'ask')}
+                        onclick={() => respondToPermission(false, 'ask')}
                         class="flex-1 px-4 py-2 bg-red-500 text-white rounded-md hover:bg-red-600"
                     >
                         Deny Once
                     </button>
                     <button
-                        on:click={() => respondToPermission(false, 'deny_always')}
+                        onclick={() => respondToPermission(false, 'deny_always')}
                         class="flex-1 px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700"
                     >
                         Never Allow

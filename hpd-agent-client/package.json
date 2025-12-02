@@ -1,0 +1,50 @@
+{
+  "name": "@hpd/hpd-agent-client",
+  "version": "0.1.0",
+  "description": "TypeScript client SDK for HPD-Agent event streaming",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./transports": {
+      "import": "./dist/transports/index.js",
+      "types": "./dist/transports/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src --ext .ts",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "hpd-agent",
+    "agent",
+    "ai",
+    "streaming",
+    "sse",
+    "websocket",
+    "typescript"
+  ],
+  "author": "HPD-AI",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^1.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

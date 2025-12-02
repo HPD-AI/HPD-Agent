@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Extensions.AI;
 using HPD.Agent;
 using HPD.Agent.Permissions;
+using HPD.Agent.Serialization;
 
 var builder = WebApplication.CreateSlimBuilder(args);
 
@@ -77,7 +78,7 @@ agentApi.MapPost("/conversations/{conversationId}/permissions/respond",
 {
     var agent = cm.GetRunningAgent(conversationId);
     if (agent == null)
-        return Results.NotFound(new { message = "No active agent for this conversation" });
+        return Results.NotFound(new ErrorResponse("No active agent for this conversation"));
 
     // Convert string choice to PermissionChoice enum
     var choice = request.Choice?.ToLower() switch
@@ -97,7 +98,7 @@ agentApi.MapPost("/conversations/{conversationId}/permissions/respond",
             request.Reason,
             choice));
 
-    return Results.Ok(new { success = true });
+    return Results.Ok(new SuccessResponse(true));
 });
 
 // Streaming SSE endpoint
@@ -118,39 +119,37 @@ agentApi.MapPost("/conversations/{conversationId}/stream",
 
     var writer = new StreamWriter(context.Response.Body, System.Text.Encoding.UTF8, 8192, leaveOpen: true);
     var sseHandler = new SseEventHandler(writer);
-    var jsonOptions = new JsonSerializerOptions
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver()
-    };
 
     try
     {
-        // Create agent with SSE handler
-        var agent = await cm.GetAgentAsync(conversationId, sseHandler);
+        // Create agent WITHOUT SSE handler - we'll handle events manually in the loop below
+        var agent = await cm.GetAgentAsync(conversationId);
         var chatMessages = request.Messages.Select(m => new ChatMessage(ChatRole.User, m.Content)).ToList();
 
-        Console.WriteLine($"[ENDPOINT] 🚀 Starting agent.RunAsync for conversation {conversationId}");
+        Console.WriteLine($"[ENDPOINT] Starting agent.RunAsync for conversation {conversationId}");
 
-        // Run agent - events are automatically formatted as SSE by the handler
+        // Run agent - manually send each event through SSE handler
         int eventCount = 0;
         await foreach (var evt in agent.RunAsync(chatMessages, options: null, thread: thread, cancellationToken: context.RequestAborted))
         {
             eventCount++;
-            Console.WriteLine($"[ENDPOINT] 🔄 Yielded event #{eventCount}: {evt.GetType().Name}");
+            Console.WriteLine($"[ENDPOINT] Yielded event #{eventCount}: {evt.GetType().Name}");
+
+            // Send event to frontend via SSE
+            await sseHandler.OnEventAsync(evt, context.RequestAborted);
         }
 
-        Console.WriteLine($"[ENDPOINT] ✅ Completed agent.RunAsync - total events: {eventCount}");
+        Console.WriteLine($"[ENDPOINT] Completed agent.RunAsync - total events: {eventCount}");
 
-        // Send completion event
-        var completeJson = JsonSerializer.Serialize(new { type = "complete" }, jsonOptions);
-        await writer.WriteAsync($"data: {completeJson}\n\n");
+        // Send completion event using standard format
+        await writer.WriteAsync("data: {\"version\":\"1.0\",\"type\":\"COMPLETE\"}\n\n");
         await writer.FlushAsync();
     }
     catch (Exception ex)
     {
-        var errorJson = JsonSerializer.Serialize(new { type = "error", data = new { message = ex.Message } }, jsonOptions);
-        await writer.WriteAsync($"data: {errorJson}\n\n");
+        // Send error event using standard format
+        var errorMessage = ex.Message.Replace("\"", "\\\"");
+        await writer.WriteAsync($"data: {{\"version\":\"1.0\",\"type\":\"ERROR\",\"message\":\"{errorMessage}\"}}\n\n");
         await writer.FlushAsync();
     }
     finally
@@ -335,4 +334,8 @@ public record PermissionResponseRequest(
     bool Approved,
     string? Choice = null,
     string? Reason = null);
+
+// API Response DTOs for AOT serialization
+public record SuccessResponse(bool Success);
+public record ErrorResponse(string Message);
 

@@ -6,6 +6,7 @@ appsettings.json
 appsettings.*.json
 **/appsettings.json
 **/appsettings.*.json
-
+**/node_modules
+**/dist
 /target
 **/target

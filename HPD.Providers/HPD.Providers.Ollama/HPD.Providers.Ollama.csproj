@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>HPD.Providers.Ollama</RootNamespace>
+    <PublishAot>true</PublishAot>
+    <PackageId>HPD.Providers.Ollama</PackageId>
+    <Title>HPD Ollama Provider</Title>
+    <Description>Ollama provider for HPD Agent and Memory products</Description>
+    <PackageTags>ai;agent;ollama;local;llm</PackageTags>
+  </PropertyGroup>
+  
+  <ItemGroup>
+    <ProjectReference Include="../HPD.Providers.Core/HPD.Providers.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="OllamaSharp" Version="5.4.8" />
+  </ItemGroup>
+</Project>

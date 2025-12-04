@@ -1,3 +1,5 @@
+using HPD.Providers.Core;
+
 namespace HPD.Agent.ErrorHandling;
 
 /// <summary>

@@ -1,5 +1,6 @@
-using HPD.Agent.ErrorHandling;
+using HPD.Providers.Core;
 using HPD.Agent;
+using HPD.Agent.ErrorHandling;
 
 namespace HPD.Agent.Middleware.Function;
 

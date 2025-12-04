@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>HPD.Providers.HuggingFace</RootNamespace>
+    <PublishAot>true</PublishAot>
+    <PackageId>HPD.Providers.HuggingFace</PackageId>
+    <Title>HPD HuggingFace Provider</Title>
+    <Description>HuggingFace Inference API provider for HPD Agent and Memory products</Description>
+    <PackageTags>ai;agent;huggingface;inference;llm</PackageTags>
+  </PropertyGroup>
+  
+  <ItemGroup>
+    <ProjectReference Include="../HPD.Providers.Core/HPD.Providers.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="HuggingFace" Version="0.4.1-dev.23" />
+  </ItemGroup>
+</Project>

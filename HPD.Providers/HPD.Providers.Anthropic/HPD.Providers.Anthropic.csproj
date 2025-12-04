@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>HPD.Providers.Anthropic</RootNamespace>
+    <PackageId>HPD.Providers.Anthropic</PackageId>
+    <Title>HPD Anthropic Provider</Title>
+    <Description>Anthropic (Claude) provider for HPD Agent and Memory products</Description>
+    <PackageTags>ai;agent;anthropic;claude;llm;memory;embeddings</PackageTags>
+    <PublishAot>true</PublishAot>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../HPD.Providers.Core/HPD.Providers.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Anthropic.SDK" Version="5.8.0" />
+  </ItemGroup>
+</Project>

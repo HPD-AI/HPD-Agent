@@ -5,6 +5,7 @@ using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.AI;
 using HPD.Agent.Checkpointing;
 using System.Collections.Immutable;
+using HPD.Providers.Core;
 
 namespace HPD.Agent;
 
@@ -414,161 +415,8 @@ public class McpConfig
     public object? Options { get; set; }
 }
 
-/// <summary>
-/// Configuration for AI provider settings.
-/// Based on existing patterns in AgentBuilder.
-/// </summary>
-public class ProviderConfig
-{
-    /// <summary>
-    /// Provider identifier (lowercase, e.g., "openai", "anthropic", "ollama").
-    /// This is the primary key for provider resolution.
-    /// </summary>
-    public string ProviderKey { get; set; } = string.Empty;
-
-    public string ModelName { get; set; } = string.Empty;
-    public string? ApiKey { get; set; }
-    public string? Endpoint { get; set; }
-    public ChatOptions? DefaultChatOptions { get; set; }
-
-    /// <summary>
-    /// Provider-specific configuration as raw JSON string.
-    /// This is the preferred way for FFI/JSON configuration.
-    /// The JSON is deserialized using the provider's registered deserializer.
-    ///
-    /// Example JSON config:
-    /// <code>
-    /// {
-    ///   "Provider": {
-    ///     "ProviderKey": "anthropic",
-    ///     "ModelName": "claude-sonnet-4-5-20250929",
-    ///     "ApiKey": "sk-ant-...",
-    ///     "ProviderOptionsJson": "{\"ThinkingBudgetTokens\":4096,\"EnablePromptCaching\":true}"
-    ///   }
-    /// }
-    /// </code>
-    /// </summary>
-    public string? ProviderOptionsJson { get; set; }
-
-    /// <summary>
-    /// Provider-specific configuration as key-value pairs.
-    /// Legacy approach - prefer ProviderOptionsJson for FFI compatibility.
-    /// See provider documentation for available options.
-    ///
-    /// Examples:
-    /// - OpenAI: { "Organization": "org-123", "StrictJsonSchema": true }
-    /// - Anthropic: { "PromptCachingType": "AutomaticToolsAndSystem" }
-    /// - OpenRouter: { "HttpReferer": "https://myapp.com" }
-    /// - Ollama: { "NumCtx": 8192, "KeepAlive": "5m" }
-    /// </summary>
-    public Dictionary<string, object>? AdditionalProperties { get; set; }
-
-    // Cache for deserialized provider config (avoids repeated deserialization)
-    [System.Text.Json.Serialization.JsonIgnore]
-    private object? _cachedProviderConfig;
-
-    /// <summary>
-    /// Gets the provider-specific configuration using the registered deserializer.
-    /// Prefers ProviderOptionsJson (FFI-friendly), falls back to AdditionalProperties.
-    /// Uses the provider's registered deserializer from ProviderDiscovery for AOT compatibility.
-    ///
-    /// Usage in providers:
-    /// <code>
-    /// var myConfig = config.GetTypedProviderConfig&lt;AnthropicProviderConfig&gt;();
-    /// </code>
-    /// </summary>
-    /// <typeparam name="T">The strongly-typed configuration class</typeparam>
-    /// <returns>Parsed configuration object, or null if no config is present</returns>
-    [RequiresUnreferencedCode("Provider configuration deserialization requires runtime type information. For AOT, use ProviderOptionsJson with registered deserializer.")]
-    public T? GetTypedProviderConfig<T>() where T : class
-    {
-        // Return cached value if available and correct type
-        if (_cachedProviderConfig is T cached)
-            return cached;
-
-        // Priority 1: Use ProviderOptionsJson with registered deserializer
-        if (!string.IsNullOrWhiteSpace(ProviderOptionsJson))
-        {
-            var registration = Providers.ProviderDiscovery.GetProviderConfigType(ProviderKey);
-            if (registration != null && registration.ConfigType == typeof(T))
-            {
-                var result = registration.Deserialize(ProviderOptionsJson) as T;
-                _cachedProviderConfig = result;
-                return result;
-            }
-        }
-
-        // Priority 2: Fall back to AdditionalProperties (legacy)
-        var legacyConfig = GetProviderConfig<T>();
-        _cachedProviderConfig = legacyConfig;
-        return legacyConfig;
-    }
-
-    /// <summary>
-    /// Sets the provider-specific configuration and updates ProviderOptionsJson.
-    /// Uses the provider's registered serializer from ProviderDiscovery for AOT compatibility.
-    /// </summary>
-    /// <typeparam name="T">The strongly-typed configuration class</typeparam>
-    /// <param name="config">The configuration object to set</param>
-    public void SetTypedProviderConfig<T>(T config) where T : class
-    {
-        _cachedProviderConfig = config;
-
-        // Serialize using registered serializer
-        var registration = Providers.ProviderDiscovery.GetProviderConfigType(ProviderKey);
-        if (registration != null && registration.ConfigType == typeof(T))
-        {
-            ProviderOptionsJson = registration.Serialize(config);
-        }
-    }
-
-    /// <summary>
-    /// Deserializes AdditionalProperties to a strongly-typed configuration class.
-    /// Legacy method - prefer GetTypedProviderConfig for FFI/AOT compatibility.
-    ///
-    /// Usage in providers:
-    /// <code>
-    /// var myConfig = config.GetProviderConfig&lt;MyProviderConfig&gt;();
-    /// </code>
-    /// </summary>
-    /// <typeparam name="T">The strongly-typed configuration class</typeparam>
-    /// <returns>Parsed configuration object, or null if AdditionalProperties is empty</returns>
-    /// <exception cref="InvalidOperationException">Thrown when configuration parsing fails</exception>
-    [System.Diagnostics.CodeAnalysis.RequiresUnreferencedCode("Generic deserialization requires runtime type information. Use type-safe provider config methods for AOT.")]
-    public T? GetProviderConfig<T>() where T : class
-    {
-        if (AdditionalProperties == null || AdditionalProperties.Count == 0)
-            return null;
-
-        try
-        {
-            // Convert dictionary to JSON using source-generated context (AOT-safe)
-            var json = System.Text.Json.JsonSerializer.Serialize(
-                AdditionalProperties, 
-                typeof(Dictionary<string, object>),
-                HPDJsonContext.Default);
-            
-            // Deserialize using source-generated context for AOT compatibility
-            var result = System.Text.Json.JsonSerializer.Deserialize(
-                json,
-                typeof(T),
-                HPDJsonContext.Default) as T;
-            return result;
-        }
-        catch (System.Text.Json.JsonException ex)
-        {
-            throw new InvalidOperationException(
-                $"Failed to parse provider configuration for {typeof(T).Name}. " +
-                $"Please check that your AdditionalProperties match the expected structure. " +
-                $"Error: {ex.Message}", ex);
-        }
-        catch (Exception ex)
-        {
-            throw new InvalidOperationException(
-                $"Unexpected error parsing provider configuration for {typeof(T).Name}: {ex.Message}", ex);
-        }
-    }
-}
+// ProviderConfig is now defined in HPD.Providers.Core
+// Using the Core version via the using statement at the top of the file
 
 /// <summary>
 /// Configuration for provider validation behavior during agent building.
@@ -684,14 +532,14 @@ public class ErrorHandlingConfig
     /// Optional per-category retry limits. If null, uses MaxRetries for all categories.
     /// Example: { ErrorCategory.RateLimitRetryable: 5, ErrorCategory.ServerError: 3 }
     /// </summary>
-    public Dictionary<HPD.Agent.ErrorHandling.ErrorCategory, int>? MaxRetriesByCategory { get; set; }
+    public Dictionary<HPD.Providers.Core.ErrorCategory, int>? MaxRetriesByCategory { get; set; }
 
     /// <summary>
     /// Provider-specific error handler. If null, auto-detects based on ProviderKey.
     /// Set this to customize error parsing for specific providers or use custom handlers.
     /// </summary>
     [System.Text.Json.Serialization.JsonIgnore]
-    public HPD.Agent.ErrorHandling.IProviderErrorHandler? ProviderHandler { get; set; }
+    public HPD.Providers.Core.IProviderErrorHandler? ProviderHandler { get; set; }
 
     /// <summary>
     /// Custom retry strategy that overrides default behavior.

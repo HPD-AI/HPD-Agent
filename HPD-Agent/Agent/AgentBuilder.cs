@@ -1,4 +1,4 @@
-using HPD.Agent.Providers;
+using HPD.Providers.Core;
 using HPD.Agent.Middleware;
 using HPD.Agent.Middleware.Function;
 using Microsoft.Extensions.AI;
@@ -25,7 +25,7 @@ namespace HPD.Agent;
 internal record AgentBuildDependencies(
     IChatClient ClientToUse,
     ChatOptions? MergedOptions,
-    ErrorHandling.IProviderErrorHandler ErrorHandler,
+    HPD.Providers.Core.IProviderErrorHandler ErrorHandler,
     IChatClient? SummarizerClient = null);
 
 /// <summary>
@@ -124,7 +124,7 @@ public class AgentBuilder
         var callingAssembly = Assembly.GetCallingAssembly();
 
         _config = new AgentConfig();
-        _providerRegistry = new ProviderRegistry();
+        _providerRegistry = ProviderRegistry.Instance;
         LoadPluginRegistryFromAssembly(callingAssembly);
         RegisterDiscoveredProviders();
     }
@@ -141,7 +141,7 @@ public class AgentBuilder
         var callingAssembly = Assembly.GetCallingAssembly();
 
         _config = config ?? throw new ArgumentNullException(nameof(config));
-        _providerRegistry = new ProviderRegistry();
+        _providerRegistry = ProviderRegistry.Instance;
         LoadPluginRegistryFromAssembly(callingAssembly);
         RegisterDiscoveredProviders();
     }
@@ -169,18 +169,8 @@ public class AgentBuilder
     /// </summary>
     private void RegisterDiscoveredProviders()
     {
-        foreach (var factory in ProviderDiscovery.GetFactories())
-        {
-            try
-            {
-                var provider = factory();
-                _providerRegistry.Register(provider);
-            }
-            catch (Exception ex)
-            {
-                _logger?.CreateLogger<AgentBuilder>().LogWarning(ex, "Failed to register provider from discovery");
-            }
-        }
+        // Providers now auto-register via ModuleInitializers to ProviderRegistry.Instance
+        // No action needed here - the singleton registry already has all providers
     }
 
     /// <summary>
@@ -377,7 +367,7 @@ public class AgentBuilder
         if (!File.Exists(jsonFilePath))
             throw new FileNotFoundException($"Configuration file not found: {jsonFilePath}");
 
-        _providerRegistry = new ProviderRegistry();
+        _providerRegistry = ProviderRegistry.Instance;
         LoadPluginRegistryFromAssembly(callingAssembly);
 
         try

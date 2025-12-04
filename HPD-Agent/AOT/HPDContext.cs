@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
 using HPD.Agent;
+using HPD.Providers.Core;
 
 /// <summary>
 /// JSON serialization context for HPD-Agent core types (AOT-compatible).

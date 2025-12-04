@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>HPD.Providers.OpenRouter</RootNamespace>
+    <PublishAot>true</PublishAot>
+    <PackageId>HPD.Providers.OpenRouter</PackageId>
+    <Title>HPD OpenRouter Provider</Title>
+    <Description>OpenRouter provider for HPD Agent and Memory products</Description>
+    <PackageTags>ai;agent;openrouter;llm</PackageTags>
+  </PropertyGroup>
+  
+  <ItemGroup>
+    <ProjectReference Include="../HPD.Providers.Core/HPD.Providers.Core.csproj" />
+    <PackageReference Include="Microsoft.Extensions.AI" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="10.0.0" />
+  </ItemGroup>
+
+</Project>

@@ -182,7 +182,7 @@ public sealed class Agent
         AgentConfig config,
         IChatClient baseClient,
         ChatOptions? mergedOptions,
-        ErrorHandling.IProviderErrorHandler providerErrorHandler,
+        HPD.Providers.Core.IProviderErrorHandler providerErrorHandler,
         IReadOnlyDictionary<string, string>? functionToPluginMap = null,
         IReadOnlyDictionary<string, string>? functionToSkillMap = null,
         IReadOnlyList<IAgentMiddleware>? middlewares = null,
@@ -3801,7 +3801,7 @@ internal static class ErrorFormatter
     /// Formats an exception with detailed error information for display to users.
     /// Extracts provider-specific error details using the error handler.
     /// </summary>
-    internal static string FormatDetailedError(Exception ex, ErrorHandling.IProviderErrorHandler? errorHandler)
+    internal static string FormatDetailedError(Exception ex, HPD.Providers.Core.IProviderErrorHandler? errorHandler)
     {
         var sb = new StringBuilder();
 

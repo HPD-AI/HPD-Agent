@@ -1,4 +1,5 @@
 using Microsoft.Extensions.AI;
+using System.Collections.Concurrent;
 using System.Text.Json;
 
 namespace HPD.Agent;
@@ -109,6 +110,61 @@ public sealed class ConversationThread
     /// Null if history reduction has never been performed on this thread.
     /// </summary>
     public HistoryReductionStateData? LastReduction { get; set; }
+
+    #region Branch Tracking
+
+    private readonly ConcurrentDictionary<string, string> _branches = new();
+
+    /// <summary>
+    /// Current position in the checkpoint tree.
+    /// Null if no checkpoints have been created yet.
+    /// </summary>
+    public string? CurrentCheckpointId { get; set; }
+
+    /// <summary>
+    /// Named branches mapping branch name to head checkpoint ID.
+    /// Default branch is "main".
+    /// </summary>
+    public IReadOnlyDictionary<string, string> Branches => _branches;
+
+    /// <summary>
+    /// Active branch name. Null means detached/anonymous state.
+    /// </summary>
+    public string? ActiveBranch { get; set; }
+
+    /// <summary>
+    /// Try to add a new branch pointing to a checkpoint.
+    /// </summary>
+    /// <returns>True if added, false if branch name already exists.</returns>
+    public bool TryAddBranch(string name, string checkpointId)
+        => _branches.TryAdd(name, checkpointId);
+
+    /// <summary>
+    /// Update an existing branch to point to a new checkpoint.
+    /// </summary>
+    /// <returns>True if updated, false if branch doesn't exist.</returns>
+    public bool TryUpdateBranch(string name, string checkpointId)
+    {
+        if (!_branches.ContainsKey(name))
+            return false;
+        _branches[name] = checkpointId;
+        return true;
+    }
+
+    /// <summary>
+    /// Remove a branch by name.
+    /// </summary>
+    /// <returns>True if removed, false if branch didn't exist.</returns>
+    public bool TryRemoveBranch(string name)
+        => _branches.TryRemove(name, out _);
+
+    /// <summary>
+    /// Get the checkpoint ID for a named branch.
+    /// </summary>
+    public string? GetBranchHead(string name)
+        => _branches.TryGetValue(name, out var id) ? id : null;
+
+    #endregion
 
     /// <summary>
     /// Creates a new conversation thread.
@@ -282,7 +338,11 @@ public sealed class ConversationThread
             ServiceThreadId = ServiceThreadId,
             ConversationId = ConversationId,
             ExecutionStateJson = ExecutionState?.Serialize(),
-            LastReductionState = LastReduction
+            LastReductionState = LastReduction,
+            // Branch state
+            CurrentCheckpointId = CurrentCheckpointId,
+            Branches = _branches.IsEmpty ? null : _branches.ToDictionary(kv => kv.Key, kv => kv.Value),
+            ActiveBranch = ActiveBranch
         };
     }
 
@@ -323,6 +383,17 @@ public sealed class ConversationThread
         // Restore LastReduction if present
         thread.LastReduction = snapshot.LastReductionState;
 
+        // Restore branch state
+        thread.CurrentCheckpointId = snapshot.CurrentCheckpointId;
+        thread.ActiveBranch = snapshot.ActiveBranch;
+        if (snapshot.Branches != null)
+        {
+            foreach (var (name, checkpointId) in snapshot.Branches)
+            {
+                thread._branches[name] = checkpointId;
+            }
+        }
+
         return thread;
     }
 
@@ -360,4 +431,23 @@ public record ConversationThreadSnapshot
     /// Last successful history reduction state for cache-aware reduction.
     /// </summary>
     public HistoryReductionStateData? LastReductionState { get; init; }
+
+    #region Branch State
+
+    /// <summary>
+    /// Current position in the checkpoint tree.
+    /// </summary>
+    public string? CurrentCheckpointId { get; init; }
+
+    /// <summary>
+    /// Named branches mapping branch name to head checkpoint ID.
+    /// </summary>
+    public Dictionary<string, string>? Branches { get; init; }
+
+    /// <summary>
+    /// Active branch name. Null means detached/anonymous state.
+    /// </summary>
+    public string? ActiveBranch { get; init; }
+
+    #endregion
 }

@@ -1,5 +1,6 @@
 ﻿using HPD.Agent;
 using HPD.Agent.Checkpointing;
+using HPD.Agent.Checkpointing.Services;
 using HPD.Agent.MCP;
 using HPD.Agent.Memory;
 
@@ -39,6 +40,8 @@ var agent = await new AgentBuilder(config)
     .WithTotalErrorThreshold(maxTotalErrors: 10)
     .WithMCP("./MCP.json")
     .WithLogging()
+    .WithCheckpointStore(store)
+    .WithDurableExecution(CheckpointFrequency.PerTurn, RetentionPolicy.LatestOnly)
     .Build();
 
 eventHandler.SetAgent(agent);
@@ -95,9 +98,7 @@ while (true)
     try
     {
         await foreach (var _ in agent.RunAsync(input, thread)) { }
-
-        // Save checkpoint after each turn
-        await store.SaveThreadAsync(thread);
+        // Agent auto-checkpoints via DurableExecutionService
         Console.WriteLine();
     }
     catch (Exception ex)

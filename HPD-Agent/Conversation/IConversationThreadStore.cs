@@ -50,6 +50,11 @@ public interface IThreadStore
     /// - ExecutionState (AgentLoopState, if present)
     /// - Custom metadata
     /// </summary>
+    /// <remarks>
+    /// For <see cref="ICheckpointStore"/> implementations, this creates a new checkpoint
+    /// with a unique ID. The first save MUST also create a root checkpoint
+    /// (with <see cref="CheckpointSource.Root"/> and messageIndex=-1) to enable "edit first message".
+    /// </remarks>
     Task SaveThreadAsync(
         ConversationThread thread,
         CancellationToken cancellationToken = default);
@@ -74,18 +79,22 @@ public interface IThreadStore
 /// Extends IThreadStore with checkpoint history, pruning, cleanup, and pending writes.
 /// </summary>
 /// <remarks>
-/// Use this interface when you need:
-/// - Checkpoint history (time-travel debugging)
-/// - Checkpoint pruning and cleanup
-/// - Pending writes for partial failure recovery
-/// - Age-based or inactivity-based cleanup
+/// <para>
+/// This is a CRUD-only interface. The store is "dumb" - it just reads/writes data.
+/// Business logic (branching, retention policies) lives in services:
+/// <list type="bullet">
+/// <item><see cref="Services.DurableExecution"/> - checkpointing + retention</item>
+/// <item><see cref="Services.Branching"/> - fork/switch/delete branches</item>
+/// </list>
+/// </para>
+/// <para>
+/// <strong>Design Note:</strong> This interface always supports full checkpoint history.
+/// For simple single-checkpoint storage, use <see cref="IThreadStore"/> directly.
+/// The <see cref="Services.DurableExecution"/> controls retention via pruning.
+/// </para>
 /// </remarks>
 public interface ICheckpointStore : IThreadStore
 {
-    /// <summary>
-    /// Gets the checkpoint retention mode for this store.
-    /// </summary>
-    CheckpointRetentionMode RetentionMode { get; }
 
     // ===== CLEANUP METHODS =====
 
@@ -118,6 +127,15 @@ public interface ICheckpointStore : IThreadStore
     Task<int> DeleteInactiveThreadsAsync(
         TimeSpan inactivityThreshold,
         bool dryRun = false,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Delete specific checkpoints by ID.
+    /// Used by services for pruning operations.
+    /// </summary>
+    Task DeleteCheckpointsAsync(
+        string threadId,
+        IEnumerable<string> checkpointIds,
         CancellationToken cancellationToken = default);
 
     // ===== PENDING WRITES METHODS =====
@@ -162,8 +180,8 @@ public interface ICheckpointStore : IThreadStore
         string checkpointId,
         CancellationToken cancellationToken = default);
 
-    // ===== FULL HISTORY METHODS =====
-    // These methods are only meaningful when RetentionMode == FullHistory
+    // ===== CHECKPOINT ACCESS METHODS =====
+    // Low-level checkpoint access for services to build on
 
     /// <summary>
     /// Load a specific checkpoint by ID (FullHistory mode only).
@@ -175,23 +193,37 @@ public interface ICheckpointStore : IThreadStore
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Get checkpoint history for a thread (FullHistory mode only).
-    /// Returns list of checkpoints ordered by creation time (newest first).
+    /// Save a thread at a specific checkpoint ID.
+    /// Used by services for fork/branch operations.
     /// </summary>
-    Task<List<CheckpointTuple>> GetCheckpointHistoryAsync(
+    /// <param name="thread">Thread to save</param>
+    /// <param name="checkpointId">Checkpoint ID to use</param>
+    /// <param name="metadata">Checkpoint metadata (source, parent, etc.)</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    Task SaveThreadAtCheckpointAsync(
+        ConversationThread thread,
+        string checkpointId,
+        CheckpointMetadata metadata,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Get checkpoint manifest entries for a thread (FullHistory mode only).
+    /// Returns list of checkpoint metadata ordered by creation time (newest first).
+    /// </summary>
+    Task<List<CheckpointManifestEntry>> GetCheckpointManifestAsync(
         string threadId,
         int? limit = null,
         DateTime? before = null,
         CancellationToken cancellationToken = default);
-}
 
-/// <summary>
-/// Combined interface for backward compatibility.
-/// Equivalent to ICheckpointStore - use IThreadStore or ICheckpointStore directly for new code.
-/// </summary>
-[Obsolete("Use IThreadStore for simple persistence or ICheckpointStore for advanced features")]
-public interface IConversationThreadStore : ICheckpointStore
-{
+    /// <summary>
+    /// Update checkpoint manifest entry (e.g., to change branch name).
+    /// </summary>
+    Task UpdateCheckpointManifestEntryAsync(
+        string threadId,
+        string checkpointId,
+        Action<CheckpointManifestEntry> update,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -204,6 +236,18 @@ public class CheckpointTuple
     public required AgentLoopState State { get; set; }
     public required CheckpointMetadata Metadata { get; set; }
     public string? ParentCheckpointId { get; set; }
+
+    /// <summary>
+    /// Optional branch label for named branches.
+    /// Null for anonymous/detached checkpoints.
+    /// </summary>
+    public string? BranchName { get; set; }
+
+    /// <summary>
+    /// Message index this checkpoint was created after.
+    /// Enables "fork from message N" operations.
+    /// </summary>
+    public int MessageIndex { get; set; }
 }
 
 /// <summary>
@@ -224,10 +268,52 @@ public class CheckpointMetadata
     public int Step { get; set; }
 
     /// <summary>
-    /// Optional: Parent checkpoint ID for tracking lineage.
+    /// Optional: Parent checkpoint ID for tracking lineage within the same thread.
     /// Used for forking and branching execution paths.
     /// </summary>
     public string? ParentCheckpointId { get; set; }
+
+    /// <summary>
+    /// Optional: Source thread ID when this checkpoint was created via Copy.
+    /// Used for cross-thread lineage tracking (see <see cref="CheckpointSource.Copy"/>).
+    /// </summary>
+    public string? ParentThreadId { get; set; }
+
+    /// <summary>
+    /// Branch name if this checkpoint is a branch head.
+    /// </summary>
+    public string? BranchName { get; set; }
+
+    /// <summary>
+    /// Message count at this checkpoint.
+    /// </summary>
+    public int MessageIndex { get; set; }
+}
+
+/// <summary>
+/// Entry in the checkpoint manifest (lightweight metadata for listing).
+/// </summary>
+public class CheckpointManifestEntry
+{
+    public required string CheckpointId { get; set; }
+    public required DateTime CreatedAt { get; set; }
+    public int Step { get; set; }
+    public CheckpointSource Source { get; set; }
+
+    /// <summary>
+    /// Parent checkpoint ID for tree structure.
+    /// </summary>
+    public string? ParentCheckpointId { get; set; }
+
+    /// <summary>
+    /// Branch name if this checkpoint is a branch head.
+    /// </summary>
+    public string? BranchName { get; set; }
+
+    /// <summary>
+    /// Message count at this checkpoint.
+    /// </summary>
+    public int MessageIndex { get; set; }
 }
 
 /// <summary>
@@ -251,9 +337,22 @@ public enum CheckpointSource
     Update,
 
     /// <summary>
-    /// Checkpoint created as a fork/copy of another checkpoint.
+    /// Checkpoint created as a fork/branch of another checkpoint within the same thread.
     /// </summary>
-    Fork
+    Fork,
+
+    /// <summary>
+    /// Checkpoint created by copying state from another thread to a new independent thread.
+    /// Tracks lineage via ParentThreadId and ParentCheckpointId in CheckpointMetadata.
+    /// </summary>
+    Copy,
+
+    /// <summary>
+    /// Root checkpoint created automatically on first save in FullHistory mode.
+    /// This checkpoint represents the empty conversation state at messageIndex=-1,
+    /// enabling "edit first message" functionality by providing a fork point.
+    /// </summary>
+    Root
 }
 
 /// <summary>
@@ -280,3 +379,5 @@ public enum CheckpointFrequency
     /// </summary>
     Manual
 }
+
+// Branch types and events are defined in HPD.Agent.Checkpointing.Services.BranchingTypes

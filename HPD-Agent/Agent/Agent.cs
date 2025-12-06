@@ -12,6 +12,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.Extensions.Logging;
 using HPD.Agent.Checkpointing;
+using HPD.Agent.Checkpointing.Services;
 
 namespace HPD.Agent;
 
@@ -48,6 +49,9 @@ public sealed class Agent
     private readonly ObserverHealthTracker? _observerHealthTracker;
     private readonly ILogger? _observerErrorLogger;
     private readonly Counter<long>? _observerErrorCounter;
+
+    // Durable execution service for checkpointing (optional, created when DurableExecutionConfig is set)
+    private readonly DurableExecution? _durableExecutionService;
 
     /// <summary>
     /// Agent configuration object containing all settings
@@ -261,6 +265,15 @@ public sealed class Agent
                 _observerErrorCounter,
                 observabilityConfig.MaxConsecutiveFailures,
                 observabilityConfig.SuccessesToResetCircuitBreaker);
+        }
+
+        // Initialize DurableExecutionService if configured
+        // This provides retention policy enforcement and cleaner checkpointing API
+        if (config.DurableExecutionConfig != null && config.ThreadStore != null)
+        {
+            _durableExecutionService = new DurableExecution(
+                config.ThreadStore,
+                config.DurableExecutionConfig);
         }
     }
 
@@ -589,19 +602,17 @@ public sealed class Agent
                     Iteration: state.Iteration,
                     MessageCount: state.CurrentMessages.Count);
 
-                //     
-                // RESTORE PENDING WRITES (partial failure recovery)
-                //     
-                if (Config?.EnablePendingWrites == true &&
-                    Config?.ThreadStore != null &&
-                    state.ETag != null)
+                //
+                // RESTORE PENDING WRITES (partial failure recovery via DurableExecutionService)
+                //
+                if (_durableExecutionService != null && state.ETag != null)
                 {
                     int pendingWritesCount = 0;
                     bool pendingWritesLoaded = false;
 
                     try
                     {
-                        var pendingWrites = await Config.ThreadStore.LoadPendingWritesAsync(
+                        var pendingWrites = await _durableExecutionService.LoadPendingWritesAsync(
                             thread.Id,
                             state.ETag,
                             effectiveCancellationToken).ConfigureAwait(false);
@@ -611,17 +622,14 @@ public sealed class Agent
 
                         if (pendingWrites.Count > 0)
                         {
-                            // Restore pending writes to AgentLoopState
                             state = state with { PendingWrites = pendingWrites.ToImmutableList() };
                         }
                     }
                     catch (Exception)
                     {
                         // Swallow errors - pending writes are an optimization
-                        // If loading fails, the system will just re-execute the functions
                     }
 
-                    // Emit observability event outside try-catch
                     if (pendingWritesLoaded)
                     {
                         yield return new CheckpointEvent(
@@ -1100,8 +1108,11 @@ public sealed class Agent
                     // If there are tool requests, execute them immediately
                     if (toolRequests.Count > 0)
                     {
+                        // Coalesce text content before creating the message
+                        var coalescedContents = CoalesceTextContents(assistantContents);
+                        
                         // Create assistant message with tool calls
-                        var assistantMessage = new ChatMessage(ChatRole.Assistant, assistantContents);
+                        var assistantMessage = new ChatMessage(ChatRole.Assistant, coalescedContents);
 
                         var currentMessages = state.CurrentMessages.ToList();
                         currentMessages.Add(assistantMessage);
@@ -1118,8 +1129,8 @@ public sealed class Agent
                         // Create assistant message for history
                         // By default, exclude reasoning content to save tokens (configurable via PreserveReasoningInHistory)
                         var historyContents = Config?.PreserveReasoningInHistory == true
-                            ? assistantContents.ToList()
-                            : assistantContents.Where(c => c is not TextReasoningContent).ToList();
+                            ? coalescedContents.ToList()
+                            : coalescedContents.Where(c => c is not TextReasoningContent).ToList();
 
                         // Add to history if there's ANY content (text OR tool calls)
                         if (historyContents.Count > 0)
@@ -1223,15 +1234,18 @@ public sealed class Agent
                             break;
                         }
 
-                        //      
-                        // PENDING WRITES (save successful function results immediately)
-                        //      
-                        if (Config?.EnablePendingWrites == true &&
-                            Config?.ThreadStore != null &&
+                        //
+                        // PENDING WRITES (save successful function results immediately via DurableExecutionService)
+                        //
+                        if (_durableExecutionService != null &&
                             thread != null &&
                             state.ETag != null)
                         {
-                            SavePendingWritesFireAndForget(toolResultMessage, state, Config.ThreadStore, thread.Id);
+                            _durableExecutionService.SavePendingWriteFireAndForget(
+                                thread.Id,
+                                state.ETag,
+                                toolResultMessage,
+                                state.Iteration);
                         }
      
                         // UPDATE STATE WITH COMPLETED FUNCTIONS   
@@ -1338,64 +1352,25 @@ public sealed class Agent
                 // Advance to next iteration
                 state = state.NextIteration();
 
-                //      
-                // CHECKPOINT AFTER EACH ITERATION (if configured)
-                //      
+                //
+                // CHECKPOINT AFTER EACH ITERATION (via DurableExecutionService)
+                //
 
-                if (thread != null &&
-                    Config?.CheckpointFrequency == CheckpointFrequency.PerIteration &&
-                    Config?.ThreadStore != null)
+                if (thread != null && _durableExecutionService != null &&
+                    _durableExecutionService.ShouldCheckpoint(state.Iteration, turnComplete: false))
                 {
-                    // Fire-and-forget async checkpoint (non-blocking!)
-                    // Update metadata to reflect loop checkpoint
-                    var checkpointState = state with
-                    {
-                        Metadata = new CheckpointMetadata
-                        {
-                            Source = CheckpointSource.Loop,
-                            Step = state.Iteration
-                        }
-                    };
+                    // Fire-and-forget async checkpoint via DurableExecutionService
+                    var checkpointState = state;
+                    var service = _durableExecutionService;
 
                     _ = Task.Run(async () =>
                     {
                         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
                         try
                         {
-                            thread.ExecutionState = checkpointState;
-                            await Config.ThreadStore.SaveThreadAsync(thread, CancellationToken.None);
-
-                            // Cleanup pending writes after successful checkpoint (fire-and-forget)
-                            if (Config.EnablePendingWrites && checkpointState.ETag != null)
-                            {
-                                var iteration = checkpointState.Iteration;
-                                var threadId = thread.Id;
-
-                                _ = Task.Run(async () =>
-                                {
-                                    try
-                                    {
-                                        await Config.ThreadStore.DeletePendingWritesAsync(
-                                            threadId,
-                                            checkpointState.ETag,
-                                            CancellationToken.None);
-
-                                        // Emit pending writes deleted event
-                                        NotifyObservers(new CheckpointEvent(
-                                            Operation: CheckpointOperation.PendingWritesDeleted,
-                                            ThreadId: threadId,
-                                            Timestamp: DateTimeOffset.UtcNow));
-                                    }
-                                    catch
-                                    {
-                                        // Swallow errors - cleanup is best-effort
-                                    }
-                                });
-                            }
-
+                            await service.SaveCheckpointAsync(thread, checkpointState, CancellationToken.None);
                             stopwatch.Stop();
 
-                            // Emit checkpoint success event
                             NotifyObservers(new CheckpointEvent(
                                 Operation: CheckpointOperation.Saved,
                                 ThreadId: thread.Id,
@@ -1408,7 +1383,6 @@ public sealed class Agent
                         {
                             stopwatch.Stop();
 
-                            // Emit checkpoint failure event
                             NotifyObservers(new CheckpointEvent(
                                 Operation: CheckpointOperation.Saved,
                                 ThreadId: thread.Id,
@@ -1417,9 +1391,6 @@ public sealed class Agent
                                 Iteration: checkpointState.Iteration,
                                 Success: false,
                                 ErrorMessage: ex.Message));
-
-                            // Checkpoint failures are non-fatal (fire-and-forget)
-                            // Agent execution continues even if checkpoint fails
                         }
                     }, CancellationToken.None);
                 }
@@ -1472,19 +1443,12 @@ public sealed class Agent
                 turnStopwatch.Elapsed,
                 DateTimeOffset.UtcNow);
     
-            // FINAL CHECKPOINT (if configured)
-            if (thread != null && Config?.ThreadStore != null)
+            // FINAL CHECKPOINT (PerTurn - via DurableExecutionService)
+            if (thread != null && _durableExecutionService != null)
             {
-                var finalState = state with
-                {
-                    Metadata = new CheckpointMetadata
-                    {
-                        Source = CheckpointSource.Loop,
-                        Step = state.Iteration
-                    }
-                };
+                var finalState = state;
+                var service = _durableExecutionService;
 
-                // Use Task.Run to avoid try-catch in iterator method
                 var checkpointTask = Task.Run(async () =>
                 {
                     var stopwatch = Stopwatch.StartNew();
@@ -1493,48 +1457,17 @@ public sealed class Agent
 
                     try
                     {
-                        thread.ExecutionState = finalState;
-                        await Config.ThreadStore.SaveThreadAsync(thread, CancellationToken.None);
+                        await service.SaveCheckpointAsync(thread, finalState, CancellationToken.None);
                         success = true;
-
-                        // Cleanup pending writes after successful final checkpoint (fire-and-forget)
-                        if (Config.EnablePendingWrites && finalState.ETag != null)
-                        {
-                            var iteration = finalState.Iteration;
-                            var threadId = thread.Id;
-
-                            _ = Task.Run(async () =>
-                            {
-                                try
-                                {
-                                    await Config.ThreadStore.DeletePendingWritesAsync(
-                                        threadId,
-                                        finalState.ETag,
-                                        CancellationToken.None);
-
-                                    // Emit pending writes deleted event
-                                    NotifyObservers(new CheckpointEvent(
-                                        Operation: CheckpointOperation.PendingWritesDeleted,
-                                        ThreadId: threadId,
-                                        Timestamp: DateTimeOffset.UtcNow));
-                                }
-                                catch
-                                {
-                                    // Swallow errors - cleanup is best-effort
-                                }
-                            });
-                        }
                     }
                     catch (Exception ex)
                     {
                         errorMessage = ex.Message;
-                        // Checkpoint failures are non-fatal - continue execution
                     }
                     finally
                     {
                         stopwatch.Stop();
 
-                        // Emit checkpoint event
                         NotifyObservers(new CheckpointEvent(
                             Operation: CheckpointOperation.Saved,
                             ThreadId: thread.Id,
@@ -1546,7 +1479,6 @@ public sealed class Agent
                     }
                 });
 
-                // Wait for checkpoint to complete
                 await checkpointTask;
             }
 
@@ -1619,65 +1551,6 @@ public sealed class Agent
          s.Contains("quota reached", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
-    /// Saves pending writes (successful function results) in a fire-and-forget manner.
-    /// This allows the system to recover partial progress if a crash occurs before the iteration checkpoint completes.
-    /// </summary>
-    private void SavePendingWritesFireAndForget(
-        ChatMessage toolResultMessage,
-        AgentLoopState state,
-        ICheckpointStore threadStore,
-        string threadId)
-    {
-        // Extract successful function results
-        var successfulResults = toolResultMessage.Contents
-            .OfType<FunctionResultContent>()
-            .Where(IsFunctionResultSuccessful)
-            .ToList();
-
-        if (successfulResults.Count == 0)
-            return;
-
-        // Create pending writes
-        var pendingWrites = new List<PendingWrite>();
-        foreach (var result in successfulResults)
-        {
-            var pendingWrite = new PendingWrite
-            {
-                CallId = result.CallId,
-                FunctionName = result.CallId, // Note: We don't have function name here, but CallId is unique
-                ResultJson = System.Text.Json.JsonSerializer.Serialize(result.Result, (JsonTypeInfo<object?>)AIJsonUtilities.DefaultOptions.GetTypeInfo(typeof(object))),
-                CompletedAt = DateTime.UtcNow,
-                Iteration = state.Iteration,
-                ThreadId = threadId
-            };
-            pendingWrites.Add(pendingWrite);
-        }
-
-        // Save in background (fire-and-forget)
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                await threadStore.SavePendingWritesAsync(
-                    threadId,
-                    state.ETag!,
-                    pendingWrites,
-                    CancellationToken.None).ConfigureAwait(false);
-
-                // Emit pending writes saved event
-                NotifyObservers(new CheckpointEvent(
-                    Operation: CheckpointOperation.PendingWritesSaved,
-                    ThreadId: threadId,
-                    Timestamp: DateTimeOffset.UtcNow,
-                    WriteCount: pendingWrites.Count));
-            }
-            catch
-            {
-                // Swallow errors - pending writes are optimization, not critical
-                // If saving fails, the system will just re-execute the functions on resume
-            }
-        });
-    }
 
     /// <summary>
     /// Constructs a final ChatResponse from collected streaming updates
@@ -1725,8 +1598,12 @@ public sealed class Agent
                 createdAt = update.CreatedAt;
         }
 
+        // Coalesce consecutive TextContent items into a single TextContent
+        // This prevents streaming chunks from being saved as separate content items
+        var coalescedContents = CoalesceTextContents(allContents);
+
         // Don't create empty assistant messages
-        if (allContents.Count == 0)
+        if (coalescedContents.Count == 0)
         {
             return new ChatResponse(Array.Empty<ChatMessage>())
             {
@@ -1738,7 +1615,7 @@ public sealed class Agent
         }
 
         // Create a ChatMessage from the collected content
-        var chatMessage = new ChatMessage(ChatRole.Assistant, allContents)
+        var chatMessage = new ChatMessage(ChatRole.Assistant, coalescedContents)
         {
             MessageId = responseId
         };
@@ -1750,6 +1627,47 @@ public sealed class Agent
             CreatedAt = createdAt,
             Usage = usage
         };
+    }
+
+    /// <summary>
+    /// Coalesces consecutive TextContent items into single TextContent items.
+    /// Non-text content (FunctionCallContent, etc.) is preserved as-is and acts as a boundary.
+    /// </summary>
+    private static List<AIContent> CoalesceTextContents(List<AIContent> contents)
+    {
+        if (contents.Count <= 1)
+            return contents;
+
+        var result = new List<AIContent>();
+        var textBuilder = new System.Text.StringBuilder();
+
+        foreach (var content in contents)
+        {
+            if (content is TextContent textContent && content is not TextReasoningContent)
+            {
+                // Accumulate text content
+                textBuilder.Append(textContent.Text);
+            }
+            else
+            {
+                // Non-text content - flush any accumulated text first
+                if (textBuilder.Length > 0)
+                {
+                    result.Add(new TextContent(textBuilder.ToString()));
+                    textBuilder.Clear();
+                }
+                // Add the non-text content
+                result.Add(content);
+            }
+        }
+
+        // Flush any remaining text
+        if (textBuilder.Length > 0)
+        {
+            result.Add(new TextContent(textBuilder.ToString()));
+        }
+
+        return result;
     }
 
     /// <inheritdoc />
@@ -2415,13 +2333,19 @@ public sealed record AgentLoopState
     /// <param name="conversationId">Conversation identifier</param>
     /// <param name="agentName">Name of the agent</param>
     /// <returns>Fresh state ready for first iteration</returns>
+    /// <remarks>
+    /// The messages collection is defensively copied to ensure immutability.
+    /// This prevents bugs where the caller modifies the original collection after state creation.
+    /// </remarks>
     public static AgentLoopState Initial(IReadOnlyList<ChatMessage> messages, string runId, string conversationId, string agentName) => new()
     {
         RunId = runId,
         ConversationId = conversationId,
         AgentName = agentName,
         StartTime = DateTime.UtcNow,
-        CurrentMessages = messages,
+        // Defensive copy: ToList() creates a new list to avoid reference sharing with mutable source.
+        // This is critical for checkpoint integrity - saved states must not change after saving.
+        CurrentMessages = messages.ToList(),
         TurnHistory = ImmutableList<ChatMessage>.Empty,
         Iteration = 0,
         IsTerminated = false,
@@ -2455,6 +2379,10 @@ public sealed record AgentLoopState
     /// Updates the current conversation messages.
     /// Used after adding new messages from LLM or tool results.
     /// </summary>
+    /// <remarks>
+    /// For maximum safety, consider passing a fresh list. This method stores the reference directly
+    /// for performance, as internal callers already provide new list instances.
+    /// </remarks>
     public AgentLoopState WithMessages(IReadOnlyList<ChatMessage> messages) =>
         this with { CurrentMessages = messages };
 

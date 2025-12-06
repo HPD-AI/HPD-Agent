@@ -1,0 +1,94 @@
+{
+  "id": "2c2f8804-e3b5-4ce1-a0a7-8a15a7695aee",
+  "messages": [
+    {
+      "role": "user",
+      "contents": [
+        {
+          "$type": "text",
+          "text": "whoa are you"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "contents": [
+        {
+          "$type": "text",
+          "text": "I am a large language model, trained by Google.\n"
+        }
+      ],
+      "messageId": "gen-1764987941-ZUhU15ZMphDVgF49ay2l"
+    },
+    {
+      "role": "user",
+      "contents": [
+        {
+          "$type": "text",
+          "text": "add 349394 ans 3949394"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "contents": [
+        {
+          "$type": "functionCall",
+          "callId": "tool_Add_noYA3jutwjUQ5Yghd1Yo",
+          "name": "Add",
+          "arguments": {
+            "a": 349394,
+            "b": 3949394,
+            "__raw_json__": {
+              "a": 349394,
+              "b": 3949394
+            }
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "contents": [
+        {
+          "$type": "functionResult",
+          "callId": "tool_Add_noYA3jutwjUQ5Yghd1Yo",
+          "result": 4298788
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "contents": [
+        {
+          "$type": "text",
+          "text": "4298788"
+        }
+      ],
+      "messageId": "gen-1764987977-ieDPOZhrNGIe1E42Yuve"
+    },
+    {
+      "role": "user",
+      "contents": [
+        {
+          "$type": "text",
+          "text": "My name si Einstein"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "contents": [
+        {
+          "$type": "text",
+          "text": "Nice to meet you, Einstein"
+        }
+      ],
+      "messageId": "gen-1764987985-lVLjY7UUUI3SVvEm6Mav"
+    }
+  ],
+  "metadata": {},
+  "createdAt": "2025-12-06T02:25:33.95625Z",
+  "lastActivity": "2025-12-06T02:26:29.546533Z",
+  "conversationId": "630f4be4-8ec6-43f2-bcf4-96e1c8d3ecda"
+}

@@ -74,6 +74,15 @@ export const EventTypes = {
   ITERATION_MESSAGES: 'ITERATION_MESSAGES',
   SCHEMA_CHANGED: 'SCHEMA_CHANGED',
   SCOPING_STATE: 'SCOPING_STATE',
+
+  // Branch Events
+  BRANCH_CREATED: 'BRANCH_CREATED',
+  BRANCH_SWITCHED: 'BRANCH_SWITCHED',
+  BRANCH_DELETED: 'BRANCH_DELETED',
+  BRANCH_RENAMED: 'BRANCH_RENAMED',
+
+  // Thread Copy Event (cross-thread copy)
+  THREAD_COPIED: 'THREAD_COPIED',
 } as const;
 
 export type EventType = (typeof EventTypes)[keyof typeof EventTypes];
@@ -347,6 +356,70 @@ export interface FrontendPluginsRegisteredEvent extends BaseEvent {
 }
 
 // ============================================
+// Branch Events
+// ============================================
+
+export interface BranchCreatedEvent extends BaseEvent {
+  type: typeof EventTypes.BRANCH_CREATED;
+  threadId: string;
+  branchName: string;
+  checkpointId: string;
+  parentCheckpointId: string;
+  forkMessageIndex: number;
+  createdAt: string;
+}
+
+export interface BranchSwitchedEvent extends BaseEvent {
+  type: typeof EventTypes.BRANCH_SWITCHED;
+  threadId: string;
+  previousBranch?: string;
+  newBranch?: string;
+  checkpointId: string;
+  switchedAt: string;
+}
+
+export interface BranchDeletedEvent extends BaseEvent {
+  type: typeof EventTypes.BRANCH_DELETED;
+  threadId: string;
+  branchName: string;
+  checkpointsPruned: number;
+  deletedAt: string;
+}
+
+export interface BranchRenamedEvent extends BaseEvent {
+  type: typeof EventTypes.BRANCH_RENAMED;
+  threadId: string;
+  oldName: string;
+  newName: string;
+  renamedAt: string;
+}
+
+// ============================================
+// Thread Copy Events
+// ============================================
+
+/**
+ * Event raised when a thread is copied from another thread's checkpoint.
+ * Unlike fork (which creates a branch within the same thread), copy creates
+ * a new independent thread with lineage tracking back to the source.
+ */
+export interface ThreadCopiedEvent extends BaseEvent {
+  type: typeof EventTypes.THREAD_COPIED;
+  /** Source thread that was copied from */
+  sourceThreadId: string;
+  /** Newly created thread ID */
+  newThreadId: string;
+  /** Checkpoint in source thread that was copied */
+  sourceCheckpointId: string;
+  /** Root checkpoint ID in the new thread */
+  newCheckpointId: string;
+  /** Message index at the copy point */
+  messageIndex: number;
+  /** When the copy occurred */
+  copiedAt: string;
+}
+
+// ============================================
 // Union Type (Core Events)
 // ============================================
 
@@ -391,7 +464,14 @@ export type AgentEvent =
   // Frontend Tool Events
   | FrontendToolInvokeRequestEvent
   | FrontendToolInvokeResponseEvent
-  | FrontendPluginsRegisteredEvent;
+  | FrontendPluginsRegisteredEvent
+  // Branch Events
+  | BranchCreatedEvent
+  | BranchSwitchedEvent
+  | BranchDeletedEvent
+  | BranchRenamedEvent
+  // Thread Copy Event
+  | ThreadCopiedEvent;
 
 // ============================================
 // Type Guards
@@ -439,4 +519,24 @@ export function isFrontendPluginsRegisteredEvent(
   event: BaseEvent
 ): event is FrontendPluginsRegisteredEvent {
   return event.type === EventTypes.FRONTEND_PLUGINS_REGISTERED;
+}
+
+export function isBranchCreatedEvent(event: BaseEvent): event is BranchCreatedEvent {
+  return event.type === EventTypes.BRANCH_CREATED;
+}
+
+export function isBranchSwitchedEvent(event: BaseEvent): event is BranchSwitchedEvent {
+  return event.type === EventTypes.BRANCH_SWITCHED;
+}
+
+export function isBranchDeletedEvent(event: BaseEvent): event is BranchDeletedEvent {
+  return event.type === EventTypes.BRANCH_DELETED;
+}
+
+export function isBranchRenamedEvent(event: BaseEvent): event is BranchRenamedEvent {
+  return event.type === EventTypes.BRANCH_RENAMED;
+}
+
+export function isThreadCopiedEvent(event: BaseEvent): event is ThreadCopiedEvent {
+  return event.type === EventTypes.THREAD_COPIED;
 }

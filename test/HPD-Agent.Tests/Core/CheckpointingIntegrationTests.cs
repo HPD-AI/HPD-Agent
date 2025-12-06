@@ -2,6 +2,7 @@ using Microsoft.Extensions.AI;
 using Xunit;
 using HPD.Agent;
 using HPD.Agent.Checkpointing;
+using HPD.Agent.Checkpointing.Services;
 using HPD.Agent.Tests.Infrastructure;
 
 namespace HPD.Agent.Tests.Core;
@@ -26,7 +27,12 @@ public class CheckpointingIntegrationTests : AgentTestBase
 
         var config = DefaultConfig();
         config.ThreadStore = checkpointer;
-        config.CheckpointFrequency = CheckpointFrequency.PerIteration;
+        config.DurableExecutionConfig = new DurableExecutionConfig
+        {
+            Enabled = true,
+            Frequency = CheckpointFrequency.PerIteration,
+            Retention = RetentionPolicy.LatestOnly
+        };
 
         var agent = CreateAgent(config, client);
         var thread = new ConversationThread();
@@ -61,7 +67,12 @@ public class CheckpointingIntegrationTests : AgentTestBase
 
         var config = DefaultConfig();
         config.ThreadStore = checkpointer;
-        config.CheckpointFrequency = CheckpointFrequency.PerTurn;
+        config.DurableExecutionConfig = new DurableExecutionConfig
+        {
+            Enabled = true,
+            Frequency = CheckpointFrequency.PerTurn,
+            Retention = RetentionPolicy.LatestOnly
+        };
 
         var agent = CreateAgent(config, client);
         var thread = new ConversationThread();
@@ -313,7 +324,12 @@ public class CheckpointingIntegrationTests : AgentTestBase
 
         var config = DefaultConfig();
         config.ThreadStore = checkpointer;
-        config.CheckpointFrequency = CheckpointFrequency.PerIteration;
+        config.DurableExecutionConfig = new DurableExecutionConfig
+        {
+            Enabled = true,
+            Frequency = CheckpointFrequency.PerIteration,
+            Retention = RetentionPolicy.FullHistory
+        };
 
         var testTool = HPDAIFunctionFactory.Create(
             async (args, ct) => await Task.FromResult("tool result"),
@@ -336,7 +352,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
         await Task.Delay(200);
 
         // Assert: Should have multiple checkpoints in history
-        var history = await checkpointer.GetCheckpointHistoryAsync(thread.Id);
+        var history = await checkpointer.GetCheckpointManifestAsync(thread.Id);
         Assert.True(history.Count >= 2); // At least 2 checkpoints (per iteration + final)
     }
 
@@ -352,7 +368,12 @@ public class CheckpointingIntegrationTests : AgentTestBase
 
         var config = DefaultConfig();
         config.ThreadStore = checkpointer;
-        config.CheckpointFrequency = CheckpointFrequency.PerIteration;
+        config.DurableExecutionConfig = new DurableExecutionConfig
+        {
+            Enabled = true,
+            Frequency = CheckpointFrequency.PerIteration,
+            Retention = RetentionPolicy.FullHistory
+        };
 
         var testTool = HPDAIFunctionFactory.Create(
             async (args, ct) => await Task.FromResult("tool result"),
@@ -372,11 +393,11 @@ public class CheckpointingIntegrationTests : AgentTestBase
 
         await Task.Delay(200);
 
-        // Get checkpoint history
-        var history = await checkpointer.GetCheckpointHistoryAsync(thread.Id);
+        // Get checkpoint history (manifest entries use Step, not full State)
+        var history = await checkpointer.GetCheckpointManifestAsync(thread.Id);
         Assert.True(history.Count >= 2);
 
-        var earlierCheckpointId = history.MinBy(c => c.State.Iteration)!.CheckpointId; // Oldest checkpoint
+        var earlierCheckpointId = history.MinBy(c => c.Step)!.CheckpointId; // Oldest checkpoint
 
         // Act: Load earlier checkpoint
         var restoredThread = await checkpointer.LoadThreadAtCheckpointAsync(
@@ -387,7 +408,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
         Assert.NotNull(restoredThread);
         Assert.NotNull(restoredThread.ExecutionState);
         // Earlier checkpoint should have lower iteration number
-        Assert.True(restoredThread.ExecutionState.Iteration < history.MaxBy(c => c.State.Iteration)!.State.Iteration);
+        Assert.True(restoredThread.ExecutionState.Iteration < history.MaxBy(c => c.Step)!.Step);
     }
 
     //      
@@ -461,7 +482,12 @@ public class CheckpointingIntegrationTests : AgentTestBase
 
         var config = DefaultConfig();
         config.ThreadStore = checkpointer;
-        config.CheckpointFrequency = CheckpointFrequency.PerIteration;
+        config.DurableExecutionConfig = new DurableExecutionConfig
+        {
+            Enabled = true,
+            Frequency = CheckpointFrequency.PerIteration,
+            Retention = RetentionPolicy.LatestOnly
+        };
 
         var step1Tool = HPDAIFunctionFactory.Create(
             async (args, ct) => await Task.FromResult("step1 result"),
@@ -543,8 +569,13 @@ public class CheckpointingIntegrationTests : AgentTestBase
 
         var config = DefaultConfig();
         config.ThreadStore = checkpointer;
-        config.CheckpointFrequency = CheckpointFrequency.PerIteration;
-        config.EnablePendingWrites = true;
+        config.DurableExecutionConfig = new DurableExecutionConfig
+        {
+            Enabled = true,
+            Frequency = CheckpointFrequency.PerIteration,
+            Retention = RetentionPolicy.LatestOnly,
+            EnablePendingWrites = true
+        };
 
         var weatherTool = HPDAIFunctionFactory.Create(
             async (args, ct) => await Task.FromResult("Sunny, 72°F"),
@@ -591,8 +622,13 @@ public class CheckpointingIntegrationTests : AgentTestBase
 
         var config = DefaultConfig();
         config.ThreadStore = checkpointer;
-        config.CheckpointFrequency = CheckpointFrequency.PerIteration;
-        config.EnablePendingWrites = true;
+        config.DurableExecutionConfig = new DurableExecutionConfig
+        {
+            Enabled = true,
+            Frequency = CheckpointFrequency.PerIteration,
+            Retention = RetentionPolicy.LatestOnly,
+            EnablePendingWrites = true
+        };
 
         var step1Tool = HPDAIFunctionFactory.Create(
             async (args, ct) => await Task.FromResult("step1 result"),
@@ -683,8 +719,13 @@ public class CheckpointingIntegrationTests : AgentTestBase
 
         var config = DefaultConfig();
         config.ThreadStore = checkpointer;
-        config.CheckpointFrequency = CheckpointFrequency.PerIteration;
-        config.EnablePendingWrites = true;
+        config.DurableExecutionConfig = new DurableExecutionConfig
+        {
+            Enabled = true,
+            Frequency = CheckpointFrequency.PerIteration,
+            Retention = RetentionPolicy.LatestOnly,
+            EnablePendingWrites = true
+        };
 
         var testTool = HPDAIFunctionFactory.Create(
             async (args, ct) => await Task.FromResult("tool result"),
@@ -731,8 +772,13 @@ public class CheckpointingIntegrationTests : AgentTestBase
 
         var config = DefaultConfig();
         config.ThreadStore = checkpointer;
-        config.CheckpointFrequency = CheckpointFrequency.PerIteration;
-        // Note: EnablePendingWrites defaults to false, so we don't set it
+        config.DurableExecutionConfig = new DurableExecutionConfig
+        {
+            Enabled = true,
+            Frequency = CheckpointFrequency.PerIteration,
+            Retention = RetentionPolicy.LatestOnly
+            // Note: EnablePendingWrites defaults to false
+        };
 
         var testTool = HPDAIFunctionFactory.Create(
             async (args, ct) => await Task.FromResult("tool result"),

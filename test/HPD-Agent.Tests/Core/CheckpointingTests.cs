@@ -292,12 +292,17 @@ public class CheckpointingTests : AgentTestBase
         thread.ExecutionState = state3;
         await checkpointer.SaveThreadAsync(thread);
 
-        // Assert: Should have 3 checkpoints in history
-        var history = await checkpointer.GetCheckpointHistoryAsync(thread.Id);
-        Assert.Equal(3, history.Count);
-        Assert.Equal(2, history[0].State.Iteration); // Newest first
-        Assert.Equal(1, history[1].State.Iteration);
-        Assert.Equal(0, history[2].State.Iteration);
+        // Assert: Should have 4 checkpoints in history (including root checkpoint)
+        var history = await checkpointer.GetCheckpointManifestAsync(thread.Id);
+        Assert.Equal(4, history.Count);
+        // Manifest entries have Step field instead of full State
+        // Order is newest first: [iter2, iter1, iter0, root]
+        Assert.Equal(2, history[0].Step); // Newest first
+        Assert.Equal(1, history[1].Step);
+        Assert.Equal(0, history[2].Step);
+        Assert.Equal(-1, history[3].Step); // Root checkpoint step
+        Assert.Equal(CheckpointSource.Root, history[3].Source); // Distinguish root checkpoint
+        Assert.Equal(-1, history[3].MessageIndex); // Root checkpoint is at messageIndex=-1
     }
 
     [Fact]
@@ -318,7 +323,7 @@ public class CheckpointingTests : AgentTestBase
         await checkpointer.SaveThreadAsync(thread);
 
         // Get the checkpoint ID of the first checkpoint
-        var history = await checkpointer.GetCheckpointHistoryAsync(thread.Id);
+        var history = await checkpointer.GetCheckpointManifestAsync(thread.Id);
         var firstCheckpointId = history[1].CheckpointId; // Second in list (newest first)
 
         // Act: Load specific checkpoint
@@ -335,7 +340,7 @@ public class CheckpointingTests : AgentTestBase
     [Fact]
     public async Task InMemoryCheckpointer_FullHistory_PruneCheckpoints_KeepsLatestN()
     {
-        // Arrange: Checkpointer with 5 checkpoints
+        // Arrange: Checkpointer with 5 checkpoints (plus root = 6 total)
         var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.FullHistory);
         var thread = new ConversationThread();
         await thread.AddMessageAsync(UserMessage("Hello"));
@@ -350,15 +355,16 @@ public class CheckpointingTests : AgentTestBase
             state = state.NextIteration();
         }
 
-        // Act: Prune to keep only 3 latest checkpoints
-        await checkpointer.PruneCheckpointsAsync(thread.Id, keepLatest: 3);
+        // Act: Prune to keep only 4 latest checkpoints (to account for root checkpoint)
+        await checkpointer.PruneCheckpointsAsync(thread.Id, keepLatest: 4);
 
-        // Assert: Should have only 3 checkpoints
-        var history = await checkpointer.GetCheckpointHistoryAsync(thread.Id);
-        Assert.Equal(3, history.Count);
-        Assert.Equal(4, history[0].State.Iteration); // Newest
-        Assert.Equal(3, history[1].State.Iteration);
-        Assert.Equal(2, history[2].State.Iteration);
+        // Assert: Should have 4 checkpoints (3 newest + root is pruned, keeping iter4, iter3, iter2, iter1)
+        var history = await checkpointer.GetCheckpointManifestAsync(thread.Id);
+        Assert.Equal(4, history.Count);
+        Assert.Equal(4, history[0].Step); // Newest
+        Assert.Equal(3, history[1].Step);
+        Assert.Equal(2, history[2].Step);
+        Assert.Equal(1, history[3].Step);
     }
 
     [Fact]
@@ -380,12 +386,12 @@ public class CheckpointingTests : AgentTestBase
         }
 
         // Act: Get only 5 checkpoints
-        var history = await checkpointer.GetCheckpointHistoryAsync(thread.Id, limit: 5);
+        var history = await checkpointer.GetCheckpointManifestAsync(thread.Id, limit: 5);
 
         // Assert: Should return only 5 (newest)
         Assert.Equal(5, history.Count);
-        Assert.Equal(9, history[0].State.Iteration);
-        Assert.Equal(5, history[4].State.Iteration);
+        Assert.Equal(9, history[0].Step);
+        Assert.Equal(5, history[4].Step);
     }
 
     [Fact]
@@ -421,7 +427,7 @@ public class CheckpointingTests : AgentTestBase
         }
 
         // Act: Get checkpoints before cutoff
-        var history = await checkpointer.GetCheckpointHistoryAsync(thread.Id, before: cutoffTime);
+        var history = await checkpointer.GetCheckpointManifestAsync(thread.Id, before: cutoffTime);
 
         // Assert: Should return only checkpoints created before cutoff (3 checkpoints)
         Assert.True(history.Count >= 3);
@@ -880,5 +886,258 @@ public class CheckpointingTests : AgentTestBase
         // Assert: Second load should still have the original data
         Assert.Single(loaded2);
         Assert.Equal("call-1", loaded2[0].CallId);
+    }
+
+    //
+    // FORK FROM CHECKPOINT TESTS (via BranchingService)
+    //
+
+    [Fact]
+    public async Task ForkFromCheckpoint_PreservesMessagesFromSourceCheckpoint()
+    {
+        // Arrange: Create a conversation with multiple messages
+        var store = new InMemoryConversationThreadStore(CheckpointRetentionMode.FullHistory);
+        var branchingService = new HPD.Agent.Checkpointing.Services.Branching(
+            store, new HPD.Agent.Checkpointing.Services.BranchingConfig { Enabled = true });
+        var thread = new ConversationThread();
+
+        // Add first exchange
+        await thread.AddMessageAsync(UserMessage("Hello"));
+        await thread.AddMessageAsync(AssistantMessage("Hi there!"));
+
+        var state1 = AgentLoopState.Initial(
+            await thread.GetMessagesAsync(), "run-1", "conv-1", "TestAgent");
+        thread.ExecutionState = state1;
+        await store.SaveThreadAsync(thread);
+
+        // Add second exchange
+        await thread.AddMessageAsync(UserMessage("My name is Alice"));
+        await thread.AddMessageAsync(AssistantMessage("Nice to meet you, Alice!"));
+
+        var state2 = state1.NextIteration()
+            .WithMessages(await thread.GetMessagesAsync());
+        thread.ExecutionState = state2;
+        await store.SaveThreadAsync(thread);
+
+        // Get the checkpoint after first exchange (should have 2 messages)
+        var history = await store.GetCheckpointManifestAsync(thread.Id);
+        var checkpointAfterFirstExchange = history.First(c => c.MessageIndex == 2);
+
+        // Act: Fork from the checkpoint after first exchange (via BranchingService)
+        var (forkedThread, evt) = await branchingService.ForkFromCheckpointAsync(
+            thread.Id,
+            checkpointAfterFirstExchange.CheckpointId,
+            "edit-branch");
+
+        // Assert: Forked thread should have exactly 2 messages (from first exchange)
+        Assert.Equal(2, forkedThread.MessageCount);
+        var messages = forkedThread.Messages.ToList();
+        Assert.Equal("Hello", messages[0].Text);
+        Assert.Equal("Hi there!", messages[1].Text);
+        Assert.Equal("edit-branch", forkedThread.ActiveBranch);
+        Assert.Equal(2, evt.ForkMessageIndex);
+    }
+
+    [Fact]
+    public async Task ForkFromRootCheckpoint_CreatesEmptyThread()
+    {
+        // Arrange: Create a conversation with messages
+        var store = new InMemoryConversationThreadStore(CheckpointRetentionMode.FullHistory);
+        var branchingService = new HPD.Agent.Checkpointing.Services.Branching(
+            store, new HPD.Agent.Checkpointing.Services.BranchingConfig { Enabled = true });
+        var thread = new ConversationThread();
+
+        await thread.AddMessageAsync(UserMessage("Hello"));
+        await thread.AddMessageAsync(AssistantMessage("Hi!"));
+
+        var state = AgentLoopState.Initial(
+            await thread.GetMessagesAsync(), "run-1", "conv-1", "TestAgent");
+        thread.ExecutionState = state;
+        await store.SaveThreadAsync(thread);
+
+        // Get the root checkpoint (messageIndex = -1)
+        var history = await store.GetCheckpointManifestAsync(thread.Id);
+        var rootCheckpoint = history.First(c => c.MessageIndex == -1);
+
+        // Act: Fork from root checkpoint (via BranchingService)
+        var (forkedThread, evt) = await branchingService.ForkFromCheckpointAsync(
+            thread.Id,
+            rootCheckpoint.CheckpointId,
+            "fresh-start");
+
+        // Assert: Forked thread should have no messages
+        Assert.Equal(0, forkedThread.MessageCount);
+        Assert.Equal("fresh-start", forkedThread.ActiveBranch);
+        Assert.Equal(-1, evt.ForkMessageIndex);
+    }
+
+    [Fact]
+    public async Task ForkFromCheckpoint_AllowsNewMessagesToBeAdded()
+    {
+        // Arrange: Create a conversation and fork
+        var store = new InMemoryConversationThreadStore(CheckpointRetentionMode.FullHistory);
+        var branchingService = new HPD.Agent.Checkpointing.Services.Branching(
+            store, new HPD.Agent.Checkpointing.Services.BranchingConfig { Enabled = true });
+        var thread = new ConversationThread();
+
+        await thread.AddMessageAsync(UserMessage("Hello"));
+        await thread.AddMessageAsync(AssistantMessage("Hi!"));
+
+        var state = AgentLoopState.Initial(
+            await thread.GetMessagesAsync(), "run-1", "conv-1", "TestAgent");
+        thread.ExecutionState = state;
+        await store.SaveThreadAsync(thread);
+
+        var history = await store.GetCheckpointManifestAsync(thread.Id);
+        var rootCheckpoint = history.First(c => c.MessageIndex == -1);
+
+        var (forkedThread, _) = await branchingService.ForkFromCheckpointAsync(
+            thread.Id,
+            rootCheckpoint.CheckpointId,
+            "new-branch");
+
+        // Act: Add new messages to forked thread
+        await forkedThread.AddMessageAsync(UserMessage("Different first message"));
+        await forkedThread.AddMessageAsync(AssistantMessage("Different response"));
+
+        // Assert: Forked thread should have the new messages
+        Assert.Equal(2, forkedThread.MessageCount);
+        Assert.Equal("Different first message", forkedThread.Messages[0].Text);
+        Assert.Equal("Different response", forkedThread.Messages[1].Text);
+    }
+
+    [Fact]
+    public async Task LoadThreadAtCheckpoint_RestoresMessagesFromState()
+    {
+        // Arrange: Create a conversation with multiple checkpoints
+        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.FullHistory);
+        var thread = new ConversationThread();
+        
+        // First exchange
+        await thread.AddMessageAsync(UserMessage("Message 1"));
+        await thread.AddMessageAsync(AssistantMessage("Response 1"));
+        
+        var state1 = AgentLoopState.Initial(
+            await thread.GetMessagesAsync(), "run-1", "conv-1", "TestAgent");
+        thread.ExecutionState = state1;
+        await checkpointer.SaveThreadAsync(thread);
+        
+        // Second exchange
+        await thread.AddMessageAsync(UserMessage("Message 2"));
+        await thread.AddMessageAsync(AssistantMessage("Response 2"));
+        
+        var state2 = state1.NextIteration()
+            .WithMessages(await thread.GetMessagesAsync());
+        thread.ExecutionState = state2;
+        await checkpointer.SaveThreadAsync(thread);
+        
+        // Get checkpoint after first exchange
+        var history = await checkpointer.GetCheckpointManifestAsync(thread.Id);
+        var checkpointWith2Messages = history.First(c => c.MessageIndex == 2);
+        
+        // Act: Load thread at earlier checkpoint
+        var loadedThread = await checkpointer.LoadThreadAtCheckpointAsync(
+            thread.Id,
+            checkpointWith2Messages.CheckpointId);
+        
+        // Assert: Should have only 2 messages
+        Assert.NotNull(loadedThread);
+        Assert.Equal(2, loadedThread.MessageCount);
+        Assert.Equal("Message 1", loadedThread.Messages[0].Text);
+        Assert.Equal("Response 1", loadedThread.Messages[1].Text);
+    }
+
+    [Fact]
+    public async Task CheckpointMessageIndex_MatchesThreadMessageCount()
+    {
+        // Arrange: Create checkpoints at different message counts
+        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.FullHistory);
+        var thread = new ConversationThread();
+        
+        // Save with 0 messages (triggers root checkpoint creation)
+        var state0 = AgentLoopState.Initial(
+            new List<ChatMessage>(), "run-1", "conv-1", "TestAgent");
+        thread.ExecutionState = state0;
+        // Don't save yet - add messages first
+        
+        // Add 2 messages
+        await thread.AddMessageAsync(UserMessage("Hello"));
+        await thread.AddMessageAsync(AssistantMessage("Hi!"));
+        
+        var state1 = AgentLoopState.Initial(
+            await thread.GetMessagesAsync(), "run-1", "conv-1", "TestAgent");
+        thread.ExecutionState = state1;
+        await checkpointer.SaveThreadAsync(thread);
+        
+        // Add 2 more messages
+        await thread.AddMessageAsync(UserMessage("How are you?"));
+        await thread.AddMessageAsync(AssistantMessage("I'm good!"));
+        
+        var state2 = state1.NextIteration()
+            .WithMessages(await thread.GetMessagesAsync());
+        thread.ExecutionState = state2;
+        await checkpointer.SaveThreadAsync(thread);
+        
+        // Act: Get checkpoint history
+        var history = await checkpointer.GetCheckpointManifestAsync(thread.Id);
+        
+        // Assert: Check message indices
+        var messageIndices = history.Select(c => c.MessageIndex).OrderBy(i => i).ToList();
+        Assert.Contains(-1, messageIndices); // Root checkpoint
+        Assert.Contains(2, messageIndices);  // After first exchange
+        Assert.Contains(4, messageIndices);  // After second exchange
+    }
+
+    [Fact]
+    public async Task FindCheckpointForMessageEdit_ReturnsCorrectCheckpoint()
+    {
+        // This simulates the frontend logic for finding which checkpoint to fork from
+        var store = new InMemoryConversationThreadStore(CheckpointRetentionMode.FullHistory);
+        var branchingService = new HPD.Agent.Checkpointing.Services.Branching(
+            store, new HPD.Agent.Checkpointing.Services.BranchingConfig { Enabled = true });
+        var thread = new ConversationThread();
+
+        // Exchange 1: messages 0, 1
+        await thread.AddMessageAsync(UserMessage("Hello"));
+        await thread.AddMessageAsync(AssistantMessage("Hi!"));
+        var state1 = AgentLoopState.Initial(
+            await thread.GetMessagesAsync(), "run-1", "conv-1", "TestAgent");
+        thread.ExecutionState = state1;
+        await store.SaveThreadAsync(thread);
+
+        // Exchange 2: messages 2, 3
+        await thread.AddMessageAsync(UserMessage("My name is Bob"));
+        await thread.AddMessageAsync(AssistantMessage("Nice to meet you Bob!"));
+        var state2 = state1.NextIteration()
+            .WithMessages(await thread.GetMessagesAsync());
+        thread.ExecutionState = state2;
+        await store.SaveThreadAsync(thread);
+
+        var history = await store.GetCheckpointManifestAsync(thread.Id);
+
+        // Scenario 1: Edit message at index 0 (first user message)
+        // Need checkpoint with messageIndex <= 0, so root checkpoint (-1)
+        var editIndex0 = 0;
+        var checkpointForEdit0 = history
+            .OrderByDescending(c => c.MessageIndex)
+            .First(c => c.MessageIndex <= editIndex0);
+        Assert.Equal(-1, checkpointForEdit0.MessageIndex);
+
+        // Scenario 2: Edit message at index 2 (second user message "My name is Bob")
+        // Need checkpoint with messageIndex <= 2, so checkpoint with 2 messages
+        var editIndex2 = 2;
+        var checkpointForEdit2 = history
+            .OrderByDescending(c => c.MessageIndex)
+            .First(c => c.MessageIndex <= editIndex2);
+        Assert.Equal(2, checkpointForEdit2.MessageIndex);
+
+        // Verify forking from these checkpoints gives correct message counts (via BranchingService)
+        var (forked0, _) = await branchingService.ForkFromCheckpointAsync(
+            thread.Id, checkpointForEdit0.CheckpointId, "edit-msg-0");
+        Assert.Equal(0, forked0.MessageCount); // Empty - can add new first message
+
+        var (forked2, _) = await branchingService.ForkFromCheckpointAsync(
+            thread.Id, checkpointForEdit2.CheckpointId, "edit-msg-2");
+        Assert.Equal(2, forked2.MessageCount); // Has first exchange, can add edited second message
     }
 }

@@ -79,6 +79,15 @@ namespace HPD.Agent.Serialization;
 [JsonSerializable(typeof(FrontendTools.JsonContent))]
 [JsonSerializable(typeof(FrontendTools.FrontendToolAugmentation))]
 
+// Branch Events
+[JsonSerializable(typeof(HPD.Agent.Checkpointing.Services.BranchCreatedEvent))]
+[JsonSerializable(typeof(HPD.Agent.Checkpointing.Services.BranchSwitchedEvent))]
+[JsonSerializable(typeof(HPD.Agent.Checkpointing.Services.BranchDeletedEvent))]
+[JsonSerializable(typeof(HPD.Agent.Checkpointing.Services.BranchRenamedEvent))]
+
+// Thread Events (cross-thread operations)
+[JsonSerializable(typeof(HPD.Agent.Checkpointing.Services.ThreadCopiedEvent))]
+
 // Observability Events
 [JsonSerializable(typeof(ScopedToolsVisibleEvent))]
 [JsonSerializable(typeof(ContainerExpandedEvent))]

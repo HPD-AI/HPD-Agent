@@ -1,4 +1,6 @@
 using HPD.Agent;
+using HPD.Agent.Checkpointing;
+using HPD.Agent.Checkpointing.Services;
 using HPD.Agent.Serialization;
 
 /// <summary>
@@ -82,6 +84,22 @@ public class SseEventHandler : IAgentEventHandler
 
             case PermissionDeniedEvent permDenied:
                 Console.WriteLine($"[SSE] Sending {typeName}: {permDenied.Reason}");
+                break;
+
+            case BranchCreatedEvent branchCreated:
+                Console.WriteLine($"[SSE] Sending {typeName}: branch '{branchCreated.BranchName}' from checkpoint {branchCreated.ParentCheckpointId} at message index {branchCreated.ForkMessageIndex}");
+                break;
+
+            case BranchSwitchedEvent branchSwitched:
+                Console.WriteLine($"[SSE] Sending {typeName}: switched to branch '{branchSwitched.NewBranch}' at checkpoint {branchSwitched.CheckpointId}");
+                break;
+
+            case BranchDeletedEvent branchDeleted:
+                Console.WriteLine($"[SSE] Sending {typeName}: deleted branch '{branchDeleted.BranchName}', pruned {branchDeleted.CheckpointsPruned} checkpoints");
+                break;
+
+            case BranchRenamedEvent branchRenamed:
+                Console.WriteLine($"[SSE] Sending {typeName}: renamed branch '{branchRenamed.OldName}' to '{branchRenamed.NewName}'");
                 break;
 
             default:

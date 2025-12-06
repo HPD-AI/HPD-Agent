@@ -1,0 +1,35 @@
+{
+  "id": "2c2f8804-e3b5-4ce1-a0a7-8a15a7695aee",
+  "messages": [
+    {
+      "role": "user",
+      "contents": [
+        {
+          "$type": "text",
+          "text": "who are you"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "contents": [
+        {
+          "$type": "text",
+          "text": "I am a large language model, trained by Google."
+        }
+      ],
+      "messageId": "gen-1764988234-MBW5T8dUUEX0keVhitAy"
+    }
+  ],
+  "metadata": {},
+  "createdAt": "2025-12-06T02:25:33.95625Z",
+  "lastActivity": "2025-12-06T02:30:36.341383Z",
+  "conversationId": "654db73c-8582-4c64-9296-f72a1d7f0914",
+  "currentCheckpointId": "3bbffdbb-97c1-4c2e-895a-6f57d70f9322",
+  "branches": {
+    "edit-1764987998893": "6c20cf20-3178-438c-abee-2790dca75c52",
+    "edit-1764988233841": "3bbffdbb-97c1-4c2e-895a-6f57d70f9322",
+    "main": "3bc56b03-b785-46ca-98f1-f72c7c312b7c"
+  },
+  "activeBranch": "edit-1764988233841"
+}

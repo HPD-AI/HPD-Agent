@@ -2,6 +2,7 @@ using Microsoft.Extensions.AI;
 using Xunit;
 using HPD.Agent;
 using HPD.Agent.Checkpointing;
+using HPD.Agent.Checkpointing.Services;
 using HPD.Agent.Tests.Infrastructure;
 
 namespace HPD.Agent.Tests.Core;
@@ -20,13 +21,18 @@ public class CheckpointingIntegrationTests : AgentTestBase
     public async Task Agent_WithCheckpointer_SavesCheckpointAfterIteration()
     {
         // Arrange: Agent with checkpointer configured
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.LatestOnly);
+        var checkpointer = new InMemoryConversationThreadStore();
         var client = new FakeChatClient();
         client.EnqueueTextResponse("Hello from agent!");
 
         var config = DefaultConfig();
         config.ThreadStore = checkpointer;
-        config.CheckpointFrequency = CheckpointFrequency.PerIteration;
+        config.DurableExecutionConfig = new DurableExecutionConfig
+        {
+            Enabled = true,
+            Frequency = CheckpointFrequency.PerIteration,
+            Retention = RetentionPolicy.LatestOnly
+        };
 
         var agent = CreateAgent(config, client);
         var thread = new ConversationThread();
@@ -55,13 +61,18 @@ public class CheckpointingIntegrationTests : AgentTestBase
     public async Task Agent_WithCheckpointer_PerTurnFrequency_SavesAfterTurnCompletes()
     {
         // Arrange: Agent with PerTurn checkpoint frequency
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.LatestOnly);
+        var checkpointer = new InMemoryConversationThreadStore();
         var client = new FakeChatClient();
         client.EnqueueTextResponse("Response 1");
 
         var config = DefaultConfig();
         config.ThreadStore = checkpointer;
-        config.CheckpointFrequency = CheckpointFrequency.PerTurn;
+        config.DurableExecutionConfig = new DurableExecutionConfig
+        {
+            Enabled = true,
+            Frequency = CheckpointFrequency.PerTurn,
+            Retention = RetentionPolicy.LatestOnly
+        };
 
         var agent = CreateAgent(config, client);
         var thread = new ConversationThread();
@@ -93,7 +104,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
     public async Task Agent_ResumeFromCheckpoint_RestoresExecutionState()
     {
         // Arrange: Create checkpoint mid-execution
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.LatestOnly);
+        var checkpointer = new InMemoryConversationThreadStore();
         var thread = new ConversationThread();
         await thread.AddMessageAsync(UserMessage("Hello"));
 
@@ -153,7 +164,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
         // Expected: Error
 
         // Arrange: Empty thread, no checkpoint, no messages
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.LatestOnly);
+        var checkpointer = new InMemoryConversationThreadStore();
         var client = new FakeChatClient();
         var config = DefaultConfig();
         config.ThreadStore = checkpointer;
@@ -182,7 +193,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
         // Expected: Fresh run
 
         // Arrange: No checkpoint, but messages provided
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.LatestOnly);
+        var checkpointer = new InMemoryConversationThreadStore();
         var client = new FakeChatClient();
         client.EnqueueTextResponse("Fresh run response");
 
@@ -214,7 +225,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
         // Expected: Resume execution
 
         // Arrange: Thread with checkpoint
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.LatestOnly);
+        var checkpointer = new InMemoryConversationThreadStore();
         var thread = new ConversationThread();
         await thread.AddMessageAsync(UserMessage("Hello"));
 
@@ -259,7 +270,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
         // Expected: Error (cannot add messages during mid-execution)
 
         // Arrange: Thread with checkpoint
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.LatestOnly);
+        var checkpointer = new InMemoryConversationThreadStore();
         var thread = new ConversationThread();
         await thread.AddMessageAsync(UserMessage("Hello"));
 
@@ -306,14 +317,19 @@ public class CheckpointingIntegrationTests : AgentTestBase
     public async Task Agent_FullHistoryMode_CreatesMultipleCheckpoints()
     {
         // Arrange: Agent with FullHistory checkpointer
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.FullHistory);
+        var checkpointer = new InMemoryConversationThreadStore();
         var client = new FakeChatClient();
         client.EnqueueToolCall("TestTool", "call-1"); // Iteration 1
         client.EnqueueTextResponse("Final response");   // Iteration 2
 
         var config = DefaultConfig();
         config.ThreadStore = checkpointer;
-        config.CheckpointFrequency = CheckpointFrequency.PerIteration;
+        config.DurableExecutionConfig = new DurableExecutionConfig
+        {
+            Enabled = true,
+            Frequency = CheckpointFrequency.PerIteration,
+            Retention = RetentionPolicy.FullHistory
+        };
 
         var testTool = HPDAIFunctionFactory.Create(
             async (args, ct) => await Task.FromResult("tool result"),
@@ -336,7 +352,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
         await Task.Delay(200);
 
         // Assert: Should have multiple checkpoints in history
-        var history = await checkpointer.GetCheckpointHistoryAsync(thread.Id);
+        var history = await checkpointer.GetCheckpointManifestAsync(thread.Id);
         Assert.True(history.Count >= 2); // At least 2 checkpoints (per iteration + final)
     }
 
@@ -344,7 +360,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
     public async Task Agent_FullHistoryMode_CanLoadPreviousCheckpoint()
     {
         // Arrange: Create agent run with multiple iterations
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.FullHistory);
+        var checkpointer = new InMemoryConversationThreadStore();
         var client = new FakeChatClient();
         client.EnqueueToolCall("TestTool", "call-1");
         client.EnqueueToolCall("TestTool", "call-2");
@@ -352,7 +368,12 @@ public class CheckpointingIntegrationTests : AgentTestBase
 
         var config = DefaultConfig();
         config.ThreadStore = checkpointer;
-        config.CheckpointFrequency = CheckpointFrequency.PerIteration;
+        config.DurableExecutionConfig = new DurableExecutionConfig
+        {
+            Enabled = true,
+            Frequency = CheckpointFrequency.PerIteration,
+            Retention = RetentionPolicy.FullHistory
+        };
 
         var testTool = HPDAIFunctionFactory.Create(
             async (args, ct) => await Task.FromResult("tool result"),
@@ -372,11 +393,11 @@ public class CheckpointingIntegrationTests : AgentTestBase
 
         await Task.Delay(200);
 
-        // Get checkpoint history
-        var history = await checkpointer.GetCheckpointHistoryAsync(thread.Id);
+        // Get checkpoint history (manifest entries use Step, not full State)
+        var history = await checkpointer.GetCheckpointManifestAsync(thread.Id);
         Assert.True(history.Count >= 2);
 
-        var earlierCheckpointId = history.MinBy(c => c.State.Iteration)!.CheckpointId; // Oldest checkpoint
+        var earlierCheckpointId = history.MinBy(c => c.Step)!.CheckpointId; // Oldest checkpoint
 
         // Act: Load earlier checkpoint
         var restoredThread = await checkpointer.LoadThreadAtCheckpointAsync(
@@ -387,7 +408,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
         Assert.NotNull(restoredThread);
         Assert.NotNull(restoredThread.ExecutionState);
         // Earlier checkpoint should have lower iteration number
-        Assert.True(restoredThread.ExecutionState.Iteration < history.MaxBy(c => c.State.Iteration)!.State.Iteration);
+        Assert.True(restoredThread.ExecutionState.Iteration < history.MaxBy(c => c.Step)!.Step);
     }
 
     //      
@@ -398,7 +419,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
     public async Task Agent_StaleCheckpoint_ThrowsValidationError()
     {
         // Arrange: Create checkpoint, then add messages to conversation
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.LatestOnly);
+        var checkpointer = new InMemoryConversationThreadStore();
         var thread = new ConversationThread();
         await thread.AddMessageAsync(UserMessage("Message 1"));
         await thread.AddMessageAsync(AssistantMessage("Response 1"));
@@ -455,13 +476,18 @@ public class CheckpointingIntegrationTests : AgentTestBase
         // Simulate: Agent starts, does some work, crashes, then resumes
 
         // PHASE 1: Initial run (simulate crash mid-execution)
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.LatestOnly);
+        var checkpointer = new InMemoryConversationThreadStore();
         var client1 = new FakeChatClient();
         client1.EnqueueToolCall("Step1", "call-1");
 
         var config = DefaultConfig();
         config.ThreadStore = checkpointer;
-        config.CheckpointFrequency = CheckpointFrequency.PerIteration;
+        config.DurableExecutionConfig = new DurableExecutionConfig
+        {
+            Enabled = true,
+            Frequency = CheckpointFrequency.PerIteration,
+            Retention = RetentionPolicy.LatestOnly
+        };
 
         var step1Tool = HPDAIFunctionFactory.Create(
             async (args, ct) => await Task.FromResult("step1 result"),
@@ -535,7 +561,7 @@ public class CheckpointingIntegrationTests : AgentTestBase
         // Test that successful function results are saved as pending writes during execution
 
         // Arrange
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.LatestOnly);
+        var checkpointer = new InMemoryConversationThreadStore();
         var client = new FakeChatClient();
         client.EnqueueToolCall("GetWeather", "call-1");
         client.EnqueueToolCall("GetNews", "call-2");
@@ -543,8 +569,13 @@ public class CheckpointingIntegrationTests : AgentTestBase
 
         var config = DefaultConfig();
         config.ThreadStore = checkpointer;
-        config.CheckpointFrequency = CheckpointFrequency.PerIteration;
-        config.EnablePendingWrites = true;
+        config.DurableExecutionConfig = new DurableExecutionConfig
+        {
+            Enabled = true,
+            Frequency = CheckpointFrequency.PerIteration,
+            Retention = RetentionPolicy.LatestOnly,
+            EnablePendingWrites = true
+        };
 
         var weatherTool = HPDAIFunctionFactory.Create(
             async (args, ct) => await Task.FromResult("Sunny, 72°F"),
@@ -585,14 +616,19 @@ public class CheckpointingIntegrationTests : AgentTestBase
         // Test that pending writes are restored and loaded into state on resume
 
         // PHASE 1: Run agent and manually save pending writes before crash
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.LatestOnly);
+        var checkpointer = new InMemoryConversationThreadStore();
         var client1 = new FakeChatClient();
         client1.EnqueueToolCall("Step1", "call-1");
 
         var config = DefaultConfig();
         config.ThreadStore = checkpointer;
-        config.CheckpointFrequency = CheckpointFrequency.PerIteration;
-        config.EnablePendingWrites = true;
+        config.DurableExecutionConfig = new DurableExecutionConfig
+        {
+            Enabled = true,
+            Frequency = CheckpointFrequency.PerIteration,
+            Retention = RetentionPolicy.LatestOnly,
+            EnablePendingWrites = true
+        };
 
         var step1Tool = HPDAIFunctionFactory.Create(
             async (args, ct) => await Task.FromResult("step1 result"),
@@ -676,15 +712,20 @@ public class CheckpointingIntegrationTests : AgentTestBase
         // Test that pending writes are deleted after successful checkpoint
 
         // Arrange
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.LatestOnly);
+        var checkpointer = new InMemoryConversationThreadStore();
         var client = new FakeChatClient();
         client.EnqueueToolCall("TestTool", "call-1");
         client.EnqueueTextResponse("Done");
 
         var config = DefaultConfig();
         config.ThreadStore = checkpointer;
-        config.CheckpointFrequency = CheckpointFrequency.PerIteration;
-        config.EnablePendingWrites = true;
+        config.DurableExecutionConfig = new DurableExecutionConfig
+        {
+            Enabled = true,
+            Frequency = CheckpointFrequency.PerIteration,
+            Retention = RetentionPolicy.LatestOnly,
+            EnablePendingWrites = true
+        };
 
         var testTool = HPDAIFunctionFactory.Create(
             async (args, ct) => await Task.FromResult("tool result"),
@@ -724,15 +765,20 @@ public class CheckpointingIntegrationTests : AgentTestBase
         // Test that pending writes are NOT saved when EnablePendingWrites is false (default)
 
         // Arrange
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.LatestOnly);
+        var checkpointer = new InMemoryConversationThreadStore();
         var client = new FakeChatClient();
         client.EnqueueToolCall("TestTool", "call-1");
         client.EnqueueTextResponse("Done");
 
         var config = DefaultConfig();
         config.ThreadStore = checkpointer;
-        config.CheckpointFrequency = CheckpointFrequency.PerIteration;
-        // Note: EnablePendingWrites defaults to false, so we don't set it
+        config.DurableExecutionConfig = new DurableExecutionConfig
+        {
+            Enabled = true,
+            Frequency = CheckpointFrequency.PerIteration,
+            Retention = RetentionPolicy.LatestOnly
+            // Note: EnablePendingWrites defaults to false
+        };
 
         var testTool = HPDAIFunctionFactory.Create(
             async (args, ct) => await Task.FromResult("tool result"),

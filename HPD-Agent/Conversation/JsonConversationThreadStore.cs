@@ -1,10 +1,11 @@
 using System.Text.Json;
+using Microsoft.Extensions.AI;
 
 namespace HPD.Agent.Checkpointing;
 
 /// <summary>
-/// File-based conversation thread store using JSON files.
-/// Persists conversation threads to disk for durability across process restarts.
+/// File-based checkpoint store using JSON files.
+/// Stores full checkpoint history to disk for durability across process restarts.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -12,8 +13,7 @@ namespace HPD.Agent.Checkpointing;
 /// <code>
 /// {basePath}/
 /// ├── threads/
-/// │   ├── {threadId}.json              (LatestOnly mode)
-/// │   └── {threadId}/                  (FullHistory mode)
+/// │   └── {threadId}/
 /// │       ├── manifest.json
 /// │       ├── {checkpointId}.json
 /// │       └── ...
@@ -26,6 +26,9 @@ namespace HPD.Agent.Checkpointing;
 /// Uses atomic writes (write to temp file, then rename) to prevent corruption.
 /// File locking is used for concurrent access safety within the same process.
 /// </para>
+/// <para>
+/// For simple single-state storage without history, use <see cref="JsonThreadStore"/>.
+/// </para>
 /// </remarks>
 public class JsonConversationThreadStore : ICheckpointStore
 {
@@ -34,207 +37,177 @@ public class JsonConversationThreadStore : ICheckpointStore
     private readonly string _pendingPath;
     private readonly object _lock = new();
 
-    /// <inheritdoc />
-    public CheckpointRetentionMode RetentionMode { get; }
-
     /// <summary>
-    /// Creates a new JSON-based conversation thread store.
+    /// Creates a new JSON-based checkpoint store.
     /// </summary>
     /// <param name="basePath">Base directory for storing checkpoint files. Will be created if it doesn't exist.</param>
-    /// <param name="retentionMode">Checkpoint retention mode (LatestOnly or FullHistory).</param>
-    public JsonConversationThreadStore(
-        string basePath,
-        CheckpointRetentionMode retentionMode = CheckpointRetentionMode.LatestOnly)
+    public JsonConversationThreadStore(string basePath)
     {
         _basePath = basePath ?? throw new ArgumentNullException(nameof(basePath));
-        RetentionMode = retentionMode;
 
         _threadsPath = Path.Combine(_basePath, "threads");
         _pendingPath = Path.Combine(_basePath, "pending");
 
-        // Ensure directories exist
         Directory.CreateDirectory(_threadsPath);
         Directory.CreateDirectory(_pendingPath);
     }
 
-    /// <inheritdoc />
     public Task<ConversationThread?> LoadThreadAsync(
         string threadId,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(threadId);
 
-        if (RetentionMode == CheckpointRetentionMode.LatestOnly)
-        {
-            var filePath = GetThreadFilePath(threadId);
+        var threadDir = GetThreadDirectoryPath(threadId);
+        var manifestPath = Path.Combine(threadDir, "manifest.json");
 
-            if (!File.Exists(filePath))
+        if (!File.Exists(manifestPath))
+            return Task.FromResult<ConversationThread?>(null);
+
+        lock (_lock)
+        {
+            var manifest = LoadManifest(manifestPath);
+            if (manifest == null || manifest.Checkpoints.Count == 0)
                 return Task.FromResult<ConversationThread?>(null);
 
-            lock (_lock)
-            {
-                var json = File.ReadAllText(filePath);
-                var snapshot = JsonSerializer.Deserialize(json, HPDJsonContext.Default.ConversationThreadSnapshot);
+            // Get latest checkpoint (first in list, sorted newest first)
+            var latest = manifest.Checkpoints[0];
+            var checkpointPath = Path.Combine(threadDir, $"{latest.CheckpointId}.json");
 
-                if (snapshot == null)
-                    return Task.FromResult<ConversationThread?>(null);
-
-                var thread = ConversationThread.Deserialize(snapshot, null);
-                return Task.FromResult<ConversationThread?>(thread);
-            }
-        }
-        else
-        {
-            // FullHistory: Load manifest and get latest checkpoint
-            var threadDir = GetThreadDirectoryPath(threadId);
-            var manifestPath = Path.Combine(threadDir, "manifest.json");
-
-            if (!File.Exists(manifestPath))
+            if (!File.Exists(checkpointPath))
                 return Task.FromResult<ConversationThread?>(null);
 
-            lock (_lock)
-            {
-                var manifestJson = File.ReadAllText(manifestPath);
-                var manifest = JsonSerializer.Deserialize<CheckpointManifest>(manifestJson);
+            var json = File.ReadAllText(checkpointPath);
+            var checkpoint = JsonSerializer.Deserialize(json, HPDJsonContext.Default.ExecutionCheckpoint);
+            if (checkpoint == null)
+                return Task.FromResult<ConversationThread?>(null);
 
-                if (manifest == null || manifest.Checkpoints.Count == 0)
-                    return Task.FromResult<ConversationThread?>(null);
-
-                // Get latest checkpoint (first in list, sorted newest first)
-                var latestId = manifest.Checkpoints[0].CheckpointId;
-                var checkpointPath = Path.Combine(threadDir, $"{latestId}.json");
-
-                if (!File.Exists(checkpointPath))
-                    return Task.FromResult<ConversationThread?>(null);
-
-                var json = File.ReadAllText(checkpointPath);
-                var snapshot = JsonSerializer.Deserialize(json, HPDJsonContext.Default.ConversationThreadSnapshot);
-
-                if (snapshot == null)
-                    return Task.FromResult<ConversationThread?>(null);
-
-                var thread = ConversationThread.Deserialize(snapshot, null);
-                return Task.FromResult<ConversationThread?>(thread);
-            }
+            var thread = ConversationThread.FromExecutionCheckpoint(checkpoint);
+            return Task.FromResult<ConversationThread?>(thread);
         }
     }
 
-    /// <inheritdoc />
     public Task SaveThreadAsync(
         ConversationThread thread,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(thread);
 
-        var snapshot = thread.Serialize(null);
-        var json = JsonSerializer.Serialize(snapshot, HPDJsonContext.Default.ConversationThreadSnapshot);
+        var threadDir = GetThreadDirectoryPath(thread.Id);
+        Directory.CreateDirectory(threadDir);
 
-        if (RetentionMode == CheckpointRetentionMode.LatestOnly)
+        var checkpointId = Guid.NewGuid().ToString();
+        var checkpointPath = Path.Combine(threadDir, $"{checkpointId}.json");
+
+        // Use ExecutionCheckpoint for durable execution (includes ExecutionState)
+        var checkpoint = thread.ToExecutionCheckpoint();
+        var json = JsonSerializer.Serialize(checkpoint, HPDJsonContext.Default.ExecutionCheckpoint);
+
+        lock (_lock)
         {
-            var filePath = GetThreadFilePath(thread.Id);
-            WriteAtomically(filePath, json);
-        }
-        else
-        {
-            // FullHistory: Create new checkpoint file and update manifest
-            var threadDir = GetThreadDirectoryPath(thread.Id);
-            Directory.CreateDirectory(threadDir);
+            var manifestPath = Path.Combine(threadDir, "manifest.json");
+            var manifest = LoadOrCreateManifest(manifestPath);
 
-            var checkpointId = Guid.NewGuid().ToString();
-            var checkpointPath = Path.Combine(threadDir, $"{checkpointId}.json");
-
-            lock (_lock)
+            // If no checkpoints exist yet, create root checkpoint (messageIndex=-1)
+            string? parentCheckpointId = null;
+            if (manifest.Checkpoints.Count == 0)
             {
-                // Write checkpoint file
-                WriteAtomically(checkpointPath, json);
-
-                // Update manifest
-                var manifestPath = Path.Combine(threadDir, "manifest.json");
-                var manifest = LoadOrCreateManifest(manifestPath);
-
-                var entry = new CheckpointManifestEntry
-                {
-                    CheckpointId = checkpointId,
-                    CreatedAt = DateTime.UtcNow,
-                    Step = thread.ExecutionState?.Metadata?.Step ?? -1,
-                    Source = thread.ExecutionState?.Metadata?.Source ?? CheckpointSource.Loop
-                };
-
-                // Insert at beginning (newest first)
-                manifest.Checkpoints.Insert(0, entry);
-                manifest.LastUpdated = DateTime.UtcNow;
-
-                var manifestJson = JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true });
-                WriteAtomically(manifestPath, manifestJson);
+                parentCheckpointId = CreateRootCheckpoint(threadDir, thread.Id, manifest);
             }
+
+            // Write checkpoint file
+            WriteAtomically(checkpointPath, json);
+
+            // Create manifest entry
+            var entry = new CheckpointManifestEntry
+            {
+                CheckpointId = checkpointId,
+                CreatedAt = DateTime.UtcNow,
+                Step = thread.ExecutionState?.Iteration ?? -1,
+                Source = thread.ExecutionState?.Metadata?.Source ?? CheckpointSource.Loop,
+                ParentCheckpointId = parentCheckpointId,
+                MessageIndex = thread.MessageCount,
+                IsSnapshot = false  // Full checkpoint with ExecutionState
+            };
+
+            manifest.Checkpoints.Insert(0, entry);
+
+            manifest.LastUpdated = DateTime.UtcNow;
+
+            var manifestJson = JsonSerializer.Serialize(manifest, HPDJsonContext.Default.CheckpointManifest);
+            WriteAtomically(manifestPath, manifestJson);
         }
 
         return Task.CompletedTask;
     }
 
-    /// <inheritdoc />
+    private string CreateRootCheckpoint(string threadDir, string threadId, CheckpointManifest manifest)
+    {
+        var rootCheckpointId = Guid.NewGuid().ToString();
+        var rootEntry = new CheckpointManifestEntry
+        {
+            CheckpointId = rootCheckpointId,
+            CreatedAt = DateTime.UtcNow,
+            Step = -1,
+            Source = CheckpointSource.Root,
+            ParentCheckpointId = null,
+            MessageIndex = -1,
+            IsSnapshot = false
+        };
+
+        var rootSnapshot = new ConversationThreadSnapshot
+        {
+            Id = threadId,
+            Messages = new List<ChatMessage>(),
+            Metadata = new Dictionary<string, object>(),
+            CreatedAt = DateTime.UtcNow,
+            LastActivity = DateTime.UtcNow
+        };
+
+        var rootJson = JsonSerializer.Serialize(rootSnapshot, HPDJsonContext.Default.ConversationThreadSnapshot);
+        var rootPath = Path.Combine(threadDir, $"{rootCheckpointId}.json");
+        WriteAtomically(rootPath, rootJson);
+
+        manifest.Checkpoints.Add(rootEntry);
+        return rootCheckpointId;
+    }
+
     public Task<List<string>> ListThreadIdsAsync(CancellationToken cancellationToken = default)
     {
         var threadIds = new List<string>();
 
-        if (RetentionMode == CheckpointRetentionMode.LatestOnly)
+        if (Directory.Exists(_threadsPath))
         {
-            if (Directory.Exists(_threadsPath))
-            {
-                var files = Directory.GetFiles(_threadsPath, "*.json");
-                threadIds.AddRange(files.Select(f => Path.GetFileNameWithoutExtension(f)));
-            }
-        }
-        else
-        {
-            if (Directory.Exists(_threadsPath))
-            {
-                var directories = Directory.GetDirectories(_threadsPath);
-                threadIds.AddRange(directories.Select(d => Path.GetFileName(d)));
-            }
+            var directories = Directory.GetDirectories(_threadsPath);
+            threadIds.AddRange(directories.Select(d => Path.GetFileName(d)));
         }
 
         return Task.FromResult(threadIds);
     }
 
-    /// <inheritdoc />
     public Task DeleteThreadAsync(string threadId, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(threadId);
 
         lock (_lock)
         {
-            if (RetentionMode == CheckpointRetentionMode.LatestOnly)
-            {
-                var filePath = GetThreadFilePath(threadId);
-                if (File.Exists(filePath))
-                    File.Delete(filePath);
-            }
-            else
-            {
-                var threadDir = GetThreadDirectoryPath(threadId);
-                if (Directory.Exists(threadDir))
-                    Directory.Delete(threadDir, recursive: true);
-            }
+            var threadDir = GetThreadDirectoryPath(threadId);
+            if (Directory.Exists(threadDir))
+                Directory.Delete(threadDir, recursive: true);
 
-            // Also clean up any pending writes for this thread
             CleanupPendingWritesForThread(threadId);
         }
 
         return Task.CompletedTask;
     }
 
-    // ===== Full History Methods =====
+    // ===== Checkpoint Access Methods =====
 
-    /// <inheritdoc />
     public Task<ConversationThread?> LoadThreadAtCheckpointAsync(
         string threadId,
         string checkpointId,
         CancellationToken cancellationToken = default)
     {
-        if (RetentionMode != CheckpointRetentionMode.FullHistory)
-            throw new NotSupportedException("LoadThreadAtCheckpointAsync requires RetentionMode.FullHistory");
-
         ArgumentException.ThrowIfNullOrWhiteSpace(threadId);
         ArgumentException.ThrowIfNullOrWhiteSpace(checkpointId);
 
@@ -247,41 +220,79 @@ public class JsonConversationThreadStore : ICheckpointStore
         lock (_lock)
         {
             var json = File.ReadAllText(checkpointPath);
-            var snapshot = JsonSerializer.Deserialize(json, HPDJsonContext.Default.ConversationThreadSnapshot);
-
-            if (snapshot == null)
+            var checkpoint = JsonSerializer.Deserialize(json, HPDJsonContext.Default.ExecutionCheckpoint);
+            if (checkpoint == null)
                 return Task.FromResult<ConversationThread?>(null);
 
-            var thread = ConversationThread.Deserialize(snapshot, null);
+            var thread = ConversationThread.FromExecutionCheckpoint(checkpoint);
             return Task.FromResult<ConversationThread?>(thread);
         }
     }
 
-    /// <inheritdoc />
-    public Task<List<CheckpointTuple>> GetCheckpointHistoryAsync(
+#pragma warning disable CS0618 // BranchName is obsolete but used internally for backward compatibility
+    public Task SaveThreadAtCheckpointAsync(
+        ConversationThread thread,
+        string checkpointId,
+        CheckpointMetadata metadata,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(thread);
+        ArgumentException.ThrowIfNullOrWhiteSpace(checkpointId);
+        ArgumentNullException.ThrowIfNull(metadata);
+
+        var threadDir = GetThreadDirectoryPath(thread.Id);
+        Directory.CreateDirectory(threadDir);
+
+        var snapshot = thread.Serialize(null);
+        var json = JsonSerializer.Serialize(snapshot, HPDJsonContext.Default.ConversationThreadSnapshot);
+        var checkpointPath = Path.Combine(threadDir, $"{checkpointId}.json");
+
+        lock (_lock)
+        {
+            WriteAtomically(checkpointPath, json);
+
+            var manifestPath = Path.Combine(threadDir, "manifest.json");
+            var manifest = LoadOrCreateManifest(manifestPath);
+
+            var entry = new CheckpointManifestEntry
+            {
+                CheckpointId = checkpointId,
+                CreatedAt = DateTime.UtcNow,
+                Step = metadata.Step,
+                Source = metadata.Source,
+                ParentCheckpointId = metadata.ParentCheckpointId,
+                MessageIndex = metadata.MessageIndex
+            };
+
+            manifest.Checkpoints.Insert(0, entry);
+            manifest.LastUpdated = DateTime.UtcNow;
+
+            var manifestJson = JsonSerializer.Serialize(manifest, HPDJsonContext.Default.CheckpointManifest);
+            WriteAtomically(manifestPath, manifestJson);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task<List<CheckpointManifestEntry>> GetCheckpointManifestAsync(
         string threadId,
         int? limit = null,
         DateTime? before = null,
         CancellationToken cancellationToken = default)
     {
-        if (RetentionMode != CheckpointRetentionMode.FullHistory)
-            throw new NotSupportedException("GetCheckpointHistoryAsync requires RetentionMode.FullHistory");
-
         ArgumentException.ThrowIfNullOrWhiteSpace(threadId);
 
         var threadDir = GetThreadDirectoryPath(threadId);
         var manifestPath = Path.Combine(threadDir, "manifest.json");
 
         if (!File.Exists(manifestPath))
-            return Task.FromResult(new List<CheckpointTuple>());
+            return Task.FromResult(new List<CheckpointManifestEntry>());
 
         lock (_lock)
         {
-            var manifestJson = File.ReadAllText(manifestPath);
-            var manifest = JsonSerializer.Deserialize<CheckpointManifest>(manifestJson);
-
+            var manifest = LoadManifest(manifestPath);
             if (manifest == null)
-                return Task.FromResult(new List<CheckpointTuple>());
+                return Task.FromResult(new List<CheckpointManifestEntry>());
 
             var query = manifest.Checkpoints.AsEnumerable();
 
@@ -291,51 +302,93 @@ public class JsonConversationThreadStore : ICheckpointStore
             if (limit.HasValue)
                 query = query.Take(limit.Value);
 
-            // Load full checkpoint data for each entry
-            var result = new List<CheckpointTuple>();
-            foreach (var entry in query)
-            {
-                var checkpointPath = Path.Combine(threadDir, $"{entry.CheckpointId}.json");
-                if (!File.Exists(checkpointPath))
-                    continue;
-
-                var json = File.ReadAllText(checkpointPath);
-                var snapshot = JsonSerializer.Deserialize(json, HPDJsonContext.Default.ConversationThreadSnapshot);
-
-                if (snapshot == null)
-                    continue;
-
-                var thread = ConversationThread.Deserialize(snapshot, null);
-
-                if (thread.ExecutionState == null)
-                    continue;
-
-                result.Add(new CheckpointTuple
-                {
-                    CheckpointId = entry.CheckpointId,
-                    CreatedAt = entry.CreatedAt,
-                    State = thread.ExecutionState,
-                    Metadata = thread.ExecutionState.Metadata ?? new CheckpointMetadata
-                    {
-                        Source = entry.Source,
-                        Step = entry.Step
-                    }
-                });
-            }
-
-            return Task.FromResult(result);
+            return Task.FromResult(query.ToList());
         }
     }
 
-    /// <inheritdoc />
+    public Task UpdateCheckpointManifestEntryAsync(
+        string threadId,
+        string checkpointId,
+        Action<CheckpointManifestEntry> update,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(threadId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(checkpointId);
+        ArgumentNullException.ThrowIfNull(update);
+
+        var threadDir = GetThreadDirectoryPath(threadId);
+        var manifestPath = Path.Combine(threadDir, "manifest.json");
+
+        if (!File.Exists(manifestPath))
+            return Task.CompletedTask;
+
+        lock (_lock)
+        {
+            var manifest = LoadManifest(manifestPath);
+            if (manifest == null)
+                return Task.CompletedTask;
+
+            var entry = manifest.Checkpoints.FirstOrDefault(c => c.CheckpointId == checkpointId);
+            if (entry == null)
+                return Task.CompletedTask;
+
+            update(entry);
+
+            manifest.LastUpdated = DateTime.UtcNow;
+            var updatedJson = JsonSerializer.Serialize(manifest, HPDJsonContext.Default.CheckpointManifest);
+            WriteAtomically(manifestPath, updatedJson);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    // ===== Cleanup Methods =====
+
+    public Task DeleteCheckpointsAsync(
+        string threadId,
+        IEnumerable<string> checkpointIds,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(threadId);
+
+        var idsToDelete = checkpointIds.ToHashSet();
+        if (idsToDelete.Count == 0)
+            return Task.CompletedTask;
+
+        var threadDir = GetThreadDirectoryPath(threadId);
+        var manifestPath = Path.Combine(threadDir, "manifest.json");
+
+        if (!File.Exists(manifestPath))
+            return Task.CompletedTask;
+
+        lock (_lock)
+        {
+            var manifest = LoadManifest(manifestPath);
+            if (manifest == null)
+                return Task.CompletedTask;
+
+            foreach (var id in idsToDelete)
+            {
+                var checkpointPath = Path.Combine(threadDir, $"{id}.json");
+                if (File.Exists(checkpointPath))
+                    File.Delete(checkpointPath);
+            }
+
+            manifest.Checkpoints.RemoveAll(c => idsToDelete.Contains(c.CheckpointId));
+            manifest.LastUpdated = DateTime.UtcNow;
+
+            var updatedJson = JsonSerializer.Serialize(manifest, HPDJsonContext.Default.CheckpointManifest);
+            WriteAtomically(manifestPath, updatedJson);
+        }
+
+        return Task.CompletedTask;
+    }
+
     public Task PruneCheckpointsAsync(
         string threadId,
         int keepLatest = 10,
         CancellationToken cancellationToken = default)
     {
-        if (RetentionMode != CheckpointRetentionMode.FullHistory)
-            return Task.CompletedTask;
-
         ArgumentException.ThrowIfNullOrWhiteSpace(threadId);
 
         var threadDir = GetThreadDirectoryPath(threadId);
@@ -346,13 +399,10 @@ public class JsonConversationThreadStore : ICheckpointStore
 
         lock (_lock)
         {
-            var manifestJson = File.ReadAllText(manifestPath);
-            var manifest = JsonSerializer.Deserialize<CheckpointManifest>(manifestJson);
-
+            var manifest = LoadManifest(manifestPath);
             if (manifest == null || manifest.Checkpoints.Count <= keepLatest)
                 return Task.CompletedTask;
 
-            // Get checkpoints to delete (oldest ones beyond keepLatest)
             var toDelete = manifest.Checkpoints.Skip(keepLatest).ToList();
 
             foreach (var entry in toDelete)
@@ -362,79 +412,53 @@ public class JsonConversationThreadStore : ICheckpointStore
                     File.Delete(checkpointPath);
             }
 
-            // Update manifest
             manifest.Checkpoints = manifest.Checkpoints.Take(keepLatest).ToList();
             manifest.LastUpdated = DateTime.UtcNow;
 
-            var updatedManifestJson = JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true });
+            var updatedManifestJson = JsonSerializer.Serialize(manifest, HPDJsonContext.Default.CheckpointManifest);
             WriteAtomically(manifestPath, updatedManifestJson);
         }
 
         return Task.CompletedTask;
     }
 
-    /// <inheritdoc />
     public Task DeleteOlderThanAsync(DateTime cutoff, CancellationToken cancellationToken = default)
     {
         lock (_lock)
         {
-            if (RetentionMode == CheckpointRetentionMode.LatestOnly)
+            if (!Directory.Exists(_threadsPath))
+                return Task.CompletedTask;
+
+            foreach (var threadDir in Directory.GetDirectories(_threadsPath))
             {
-                if (!Directory.Exists(_threadsPath))
-                    return Task.CompletedTask;
+                var manifestPath = Path.Combine(threadDir, "manifest.json");
+                if (!File.Exists(manifestPath))
+                    continue;
 
-                foreach (var filePath in Directory.GetFiles(_threadsPath, "*.json"))
+                var manifest = LoadManifest(manifestPath);
+                if (manifest == null)
+                    continue;
+
+                var toDelete = manifest.Checkpoints.Where(c => c.CreatedAt < cutoff).ToList();
+
+                foreach (var entry in toDelete)
                 {
-                    var json = File.ReadAllText(filePath);
-                    var snapshot = JsonSerializer.Deserialize(json, HPDJsonContext.Default.ConversationThreadSnapshot);
-
-                    if (snapshot != null && snapshot.LastActivity < cutoff)
-                    {
-                        File.Delete(filePath);
-                    }
+                    var checkpointPath = Path.Combine(threadDir, $"{entry.CheckpointId}.json");
+                    if (File.Exists(checkpointPath))
+                        File.Delete(checkpointPath);
                 }
-            }
-            else
-            {
-                if (!Directory.Exists(_threadsPath))
-                    return Task.CompletedTask;
 
-                foreach (var threadDir in Directory.GetDirectories(_threadsPath))
+                manifest.Checkpoints = manifest.Checkpoints.Where(c => c.CreatedAt >= cutoff).ToList();
+
+                if (manifest.Checkpoints.Count == 0)
                 {
-                    var manifestPath = Path.Combine(threadDir, "manifest.json");
-                    if (!File.Exists(manifestPath))
-                        continue;
-
-                    var manifestJson = File.ReadAllText(manifestPath);
-                    var manifest = JsonSerializer.Deserialize<CheckpointManifest>(manifestJson);
-
-                    if (manifest == null)
-                        continue;
-
-                    // Remove checkpoints older than cutoff
-                    var toDelete = manifest.Checkpoints.Where(c => c.CreatedAt < cutoff).ToList();
-
-                    foreach (var entry in toDelete)
-                    {
-                        var checkpointPath = Path.Combine(threadDir, $"{entry.CheckpointId}.json");
-                        if (File.Exists(checkpointPath))
-                            File.Delete(checkpointPath);
-                    }
-
-                    manifest.Checkpoints = manifest.Checkpoints.Where(c => c.CreatedAt >= cutoff).ToList();
-
-                    if (manifest.Checkpoints.Count == 0)
-                    {
-                        // No checkpoints left, delete the whole thread directory
-                        Directory.Delete(threadDir, recursive: true);
-                    }
-                    else
-                    {
-                        // Update manifest
-                        manifest.LastUpdated = DateTime.UtcNow;
-                        var updatedManifestJson = JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true });
-                        WriteAtomically(manifestPath, updatedManifestJson);
-                    }
+                    Directory.Delete(threadDir, recursive: true);
+                }
+                else
+                {
+                    manifest.LastUpdated = DateTime.UtcNow;
+                    var updatedManifestJson = JsonSerializer.Serialize(manifest, HPDJsonContext.Default.CheckpointManifest);
+                    WriteAtomically(manifestPath, updatedManifestJson);
                 }
             }
         }
@@ -442,98 +466,54 @@ public class JsonConversationThreadStore : ICheckpointStore
         return Task.CompletedTask;
     }
 
-    /// <inheritdoc />
     public Task<int> DeleteInactiveThreadsAsync(
         TimeSpan inactivityThreshold,
         bool dryRun = false,
         CancellationToken cancellationToken = default)
     {
         var cutoff = DateTime.UtcNow - inactivityThreshold;
-        var count = 0;
+        var toDelete = new List<string>();
 
         lock (_lock)
         {
-            if (RetentionMode == CheckpointRetentionMode.LatestOnly)
+            if (!Directory.Exists(_threadsPath))
+                return Task.FromResult(0);
+
+            foreach (var threadDir in Directory.GetDirectories(_threadsPath))
             {
-                if (!Directory.Exists(_threadsPath))
-                    return Task.FromResult(0);
+                var manifestPath = Path.Combine(threadDir, "manifest.json");
+                if (!File.Exists(manifestPath))
+                    continue;
 
-                var toDelete = new List<string>();
-
-                foreach (var filePath in Directory.GetFiles(_threadsPath, "*.json"))
+                var manifest = LoadManifest(manifestPath);
+                if (manifest == null || manifest.Checkpoints.Count == 0)
                 {
-                    var json = File.ReadAllText(filePath);
-                    var snapshot = JsonSerializer.Deserialize(json, HPDJsonContext.Default.ConversationThreadSnapshot);
-
-                    if (snapshot != null && snapshot.LastActivity < cutoff)
-                    {
-                        toDelete.Add(filePath);
-                    }
+                    toDelete.Add(threadDir);
+                    continue;
                 }
 
-                count = toDelete.Count;
-
-                if (!dryRun)
+                if (manifest.Checkpoints[0].CreatedAt < cutoff)
                 {
-                    foreach (var filePath in toDelete)
-                    {
-                        File.Delete(filePath);
-
-                        // Clean up pending writes
-                        var threadId = Path.GetFileNameWithoutExtension(filePath);
-                        CleanupPendingWritesForThread(threadId);
-                    }
+                    toDelete.Add(threadDir);
                 }
             }
-            else
+
+            if (!dryRun)
             {
-                if (!Directory.Exists(_threadsPath))
-                    return Task.FromResult(0);
-
-                var toDelete = new List<string>();
-
-                foreach (var threadDir in Directory.GetDirectories(_threadsPath))
+                foreach (var threadDir in toDelete)
                 {
-                    var manifestPath = Path.Combine(threadDir, "manifest.json");
-                    if (!File.Exists(manifestPath))
-                        continue;
-
-                    var manifestJson = File.ReadAllText(manifestPath);
-                    var manifest = JsonSerializer.Deserialize<CheckpointManifest>(manifestJson);
-
-                    if (manifest == null || manifest.Checkpoints.Count == 0)
-                    {
-                        toDelete.Add(threadDir);
-                        continue;
-                    }
-
-                    // Check latest checkpoint (first in list)
-                    if (manifest.Checkpoints[0].CreatedAt < cutoff)
-                    {
-                        toDelete.Add(threadDir);
-                    }
-                }
-
-                count = toDelete.Count;
-
-                if (!dryRun)
-                {
-                    foreach (var threadDir in toDelete)
-                    {
-                        var threadId = Path.GetFileName(threadDir);
-                        Directory.Delete(threadDir, recursive: true);
-                        CleanupPendingWritesForThread(threadId);
-                    }
+                    var threadId = Path.GetFileName(threadDir);
+                    Directory.Delete(threadDir, recursive: true);
+                    CleanupPendingWritesForThread(threadId);
                 }
             }
         }
 
-        return Task.FromResult(count);
+        return Task.FromResult(toDelete.Count);
     }
 
     // ===== Pending Writes Methods =====
 
-    /// <inheritdoc />
     public Task SavePendingWritesAsync(
         string threadId,
         string checkpointId,
@@ -550,24 +530,21 @@ public class JsonConversationThreadStore : ICheckpointStore
         {
             List<PendingWrite> existing = new();
 
-            // Load existing pending writes if any
             if (File.Exists(filePath))
             {
                 var existingJson = File.ReadAllText(filePath);
-                existing = JsonSerializer.Deserialize<List<PendingWrite>>(existingJson) ?? new();
+                existing = JsonSerializer.Deserialize(existingJson, HPDJsonContext.Default.ListPendingWrite) ?? new();
             }
 
-            // Append new writes
             existing.AddRange(writesList);
 
-            var json = JsonSerializer.Serialize(existing, new JsonSerializerOptions { WriteIndented = true });
+            var json = JsonSerializer.Serialize(existing, HPDJsonContext.Default.ListPendingWrite);
             WriteAtomically(filePath, json);
         }
 
         return Task.CompletedTask;
     }
 
-    /// <inheritdoc />
     public Task<List<PendingWrite>> LoadPendingWritesAsync(
         string threadId,
         string checkpointId,
@@ -584,12 +561,11 @@ public class JsonConversationThreadStore : ICheckpointStore
         lock (_lock)
         {
             var json = File.ReadAllText(filePath);
-            var writes = JsonSerializer.Deserialize<List<PendingWrite>>(json) ?? new();
+            var writes = JsonSerializer.Deserialize(json, HPDJsonContext.Default.ListPendingWrite) ?? new();
             return Task.FromResult(writes);
         }
     }
 
-    /// <inheritdoc />
     public Task DeletePendingWritesAsync(
         string threadId,
         string checkpointId,
@@ -609,10 +585,11 @@ public class JsonConversationThreadStore : ICheckpointStore
         return Task.CompletedTask;
     }
 
-    // ===== Private Helpers =====
+    // ===== Lightweight Snapshot Methods =====
 
-    private string GetThreadFilePath(string threadId)
-        => Path.Combine(_threadsPath, $"{threadId}.json");
+    // Snapshot methods removed - branching is now an application-level concern
+
+    // ===== Private Helper Methods =====
 
     private string GetThreadDirectoryPath(string threadId)
         => Path.Combine(_threadsPath, threadId);
@@ -627,14 +604,18 @@ public class JsonConversationThreadStore : ICheckpointStore
         File.Move(tempPath, filePath, overwrite: true);
     }
 
+    private CheckpointManifest? LoadManifest(string manifestPath)
+    {
+        var json = File.ReadAllText(manifestPath);
+        return JsonSerializer.Deserialize(json, HPDJsonContext.Default.CheckpointManifest);
+    }
+
     private CheckpointManifest LoadOrCreateManifest(string manifestPath)
     {
         if (File.Exists(manifestPath))
         {
-            var json = File.ReadAllText(manifestPath);
-            return JsonSerializer.Deserialize<CheckpointManifest>(json) ?? new CheckpointManifest();
+            return LoadManifest(manifestPath) ?? new CheckpointManifest();
         }
-
         return new CheckpointManifest();
     }
 
@@ -652,23 +633,12 @@ public class JsonConversationThreadStore : ICheckpointStore
 }
 
 /// <summary>
-/// Manifest file tracking all checkpoints for a thread (FullHistory mode).
+/// Manifest file tracking all checkpoints for a thread.
 /// </summary>
-internal class CheckpointManifest
+public class CheckpointManifest
 {
     public string ThreadId { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime LastUpdated { get; set; } = DateTime.UtcNow;
     public List<CheckpointManifestEntry> Checkpoints { get; set; } = new();
-}
-
-/// <summary>
-/// Entry in the checkpoint manifest (lightweight metadata).
-/// </summary>
-internal class CheckpointManifestEntry
-{
-    public required string CheckpointId { get; set; }
-    public required DateTime CreatedAt { get; set; }
-    public int Step { get; set; }
-    public CheckpointSource Source { get; set; }
 }

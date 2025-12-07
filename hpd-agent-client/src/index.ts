@@ -11,6 +11,9 @@ export type {
 // Types
 export * from './types/index.js';
 
+// Branching utilities
+export * from './branching.js';
+
 // Transports (for advanced usage)
 export { SseTransport, WebSocketTransport } from './transports/index.js';
 

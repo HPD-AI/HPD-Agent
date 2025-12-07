@@ -63,6 +63,7 @@
         const res = await fetch(`${API_BASE}/conversations`, { method: 'POST' });
         const data = await res.json();
         conversationId = data.id;
+        console.log('[CREATE] Created new conversation:', conversationId);
         localStorage.setItem('conversationId', conversationId!);
         messages = [];
         // Close any open artifact on new conversation
@@ -75,6 +76,7 @@
         const userMsg = currentMessage.trim();
         currentMessage = '';
 
+        console.log('[SEND] Sending message to conversation:', conversationId);
         messages = [...messages, { role: 'user', content: userMsg }];
         messages = [...messages, { role: 'assistant', content: '', thinking: '' }];
 
@@ -246,31 +248,17 @@
         <div class="flex-1 flex flex-col {artifact.isOpen ? 'w-1/3 min-w-[300px] border-r' : ''}">
             <!-- Messages -->
             <div class="flex-1 overflow-y-auto p-6 space-y-4">
-                {#each messages as message}
-                    <div class="flex {message.role === 'user' ? 'justify-end' : 'justify-start'}">
-                        <div class="max-w-full px-4 py-3 rounded-lg {
-                            message.role === 'user'
-                                ? 'bg-blue-500 text-white'
-                                : 'bg-white border shadow-sm'
-                        }">
-                            <div class="text-xs font-medium mb-1 opacity-70">
-                                {message.role === 'user' ? 'You' : 'Agent'}
-                            </div>
-
-                            {#if message.thinking}
-                                <div class="text-xs italic opacity-60 mb-2">
+                {#each messages as message, index}
+                    <div class="flex gap-3 {message.role === 'user' ? 'justify-end' : ''}">
+                        <div class="max-w-[80%] {message.role === 'user' ? 'bg-blue-500 text-white' : 'bg-white border'} rounded-lg p-4">
+                            {#if message.thinking && index === messages.length - 1 && isLoading}
+                                <div class="text-sm italic opacity-70 mb-2">
                                     {message.thinking}
                                 </div>
                             {/if}
-
-                            <div class="whitespace-pre-wrap">{message.content}</div>
-
-                            {#if isLoading && message === messages[messages.length - 1]}
-                                <div class="mt-2 flex items-center text-xs opacity-60">
-                                    <div class="animate-spin rounded-full h-3 w-3 border-b-2 mr-2"></div>
-                                    Thinking...
-                                </div>
-                            {/if}
+                            <div class="whitespace-pre-wrap">
+                                {message.content}
+                            </div>
                         </div>
                     </div>
                 {/each}

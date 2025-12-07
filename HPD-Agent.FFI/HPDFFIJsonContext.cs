@@ -141,6 +141,8 @@ namespace HPD.Agent.FFI;
 
 // --- Checkpointing / Resume Types ---
 [JsonSerializable(typeof(ConversationThreadSnapshot))]
+[JsonSerializable(typeof(ThreadSnapshot))]
+[JsonSerializable(typeof(ExecutionCheckpoint))]
 
 // --- Permission Types ---
 [JsonSerializable(typeof(PermissionChoice))]

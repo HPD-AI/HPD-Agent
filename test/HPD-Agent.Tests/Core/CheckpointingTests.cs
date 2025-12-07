@@ -151,7 +151,7 @@ public class CheckpointingTests : AgentTestBase
     public async Task InMemoryCheckpointer_LatestOnly_SaveAndLoad_RoundTrip()
     {
         // Arrange: Checkpointer in LatestOnly mode
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.LatestOnly);
+        var checkpointer = new InMemoryConversationThreadStore();
         var thread = new ConversationThread();
         await thread.AddMessageAsync(UserMessage("Hello"));
 
@@ -177,7 +177,7 @@ public class CheckpointingTests : AgentTestBase
     public async Task InMemoryCheckpointer_LatestOnly_Upsert_OverwritesPrevious()
     {
         // Arrange: Checkpointer with existing checkpoint
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.LatestOnly);
+        var checkpointer = new InMemoryConversationThreadStore();
         var thread = new ConversationThread();
         await thread.AddMessageAsync(UserMessage("Hello"));
 
@@ -207,7 +207,7 @@ public class CheckpointingTests : AgentTestBase
     public async Task InMemoryCheckpointer_LatestOnly_LoadNonExistent_ReturnsNull()
     {
         // Arrange: Empty checkpointer
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.LatestOnly);
+        var checkpointer = new InMemoryConversationThreadStore();
 
         // Act: Try to load non-existent thread
         var result = await checkpointer.LoadThreadAsync("non-existent-thread-id");
@@ -220,7 +220,7 @@ public class CheckpointingTests : AgentTestBase
     public async Task InMemoryCheckpointer_LatestOnly_DeleteThread_RemovesCheckpoint()
     {
         // Arrange: Checkpointer with saved thread
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.LatestOnly);
+        var checkpointer = new InMemoryConversationThreadStore();
         var thread = new ConversationThread();
         await thread.AddMessageAsync(UserMessage("Hello"));
         var state = AgentLoopState.Initial(
@@ -243,7 +243,7 @@ public class CheckpointingTests : AgentTestBase
     public async Task InMemoryCheckpointer_LatestOnly_ListThreadIds_ReturnsAllThreads()
     {
         // Arrange: Checkpointer with multiple threads
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.LatestOnly);
+        var checkpointer = new InMemoryConversationThreadStore();
 
         var thread1 = new ConversationThread();
         await thread1.AddMessageAsync(UserMessage("Hello"));
@@ -274,7 +274,7 @@ public class CheckpointingTests : AgentTestBase
     public async Task InMemoryCheckpointer_FullHistory_SaveMultiple_PreservesHistory()
     {
         // Arrange: Checkpointer in FullHistory mode
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.FullHistory);
+        var checkpointer = new InMemoryConversationThreadStore();
         var thread = new ConversationThread();
         await thread.AddMessageAsync(UserMessage("Hello"));
 
@@ -292,19 +292,25 @@ public class CheckpointingTests : AgentTestBase
         thread.ExecutionState = state3;
         await checkpointer.SaveThreadAsync(thread);
 
-        // Assert: Should have 3 checkpoints in history
-        var history = await checkpointer.GetCheckpointHistoryAsync(thread.Id);
-        Assert.Equal(3, history.Count);
-        Assert.Equal(2, history[0].State.Iteration); // Newest first
-        Assert.Equal(1, history[1].State.Iteration);
-        Assert.Equal(0, history[2].State.Iteration);
+        // Assert: Should have 4 checkpoints in history (including root checkpoint)
+        var history = await checkpointer.GetCheckpointManifestAsync(thread.Id);
+        var checkpoints = history.Where(c => !c.IsSnapshot).ToList();
+        Assert.Equal(4, checkpoints.Count);
+        // Manifest entries have Step field instead of full State
+        // Order is newest first: [iter2, iter1, iter0, root]
+        Assert.Equal(2, checkpoints[0].Step); // Newest first
+        Assert.Equal(1, checkpoints[1].Step);
+        Assert.Equal(0, checkpoints[2].Step);
+        Assert.Equal(-1, checkpoints[3].Step); // Root checkpoint step
+        Assert.Equal(CheckpointSource.Root, checkpoints[3].Source); // Distinguish root checkpoint
+        Assert.Equal(-1, checkpoints[3].MessageIndex); // Root checkpoint is at messageIndex=-1
     }
 
     [Fact]
     public async Task InMemoryCheckpointer_FullHistory_LoadThreadAtCheckpoint_RestoresSpecificCheckpoint()
     {
         // Arrange: Checkpointer with multiple checkpoints
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.FullHistory);
+        var checkpointer = new InMemoryConversationThreadStore();
         var thread = new ConversationThread();
         await thread.AddMessageAsync(UserMessage("Hello"));
 
@@ -318,8 +324,9 @@ public class CheckpointingTests : AgentTestBase
         await checkpointer.SaveThreadAsync(thread);
 
         // Get the checkpoint ID of the first checkpoint
-        var history = await checkpointer.GetCheckpointHistoryAsync(thread.Id);
-        var firstCheckpointId = history[1].CheckpointId; // Second in list (newest first)
+        var history = await checkpointer.GetCheckpointManifestAsync(thread.Id);
+        var checkpoints = history.Where(c => !c.IsSnapshot).ToList();
+        var firstCheckpointId = checkpoints[1].CheckpointId; // Second in list (newest first)
 
         // Act: Load specific checkpoint
         var loadedThread = await checkpointer.LoadThreadAtCheckpointAsync(thread.Id, firstCheckpointId);
@@ -335,8 +342,8 @@ public class CheckpointingTests : AgentTestBase
     [Fact]
     public async Task InMemoryCheckpointer_FullHistory_PruneCheckpoints_KeepsLatestN()
     {
-        // Arrange: Checkpointer with 5 checkpoints
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.FullHistory);
+        // Arrange: Checkpointer with 5 checkpoints (plus root = 6 total)
+        var checkpointer = new InMemoryConversationThreadStore();
         var thread = new ConversationThread();
         await thread.AddMessageAsync(UserMessage("Hello"));
 
@@ -350,22 +357,24 @@ public class CheckpointingTests : AgentTestBase
             state = state.NextIteration();
         }
 
-        // Act: Prune to keep only 3 latest checkpoints
-        await checkpointer.PruneCheckpointsAsync(thread.Id, keepLatest: 3);
+        // Act: Prune to keep only 4 latest checkpoints (to account for root checkpoint)
+        await checkpointer.PruneCheckpointsAsync(thread.Id, keepLatest: 4);
 
-        // Assert: Should have only 3 checkpoints
-        var history = await checkpointer.GetCheckpointHistoryAsync(thread.Id);
-        Assert.Equal(3, history.Count);
-        Assert.Equal(4, history[0].State.Iteration); // Newest
-        Assert.Equal(3, history[1].State.Iteration);
-        Assert.Equal(2, history[2].State.Iteration);
+        // Assert: Should have 4 checkpoints (3 newest + root is pruned, keeping iter4, iter3, iter2, iter1)
+        var history = await checkpointer.GetCheckpointManifestAsync(thread.Id);
+        var checkpoints = history.Where(c => !c.IsSnapshot).ToList();
+        Assert.Equal(4, checkpoints.Count);
+        Assert.Equal(4, checkpoints[0].Step); // Newest
+        Assert.Equal(3, checkpoints[1].Step);
+        Assert.Equal(2, checkpoints[2].Step);
+        Assert.Equal(1, checkpoints[3].Step);
     }
 
     [Fact]
     public async Task InMemoryCheckpointer_FullHistory_GetCheckpointHistory_WithLimit_ReturnsLimitedResults()
     {
         // Arrange: Checkpointer with 10 checkpoints
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.FullHistory);
+        var checkpointer = new InMemoryConversationThreadStore();
         var thread = new ConversationThread();
         await thread.AddMessageAsync(UserMessage("Hello"));
 
@@ -379,20 +388,23 @@ public class CheckpointingTests : AgentTestBase
             state = state.NextIteration();
         }
 
-        // Act: Get only 5 checkpoints
-        var history = await checkpointer.GetCheckpointHistoryAsync(thread.Id, limit: 5);
+        // Act: Get only 5 total entries (limit applies to all entries: checkpoints + snapshots)
+        var history = await checkpointer.GetCheckpointManifestAsync(thread.Id, limit: 5);
+        var checkpoints = history.Where(c => !c.IsSnapshot).ToList();
 
-        // Assert: Should return only 5 (newest)
+        // Assert: limit=5 returns 5 total entries, which includes both checkpoints and snapshots
+        // The 5 newest entries will be interleaved checkpoints and snapshots
         Assert.Equal(5, history.Count);
-        Assert.Equal(9, history[0].State.Iteration);
-        Assert.Equal(5, history[4].State.Iteration);
+        // Among those 5, some are checkpoints
+        Assert.True(checkpoints.Count > 0);
+        Assert.Equal(9, checkpoints[0].Step); // Newest checkpoint first
     }
 
     [Fact]
     public async Task InMemoryCheckpointer_FullHistory_GetCheckpointHistory_WithBefore_FiltersOlderCheckpoints()
     {
         // Arrange: Checkpointer with checkpoints at different times
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.FullHistory);
+        var checkpointer = new InMemoryConversationThreadStore();
         var thread = new ConversationThread();
         await thread.AddMessageAsync(UserMessage("Hello"));
 
@@ -421,7 +433,7 @@ public class CheckpointingTests : AgentTestBase
         }
 
         // Act: Get checkpoints before cutoff
-        var history = await checkpointer.GetCheckpointHistoryAsync(thread.Id, before: cutoffTime);
+        var history = await checkpointer.GetCheckpointManifestAsync(thread.Id, before: cutoffTime);
 
         // Assert: Should return only checkpoints created before cutoff (3 checkpoints)
         Assert.True(history.Count >= 3);
@@ -526,7 +538,7 @@ public class CheckpointingTests : AgentTestBase
     public async Task InMemoryCheckpointer_DeleteOlderThan_RemovesOldCheckpoints()
     {
         // Arrange: Checkpointer with old and new checkpoints
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.LatestOnly);
+        var checkpointer = new InMemoryConversationThreadStore();
 
         var oldThread = new ConversationThread();
         await oldThread.AddMessageAsync(UserMessage("Old"));
@@ -560,7 +572,7 @@ public class CheckpointingTests : AgentTestBase
     public async Task InMemoryCheckpointer_DeleteInactiveThreads_DryRun_DoesNotDelete()
     {
         // Arrange: Checkpointer with inactive thread
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.LatestOnly);
+        var checkpointer = new InMemoryConversationThreadStore();
         var thread = new ConversationThread();
         await thread.AddMessageAsync(UserMessage("Hello"));
         thread.ExecutionState = AgentLoopState.Initial(
@@ -584,7 +596,7 @@ public class CheckpointingTests : AgentTestBase
     public async Task InMemoryCheckpointer_DeleteInactiveThreads_ActualDelete_RemovesThreads()
     {
         // Arrange: Checkpointer with inactive thread
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.LatestOnly);
+        var checkpointer = new InMemoryConversationThreadStore();
         var thread = new ConversationThread();
         await thread.AddMessageAsync(UserMessage("Hello"));
         thread.ExecutionState = AgentLoopState.Initial(
@@ -612,7 +624,7 @@ public class CheckpointingTests : AgentTestBase
     public async Task PendingWrites_SaveAndLoad_RoundTrip()
     {
         // Arrange: Checkpointer and pending writes
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.LatestOnly);
+        var checkpointer = new InMemoryConversationThreadStore();
         var threadId = "thread-123";
         var checkpointId = "checkpoint-456";
 
@@ -655,7 +667,7 @@ public class CheckpointingTests : AgentTestBase
     public async Task PendingWrites_LoadNonExistent_ReturnsEmptyList()
     {
         // Arrange: Empty checkpointer
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.LatestOnly);
+        var checkpointer = new InMemoryConversationThreadStore();
 
         // Act: Try to load non-existent pending writes
         var result = await checkpointer.LoadPendingWritesAsync("thread-123", "checkpoint-456");
@@ -669,7 +681,7 @@ public class CheckpointingTests : AgentTestBase
     public async Task PendingWrites_Delete_RemovesWrites()
     {
         // Arrange: Checkpointer with saved pending writes
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.LatestOnly);
+        var checkpointer = new InMemoryConversationThreadStore();
         var threadId = "thread-123";
         var checkpointId = "checkpoint-456";
 
@@ -700,7 +712,7 @@ public class CheckpointingTests : AgentTestBase
     public async Task PendingWrites_SaveMultipleTimes_AppendsWrites()
     {
         // Arrange: Checkpointer
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.LatestOnly);
+        var checkpointer = new InMemoryConversationThreadStore();
         var threadId = "thread-123";
         var checkpointId = "checkpoint-456";
 
@@ -747,7 +759,7 @@ public class CheckpointingTests : AgentTestBase
     public async Task PendingWrites_DifferentCheckpoints_AreIsolated()
     {
         // Arrange: Checkpointer with writes for different checkpoints
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.LatestOnly);
+        var checkpointer = new InMemoryConversationThreadStore();
         var threadId = "thread-123";
         var checkpoint1 = "checkpoint-1";
         var checkpoint2 = "checkpoint-2";
@@ -798,7 +810,7 @@ public class CheckpointingTests : AgentTestBase
     public async Task PendingWrites_DifferentThreads_AreIsolated()
     {
         // Arrange: Checkpointer with writes for different threads
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.LatestOnly);
+        var checkpointer = new InMemoryConversationThreadStore();
         var thread1 = "thread-1";
         var thread2 = "thread-2";
         var checkpointId = "checkpoint-123";
@@ -851,7 +863,7 @@ public class CheckpointingTests : AgentTestBase
     public async Task PendingWrites_LoadReturnsCopy_ModificationsDoNotAffectStorage()
     {
         // Arrange: Checkpointer with saved pending writes
-        var checkpointer = new InMemoryConversationThreadStore(CheckpointRetentionMode.LatestOnly);
+        var checkpointer = new InMemoryConversationThreadStore();
         var threadId = "thread-123";
         var checkpointId = "checkpoint-456";
 
@@ -880,5 +892,88 @@ public class CheckpointingTests : AgentTestBase
         // Assert: Second load should still have the original data
         Assert.Single(loaded2);
         Assert.Equal("call-1", loaded2[0].CallId);
+    }
+
+    [Fact]
+    public async Task LoadThreadAtCheckpoint_RestoresMessagesFromState()
+    {
+        // Arrange: Create a conversation with multiple checkpoints
+        var checkpointer = new InMemoryConversationThreadStore();
+        var thread = new ConversationThread();
+        
+        // First exchange
+        await thread.AddMessageAsync(UserMessage("Message 1"));
+        await thread.AddMessageAsync(AssistantMessage("Response 1"));
+        
+        var state1 = AgentLoopState.Initial(
+            await thread.GetMessagesAsync(), "run-1", "conv-1", "TestAgent");
+        thread.ExecutionState = state1;
+        await checkpointer.SaveThreadAsync(thread);
+        
+        // Second exchange
+        await thread.AddMessageAsync(UserMessage("Message 2"));
+        await thread.AddMessageAsync(AssistantMessage("Response 2"));
+        
+        var state2 = state1.NextIteration()
+            .WithMessages(await thread.GetMessagesAsync());
+        thread.ExecutionState = state2;
+        await checkpointer.SaveThreadAsync(thread);
+        
+        // Get checkpoint after first exchange
+        var history = await checkpointer.GetCheckpointManifestAsync(thread.Id);
+        var checkpoints = history.Where(c => !c.IsSnapshot).ToList();
+        var checkpointWith2Messages = checkpoints.First(c => c.MessageIndex == 2);
+        
+        // Act: Load thread at earlier checkpoint
+        var loadedThread = await checkpointer.LoadThreadAtCheckpointAsync(
+            thread.Id,
+            checkpointWith2Messages.CheckpointId);
+        
+        // Assert: Should have only 2 messages
+        Assert.NotNull(loadedThread);
+        Assert.Equal(2, loadedThread.MessageCount);
+        Assert.Equal("Message 1", loadedThread.Messages[0].Text);
+        Assert.Equal("Response 1", loadedThread.Messages[1].Text);
+    }
+
+    [Fact]
+    public async Task CheckpointMessageIndex_MatchesThreadMessageCount()
+    {
+        // Arrange: Create checkpoints at different message counts
+        var checkpointer = new InMemoryConversationThreadStore();
+        var thread = new ConversationThread();
+        
+        // Save with 0 messages (triggers root checkpoint creation)
+        var state0 = AgentLoopState.Initial(
+            new List<ChatMessage>(), "run-1", "conv-1", "TestAgent");
+        thread.ExecutionState = state0;
+        // Don't save yet - add messages first
+        
+        // Add 2 messages
+        await thread.AddMessageAsync(UserMessage("Hello"));
+        await thread.AddMessageAsync(AssistantMessage("Hi!"));
+        
+        var state1 = AgentLoopState.Initial(
+            await thread.GetMessagesAsync(), "run-1", "conv-1", "TestAgent");
+        thread.ExecutionState = state1;
+        await checkpointer.SaveThreadAsync(thread);
+        
+        // Add 2 more messages
+        await thread.AddMessageAsync(UserMessage("How are you?"));
+        await thread.AddMessageAsync(AssistantMessage("I'm good!"));
+        
+        var state2 = state1.NextIteration()
+            .WithMessages(await thread.GetMessagesAsync());
+        thread.ExecutionState = state2;
+        await checkpointer.SaveThreadAsync(thread);
+        
+        // Act: Get checkpoint history
+        var history = await checkpointer.GetCheckpointManifestAsync(thread.Id);
+        
+        // Assert: Check message indices
+        var messageIndices = history.Select(c => c.MessageIndex).OrderBy(i => i).ToList();
+        Assert.Contains(-1, messageIndices); // Root checkpoint
+        Assert.Contains(2, messageIndices);  // After first exchange
+        Assert.Contains(4, messageIndices);  // After second exchange
     }
 }

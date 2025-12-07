@@ -36,22 +36,27 @@ builder.Services.AddCors(options =>
     });
 });
 
-// Register services
-var checkpointPath = Path.Combine(Environment.CurrentDirectory, "checkpoints");
-builder.Services.AddSingleton<IThreadStore>(
-    new JsonConversationThreadStore(checkpointPath, CheckpointRetentionMode.LatestOnly));
+// Register checkpointing services
+var threadStore = new JsonConversationThreadStore(
+    Path.Combine(Environment.CurrentDirectory, "threads"));
+
+builder.Services.AddSingleton<IThreadStore>(threadStore);
 builder.Services.AddSingleton<ConversationManager>();
 
 var app = builder.Build();
+
+// Validate checkpointing configuration on startup
+ValidateCheckpointingConfiguration(app.Services);
+
 app.UseCors("AllowFrontend");
 app.UseWebSockets();
 
 // Conversation API
 var conversationsApi = app.MapGroup("/conversations").WithTags("Conversations");
 
-conversationsApi.MapPost("/", (ConversationManager cm) =>
+conversationsApi.MapPost("/", async (ConversationManager cm) =>
 {
-    var thread = cm.CreateConversation();
+    var thread = await cm.CreateConversationAsync();
     return Results.Created($"/conversations/{thread.Id}", new ConversationDto(
         thread.Id,
         thread.DisplayName ?? "New Conversation",
@@ -60,18 +65,24 @@ conversationsApi.MapPost("/", (ConversationManager cm) =>
         thread.MessageCount));
 });
 
-conversationsApi.MapGet("/{conversationId}", (string conversationId, ConversationManager cm) =>
-    cm.GetConversation(conversationId) is { } thread
+conversationsApi.MapGet("/{conversationId}", async (string conversationId, ConversationManager cm) =>
+{
+    var thread = await cm.GetConversationAsync(conversationId);
+    return thread is not null
         ? Results.Ok(new ConversationDto(
             thread.Id,
             thread.DisplayName ?? "New Conversation",
             thread.CreatedAt,
             thread.LastActivity,
             thread.MessageCount))
-        : Results.NotFound());
+        : Results.NotFound();
+});
 
-conversationsApi.MapDelete("/{conversationId}", (string conversationId, ConversationManager cm) =>
-    cm.DeleteConversation(conversationId) ? Results.NoContent() : Results.NotFound());
+conversationsApi.MapDelete("/{conversationId}", async (string conversationId, ConversationManager cm) =>
+{
+    var deleted = await cm.DeleteConversationAsync(conversationId);
+    return deleted ? Results.NoContent() : Results.NotFound();
+});
 
 // List all persisted conversations
 conversationsApi.MapGet("/", async (ConversationManager cm) =>
@@ -94,6 +105,35 @@ conversationsApi.MapGet("/", async (ConversationManager cm) =>
     }
 
     return Results.Ok(conversations);
+});
+
+// Get messages for a conversation
+conversationsApi.MapGet("/{conversationId}/messages", async (string conversationId, ConversationManager cm) =>
+{
+    Console.WriteLine($"[MESSAGES] Getting messages for conversation {conversationId}");
+    
+    var thread = await cm.GetConversationAsync(conversationId);
+    if (thread == null)
+    {
+        Console.WriteLine($"[MESSAGES] Conversation not found");
+        return Results.NotFound(new ErrorResponse("Conversation not found"));
+    }
+
+    Console.WriteLine($"[MESSAGES] Thread has {thread.MessageCount} messages");
+    var messages = thread.Messages.Select((m, i) => new MessageDto(
+        i,
+        m.Role.Value,
+        m.Text ?? "",
+        m.AdditionalProperties?.TryGetValue("thinking", out var thinking) == true ? thinking?.ToString() : null
+    )).ToList();
+
+    foreach (var msg in messages.Take(10))
+    {
+        var preview = msg.Content?.Length > 50 ? msg.Content.Substring(0, 50) + "..." : msg.Content;
+        Console.WriteLine($"[MESSAGES]   [{msg.Index}] {msg.Role}: {preview}");
+    }
+
+    return Results.Ok(messages);
 });
 
 // Agent API
@@ -168,12 +208,16 @@ agentApi.MapPost("/conversations/{conversationId}/frontend-tools/respond",
 agentApi.MapPost("/conversations/{conversationId}/stream",
     async (string conversationId, StreamRequest request, ConversationManager cm, HttpContext context) =>
 {
-    var thread = cm.GetConversation(conversationId);
+    var thread = await cm.GetConversationAsync(conversationId);
     if (thread == null)
     {
         context.Response.StatusCode = 404;
         return;
     }
+
+    // Ensure events use conversationId (not internal threadId)
+    // Frontend expects consistent conversationId across all requests
+    thread.ConversationId = conversationId;
 
     // SSE headers
     context.Response.Headers.Append("Content-Type", "text/event-stream");
@@ -215,10 +259,6 @@ agentApi.MapPost("/conversations/{conversationId}/stream",
 
         Console.WriteLine($"[ENDPOINT] Completed agent.RunAsync - total events: {eventCount}");
 
-        // Save checkpoint after successful completion
-        await cm.SaveCheckpointAsync(thread);
-        Console.WriteLine($"[ENDPOINT] Checkpoint saved for conversation {conversationId}");
-
         // Send completion event using standard format
         await writer.WriteAsync("data: {\"version\":\"1.0\",\"type\":\"COMPLETE\"}\n\n");
         await writer.FlushAsync();
@@ -247,7 +287,7 @@ agentApi.MapGet("/conversations/{conversationId}/ws",
     }
 
     using var webSocket = await context.WebSockets.AcceptWebSocketAsync();
-    var thread = cm.GetConversation(conversationId);
+    var thread = await cm.GetConversationAsync(conversationId);
 
     if (thread == null)
     {
@@ -257,6 +297,9 @@ agentApi.MapGet("/conversations/{conversationId}/ws",
             CancellationToken.None);
         return;
     }
+
+    // Ensure events use conversationId (not internal threadId)
+    thread.ConversationId = conversationId;
 
     try
     {
@@ -300,9 +343,6 @@ agentApi.MapGet("/conversations/{conversationId}/ws",
             }
         }
 
-        // Save checkpoint after successful completion
-        await cm.SaveCheckpointAsync(thread);
-
         await webSocket.CloseAsync(
             System.Net.WebSockets.WebSocketCloseStatus.NormalClosure,
             "Completed",
@@ -339,34 +379,43 @@ static AgentRunInput? BuildRunInput(StreamRequest request)
 
 app.Run();
 
+/// <summary>
+/// Validates that checkpointing services are properly configured.
+/// Validates that thread store is properly configured.
+/// </summary>
+static void ValidateCheckpointingConfiguration(IServiceProvider services)
+{
+    try
+    {
+        var threadStore = services.GetRequiredService<IThreadStore>();
+        Console.WriteLine("\n✓ Thread store configured:");
+        Console.WriteLine($"  - Thread store: {threadStore.GetType().Name}");
+        Console.WriteLine();
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"\n⚠ Warning: Could not validate thread store configuration: {ex.Message}\n");
+    }
+}
+
 // Conversation Manager
 internal class ConversationManager
 {
-    private readonly IThreadStore _store;
+    private readonly IThreadStore _threadStore;
     private readonly Dictionary<string, ConversationThread> _threadCache = new(); // In-memory cache
     private readonly Dictionary<string, Agent> _runningAgents = new(); // Track active agents
     private readonly InMemoryPermissionStorage _permissionStorage = new();
 
-    public ConversationManager(IThreadStore store)
+    public ConversationManager(IThreadStore threadStore)
     {
-        _store = store;
+        _threadStore = threadStore;
     }
 
     public async Task<ConversationThread> CreateConversationAsync()
     {
         var thread = new ConversationThread();
+        await _threadStore.SaveThreadAsync(thread);
         _threadCache[thread.Id] = thread;
-        await _store.SaveThreadAsync(thread);
-        return thread;
-    }
-
-    // Sync version for backward compatibility (creates without persisting initially)
-    public ConversationThread CreateConversation()
-    {
-        var thread = new ConversationThread();
-        _threadCache[thread.Id] = thread;
-        // Fire-and-forget save
-        _ = _store.SaveThreadAsync(thread);
         return thread;
     }
 
@@ -376,23 +425,7 @@ internal class ConversationManager
         if (_threadCache.TryGetValue(conversationId, out var cached))
             return cached;
 
-        // Load from store
-        var thread = await _store.LoadThreadAsync(conversationId);
-        if (thread != null)
-            _threadCache[conversationId] = thread;
-
-        return thread;
-    }
-
-    // Sync version for backward compatibility
-    public ConversationThread? GetConversation(string conversationId)
-    {
-        // Check cache first
-        if (_threadCache.TryGetValue(conversationId, out var cached))
-            return cached;
-
-        // Sync-over-async (not ideal but maintains compatibility)
-        var thread = _store.LoadThreadAsync(conversationId).GetAwaiter().GetResult();
+        var thread = await _threadStore.LoadThreadAsync(conversationId);
         if (thread != null)
             _threadCache[conversationId] = thread;
 
@@ -403,33 +436,13 @@ internal class ConversationManager
     {
         _threadCache.Remove(conversationId);
         _runningAgents.Remove(conversationId);
-        await _store.DeleteThreadAsync(conversationId);
+        await _threadStore.DeleteThreadAsync(conversationId);
         return true;
     }
 
-    // Sync version for backward compatibility
-    public bool DeleteConversation(string conversationId)
-    {
-        _threadCache.Remove(conversationId);
-        _runningAgents.Remove(conversationId);
-        _ = _store.DeleteThreadAsync(conversationId);
-        return true;
-    }
-
-    /// <summary>
-    /// Save a conversation thread checkpoint after agent run completes.
-    /// </summary>
-    public async Task SaveCheckpointAsync(ConversationThread thread)
-    {
-        await _store.SaveThreadAsync(thread);
-    }
-
-    /// <summary>
-    /// List all conversation IDs (from persistent storage).
-    /// </summary>
     public async Task<List<string>> ListConversationIdsAsync()
     {
-        return await _store.ListThreadIdsAsync();
+        return await _threadStore.ListThreadIdsAsync();
     }
 
     public async Task<Agent> GetAgentAsync(string conversationId, IAgentEventHandler? eventHandler = null)
@@ -496,7 +509,14 @@ internal class InMemoryPermissionStorage : IPermissionStorage
 }
 
 // DTOs
-public record ConversationDto(string Id, string Name, DateTime CreatedAt, DateTime LastActivity, int MessageCount);
+public record ConversationDto(
+    string Id,
+    string Name,
+    DateTime CreatedAt,
+    DateTime LastActivity,
+    int MessageCount,
+    string? ActiveBranch = null,
+    List<string>? BranchNames = null);
 public record StreamRequest(
     StreamMessage[] Messages,
     FrontendPluginDefinition[]? FrontendPlugins = null,
@@ -532,4 +552,6 @@ public record FrontendToolContentDto(
     string? Url = null,
     string? Id = null,
     string? Filename = null);
+
+public record MessageDto(int Index, string Role, string Content, string? Thinking = null);
 

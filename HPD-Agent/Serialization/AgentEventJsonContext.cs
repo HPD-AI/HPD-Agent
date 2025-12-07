@@ -79,6 +79,9 @@ namespace HPD.Agent.Serialization;
 [JsonSerializable(typeof(FrontendTools.JsonContent))]
 [JsonSerializable(typeof(FrontendTools.FrontendToolAugmentation))]
 
+// Branch events removed - branching is now an application-level concern
+// Applications should define their own branch event types if needed
+
 // Observability Events
 [JsonSerializable(typeof(ScopedToolsVisibleEvent))]
 [JsonSerializable(typeof(ContainerExpandedEvent))]

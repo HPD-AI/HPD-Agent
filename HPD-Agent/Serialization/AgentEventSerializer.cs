@@ -72,6 +72,8 @@ public static partial class AgentEventSerializer
         [typeof(MiddlewareProgressEvent)] = EventTypes.Middleware.MIDDLEWARE_PROGRESS,
         [typeof(MiddlewareErrorEvent)] = EventTypes.Middleware.MIDDLEWARE_ERROR,
 
+        // Branch events removed - branching is now an application-level concern
+
         // Observability Events
         [typeof(ScopedToolsVisibleEvent)] = EventTypes.Observability.SCOPED_TOOLS_VISIBLE,
         [typeof(ContainerExpandedEvent)] = EventTypes.Observability.CONTAINER_EXPANDED,

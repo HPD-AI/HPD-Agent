@@ -1,4 +1,6 @@
 using HPD.Agent;
+using HPD.Agent.Checkpointing;
+using HPD.Agent.Checkpointing.Services;
 using HPD.Agent.Serialization;
 
 /// <summary>
@@ -83,6 +85,9 @@ public class SseEventHandler : IAgentEventHandler
             case PermissionDeniedEvent permDenied:
                 Console.WriteLine($"[SSE] Sending {typeName}: {permDenied.Reason}");
                 break;
+
+            // Branch events removed - branching is now application-level (not part of AgentEvent hierarchy)
+            // Branch events are handled separately by ConversationManager
 
             default:
                 // All other events are logged with their type name

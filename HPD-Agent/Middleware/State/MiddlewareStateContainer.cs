@@ -205,4 +205,61 @@ public sealed partial class MiddlewareState
             StateVersions = this.StateVersions
         };
     }
+
+    //
+    // PERSISTENCE API (Thread Synchronization)
+    //
+
+    /// <summary>
+    /// Load persistent middleware state from thread (called at agent start).
+    /// Restores state that needs to survive across agent runs.
+    /// </summary>
+    /// <param name="thread">Thread to load state from (null returns empty state)</param>
+    /// <returns>MiddlewareState with restored persistent state</returns>
+    public static MiddlewareState LoadFromThread(ConversationThread? thread)
+    {
+        if (thread == null)
+            return new MiddlewareState();
+
+        var state = new MiddlewareState();
+
+        // Load HistoryReduction if persisted
+        var hrKey = "HPD.Agent.HistoryReductionStateData";
+        var hrJson = thread.GetMiddlewarePersistentState(hrKey);
+        if (hrJson != null)
+        {
+            var hrData = JsonSerializer.Deserialize<HistoryReductionStateData>(
+                hrJson, AIJsonUtilities.DefaultOptions);
+
+            if (hrData != null)
+                state = state.WithHistoryReduction(hrData);
+        }
+
+        // Future middlewares can add their own persistence here
+        // No changes to ConversationThread or Agent required!
+
+        return state;
+    }
+
+    /// <summary>
+    /// Save persistent middleware state to thread (called at agent end).
+    /// Persists state that needs to survive across agent runs.
+    /// </summary>
+    /// <param name="thread">Thread to save state to</param>
+    public void SaveToThread(ConversationThread thread)
+    {
+        ArgumentNullException.ThrowIfNull(thread);
+
+        // Save HistoryReduction if present
+        if (this.HistoryReduction?.LastReduction != null)
+        {
+            var hrKey = "HPD.Agent.HistoryReductionStateData";
+            var hrJson = JsonSerializer.Serialize(
+                this.HistoryReduction, AIJsonUtilities.DefaultOptions);
+
+            thread.SetMiddlewarePersistentState(hrKey, hrJson);
+        }
+
+        // Future middlewares can add their own persistence here
+    }
 }

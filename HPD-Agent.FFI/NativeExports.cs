@@ -360,14 +360,7 @@ public static partial class NativeExports
             var thread = ObjectManager.Get<ConversationThread>(threadHandle);
             if (thread == null) return -1;
 
-            // Use sync access for InMemoryConversationMessageStore
-            if (thread.MessageStore is InMemoryConversationMessageStore inMemoryStore)
-            {
-                return inMemoryStore.Count;
-            }
-
-            // Fallback to async for other store types
-            return thread.MessageStore.GetMessagesAsync().GetAwaiter().GetResult().Count();
+            return thread.MessageCount;
         }
         catch (Exception ex)
         {
@@ -389,19 +382,7 @@ public static partial class NativeExports
             var thread = ObjectManager.Get<ConversationThread>(threadHandle);
             if (thread == null) return IntPtr.Zero;
 
-            // Use sync access for InMemoryConversationMessageStore
-            IEnumerable<ChatMessage> messages;
-            if (thread.MessageStore is InMemoryConversationMessageStore inMemoryStore)
-            {
-                messages = inMemoryStore.Messages;
-            }
-            else
-            {
-                // Fallback to async for other store types
-                messages = thread.MessageStore.GetMessagesAsync().GetAwaiter().GetResult();
-            }
-
-            var json = JsonSerializer.Serialize(messages, HPDFFIJsonContext.Default.IEnumerableChatMessage);
+            var json = JsonSerializer.Serialize(thread.Messages, HPDFFIJsonContext.Default.IEnumerableChatMessage);
             return MarshalString(json);
         }
         catch (Exception ex)
@@ -431,8 +412,7 @@ public static partial class NativeExports
             var message = JsonSerializer.Deserialize(messageJson, HPDFFIJsonContext.Default.ChatMessage);
             if (message == null) return 0;
 
-            // Use async method (required by interface)
-            thread.MessageStore.AddMessagesAsync(new[] { message }).GetAwaiter().GetResult();
+            thread.AddMessage(message);
             return 1;
         }
         catch (Exception ex)
@@ -455,8 +435,7 @@ public static partial class NativeExports
             var thread = ObjectManager.Get<ConversationThread>(threadHandle);
             if (thread == null) return 0;
 
-            // Use async method (required by interface)
-            thread.MessageStore.ClearAsync().GetAwaiter().GetResult();
+            thread.Clear();
             return 1;
         }
         catch (Exception ex)

@@ -136,6 +136,37 @@ public static partial class EventTypes
 
     #endregion
 
+    #region Branch Events
+
+    /// <summary>
+    /// Conversation branching events.
+    /// </summary>
+    public static class Branch
+    {
+        public const string BRANCH_CREATED = "BRANCH_CREATED";
+        public const string BRANCH_SWITCHED = "BRANCH_SWITCHED";
+        public const string BRANCH_DELETED = "BRANCH_DELETED";
+        public const string BRANCH_RENAMED = "BRANCH_RENAMED";
+    }
+
+    #endregion
+
+    #region Thread Events
+
+    /// <summary>
+    /// Thread-level events (cross-thread operations).
+    /// </summary>
+    public static class Thread
+    {
+        /// <summary>
+        /// Raised when a thread is copied from another thread's checkpoint.
+        /// Unlike branch events (same thread), this creates a new independent thread.
+        /// </summary>
+        public const string THREAD_COPIED = "THREAD_COPIED";
+    }
+
+    #endregion
+
     #region Observability Events
 
     /// <summary>

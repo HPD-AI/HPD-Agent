@@ -1,4 +1,5 @@
 using Microsoft.Extensions.AI;
+using System.Collections.Concurrent;
 using System.Text.Json;
 
 namespace HPD.Agent;
@@ -28,6 +29,7 @@ public sealed class ConversationThread
 
     private readonly List<ChatMessage> _messages = new();
     private readonly Dictionary<string, object> _metadata = new();
+    private readonly Dictionary<string, string> _middlewarePersistentState = new();
     private string? _serviceThreadId;
 
     /// <summary>
@@ -104,11 +106,31 @@ public sealed class ConversationThread
     public AgentLoopState? ExecutionState { get; set; }
 
     /// <summary>
-    /// Last successful history reduction state for cache-aware reduction.
-    /// Persists across multiple agent runs to enable reduction cache hits.
-    /// Null if history reduction has never been performed on this thread.
+    /// Persistent state for middlewares that need to cache data across runs.
+    /// Uses type-safe keys generated from middleware state types.
     /// </summary>
-    public HistoryReductionStateData? LastReduction { get; set; }
+    internal IReadOnlyDictionary<string, string> MiddlewarePersistentState
+        => _middlewarePersistentState;
+
+    /// <summary>
+    /// Sets middleware persistent state for a given key.
+    /// </summary>
+    internal void SetMiddlewarePersistentState(string key, string jsonValue)
+    {
+        _middlewarePersistentState[key] = jsonValue;
+        LastActivity = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Gets middleware persistent state for a given key.
+    /// </summary>
+    internal string? GetMiddlewarePersistentState(string key)
+    {
+        return _middlewarePersistentState.TryGetValue(key, out var value) ? value : null;
+    }
+
+    // Branch tracking removed - now an application-level concern (see BranchManager)
+    // Applications should use ConversationId to link threads to conversations
 
     /// <summary>
     /// Creates a new conversation thread.
@@ -282,7 +304,11 @@ public sealed class ConversationThread
             ServiceThreadId = ServiceThreadId,
             ConversationId = ConversationId,
             ExecutionStateJson = ExecutionState?.Serialize(),
-            LastReductionState = LastReduction
+            // Generic middleware persistent state
+            MiddlewarePersistentState = _middlewarePersistentState.Count > 0
+                ? _middlewarePersistentState.ToDictionary(kv => kv.Key, kv => kv.Value)
+                : null,
+            // Branch state
         };
     }
 
@@ -320,9 +346,114 @@ public sealed class ConversationThread
             thread.ExecutionState = AgentLoopState.Deserialize(snapshot.ExecutionStateJson);
         }
 
-        // Restore LastReduction if present
-        thread.LastReduction = snapshot.LastReductionState;
+        // Restore generic middleware persistent state
+        if (snapshot.MiddlewarePersistentState != null)
+        {
+            foreach (var (key, value) in snapshot.MiddlewarePersistentState)
+            {
+                thread._middlewarePersistentState[key] = value;
+            }
+        }
 
+        // Restore branch state
+
+        return thread;
+    }
+
+    /// <summary>
+    /// Convert this thread to a lightweight snapshot (no ExecutionState).
+    /// </summary>
+    public ThreadSnapshot ToSnapshot()
+    {
+        return new ThreadSnapshot
+        {
+            ThreadId = Id,
+            Messages = _messages.ToList(),
+            Metadata = _metadata.ToDictionary(kv => kv.Key, kv => kv.Value),
+            MiddlewarePersistentState = _middlewarePersistentState.Count > 0
+                ? _middlewarePersistentState.ToDictionary(kv => kv.Key, kv => kv.Value)
+                : null,
+            CreatedAt = CreatedAt,
+            LastActivity = LastActivity,
+            ServiceThreadId = ServiceThreadId,
+            ConversationId = ConversationId,
+        };
+    }
+
+    /// <summary>
+    /// Create a ConversationThread from a lightweight snapshot.
+    /// ExecutionState will be null.
+    /// </summary>
+    public static ConversationThread FromSnapshot(ThreadSnapshot snapshot)
+    {
+        var thread = new ConversationThread(
+            snapshot.ThreadId,
+            snapshot.CreatedAt,
+            snapshot.LastActivity);
+
+        if (snapshot.Messages != null)
+            thread._messages.AddRange(snapshot.Messages);
+
+        foreach (var (key, value) in snapshot.Metadata)
+            thread._metadata[key] = value;
+
+        if (snapshot.MiddlewarePersistentState != null)
+        {
+            foreach (var (key, value) in snapshot.MiddlewarePersistentState)
+                thread._middlewarePersistentState[key] = value;
+        }
+
+        thread._serviceThreadId = snapshot.ServiceThreadId;
+        thread.ConversationId = snapshot.ConversationId;
+
+        // ExecutionState is null - that's intentional for snapshots
+        thread.ExecutionState = null;
+
+        return thread;
+    }
+
+    /// <summary>
+    /// Convert this thread to a full execution checkpoint (includes ExecutionState).
+    /// </summary>
+    public ExecutionCheckpoint ToExecutionCheckpoint()
+    {
+        if (ExecutionState == null)
+            throw new InvalidOperationException("Cannot create ExecutionCheckpoint without ExecutionState");
+
+        return new ExecutionCheckpoint
+        {
+            ThreadId = Id,
+            Messages = _messages.ToList(),
+            Metadata = _metadata.ToDictionary(kv => kv.Key, kv => kv.Value),
+            MiddlewarePersistentState = _middlewarePersistentState.Count > 0
+                ? _middlewarePersistentState.ToDictionary(kv => kv.Key, kv => kv.Value)
+                : null,
+            ExecutionState = ExecutionState,
+            CreatedAt = CreatedAt,
+            LastActivity = LastActivity,
+            ServiceThreadId = ServiceThreadId,
+            ConversationId = ConversationId,
+        };
+    }
+
+    /// <summary>
+    /// Create a ConversationThread from a full execution checkpoint.
+    /// </summary>
+    public static ConversationThread FromExecutionCheckpoint(ExecutionCheckpoint checkpoint)
+    {
+        var thread = FromSnapshot(new ThreadSnapshot
+        {
+            ThreadId = checkpoint.ThreadId,
+            Messages = checkpoint.Messages,
+            Metadata = checkpoint.Metadata,
+            MiddlewarePersistentState = checkpoint.MiddlewarePersistentState,
+            CreatedAt = checkpoint.CreatedAt,
+            LastActivity = checkpoint.LastActivity,
+            ServiceThreadId = checkpoint.ServiceThreadId,
+            ConversationId = checkpoint.ConversationId,
+        });
+
+        thread.ExecutionState = checkpoint.ExecutionState;
         return thread;
     }
 
@@ -357,7 +488,101 @@ public record ConversationThreadSnapshot
     public string? ExecutionStateJson { get; init; }
 
     /// <summary>
-    /// Last successful history reduction state for cache-aware reduction.
+    /// Generic middleware persistent state (survives across runs).
+    /// Dictionary mapping middleware state type keys to JSON values.
     /// </summary>
-    public HistoryReductionStateData? LastReductionState { get; init; }
+    public Dictionary<string, string>? MiddlewarePersistentState { get; init; }
+
+    // Branch tracking removed - application-level concern
+}
+
+//──────────────────────────────────────────────────────────────────
+// LIGHTWEIGHT: Snapshot for branching (~20KB)
+//──────────────────────────────────────────────────────────────────
+
+/// <summary>
+/// Lightweight conversation snapshot for branching operations.
+/// Contains only conversation-level state (messages, metadata, persistent middleware state).
+/// Does NOT include execution-level state (AgentLoopState).
+/// </summary>
+/// <remarks>
+/// This is optimized for branching/forking operations where execution state is not needed.
+/// Storage size: ~20KB vs ~120KB for full checkpoint.
+/// </remarks>
+public record ThreadSnapshot
+{
+    public required string ThreadId { get; init; }
+    public required IReadOnlyList<ChatMessage> Messages { get; init; }
+    public required Dictionary<string, object> Metadata { get; init; }
+
+    /// <summary>
+    /// Persistent middleware state that survives across agent runs.
+    /// Includes HistoryReductionStateData and other conversation-level middleware caches.
+    /// </summary>
+    /// <remarks>
+    /// This is stored in ConversationThread._middlewarePersistentState and persists
+    /// across runs via MiddlewareState.LoadFromThread/SaveToThread pattern.
+    /// Example keys:
+    /// - "HPD.Agent.HistoryReductionStateData" (history reduction cache)
+    /// - Future middleware persistent state keys
+    /// </remarks>
+    public Dictionary<string, string>? MiddlewarePersistentState { get; init; }
+
+    public required DateTime CreatedAt { get; init; }
+    public required DateTime LastActivity { get; init; }
+
+    /// <summary>
+    /// Optional service thread ID for hybrid scenarios.
+    /// </summary>
+    public string? ServiceThreadId { get; init; }
+
+    /// <summary>
+    /// Conversation identifier for server-side history tracking.
+    /// </summary>
+    public string? ConversationId { get; init; }
+
+    // Branch tracking removed - application-level concern
+
+    /// <summary>
+    /// Message count at the time of snapshot.
+    /// </summary>
+    public int MessageCount => Messages.Count;
+}
+
+//──────────────────────────────────────────────────────────────────
+// HEAVYWEIGHT: Checkpoint for durable execution (~120KB+)
+//──────────────────────────────────────────────────────────────────
+
+/// <summary>
+/// Full execution checkpoint including agent runtime state.
+/// Used by DurableExecution for crash recovery and resumption.
+/// </summary>
+/// <remarks>
+/// Contains everything in ThreadSnapshot PLUS the heavyweight AgentLoopState (~100KB).
+/// Only used when resuming mid-execution or saving checkpoints during agent runs.
+/// </remarks>
+public record ExecutionCheckpoint
+{
+    public required string ThreadId { get; init; }
+    public required IReadOnlyList<ChatMessage> Messages { get; init; }
+    public required Dictionary<string, object> Metadata { get; init; }
+    public Dictionary<string, string>? MiddlewarePersistentState { get; init; }
+
+    /// <summary>
+    /// Agent execution state (iteration, middleware runtime state, etc.).
+    /// This is the heavyweight component (~100KB).
+    /// </summary>
+    public required AgentLoopState ExecutionState { get; init; }
+
+    public required DateTime CreatedAt { get; init; }
+    public required DateTime LastActivity { get; init; }
+    public string? ServiceThreadId { get; init; }
+    public string? ConversationId { get; init; }
+
+    // Branch tracking removed - application-level concern
+
+    /// <summary>
+    /// Version for schema evolution.
+    /// </summary>
+    public int Version { get; init; } = 1;
 }

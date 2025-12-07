@@ -78,12 +78,17 @@ using HPD.Agent;
 
 // --- Conversation storage and serialization types ---
 [JsonSerializable(typeof(ConversationThreadSnapshot))]
+[JsonSerializable(typeof(ThreadSnapshot))]
+[JsonSerializable(typeof(ExecutionCheckpoint))]
 [JsonSerializable(typeof(HistoryReductionStateData))]
 [JsonSerializable(typeof(CachedReduction))]
 
 // --- Checkpointing types ---
 [JsonSerializable(typeof(HPD.Agent.Checkpointing.PendingWrite))]
 [JsonSerializable(typeof(List<HPD.Agent.Checkpointing.PendingWrite>))]
+[JsonSerializable(typeof(HPD.Agent.Checkpointing.CheckpointManifest))]
+[JsonSerializable(typeof(HPD.Agent.Checkpointing.CheckpointManifestEntry))]
+[JsonSerializable(typeof(List<HPD.Agent.Checkpointing.CheckpointManifestEntry>))]
 
 // --- Document store types ---
 [JsonSerializable(typeof(HPD.Agent.Skills.DocumentStore.GlobalDocumentInfo))]

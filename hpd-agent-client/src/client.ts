@@ -7,6 +7,10 @@ import type {
   FrontendToolInvokeRequestEvent,
   FrontendPluginsRegisteredEvent,
   PermissionChoice,
+  BranchCreatedEvent,
+  BranchSwitchedEvent,
+  BranchDeletedEvent,
+  BranchRenamedEvent,
 } from './types/events.js';
 import { EventTypes } from './types/events.js';
 import type { AgentTransport } from './types/transport.js';
@@ -148,6 +152,22 @@ export interface EventHandlers {
 
   /** Called on middleware progress */
   onProgress?: (sourceName: string, message: string, percentComplete?: number) => void;
+
+  // ============================================
+  // Branch Handlers
+  // ============================================
+
+  /** Called when a new conversation branch is created */
+  onBranchCreated?: (event: BranchCreatedEvent) => void;
+
+  /** Called when the active branch is switched */
+  onBranchSwitched?: (event: BranchSwitchedEvent) => void;
+
+  /** Called when a branch is deleted */
+  onBranchDeleted?: (event: BranchDeletedEvent) => void;
+
+  /** Called when a branch is renamed */
+  onBranchRenamed?: (event: BranchRenamedEvent) => void;
 
   // ============================================
   // Raw Event Access
@@ -421,6 +441,23 @@ export class AgentClient {
         case EventTypes.MESSAGE_TURN_ERROR:
           handlers.onError?.(event.message);
           fail(new Error(event.message));
+          break;
+
+        // Branch events
+        case EventTypes.BRANCH_CREATED:
+          handlers.onBranchCreated?.(event);
+          break;
+
+        case EventTypes.BRANCH_SWITCHED:
+          handlers.onBranchSwitched?.(event);
+          break;
+
+        case EventTypes.BRANCH_DELETED:
+          handlers.onBranchDeleted?.(event);
+          break;
+
+        case EventTypes.BRANCH_RENAMED:
+          handlers.onBranchRenamed?.(event);
           break;
       }
     } catch (error) {

@@ -4,7 +4,7 @@ namespace HPD.Agent.Checkpointing.Services;
 
 /// <summary>
 /// Service for branching operations (fork, copy, switch, delete, rename).
-/// Provides Git-like branching semantics for conversation threads.
+/// Provides   branching semantics for conversation threads.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -13,7 +13,7 @@ namespace HPD.Agent.Checkpointing.Services;
 /// <para>
 /// Two distinct operations are supported:
 /// <list type="bullet">
-/// <item><b>Fork</b>: Creates a new branch within the SAME thread (Git-like branches)</item>
+/// <item><b>Fork</b>: Creates a new branch within the SAME thread (  branches)</item>
 /// <item><b>Copy</b>: Creates a NEW independent thread with lineage tracking</item>
 /// </list>
 /// </para>
@@ -66,7 +66,6 @@ public class Branching
 
     /// <summary>
     /// Fork from a checkpoint, creating a new BRANCH within the SAME thread.
-    /// This is Git-like behavior: same repo, different branches.
     /// </summary>
     /// <param name="threadId">Thread to fork from</param>
     /// <param name="checkpointId">Checkpoint to fork from</param>
@@ -87,10 +86,12 @@ public class Branching
         ArgumentException.ThrowIfNullOrWhiteSpace(threadId);
         ArgumentException.ThrowIfNullOrWhiteSpace(checkpointId);
 
-        // Load the source checkpoint (state at the fork point)
-        var sourceThread = await _store.LoadThreadAtCheckpointAsync(threadId, checkpointId, cancellationToken);
-        if (sourceThread == null)
-            throw new ArgumentException($"Checkpoint {checkpointId} not found in thread {threadId}");
+        // Load source snapshot (branching uses snapshots only, not full checkpoints)
+        var sourceSnapshot = await _store.LoadSnapshotAsync(threadId, checkpointId, cancellationToken);
+        if (sourceSnapshot == null)
+            throw new ArgumentException($"Snapshot '{checkpointId}' not found for thread '{threadId}'. Branching requires snapshots, not full checkpoints.");
+        
+        var sourceThread = ConversationThread.FromSnapshot(sourceSnapshot);
 
         // Load the CURRENT thread state to get up-to-date branch info and the latest checkpoint
         var currentThread = await _store.LoadThreadAsync(threadId, cancellationToken);
@@ -112,9 +113,6 @@ public class Branching
 
         // Generate branch name if not provided
         var branchName = newBranchName ?? $"branch-{Guid.NewGuid().ToString()[..8]}";
-
-        // Create new checkpoint for the fork
-        var forkCheckpointId = Guid.NewGuid().ToString();
 
         // Copy current branch data to the forked thread
         if (currentThread != null)
@@ -142,23 +140,24 @@ public class Branching
             sourceThread.TryUpdateBranch(previousBranch, currentCheckpointId);
         }
 
-        // Update the thread with fork state
-        sourceThread.CurrentCheckpointId = forkCheckpointId;
-        sourceThread.ActiveBranch = branchName;
-        sourceThread.TryAddBranch(branchName, forkCheckpointId);
-
         // Create metadata for the fork checkpoint
         var metadata = new CheckpointMetadata
         {
             Source = CheckpointSource.Fork,
-            Step = sourceThread.ExecutionState?.Metadata?.Step ?? -1,
+            Step = -1,  // Forks don't have execution step
             ParentCheckpointId = checkpointId,
             BranchName = branchName,
             MessageIndex = forkMessageIndex
         };
 
-        // Save the fork checkpoint
-        await _store.SaveThreadAtCheckpointAsync(sourceThread, forkCheckpointId, metadata, cancellationToken);
+        // NEW: Save as lightweight snapshot (~20KB vs ~120KB) - ID is auto-generated
+        var forkSnapshot = sourceThread.ToSnapshot();
+        var forkCheckpointId = await _store.SaveSnapshotAsync(threadId, forkSnapshot, metadata, cancellationToken);
+
+        // Update the thread with fork state
+        sourceThread.CurrentCheckpointId = forkCheckpointId;
+        sourceThread.ActiveBranch = branchName;
+        sourceThread.TryAddBranch(branchName, forkCheckpointId);
 
         // Create the event
         var evt = new BranchCreatedEvent(
@@ -172,6 +171,121 @@ public class Branching
         NotifyObservers(o => o.OnBranchCreated(evt));
 
         return (sourceThread, evt);
+    }
+
+    /// <summary>
+    /// Fork from the current in-memory thread state.
+    /// Creates a single snapshot with fork metadata and branches from it.
+    /// This is the recommended method for forking - it always forks from the latest state
+    /// without requiring historical checkpoints or manual snapshot management.
+    /// </summary>
+    /// <param name="currentThread">The current thread with all messages in memory</param>
+    /// <param name="newBranchName">Optional name for the new branch</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Tuple of (forked thread, event)</returns>
+    public async Task<(ConversationThread Thread, BranchCreatedEvent Event)> ForkFromCurrentAsync(
+        ConversationThread currentThread,
+        string? newBranchName = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (!_config.Enabled)
+            throw new InvalidOperationException("Branching is not enabled");
+
+        ArgumentNullException.ThrowIfNull(currentThread);
+
+        // Generate branch name if not provided
+        var branchName = newBranchName ?? $"branch-{Guid.NewGuid().ToString()[..8]}";
+
+        // Get the manifest to track parent checkpoint
+        var manifest = await _store.GetCheckpointManifestAsync(currentThread.Id, cancellationToken: cancellationToken);
+        
+        // Find the most recent checkpoint as parent (for lineage tracking)
+        var parentCheckpointId = manifest.FirstOrDefault()?.CheckpointId;
+        var previousBranch = currentThread.ActiveBranch;
+
+        // CRITICAL: Preserve the original conversation path before switching to the new branch
+        // Save the current state as the "main" branch (or update the previous branch)
+        string mainBranchCheckpointId;
+        
+        if (string.IsNullOrWhiteSpace(previousBranch))
+        {
+            // No branch was active - save current state as "main" branch
+            var mainMetadata = new CheckpointMetadata
+            {
+                Source = CheckpointSource.Input,
+                Step = -1,
+                ParentCheckpointId = parentCheckpointId,
+                BranchName = "main",
+                MessageIndex = currentThread.MessageCount
+            };
+            
+            mainBranchCheckpointId = await _store.SaveSnapshotAsync(
+                currentThread.Id,
+                currentThread.ToSnapshot(),
+                mainMetadata,
+                cancellationToken);
+            
+            currentThread.TryAddBranch("main", mainBranchCheckpointId);
+        }
+        else
+        {
+            // Update the previous branch's head to point to a new snapshot of current state
+            var prevBranchMetadata = new CheckpointMetadata
+            {
+                Source = CheckpointSource.Input,
+                Step = -1,
+                ParentCheckpointId = parentCheckpointId,
+                BranchName = previousBranch,
+                MessageIndex = currentThread.MessageCount
+            };
+            
+            mainBranchCheckpointId = await _store.SaveSnapshotAsync(
+                currentThread.Id,
+                currentThread.ToSnapshot(),
+                prevBranchMetadata,
+                cancellationToken);
+            
+            currentThread.TryUpdateBranch(previousBranch, mainBranchCheckpointId);
+        }
+        
+        // Now use this saved snapshot as the parent for the fork
+        parentCheckpointId = mainBranchCheckpointId;
+
+        // Create metadata for the fork snapshot
+        var metadata = new CheckpointMetadata
+        {
+            Source = CheckpointSource.Fork,
+            Step = -1,
+            ParentCheckpointId = parentCheckpointId,
+            BranchName = branchName,
+            MessageIndex = currentThread.MessageCount
+        };
+
+        // Save snapshot of current state WITH fork metadata (single save)
+        var forkSnapshot = currentThread.ToSnapshot();
+        var forkCheckpointId = await _store.SaveSnapshotAsync(
+            currentThread.Id, 
+            forkSnapshot, 
+            metadata, 
+            cancellationToken);
+
+        // Update the thread with fork state
+        currentThread.CurrentCheckpointId = forkCheckpointId;
+        currentThread.ActiveBranch = branchName;
+        currentThread.TryAddBranch(branchName, forkCheckpointId);
+
+        // Create the event
+        var evt = new BranchCreatedEvent(
+            currentThread.Id,
+            branchName,
+            forkCheckpointId,
+            parentCheckpointId,
+            currentThread.MessageCount);
+
+        // Notify observers
+        NotifyObservers(o => o.OnBranchCreated(evt));
+
+        return (currentThread, evt);
     }
 
     //──────────────────────────────────────────────────────────────────
@@ -202,12 +316,12 @@ public class Branching
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceThreadId);
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceCheckpointId);
 
-        // Load the source checkpoint
-        var sourceThread = await _store.LoadThreadAtCheckpointAsync(
-            sourceThreadId, sourceCheckpointId, cancellationToken);
-
-        if (sourceThread == null)
-            throw new ArgumentException($"Checkpoint {sourceCheckpointId} not found in thread {sourceThreadId}");
+        // Load source snapshot (branching uses snapshots only, not full checkpoints)
+        var sourceSnapshot = await _store.LoadSnapshotAsync(sourceThreadId, sourceCheckpointId, cancellationToken);
+        if (sourceSnapshot == null)
+            throw new ArgumentException($"Snapshot '{sourceCheckpointId}' not found for thread '{sourceThreadId}'. Branching requires snapshots, not full checkpoints.");
+        
+        var sourceThread = ConversationThread.FromSnapshot(sourceSnapshot);
 
         // Create a new independent thread
         var newThread = new ConversationThread();
@@ -235,12 +349,6 @@ public class Branching
             newThread.ExecutionState = sourceThread.ExecutionState;
         }
 
-        // Create root checkpoint in the new thread with lineage
-        var newCheckpointId = Guid.NewGuid().ToString();
-        newThread.CurrentCheckpointId = newCheckpointId;
-        newThread.TryAddBranch("main", newCheckpointId);
-        newThread.ActiveBranch = "main";
-
         // Save the new thread with Copy metadata
         var metadata = new CheckpointMetadata
         {
@@ -252,7 +360,14 @@ public class Branching
             MessageIndex = newThread.MessageCount
         };
 
-        await _store.SaveThreadAtCheckpointAsync(newThread, newCheckpointId, metadata, cancellationToken);
+        // NEW: Save as lightweight snapshot (~20KB vs ~120KB) - ID is auto-generated
+        var newSnapshot = newThread.ToSnapshot();
+        var newCheckpointId = await _store.SaveSnapshotAsync(newThread.Id, newSnapshot, metadata, cancellationToken);
+
+        // Create root checkpoint in the new thread with lineage
+        newThread.CurrentCheckpointId = newCheckpointId;
+        newThread.TryAddBranch("main", newCheckpointId);
+        newThread.ActiveBranch = "main";
 
         // Create the event
         var messageIndex = sourceThread.MessageCount - 1;
@@ -313,11 +428,12 @@ public class Branching
         if (targetCheckpointId == null)
             return null;
 
-        // Load the checkpoint
-        var thread = await _store.LoadThreadAtCheckpointAsync(threadId, targetCheckpointId, cancellationToken);
-        if (thread == null)
+        // Load the snapshot (branches use snapshots, not full checkpoints)
+        var snapshot = await _store.LoadSnapshotAsync(threadId, targetCheckpointId, cancellationToken);
+        if (snapshot == null)
             return null;
 
+        var thread = ConversationThread.FromSnapshot(snapshot);
         var previousBranch = currentThread?.ActiveBranch ?? thread.ActiveBranch;
 
         // Copy over the current branch data to preserve all branches
@@ -445,23 +561,40 @@ public class Branching
 
         var manifest = await _store.GetCheckpointManifestAsync(threadId, limit, before, cancellationToken);
 
-        // Load full checkpoint data for each entry
+        // Load checkpoint data for each entry (snapshots don't have execution state)
         var result = new List<CheckpointTuple>();
         foreach (var entry in manifest)
         {
-            var thread = await _store.LoadThreadAtCheckpointAsync(threadId, entry.CheckpointId, cancellationToken);
+            ConversationThread? thread = null;
+            AgentLoopState? state = null;
+
+            // Snapshots are lightweight (no execution state), checkpoints have full state
+            if (entry.IsSnapshot)
+            {
+                var snapshot = await _store.LoadSnapshotAsync(threadId, entry.CheckpointId, cancellationToken);
+                if (snapshot != null)
+                {
+                    thread = ConversationThread.FromSnapshot(snapshot);
+                    state = null; // Snapshots explicitly don't include execution state
+                }
+            }
+            else
+            {
+                thread = await _store.LoadThreadAtCheckpointAsync(threadId, entry.CheckpointId, cancellationToken);
+                state = thread?.ExecutionState;
+            }
+
             if (thread == null)
                 continue;
 
             // Accept checkpoints with or without ExecutionState
-            // Root checkpoints (messageIndex=-1) don't have ExecutionState, that's expected
-            // All other checkpoints should have ExecutionState, but we handle gracefully if missing
+            // Root checkpoints and snapshots don't have ExecutionState - that's expected
             result.Add(new CheckpointTuple
             {
                 CheckpointId = entry.CheckpointId,
                 CreatedAt = entry.CreatedAt,
-                State = thread.ExecutionState,
-                Metadata = thread.ExecutionState?.Metadata ?? new CheckpointMetadata
+                State = state,
+                Metadata = state?.Metadata ?? new CheckpointMetadata
                 {
                     Source = entry.Source,
                     Step = entry.Step,
@@ -505,23 +638,40 @@ public class Branching
             .OrderBy(c => c.CreatedAt)
             .ToList();
 
-        // Load full checkpoint data
+        // Load checkpoint data (snapshots don't have execution state)
         var result = new List<CheckpointTuple>();
         foreach (var entry in variantEntries)
         {
-            var thread = await _store.LoadThreadAtCheckpointAsync(threadId, entry.CheckpointId, cancellationToken);
+            ConversationThread? thread = null;
+            AgentLoopState? state = null;
+
+            // Snapshots are lightweight (no execution state), checkpoints have full state
+            if (entry.IsSnapshot)
+            {
+                var snapshot = await _store.LoadSnapshotAsync(threadId, entry.CheckpointId, cancellationToken);
+                if (snapshot != null)
+                {
+                    thread = ConversationThread.FromSnapshot(snapshot);
+                    state = null; // Snapshots explicitly don't include execution state
+                }
+            }
+            else
+            {
+                thread = await _store.LoadThreadAtCheckpointAsync(threadId, entry.CheckpointId, cancellationToken);
+                state = thread?.ExecutionState;
+            }
+
             if (thread == null)
                 continue;
 
             // Accept checkpoints with or without ExecutionState
-            // Root checkpoints (messageIndex=-1) don't have ExecutionState, that's expected
-            // All other checkpoints should have ExecutionState, but we handle gracefully if missing
+            // Root checkpoints and snapshots don't have ExecutionState - that's expected
             result.Add(new CheckpointTuple
             {
                 CheckpointId = entry.CheckpointId,
                 CreatedAt = entry.CreatedAt,
-                State = thread.ExecutionState,
-                Metadata = thread.ExecutionState?.Metadata ?? new CheckpointMetadata
+                State = state,
+                Metadata = state?.Metadata ?? new CheckpointMetadata
                 {
                     Source = entry.Source,
                     Step = entry.Step,

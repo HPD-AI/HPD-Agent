@@ -456,4 +456,102 @@ public class InMemoryConversationThreadStore : ICheckpointStore
         _pendingWrites.TryRemove(key, out _);
         return Task.CompletedTask;
     }
+
+    // ===== Lightweight Snapshot Methods =====
+
+    private readonly ConcurrentDictionary<string, List<(string SnapshotId, ThreadSnapshot Snapshot, CheckpointMetadata Metadata, DateTime CreatedAt)>> _snapshots = new();
+
+    public Task<string> SaveSnapshotAsync(
+        string threadId,
+        ThreadSnapshot snapshot,
+        CheckpointMetadata metadata,
+        CancellationToken cancellationToken = default)
+    {
+        // Auto-generate unique snapshot ID
+        var snapshotId = Guid.NewGuid().ToString();
+        
+        var entry = (snapshotId, snapshot, metadata, DateTime.UtcNow);
+
+        _snapshots.AddOrUpdate(
+            threadId,
+            _ => new List<(string, ThreadSnapshot, CheckpointMetadata, DateTime)> { entry },
+            (_, existing) =>
+            {
+                lock (existing)
+                {
+                    existing.Insert(0, entry); // Insert at beginning (newest first)
+                }
+                return existing;
+            });
+
+        // Also add to checkpoint history for unified manifest
+        _checkpointHistory.AddOrUpdate(
+            threadId,
+            _ => new List<CheckpointTuple>(),
+            (_, existing) =>
+            {
+                lock (existing)
+                {
+                    // Don't add actual checkpoint, just track in manifest
+                }
+                return existing;
+            });
+
+        return Task.FromResult(snapshotId);
+    }
+
+    public Task<ThreadSnapshot?> LoadSnapshotAsync(
+        string threadId,
+        string snapshotId,
+        CancellationToken cancellationToken = default)
+    {
+        if (_snapshots.TryGetValue(threadId, out var snapshots))
+        {
+            lock (snapshots)
+            {
+                var snapshot = snapshots.FirstOrDefault(s => s.SnapshotId == snapshotId);
+                if (snapshot.SnapshotId != null)
+                    return Task.FromResult<ThreadSnapshot?>(snapshot.Snapshot);
+            }
+        }
+
+        return Task.FromResult<ThreadSnapshot?>(null);
+    }
+
+    public Task DeleteSnapshotsAsync(
+        string threadId,
+        IEnumerable<string> snapshotIds,
+        CancellationToken cancellationToken = default)
+    {
+        var idsToDelete = snapshotIds.ToHashSet();
+
+        if (_snapshots.TryGetValue(threadId, out var snapshots))
+        {
+            lock (snapshots)
+            {
+                snapshots.RemoveAll(s => idsToDelete.Contains(s.SnapshotId));
+            }
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task PruneSnapshotsAsync(
+        string threadId,
+        int keepLatest = 50,
+        CancellationToken cancellationToken = default)
+    {
+        if (_snapshots.TryGetValue(threadId, out var snapshots))
+        {
+            lock (snapshots)
+            {
+                if (snapshots.Count > keepLatest)
+                {
+                    snapshots.RemoveRange(keepLatest, snapshots.Count - keepLatest);
+                }
+            }
+        }
+
+        return Task.CompletedTask;
+    }
 }

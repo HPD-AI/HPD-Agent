@@ -92,7 +92,6 @@ public static class AgentBuilderCheckpointingExtensions
     /// <remarks>
     /// <para>
     /// Branching allows forking conversations from any checkpoint,
-    /// creating Git-like branches within the same thread.
     /// </para>
     /// <para>
     /// <strong>Note:</strong> You must call <c>WithCheckpointStore()</c> first to set the storage backend.

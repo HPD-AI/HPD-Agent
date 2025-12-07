@@ -1,425 +1,686 @@
 # 13. Durable Execution
 
-Durable Execution provides automatic checkpointing and crash recovery for your agent conversations. If your agent crashes mid-conversation, it can resume from the last checkpoint instead of losing all progress.
+Durable Execution provides automatic crash recovery for your agents. When enabled, your agent's execution state is periodically saved, allowing seamless recovery from crashes, timeouts, or system failures.
 
 ## What is Durable Execution?
 
-Durable Execution is about **producing checkpoints automatically**. It handles:
+Durable Execution is **automatic, background checkpointing** that:
 
-- **Auto-checkpointing** - Saves state at configurable intervals (per turn, per iteration, or manually)
-- **Retention policies** - Controls how many checkpoints to keep
-- **Crash recovery** - Resume from the latest checkpoint after a crash
-- **Pending writes** - Recover partial progress from interrupted operations
+- **Saves execution state** - Captures agent progress including messages, tool calls, middleware state
+- **Resumes on restart** - Detects incomplete conversations and continues where it left off
+- **Works transparently** - No code changes needed in your agent logic
+- **Fire-and-forget** - Doesn't block agent execution
 
-> **Important**: Durable Execution is separate from [Branching](./14%20Branching.md). Durable Execution *creates* checkpoints; Branching *operates on* checkpoints (fork, switch, delete). They're independent services that share the same checkpoint store.
+> **Note**: Durable Execution is separate from [Branching](./15%20Branching.md). Durable Execution provides crash recovery; Branching creates conversation variants. They work together but are independent features.
 
 ## When to Use Durable Execution
 
-| Scenario | Recommendation |
-|----------|----------------|
-| Short conversations (< 5 messages) | Optional |
-| Long-running agents (> 10 iterations) | Recommended |
-| Production environments | Strongly recommended |
-| Multi-tool workflows | Recommended with pending writes |
-| Debugging/development | Use with FullHistory retention |
+| Scenario | Use Durable Execution? |
+|----------|------------------------|
+| Production agents | ✅ Yes |
+| Long-running conversations (>5 min) | ✅ Yes |
+| Multi-tool workflows | ✅ Yes |
+| Expensive operations you don't want to redo | ✅ Yes |
+| Short scripts (<1 min) | ❌ No |
+| Simple testing | ❌ No |
+| Fully stateless agents | ❌ No |
+
+---
 
 ## Quick Setup
 
 ### Using DI (Recommended)
 
 ```csharp
+using HPD_Agent.Checkpointing.Services;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Enable durable execution
 builder.Services.AddCheckpointing(opts =>
 {
     opts.StoragePath = "./checkpoints";
-    
     opts.DurableExecution.Enabled = true;
     opts.DurableExecution.Frequency = CheckpointFrequency.PerTurn;
     opts.DurableExecution.Retention = RetentionPolicy.LatestOnly;
 });
-```
 
-### Using AgentBuilder (Fluent API)
-
-```csharp
-var agent = new AgentBuilder()
-    .WithProvider("openai", "gpt-4")
-    .WithCheckpointStore(new JsonCheckpointStore("./checkpoints"))
-    .WithDurableExecution(CheckpointFrequency.PerTurn, RetentionPolicy.LatestOnly)
-    .Build();
-```
-
-### In-Memory (Development Only)
-
-```csharp
-builder.Services.AddInMemoryCheckpointing();
-```
-
-## Checkpoint Frequencies
-
-Choose when checkpoints are created:
-
-### PerTurn (Default, Recommended)
-
-Checkpoints after each complete message turn (user message → agent response).
-
-```csharp
-opts.DurableExecution.Frequency = CheckpointFrequency.PerTurn;
-```
-
-**Best for**: Most use cases. Balances durability with performance.
-
-### PerIteration
-
-Checkpoints after every agent iteration (each tool call cycle).
-
-```csharp
-opts.DurableExecution.Frequency = CheckpointFrequency.PerIteration;
-```
-
-**Best for**: Long-running agents with many tool calls (>10 iterations). Higher overhead but maximum durability.
-
-### Manual
-
-Only checkpoint when you explicitly call `SaveCheckpointAsync()`.
-
-```csharp
-opts.DurableExecution.Frequency = CheckpointFrequency.Manual;
-
-// Later, manually save
-await durableExecutionService.SaveCheckpointAsync(thread, state);
-```
-
-**Best for**: Full control over when state is persisted.
-
-## Retention Policies
-
-Control how many checkpoints to keep:
-
-### LatestOnly (Default)
-
-Keep only the most recent checkpoint. Minimizes storage.
-
-```csharp
-opts.DurableExecution.Retention = RetentionPolicy.LatestOnly;
-```
-
-**Storage**: Minimal (1 checkpoint per thread)  
-**Best for**: Simple crash recovery, no need for history
-
-### FullHistory
-
-Keep all checkpoints. Enables time-travel debugging and branching.
-
-```csharp
-opts.DurableExecution.Retention = RetentionPolicy.FullHistory;
-```
-
-**Storage**: Grows with conversation length  
-**Best for**: Development, debugging, when using branching
-
-### LastN
-
-Keep the last N checkpoints.
-
-```csharp
-opts.DurableExecution.Retention = RetentionPolicy.LastN(10);
-```
-
-**Storage**: Bounded to N checkpoints  
-**Best for**: Balance between history and storage
-
-### TimeBased
-
-Keep checkpoints from the last specified duration.
-
-```csharp
-opts.DurableExecution.Retention = RetentionPolicy.TimeBased(TimeSpan.FromDays(30));
-```
-
-**Storage**: Varies with time window  
-**Best for**: Compliance requirements (e.g., audit logs)
-
-## Crash Recovery
-
-### Automatic Resume
-
-Resume a crashed conversation from its latest checkpoint:
-
-```csharp
-var durableExecution = serviceProvider.GetRequiredService<DurableExecutionService>();
-
-// Resume returns the thread at the last checkpoint
-var thread = await durableExecution.ResumeFromLatestAsync(threadId);
-
-if (thread != null)
+// Inject DurableExecution where needed
+public class AgentService
 {
-    Console.WriteLine($"Resumed from checkpoint at message {thread.Messages.Count}");
-    // Continue the conversation
-}
-else
-{
-    Console.WriteLine("No checkpoint found, starting fresh");
-}
-```
-
-### Checking if Checkpoints Exist
-
-```csharp
-var store = serviceProvider.GetRequiredService<ICheckpointStore>();
-var checkpoints = await store.GetCheckpointsAsync(threadId);
-
-if (checkpoints.Any())
-{
-    Console.WriteLine($"Found {checkpoints.Count} checkpoints");
-}
-```
-
-## Pending Writes (Advanced)
-
-Pending writes provide partial failure recovery. When multiple tools execute in sequence, successful results are saved before the full checkpoint.
-
-### The Problem
-
-```
-Tool A succeeds → result saved in memory
-Tool B succeeds → result saved in memory
-Tool C crashes  → 💥 Lost A and B results!
-```
-
-### The Solution
-
-With pending writes enabled:
-
-```
-Tool A succeeds → SavePendingWriteAsync()  ✓
-Tool B succeeds → SavePendingWriteAsync()  ✓
-Tool C crashes  → 💥
-Resume          → LoadPendingWritesAsync() → Restore A & B results
-Checkpoint      → DeletePendingWritesAsync() → Cleanup
-```
-
-### Enabling Pending Writes
-
-```csharp
-builder.Services.AddCheckpointing(opts =>
-{
-    opts.StoragePath = "./checkpoints";
-    opts.DurableExecution.Enabled = true;
-    opts.DurableExecution.EnablePendingWrites = true;
-});
-```
-
-### Using Pending Writes
-
-```csharp
-var durableExecution = serviceProvider.GetRequiredService<DurableExecutionService>();
-
-// Save individual tool results as pending writes (fire-and-forget)
-durableExecution.SavePendingWriteFireAndForget(threadId, toolCallId, toolResult);
-
-// Later, load pending writes during recovery
-var pendingWrites = await durableExecution.LoadPendingWritesAsync(threadId);
-
-foreach (var write in pendingWrites)
-{
-    Console.WriteLine($"Recovered: {write.ToolCallId} = {write.Result}");
-}
-
-// Cleanup after successful checkpoint
-await durableExecution.DeletePendingWritesAsync(threadId);
-```
-
-## Configuration Reference
-
-### DurableExecutionConfig
-
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `Enabled` | `bool` | `false` | Enable durable execution |
-| `Frequency` | `CheckpointFrequency` | `PerTurn` | When to checkpoint |
-| `Retention` | `RetentionPolicy` | `LatestOnly` | How many checkpoints to keep |
-| `EnablePendingWrites` | `bool` | `false` | Enable partial failure recovery |
-
-### CheckpointingOptions
-
-```csharp
-builder.Services.AddCheckpointing(opts =>
-{
-    // Storage
-    opts.StoragePath = "./checkpoints";  // File system path
+    private readonly DurableExecution _durable;
     
-    // Durable Execution
-    opts.DurableExecution.Enabled = true;
-    opts.DurableExecution.Frequency = CheckpointFrequency.PerTurn;
-    opts.DurableExecution.Retention = RetentionPolicy.FullHistory;
-    opts.DurableExecution.EnablePendingWrites = true;
-    
-    // Branching (separate feature)
-    opts.Branching.Enabled = true;
-});
-```
-
-## Common Patterns
-
-### Production Setup
-
-```csharp
-builder.Services.AddCheckpointing(opts =>
-{
-    opts.StoragePath = "./data/checkpoints";
-    
-    opts.DurableExecution.Enabled = true;
-    opts.DurableExecution.Frequency = CheckpointFrequency.PerTurn;
-    opts.DurableExecution.Retention = RetentionPolicy.LastN(5);
-    opts.DurableExecution.EnablePendingWrites = true;
-});
-```
-
-### Development Setup
-
-```csharp
-builder.Services.AddCheckpointing(opts =>
-{
-    opts.StoragePath = "./dev-checkpoints";
-    
-    opts.DurableExecution.Enabled = true;
-    opts.DurableExecution.Frequency = CheckpointFrequency.PerIteration;
-    opts.DurableExecution.Retention = RetentionPolicy.FullHistory;
-    
-    // Enable branching for debugging
-    opts.Branching.Enabled = true;
-});
-```
-
-### High-Reliability Setup
-
-```csharp
-builder.Services.AddCheckpointing(opts =>
-{
-    opts.StoragePath = "./checkpoints";
-    
-    opts.DurableExecution.Enabled = true;
-    opts.DurableExecution.Frequency = CheckpointFrequency.PerIteration;
-    opts.DurableExecution.Retention = RetentionPolicy.FullHistory;
-    opts.DurableExecution.EnablePendingWrites = true;
-});
-```
-
-## Best Practices
-
-### 1. Choose the Right Frequency
-
-- Use `PerTurn` for most applications (good balance)
-- Use `PerIteration` for long-running agents or critical workflows
-- Use `Manual` only when you need precise control
-
-### 2. Balance Retention vs Storage
-
-- `LatestOnly` is sufficient for pure crash recovery
-- Use `FullHistory` during development or when using branching
-- Use `LastN` in production to bound storage growth
-
-### 3. Enable Pending Writes for Multi-Tool Agents
-
-If your agent calls multiple tools in sequence, enable pending writes to avoid re-executing successful operations after a crash.
-
-### 4. Validate Configuration at Startup
-
-```csharp
-// In Program.cs
-ValidateCheckpointingConfiguration(app.Services);
-
-void ValidateCheckpointingConfiguration(IServiceProvider services)
-{
-    var durableExecution = services.GetService<DurableExecutionService>();
-    if (durableExecution?.IsEnabled == true)
+    public AgentService(DurableExecution durable)
     {
-        var store = services.GetService<ICheckpointStore>();
-        if (store == null)
-        {
-            throw new InvalidOperationException(
-                "DurableExecution is enabled but no ICheckpointStore is registered");
-        }
+        _durable = durable;
     }
 }
 ```
 
-### 5. Use Branching with FullHistory
-
-If you want to use branching features, use `FullHistory` retention so checkpoints are available to fork from:
+### Manual Setup
 
 ```csharp
-opts.DurableExecution.Retention = RetentionPolicy.FullHistory;
-opts.Branching.Enabled = true;
+var store = new JsonConversationThreadStore("./checkpoints");
+var durable = new DurableExecution(store, new DurableExecutionConfig
+{
+    Enabled = true,
+    Frequency = CheckpointFrequency.PerTurn,
+    Retention = RetentionPolicy.LatestOnly
+});
 ```
 
-## Durable Execution vs Branching
+---
 
-| Feature | Durable Execution | Branching |
-|---------|-------------------|-----------|
-| **Purpose** | Create checkpoints | Operate on checkpoints |
-| **Focus** | Crash recovery, state persistence | Forking, switching, exploration |
-| **Creates checkpoints?** | Yes | No |
-| **Requires checkpoints?** | No | Yes |
-| **Typical retention** | LatestOnly or LastN | FullHistory |
+## How It Works
 
-They work together: Durable Execution produces the checkpoints that Branching consumes.
+### The Flow
 
-## API Reference
+```
+1. Agent starts conversation
+   └─ DurableExecution: Checks for incomplete checkpoint
+      ├─ Found? → Resume from saved state
+      └─ None? → Start fresh
 
-### DurableExecutionService
+2. Agent processes turn
+   ├─ User message
+   ├─ Tool calls
+   ├─ LLM responses
+   └─ DurableExecution: Save checkpoint (background)
+      └─ Fire-and-forget (doesn't block)
+
+3. System crash! 💥
+
+4. Agent restarts
+   └─ DurableExecution: Detects incomplete checkpoint
+      └─ Resumes from last saved state
+         ├─ Restores messages
+         ├─ Restores middleware state
+         ├─ Restores iteration
+         └─ Continues execution
+```
+
+### What Gets Saved
+
+```
+ExecutionCheckpoint (~120KB):
+├─ Thread metadata
+│  ├─ ThreadId
+│  ├─ DisplayName
+│  ├─ CreatedAt
+│  └─ ActiveBranch
+│
+├─ Conversation history
+│  ├─ Messages (user, assistant, tool)
+│  ├─ Message metadata
+│  └─ Turn boundaries
+│
+└─ Execution state (~100KB)
+   ├─ Iteration count
+   ├─ Middleware state
+   ├─ Pending operations
+   ├─ Tool call results
+   └─ Internal loop state
+```
+
+---
+
+## Configuration
+
+### CheckpointFrequency
+
+Controls when checkpoints are saved:
 
 ```csharp
-public class DurableExecutionService
+public enum CheckpointFrequency
 {
-    // Properties
-    bool IsEnabled { get; }
-    CheckpointFrequency Frequency { get; }
-    RetentionPolicy Retention { get; }
-    
-    // Core Methods
-    Task SaveCheckpointAsync(ConversationThread thread, AgentLoopState state, ...);
-    bool ShouldCheckpoint(int iteration, bool turnComplete);
-    Task<ConversationThread?> ResumeFromLatestAsync(string threadId, ...);
-    
-    // Pending Writes (when EnablePendingWrites = true)
-    void SavePendingWriteFireAndForget(string threadId, string toolCallId, object result);
-    Task<IReadOnlyList<PendingWrite>> LoadPendingWritesAsync(string threadId, ...);
-    Task DeletePendingWritesAsync(string threadId, ...);
+    PerTurn,      // After each user-assistant exchange (recommended)
+    PerIteration, // After each agent loop iteration
+    Manual        // Only when you call SaveCheckpointAsync()
 }
 ```
 
-### ShouldCheckpoint Logic
+**Recommendations:**
+
+| Use Case | Frequency | Why |
+|----------|-----------|-----|
+| Most agents | `PerTurn` | Balanced - recovers to turn boundary |
+| High-frequency tools | `PerIteration` | Fine-grained recovery (more storage) |
+| Custom logic | `Manual` | You control when to checkpoint |
+
+### RetentionPolicy
+
+Controls how many checkpoints to keep:
 
 ```csharp
-Frequency switch
+public enum RetentionPolicy
 {
-    PerIteration => true,           // Always checkpoint
-    PerTurn      => turnComplete,   // Only when turn completes
-    Manual       => false           // Never auto-checkpoint
+    LatestOnly,  // Keep only most recent (for recovery)
+    FullHistory  // Keep all checkpoints (for tracing)
 }
 ```
+
+**Recommendations:**
+
+| Use Case | Retention | Why |
+|----------|-----------|-----|
+| Production recovery | `LatestOnly` | Minimal storage overhead |
+| Debugging/tracing | `FullHistory` | See full execution history |
+| Compliance/audit | `FullHistory` | Keep complete records |
+
+### DurableExecutionConfig
+
+```csharp
+public class DurableExecutionConfig
+{
+    // Enable/disable durable execution
+    public bool Enabled { get; set; } = false;
+    
+    // When to save checkpoints
+    public CheckpointFrequency Frequency { get; set; } = CheckpointFrequency.PerTurn;
+    
+    // How many to keep
+    public RetentionPolicy Retention { get; set; } = RetentionPolicy.LatestOnly;
+    
+    // Timeout for detecting incomplete checkpoints (seconds)
+    public int CheckpointTimeoutSeconds { get; set; } = 300; // 5 minutes
+}
+```
+
+---
+
+## Usage
+
+### Basic Usage (Automatic)
+
+Once configured, DurableExecution works automatically:
+
+```csharp
+// Just run your agent normally
+var agent = builder.Build();
+await agent.RunAsync(messages, thread);
+
+// Checkpointing happens automatically in background
+// If crash occurs, next run resumes from last checkpoint
+```
+
+### Manual Checkpointing
+
+If you need fine control:
+
+```csharp
+builder.Services.AddCheckpointing(opts =>
+{
+    opts.DurableExecution.Enabled = true;
+    opts.DurableExecution.Frequency = CheckpointFrequency.Manual;
+});
+
+// Inject DurableExecution
+public class MyAgent
+{
+    private readonly DurableExecution _durable;
+    
+    public MyAgent(DurableExecution durable)
+    {
+        _durable = durable;
+    }
+    
+    public async Task RunAsync(ConversationThread thread)
+    {
+        // ... do work ...
+        
+        // Checkpoint at strategic points
+        await _durable.SaveCheckpointAsync(thread, 
+            CheckpointSource.Application, 
+            step: 1);
+        
+        // ... more work ...
+        
+        await _durable.SaveCheckpointAsync(thread, 
+            CheckpointSource.Application, 
+            step: 2);
+    }
+}
+```
+
+### Resume After Crash
+
+```csharp
+// On agent startup, check for incomplete conversations
+var threads = await store.GetAllThreadsAsync();
+
+foreach (var thread in threads)
+{
+    // DurableExecution automatically detects incomplete checkpoints
+    var checkpoint = await store.GetLatestCheckpointAsync(thread.Id);
+    
+    if (checkpoint != null && checkpoint.Metadata.IsIncomplete)
+    {
+        Console.WriteLine($"Resuming thread {thread.Id}...");
+        
+        // Load and continue
+        var restored = await store.LoadThreadAtCheckpointAsync(
+            thread.Id, checkpoint.CheckpointId);
+        
+        await agent.RunAsync(pendingMessages, restored);
+    }
+}
+```
+
+---
+
+## Branch-Agnostic Design
+
+**Important concept:** DurableExecution doesn't care about branches!
+
+### How It Works
+
+```csharp
+// When you save a checkpoint, DurableExecution just saves the thread object
+await durableExecution.SaveCheckpointAsync(thread, CheckpointSource.Loop, step: 5);
+
+// The thread object contains branch info as a property:
+thread.ActiveBranch // e.g., "main", "feature-x", etc.
+
+// On restore:
+var restored = await store.LoadThreadAtCheckpointAsync(threadId, checkpointId);
+Console.WriteLine(restored.ActiveBranch); // Still has branch info!
+```
+
+**What this means:**
+
+```
+DurableExecution doesn't check:
+├─ "What branch is this?"
+├─ "Should I save this branch?"
+└─ "Should I restore this branch?"
+
+It just:
+├─ Saves whatever thread object you give it
+└─ Restores complete thread object (including branch)
+```
+
+### Why Branch-Agnostic?
+
+**Separation of concerns:**
+
+```
+High-level feature (BranchingService):
+├─ Manages forks, switches, copies
+├─ Decides when to create branches
+└─ Branch-aware logic
+
+Low-level infrastructure (DurableExecution):
+├─ Saves execution state
+├─ Detects crashes
+├─ Resumes conversations
+└─ Branch-agnostic (just serializes thread object)
+```
+
+**Example:**
+
+```csharp
+// You fork a conversation
+var (forkedThread, _) = await branching.ForkFromCheckpointAsync(
+    threadId, checkpointId, "experiment");
+
+// forkedThread.ActiveBranch == "experiment"
+
+// You run agent on this branch
+await agent.RunAsync(messages, forkedThread);
+
+// DurableExecution saves checkpoint
+// ├─ Doesn't care it's on "experiment" branch
+// └─ Just saves the thread (which happens to have ActiveBranch="experiment")
+
+// Crash! 💥
+
+// On restart, DurableExecution resumes
+var restored = await store.LoadThreadAtCheckpointAsync(
+    forkedThread.Id, latestCheckpointId);
+
+// restored.ActiveBranch == "experiment" (preserved as part of thread)
+```
+
+---
+
+## Recovery Scenarios
+
+### Scenario 1: Mid-Turn Crash
+
+```csharp
+// Turn started
+User: "Search for flights to Paris"
+
+// Agent thinking...
+  ├─ Tool call: search_flights("Paris")
+  ├─ Checkpoint saved ✅
+  ├─ System crashes! 💥
+
+// On restart:
+  └─ Resumes from checkpoint
+     ├─ Knows search_flights was called
+     ├─ Has tool result
+     └─ Continues with LLM response
+```
+
+### Scenario 2: Between Turns
+
+```csharp
+Turn 1 complete: "Here are flights to Paris"
+  └─ Checkpoint saved ✅
+
+System crashes! 💥
+
+// On restart:
+  └─ Resumes from checkpoint
+     ├─ Turn 1 complete
+     └─ Ready for Turn 2
+```
+
+### Scenario 3: Long Tool Execution
+
+```csharp
+User: "Analyze this 1GB file"
+
+Agent:
+  ├─ Starts file analysis
+  ├─ Checkpoint saved (before tool) ✅
+  ├─ Tool runs for 10 minutes...
+  ├─ System crashes during tool! 💥
+
+// On restart:
+  └─ Resumes from checkpoint
+     ├─ Knows analysis started
+     ├─ Re-executes tool (idempotent!)
+     └─ Continues when done
+```
+
+---
+
+## Performance
+
+### Storage Overhead
+
+```
+Per checkpoint: ~120KB
+
+LatestOnly mode:
+├─ 1 thread, 10 turns → ~1.2MB total
+└─ Overwrites old checkpoints
+
+FullHistory mode:
+├─ 1 thread, 100 turns → ~12MB total
+└─ Keeps all checkpoints (grows over time)
+```
+
+### Runtime Overhead
+
+**Checkpoint save:**
+- Async fire-and-forget (non-blocking)
+- ~1-5ms serialization time
+- Runs in background thread
+
+**Checkpoint load:**
+- ~5-10ms deserialization
+- Only on startup (after crash)
+
+**Recommendation:** Use `PerTurn` frequency with `LatestOnly` retention for optimal balance.
+
+---
+
+## Events
+
+DurableExecution emits events for observability:
+
+```csharp
+// Checkpoint saved
+public record CheckpointSavedEvent
+{
+    public string ThreadId { get; init; }
+    public string CheckpointId { get; init; }
+    public CheckpointSource Source { get; init; }
+    public int Step { get; init; }
+    public long SizeBytes { get; init; }
+    public DateTime CreatedAt { get; init; }
+}
+
+// Checkpoint restored
+public record CheckpointRestoredEvent
+{
+    public string ThreadId { get; init; }
+    public string CheckpointId { get; init; }
+    public int MessageCount { get; init; }
+    public int Iteration { get; init; }
+    public DateTime RestoredAt { get; init; }
+}
+```
+
+---
+
+## Common Patterns
+
+### Pattern 1: Simple Recovery
+
+```csharp
+// Setup
+builder.Services.AddCheckpointing(opts =>
+{
+    opts.DurableExecution.Enabled = true;
+    opts.DurableExecution.Frequency = CheckpointFrequency.PerTurn;
+    opts.DurableExecution.Retention = RetentionPolicy.LatestOnly;
+});
+
+// Use
+await agent.RunAsync(messages, thread);
+// That's it! Automatic recovery on crash
+```
+
+### Pattern 2: Debug with Full History
+
+```csharp
+// Setup for debugging
+builder.Services.AddCheckpointing(opts =>
+{
+    opts.DurableExecution.Enabled = true;
+    opts.DurableExecution.Frequency = CheckpointFrequency.PerIteration;
+    opts.DurableExecution.Retention = RetentionPolicy.FullHistory;
+});
+
+// Later: Analyze execution history
+var manifest = await store.GetCheckpointManifestAsync(thread.Id);
+
+Console.WriteLine($"Found {manifest.Count} checkpoints:");
+foreach (var entry in manifest)
+{
+    Console.WriteLine($"  Step {entry.Step}: {entry.CreatedAt}");
+}
+```
+
+### Pattern 3: Custom Checkpointing
+
+```csharp
+// Setup manual mode
+builder.Services.AddCheckpointing(opts =>
+{
+    opts.DurableExecution.Enabled = true;
+    opts.DurableExecution.Frequency = CheckpointFrequency.Manual;
+});
+
+// Checkpoint at strategic points
+await ProcessUserInput(thread);
+await durable.SaveCheckpointAsync(thread, CheckpointSource.Application, step: 1);
+
+await CallExpensiveAPI(thread);
+await durable.SaveCheckpointAsync(thread, CheckpointSource.Application, step: 2);
+
+await GenerateResponse(thread);
+await durable.SaveCheckpointAsync(thread, CheckpointSource.Application, step: 3);
+```
+
+---
+
+## Durable Execution + Branching
+
+These features work independently but complement each other:
+
+```csharp
+builder.Services.AddCheckpointing(opts =>
+{
+    opts.StoragePath = "./checkpoints";
+    
+    // Feature 1: Automatic recovery (DurableExecution)
+    opts.DurableExecution.Enabled = true;
+    opts.DurableExecution.Frequency = CheckpointFrequency.PerTurn;
+    
+    // Feature 2: Manual forking (Branching)
+    opts.Branching.Enabled = true;
+});
+```
+
+**How they coexist:**
+
+```
+Main conversation:
+├─ Turn 1: "Hello"
+│  └─ DurableExecution: Saves ExecutionCheckpoint (~120KB)
+│
+├─ Turn 2: "Tell me more"
+│  └─ DurableExecution: Saves ExecutionCheckpoint (~120KB)
+│
+└─ User: "Fork from Turn 1"
+   └─ Branching: Loads ThreadSnapshot (~20KB)
+      └─ Creates new branch
+         └─ DurableExecution: Now tracks new branch's checkpoints
+```
+
+**Key points:**
+- **DurableExecution**: Saves heavy checkpoints with execution state
+- **Branching**: Uses light snapshots without execution state
+- **Both**: Share same storage but different data formats
+- **Independent**: Branching doesn't affect recovery, recovery doesn't affect branching
+
+---
+
+## Best Practices
+
+### ✅ Do
+
+- **Use `PerTurn` frequency** for most agents (balanced)
+- **Use `LatestOnly` retention** in production (saves storage)
+- **Use `FullHistory` for debugging** (see execution timeline)
+- **Test recovery scenarios** (simulate crashes)
+- **Monitor checkpoint sizes** (tune retention as needed)
+
+### ❌ Don't
+
+- **Don't use `PerIteration` unless needed** (too frequent)
+- **Don't disable in production** (lose crash recovery)
+- **Don't rely on in-memory storage** (lost on restart)
+- **Don't checkpoint in tight loops** (performance impact)
+- **Don't ignore checkpoint errors** (log and alert)
+
+---
 
 ## Troubleshooting
 
-### Checkpoints Not Being Created
+### "Agent doesn't resume after crash"
 
-1. Verify `Enabled = true`
-2. Check the storage path exists and is writable
-3. Ensure frequency matches your expectation (PerTurn requires turn completion)
+**Check:**
+1. Durable execution enabled?
+2. Using persistent storage (not in-memory)?
+3. Checkpoint timeout reasonable?
 
-### Storage Growing Too Fast
+```csharp
+builder.Services.AddCheckpointing(opts =>
+{
+    opts.DurableExecution.Enabled = true; // ← Must be true
+    opts.StoragePath = "./checkpoints";   // ← Must be persistent
+    opts.DurableExecution.CheckpointTimeoutSeconds = 300; // ← Adjust if needed
+});
+```
 
-1. Switch from `FullHistory` to `LastN` or `LatestOnly`
-2. Reduce checkpoint frequency if using `PerIteration`
+### "Checkpoint files growing too large"
 
-### Resume Not Finding Checkpoints
+**Solution:** Use `LatestOnly` retention:
+```csharp
+opts.DurableExecution.Retention = RetentionPolicy.LatestOnly;
+```
 
-1. Verify the thread ID is correct
-2. Check retention policy hasn't pruned the checkpoints
-3. Ensure storage path is the same as when checkpoints were created
+### "Recovery takes too long"
+
+**Problem:** Too many messages or large execution state.
+
+**Solutions:**
+- Archive old conversations
+- Prune old checkpoints
+- Consider shorter conversations
+
+### "Lost branch info after recovery"
+
+**Not a bug!** Branch info is preserved in the thread object:
+```csharp
+var restored = await store.LoadThreadAtCheckpointAsync(threadId, checkpointId);
+Console.WriteLine(restored.ActiveBranch); // Preserved!
+```
+
+---
+
+## API Reference
+
+### DurableExecution Service
+
+```csharp
+public class DurableExecution
+{
+    // Save checkpoint manually
+    Task SaveCheckpointAsync(ConversationThread thread, 
+        CheckpointSource source, int step = -1);
+    
+    // Load latest checkpoint
+    Task<ConversationThread?> LoadLatestCheckpointAsync(string threadId);
+    
+    // Get checkpoint history
+    Task<List<CheckpointMetadata>> GetCheckpointHistoryAsync(
+        string threadId, int? limit = null, DateTime? before = null);
+    
+    // Prune old checkpoints
+    Task PruneCheckpointsAsync(string threadId, int keepCount);
+}
+```
+
+### CheckpointSource
+
+```csharp
+public enum CheckpointSource
+{
+    Loop,         // Automatic from agent loop
+    User,         // User-requested save
+    Fork,         // Branching operation
+    Application,  // Application-level save
+    Manual        // Explicit manual save
+}
+```
+
+### CheckpointMetadata
+
+```csharp
+public record CheckpointMetadata
+{
+    public string CheckpointId { get; init; }
+    public CheckpointSource Source { get; init; }
+    public int Step { get; init; }
+    public int MessageIndex { get; init; }
+    public string? BranchName { get; init; }
+    public DateTime CreatedAt { get; init; }
+    public long SizeBytes { get; init; }
+    public bool IsIncomplete { get; init; }
+}
+```
+
+---
 
 ## See Also
 
-- [14 Branching](./14%20Branching.md) - Fork and switch between conversation branches
-- [ICheckpointStore](./14%20Branching.md#storage-backends) - Storage backend options
+- [12. Checkpointing Overview](./12%20Checkpointing%20Overview.md) - High-level system overview
+- [15. Branching](./15%20Branching.md) - Conversation forking
+- [Conversation Threads](./08%20Conversation%20Threads.md) - Thread basics

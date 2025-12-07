@@ -1,6 +1,6 @@
 <script lang="ts">
     import { onMount } from 'svelte';
-    import { AgentClient, type PermissionRequestEvent, type PermissionChoice, type FrontendToolInvokeRequestEvent, type BranchCreatedEvent, type BranchSwitchedEvent, type BranchDeletedEvent, type BranchRenamedEvent, selectCheckpointForEdit, type CheckpointData } from '@hpd/hpd-agent-client';
+    import { AgentClient, type PermissionRequestEvent, type PermissionChoice, type FrontendToolInvokeRequestEvent, type BranchCreatedEvent, type BranchSwitchedEvent, type BranchDeletedEvent, type BranchRenamedEvent } from '@hpd/hpd-agent-client';
     import Artifact from '$lib/artifacts/Artifact.svelte';
     import { artifactStore, type ArtifactState } from '$lib/artifacts/artifact-store.js';
     import { artifactPlugin, handleArtifactTool } from '$lib/artifacts/artifact-plugin.js';
@@ -139,61 +139,19 @@
         }
     }
 
-    // Handle message edit - creates a fork and resends with new content
+    // Handle message edit - creates a fork from current state and resends with new content
     async function handleMessageEdit(event: CustomEvent<{ index: number; newContent: string }>) {
         if (!conversationId || isLoading) return;
 
         const { index, newContent } = event.detail;
         console.log('Editing message at index:', index, 'New content:', newContent);
-        console.log('Current messages:', messages.length, 'messages');
 
-        // Get checkpoint history to find the checkpoint before this message
         try {
-            const checkpointsRes = await fetch(`${API_BASE}/conversations/${conversationId}/checkpoints`);
-            if (!checkpointsRes.ok) {
-                console.error('Failed to get checkpoints');
-                return;
-            }
-
-            const checkpoints: CheckpointData[] = await checkpointsRes.json();
-            console.log('[EDIT] Checkpoint history:', checkpoints.length, 'checkpoints');
-            checkpoints.forEach((cp, i: number) => {
-                console.log(`[EDIT]   CP ${i}: messageIndex=${cp.messageIndex}, branchName=${cp.branchName ?? 'root'}`);
-            });
-
-            // If no checkpoints exist, something went wrong on backend
-            if (checkpoints.length === 0) {
-                console.error('[EDIT] ERROR: No checkpoints found! Conversation should have root checkpoint');
-                console.error('[EDIT] This means root checkpoint was not created when conversation was initialized');
-                await createConversation();
-                currentMessage = newContent;
-                await sendMessage();
-                return;
-            }
-
-            // Use client library utility to select checkpoint for editing
-            // This finds the checkpoint with the highest messageIndex <= our target index
-            const checkpoint = selectCheckpointForEdit(checkpoints, index);
-
-            if (!checkpoint) {
-                // This should rarely happen now that we have root checkpoints
-                // Fallback: create a new conversation
-                console.log('[EDIT] No suitable checkpoint found, creating new conversation');
-                await createConversation();
-                // Now send the edited message to the fresh conversation
-                currentMessage = newContent;
-                await sendMessage();
-                return;
-            }
-
-            console.log('[EDIT] Best checkpoint for editing message', index, ':', checkpoint.checkpointId, 'with messageIndex:', checkpoint.messageIndex);
-
-            // Fork from this checkpoint
+            // Fork from current state (automatically saves snapshot)
             const forkRes = await fetch(`${API_BASE}/conversations/${conversationId}/branches`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    checkpointId: checkpoint.checkpointId,
                     branchName: `edit-${Date.now()}`
                 })
             });
@@ -205,40 +163,29 @@
             }
 
             const forkData = await forkRes.json();
-            console.log('Created branch:', forkData.branchName);
-            console.log('[FORK] New checkpoint ID:', forkData.checkpointId, 'at message index:', forkData.messageIndex);
-
-            // Small delay to ensure backend state is persisted
-            await new Promise(resolve => setTimeout(resolve, 100));
+            console.log('Created branch:', forkData.branchName, 'with', forkData.messageIndex, 'messages');
 
             // Reload messages from the forked state
             const messagesRes = await fetch(`${API_BASE}/conversations/${conversationId}/messages`);
             if (messagesRes.ok) {
                 const data = await messagesRes.json();
-                console.log('[FORK] Reloaded messages after fork:', data.length, 'messages');
-                if (data.length !== forkData.messageIndex) {
-                    console.warn(`[FORK] WARNING: Expected ${forkData.messageIndex} messages but got ${data.length}`);
-                }
                 messages = data.map((m: { role: string; content: string; thinking?: string }) => ({
                     role: m.role as 'user' | 'assistant',
                     content: m.content,
                     thinking: m.thinking
                 }));
-                console.log('[FORK] Messages state updated, now have', messages.length, 'messages');
-                data.forEach((m: { role: string; content: string }, i: number) => {
-                    const preview = m.content.substring(0, 40);
-                    console.log(`[FORK]   Message ${i}: ${m.role} - ${preview}...`);
-                });
+
+                // Truncate to the edit point
+                messages = messages.slice(0, index);
             } else {
-                console.error('[FORK] Failed to reload messages after fork:', messagesRes.status);
+                console.error('Failed to reload messages after fork');
                 return;
             }
 
-            // Ensure we're on the correct branch before sending
+            // Update branch state
             await loadBranches();
 
-            // Now send the edited message
-            console.log('[FORK] About to send edited message:', newContent.substring(0, 50));
+            // Send the edited message
             currentMessage = newContent;
             await sendMessage();
 

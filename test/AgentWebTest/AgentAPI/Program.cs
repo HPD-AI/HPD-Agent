@@ -37,16 +37,11 @@ builder.Services.AddCors(options =>
     });
 });
 
-// Register checkpointing services (branching + durable execution)
-// Uses extension method for cleaner DI registration
+// Register checkpointing services (branching only)
 builder.Services.AddCheckpointing(opts =>
 {
     opts.Store = new JsonConversationThreadStore(
         Path.Combine(Environment.CurrentDirectory, "checkpoints"));
-    
-    opts.DurableExecution.Enabled = true;
-    opts.DurableExecution.Frequency = CheckpointFrequency.PerTurn;
-    opts.DurableExecution.Retention = RetentionPolicy.FullHistory;
     
     opts.Branching.Enabled = true;
 });
@@ -169,13 +164,13 @@ conversationsApi.MapGet("/{conversationId}/branches", async (string conversation
     }
 });
 
-// Create a new branch (fork from checkpoint)
+// Create a new branch (fork from current state)
 conversationsApi.MapPost("/{conversationId}/branches", async (string conversationId, ForkRequest request, ConversationManager cm) =>
 {
-    Console.WriteLine($"[FORK] Request to fork conversation {conversationId} from checkpoint {request.CheckpointId}");
+    Console.WriteLine($"[FORK] Request to fork conversation {conversationId} from current state");
     try
     {
-        var (thread, evt) = await cm.ForkAsync(conversationId, request.CheckpointId, request.BranchName);
+        var (thread, evt) = await cm.ForkAsync(conversationId, request.BranchName);
         Console.WriteLine($"[FORK] Created branch '{evt.BranchName}' at checkpoint {evt.CheckpointId}");
         Console.WriteLine($"[FORK] Fork point: checkpoint {evt.ParentCheckpointId}, message index {evt.ForkMessageIndex}");
         Console.WriteLine($"[FORK] Thread now has {thread.MessageCount} messages");
@@ -430,10 +425,6 @@ agentApi.MapPost("/conversations/{conversationId}/stream",
 
         Console.WriteLine($"[ENDPOINT] Completed agent.RunAsync - total events: {eventCount}");
 
-        // Save checkpoint after successful completion
-        await cm.SaveCheckpointAsync(thread);
-        Console.WriteLine($"[ENDPOINT] Checkpoint saved for conversation {conversationId}");
-
         // Send completion event using standard format
         await writer.WriteAsync("data: {\"version\":\"1.0\",\"type\":\"COMPLETE\"}\n\n");
         await writer.FlushAsync();
@@ -515,9 +506,6 @@ agentApi.MapGet("/conversations/{conversationId}/ws",
             }
         }
 
-        // Save checkpoint after successful completion
-        await cm.SaveCheckpointAsync(thread);
-
         await webSocket.CloseAsync(
             System.Net.WebSockets.WebSocketCloseStatus.NormalClosure,
             "Completed",
@@ -564,7 +552,6 @@ static void ValidateCheckpointingConfiguration(IServiceProvider services)
     {
         var store = services.GetRequiredService<ICheckpointStore>();
         var branching = services.GetService<Branching>();
-        var durableExecution = services.GetService<DurableExecution>();
         
         Console.WriteLine("\n✓ Checkpointing configuration validated:");
         Console.WriteLine($"  - Checkpoint store: {store.GetType().Name}");
@@ -572,12 +559,6 @@ static void ValidateCheckpointingConfiguration(IServiceProvider services)
         if (branching != null)
             Console.WriteLine($"  - Branching: Enabled");
         
-        if (durableExecution != null)
-        {
-            Console.WriteLine($"  - Durable execution: Enabled");
-            Console.WriteLine($"    • Frequency: {durableExecution.Frequency}");
-            Console.WriteLine($"    • Retention: {durableExecution.Retention}");
-        }
         Console.WriteLine();
     }
     catch (Exception ex)
@@ -591,32 +572,35 @@ internal class ConversationManager
 {
     private readonly ICheckpointStore _store;
     private readonly Branching _branchingService;
-    private readonly DurableExecution _durableService;
     private readonly Dictionary<string, ConversationThread> _threadCache = new(); // In-memory cache
     private readonly Dictionary<string, Agent> _runningAgents = new(); // Track active agents
     private readonly InMemoryPermissionStorage _permissionStorage = new();
 
     public ConversationManager(
         ICheckpointStore store,
-        Branching branchingService,
-        DurableExecution durableService)
+        Branching branchingService)
     {
         _store = store;
         _branchingService = branchingService;
-        _durableService = durableService;
     }
 
     // ===== Branching Methods (via BranchingService) =====
 
     /// <summary>
-    /// Fork from a checkpoint to create a new branch.
+    /// Fork from the current conversation state to create a new branch.
+    /// Creates a snapshot of the current state and branches from it.
     /// </summary>
     public async Task<(ConversationThread Thread, BranchCreatedEvent Event)> ForkAsync(
         string conversationId,
-        string checkpointId,
         string? branchName = null)
     {
-        var (thread, evt) = await _branchingService.ForkFromCheckpointAsync(conversationId, checkpointId, branchName);
+        // Get current thread from cache
+        var currentThread = await GetConversationAsync(conversationId);
+        if (currentThread == null)
+            throw new KeyNotFoundException($"Conversation '{conversationId}' not found");
+
+        // Fork from current state (library will save snapshot automatically)
+        var (thread, evt) = await _branchingService.ForkFromCurrentAsync(currentThread, branchName);
         _threadCache[conversationId] = thread; // Update cache with forked state
         return (thread, evt);
     }
@@ -707,10 +691,18 @@ internal class ConversationManager
         var thread = new ConversationThread();
         _threadCache[thread.Id] = thread;
         
-        // Save the thread to create a root checkpoint
-        // This enables forking/editing before any agent responses
-        // The store will automatically create a root checkpoint with messageIndex=-1
-        await _store.SaveThreadAsync(thread);
+        // Save initial snapshot for branching from root
+        // Snapshots are lightweight (~6x smaller) and sufficient for branching
+        await _store.SaveSnapshotAsync(
+            thread.Id,
+            thread.ToSnapshot(),
+            new CheckpointMetadata
+            {
+                Source = CheckpointSource.Root,
+                Step = -1,
+                MessageIndex = -1,
+                BranchName = thread.ActiveBranch
+            });
         
         return thread;
     }
@@ -735,14 +727,6 @@ internal class ConversationManager
         _runningAgents.Remove(conversationId);
         await _store.DeleteThreadAsync(conversationId);
         return true;
-    }
-
-    /// <summary>
-    /// Save a conversation thread checkpoint after agent run completes.
-    /// </summary>
-    public async Task SaveCheckpointAsync(ConversationThread thread)
-    {
-        await _store.SaveThreadAsync(thread);
     }
 
     /// <summary>
@@ -876,7 +860,7 @@ public record BranchNodeDto(
     List<string> ChildCheckpointIds,
     string? BranchName);
 public record BranchMetadataDto(string Name, string HeadCheckpointId, DateTime CreatedAt);
-public record ForkRequest(string CheckpointId, string? BranchName = null);
+public record ForkRequest(string? BranchName = null);
 public record RenameBranchRequest(string NewName);
 public record BranchCreatedDto(string BranchName, string CheckpointId, string ForkPointCheckpointId, int MessageIndex);
 public record BranchSwitchedDto(string BranchName, string CheckpointId, int MessageCount);

@@ -224,6 +224,47 @@ public interface ICheckpointStore : IThreadStore
         string checkpointId,
         Action<CheckpointManifestEntry> update,
         CancellationToken cancellationToken = default);
+
+    // ===== LIGHTWEIGHT SNAPSHOT STORAGE =====
+
+    /// <summary>
+    /// Save a lightweight snapshot (messages + metadata + persistent middleware state only).
+    /// Used by BranchingService for fork operations.
+    /// Storage size: ~20KB vs ~120KB for full checkpoint.
+    /// Automatically generates a unique snapshot ID.
+    /// </summary>
+    /// <returns>The generated snapshot ID</returns>
+    Task<string> SaveSnapshotAsync(
+        string threadId,
+        ThreadSnapshot snapshot,
+        CheckpointMetadata metadata,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Load a lightweight snapshot by ID.
+    /// Returns null if snapshot doesn't exist.
+    /// </summary>
+    Task<ThreadSnapshot?> LoadSnapshotAsync(
+        string threadId,
+        string snapshotId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Delete specific snapshots by ID.
+    /// </summary>
+    Task DeleteSnapshotsAsync(
+        string threadId,
+        IEnumerable<string> snapshotIds,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Prune old snapshots for a thread.
+    /// Keeps the N most recent snapshots and deletes the rest.
+    /// </summary>
+    Task PruneSnapshotsAsync(
+        string threadId,
+        int keepLatest = 50,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -233,7 +274,10 @@ public class CheckpointTuple
 {
     public required string CheckpointId { get; set; }
     public required DateTime CreatedAt { get; set; }
-    public required AgentLoopState State { get; set; }
+    /// <summary>
+    /// Execution state. Null for snapshots (lightweight branching) or root checkpoints.
+    /// </summary>
+    public AgentLoopState? State { get; set; }
     public required CheckpointMetadata Metadata { get; set; }
     public string? ParentCheckpointId { get; set; }
 
@@ -314,6 +358,12 @@ public class CheckpointManifestEntry
     /// Message count at this checkpoint.
     /// </summary>
     public int MessageIndex { get; set; }
+
+    /// <summary>
+    /// Flag to distinguish lightweight snapshots from full checkpoints.
+    /// true = Snapshot (~20KB), false = Full checkpoint (~120KB)
+    /// </summary>
+    public bool IsSnapshot { get; set; }
 }
 
 /// <summary>

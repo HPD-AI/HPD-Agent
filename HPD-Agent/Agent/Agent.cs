@@ -654,6 +654,15 @@ public sealed class Agent
                 // We store the full history in state for proper message counting
                 state = AgentLoopState.Initial(messages.ToList(), messageTurnId, conversationId, this.Name);
 
+                // Load middleware persistent state (generic - agent doesn't know what!)
+                if (thread != null)
+                {
+                    state = state with
+                    {
+                        MiddlewareState = MiddlewareState.LoadFromThread(thread)
+                    };
+                }
+
                 // Use PreparedTurn's already-prepared messages and options
                 effectiveMessages = turn.MessagesForLLM;
                 effectiveOptions = turn.Options;  // Already merged + Middlewareed
@@ -1497,14 +1506,20 @@ public sealed class Agent
                 yield return middlewareEvt;
 
             // PERSISTENCE: Save complete turn history to thread
-            if (thread != null && turnHistory.Count > 0)
+            if (thread != null)
             {
                 try
                 {
+                    // Save middleware persistent state (generic - agent doesn't know what!)
+                    state.MiddlewareState.SaveToThread(thread);
+
                     // Save ALL messages from this turn (user + assistant + tool)
                     // Input messages were added to turnHistory at the start of execution
                     // Middleware may have filtered this list (e.g., removed ephemeral container results)
-                    await thread.AddMessagesAsync(turnHistory, effectiveCancellationToken).ConfigureAwait(false);
+                    if (turnHistory.Count > 0)
+                    {
+                        await thread.AddMessagesAsync(turnHistory, effectiveCancellationToken).ConfigureAwait(false);
+                    }
                 }
                 catch (Exception)
                 {

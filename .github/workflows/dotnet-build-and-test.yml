@@ -219,11 +219,6 @@ jobs:
       working-directory: hpd-agent-client
       run: npm run build
     
-    - name: Update version in package.json
-      working-directory: hpd-agent-client
-      run: |
-        npm version ${{ steps.version.outputs.version }} --no-git-tag-version
-    
     - name: Publish to npm
       working-directory: hpd-agent-client
       env:

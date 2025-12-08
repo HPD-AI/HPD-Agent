@@ -55,6 +55,9 @@ jobs:
     needs: build-and-test
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+      packages: write
     
     steps:
     - uses: actions/checkout@v4
@@ -182,6 +185,9 @@ jobs:
     needs: build-and-test
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/client-v')
+    permissions:
+      contents: write
+      packages: write
     
     steps:
     - uses: actions/checkout@v4

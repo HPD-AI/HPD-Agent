@@ -1,0 +1,247 @@
+name: Build, Test, and Publish
+
+on:
+  push:
+    branches: [ main, develop ]
+    tags:
+      - 'v*.*.*'
+      - 'client-v*.*.*'
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+env:
+  DOTNET_VERSION: '10.0.x'
+  NODE_VERSION: '20.x'
+  NUGET_SOURCE: 'https://api.nuget.org/v3/index.json'
+
+jobs:
+  # ============================================
+  # BUILD AND TEST
+  # ============================================
+  build-and-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+    
+    - name: Restore dependencies
+      run: dotnet restore
+    
+    - name: Build
+      run: dotnet build --configuration Release --no-restore
+    
+    - name: Run tests
+      run: dotnet test --configuration Release --no-build --verbosity normal --logger "trx;LogFileName=test-results.trx"
+    
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results
+        path: '**/test-results.trx'
+
+  # ============================================
+  # PUBLISH NUGET (on version tags)
+  # ============================================
+  publish-nuget:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+    
+    - name: Restore dependencies
+      run: dotnet restore
+    
+    - name: Build Release
+      run: dotnet build --configuration Release --no-restore
+    
+    - name: Extract version from tag
+      id: version
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Version: $VERSION"
+    
+    # Pack all NuGet packages
+    - name: Pack HPD.Agent.Framework
+      run: dotnet pack HPD-Agent/HPD-Agent.csproj --configuration Release --no-build --output ./nupkg -p:PackageVersion=${{ steps.version.outputs.version }}
+    
+    - name: Pack HPD.Agent.Plugins.FileSystem
+      run: dotnet pack HPD-Agent.Plugins/HPD-Agent.Plugins.FileSystem/HPD-Agent.Plugins.FileSystem.csproj --configuration Release --no-build --output ./nupkg -p:PackageVersion=${{ steps.version.outputs.version }}
+    
+    - name: Pack HPD.Agent.Plugins.WebSearch
+      run: dotnet pack HPD-Agent.Plugins/HPD-Agent.Plugins.WebSearch/HPD-Agent.Plugins.WebSearch.csproj --configuration Release --no-build --output ./nupkg -p:PackageVersion=${{ steps.version.outputs.version }}
+    
+    - name: Pack HPD.Agent.Memory
+      run: dotnet pack HPD-Agent.Memory/HPD-Agent.Memory.csproj --configuration Release --no-build --output ./nupkg -p:PackageVersion=${{ steps.version.outputs.version }}
+    
+    - name: Pack HPD.Agent.MCP
+      run: dotnet pack HPD-Agent.MCP/HPD-Agent.MCP.csproj --configuration Release --no-build --output ./nupkg -p:PackageVersion=${{ steps.version.outputs.version }}
+    
+    - name: Pack HPD-Agent.Providers.OpenAI
+      run: dotnet pack HPD-Agent.Providers/HPD-Agent.Providers.OpenAI/HPD-Agent.Providers.OpenAI.csproj --configuration Release --no-build --output ./nupkg -p:PackageVersion=${{ steps.version.outputs.version }}
+    
+    - name: Pack HPD-Agent.Providers.Anthropic
+      run: dotnet pack HPD-Agent.Providers/HPD-Agent.Providers.Anthropic/HPD-Agent.Providers.Anthropic.csproj --configuration Release --no-build --output ./nupkg -p:PackageVersion=${{ steps.version.outputs.version }}
+    
+    - name: Pack HPD-Agent.Providers.GoogleAI
+      run: dotnet pack HPD-Agent.Providers/HPD-Agent.Providers.GoogleAI/HPD-Agent.Providers.GoogleAI.csproj --configuration Release --no-build --output ./nupkg -p:PackageVersion=${{ steps.version.outputs.version }}
+    
+    - name: Pack HPD-Agent.Providers.Mistral
+      run: dotnet pack HPD-Agent.Providers/HPD-Agent.Providers.Mistral/HPD-Agent.Providers.Mistral.csproj --configuration Release --no-build --output ./nupkg -p:PackageVersion=${{ steps.version.outputs.version }}
+    
+    - name: Pack HPD-Agent.Providers.OpenRouter
+      run: dotnet pack HPD-Agent.Providers/HPD-Agent.Providers.OpenRouter/HPD-Agent.Providers.OpenRouter.csproj --configuration Release --no-build --output ./nupkg -p:PackageVersion=${{ steps.version.outputs.version }}
+    
+    - name: Pack HPD-Agent.Providers.Ollama
+      run: dotnet pack HPD-Agent.Providers/HPD-Agent.Providers.Ollama/HPD-Agent.Providers.Ollama.csproj --configuration Release --no-build --output ./nupkg -p:PackageVersion=${{ steps.version.outputs.version }}
+    
+    - name: Pack HPD-Agent.Providers.HuggingFace
+      run: dotnet pack HPD-Agent.Providers/HPD-Agent.Providers.HuggingFace/HPD-Agent.Providers.HuggingFace.csproj --configuration Release --no-build --output ./nupkg -p:PackageVersion=${{ steps.version.outputs.version }}
+    
+    - name: Pack HPD-Agent.Providers.Bedrock
+      run: dotnet pack HPD-Agent.Providers/HPD-Agent.Providers.Bedrock/HPD-Agent.Providers.Bedrock.csproj --configuration Release --no-build --output ./nupkg -p:PackageVersion=${{ steps.version.outputs.version }}
+    
+    - name: Pack HPD-Agent.Providers.AzureAIInference
+      run: dotnet pack HPD-Agent.Providers/HPD-Agent.Providers.AzureAIInference/HPD-Agent.Providers.AzureAIInference.csproj --configuration Release --no-build --output ./nupkg -p:PackageVersion=${{ steps.version.outputs.version }}
+    
+    - name: Pack HPD-Agent.Providers.OnnxRuntime
+      run: dotnet pack HPD-Agent.Providers/HPD-Agent.Providers.OnnxRuntime/HPD-Agent.Providers.OnnxRuntime.csproj --configuration Release --no-build --output ./nupkg -p:PackageVersion=${{ steps.version.outputs.version }}
+    
+    - name: Push to NuGet
+      env:
+        NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+      run: |
+        if [ -z "$NUGET_API_KEY" ]; then
+          echo "Error: NUGET_API_KEY is not set"
+          exit 1
+        fi
+        dotnet nuget push ./nupkg/*.nupkg --source ${{ env.NUGET_SOURCE }} --api-key $NUGET_API_KEY --skip-duplicate
+    
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ steps.version.outputs.version }}
+        files: ./nupkg/*.nupkg
+        body: |
+          ## NuGet Packages Released
+          
+          **Version:** ${{ steps.version.outputs.version }}
+          
+          ### Install
+          ```bash
+          dotnet add package HPD.Agent.Framework --version ${{ steps.version.outputs.version }}
+          dotnet add package HPD.Agent.Memory --version ${{ steps.version.outputs.version }}
+          dotnet add package HPD.Agent.MCP --version ${{ steps.version.outputs.version }}
+          ```
+          
+          ### Packages Released
+          - HPD.Agent.Framework
+          - HPD.Agent.Plugins.FileSystem
+          - HPD.Agent.Plugins.WebSearch
+          - HPD.Agent.Memory
+          - HPD.Agent.MCP
+          - HPD-Agent.Providers.OpenAI
+          - HPD-Agent.Providers.Anthropic
+          - HPD-Agent.Providers.GoogleAI
+          - HPD-Agent.Providers.Mistral
+          - HPD-Agent.Providers.OpenRouter
+          - HPD-Agent.Providers.Ollama
+          - HPD-Agent.Providers.HuggingFace
+          - HPD-Agent.Providers.Bedrock
+          - HPD-Agent.Providers.AzureAIInference
+          - HPD-Agent.Providers.OnnxRuntime
+          
+          ### Links
+          - NuGet Search: https://www.nuget.org/packages?q=HPD.Agent
+          - Documentation: https://github.com/HPD-AI/HPD-Agent
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ============================================
+  # PUBLISH NPM (on client version tags)
+  # ============================================
+  publish-npm:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/client-v')
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        registry-url: 'https://registry.npmjs.org'
+    
+    - name: Extract version from tag
+      id: version
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/client-v}
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Version: $VERSION"
+    
+    - name: Install dependencies
+      working-directory: hpd-agent-client
+      run: npm ci
+    
+    - name: Run tests
+      working-directory: hpd-agent-client
+      run: npm run test
+    
+    - name: Build
+      working-directory: hpd-agent-client
+      run: npm run build
+    
+    - name: Update version in package.json
+      working-directory: hpd-agent-client
+      run: |
+        npm version ${{ steps.version.outputs.version }} --no-git-tag-version
+    
+    - name: Publish to npm
+      working-directory: hpd-agent-client
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      run: npm publish
+    
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: client-v${{ steps.version.outputs.version }}
+        files: hpd-agent-client/dist/**/*
+        body: |
+          ## NPM Package Released: hpd-agent-client
+          
+          **Version:** ${{ steps.version.outputs.version }}
+          
+          **Install:**
+          ```bash
+          npm install hpd-agent-client@${{ steps.version.outputs.version }}
+          ```
+          
+          **Links:**
+          - NPM Registry: https://www.npmjs.com/package/hpd-agent-client
+          - GitHub Repository: https://github.com/HPD-AI/HPD-Agent
+          - Documentation: https://github.com/HPD-AI/HPD-Agent/tree/main/hpd-agent-client
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

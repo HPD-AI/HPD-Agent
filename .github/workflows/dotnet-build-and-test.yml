@@ -86,16 +86,16 @@ jobs:
     - name: Pack HPD-Agent.Framework
       run: dotnet pack HPD-Agent/HPD-Agent.csproj --configuration Release --no-build --output ./nupkg -p:PackageVersion=${{ steps.version.outputs.version }}
     
-    - name: Pack HPD.Agent.Plugins.FileSystem
+    - name: Pack HPD-Agent.Plugins.FileSystem
       run: dotnet pack HPD-Agent.Plugins/HPD-Agent.Plugins.FileSystem/HPD-Agent.Plugins.FileSystem.csproj --configuration Release --no-build --output ./nupkg -p:PackageVersion=${{ steps.version.outputs.version }}
     
-    - name: Pack HPD.Agent.Plugins.WebSearch
+    - name: Pack HPD-Agent.Plugins.WebSearch
       run: dotnet pack HPD-Agent.Plugins/HPD-Agent.Plugins.WebSearch/HPD-Agent.Plugins.WebSearch.csproj --configuration Release --no-build --output ./nupkg -p:PackageVersion=${{ steps.version.outputs.version }}
     
-    - name: Pack HPD.Agent.Memory
+    - name: Pack HPD-Agent.Memory
       run: dotnet pack HPD-Agent.Memory/HPD-Agent.Memory.csproj --configuration Release --no-build --output ./nupkg -p:PackageVersion=${{ steps.version.outputs.version }}
     
-    - name: Pack HPD.Agent.MCP
+    - name: Pack HPD-Agent.MCP
       run: dotnet pack HPD-Agent.MCP/HPD-Agent.MCP.csproj --configuration Release --no-build --output ./nupkg -p:PackageVersion=${{ steps.version.outputs.version }}
     
     - name: Pack HPD-Agent.Providers.OpenAI

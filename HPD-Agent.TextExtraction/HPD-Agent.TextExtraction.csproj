@@ -5,7 +5,32 @@
     <RootNamespace>HPD.Agent.TextExtraction</RootNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <NoWarn>CS8600;CS8601;CS8602;CS8604;RS2008;CS0628;CA2024</NoWarn>
+    <OutputType>Library</OutputType>
   </PropertyGroup>
+
+  <!-- NuGet Package Metadata -->
+  <PropertyGroup>
+    <PackageId>HPD.Agent.TextExtraction</PackageId>
+    <Version>0.1.1-alpha</Version>
+    <Authors>Einstein Essibu</Authors>
+    <Company>HPD</Company>
+    <Description>Text extraction utilities for HPD Agent framework, supporting PDF, DOCX, HTML and other document formats.</Description>
+    <Copyright>Copyright © 2024 Einstein Essibu. All rights reserved.</Copyright>
+    <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
+    <PackageLicenseFile>LICENSE</PackageLicenseFile>
+    <PackageTags>text-extraction;pdf;docx;html;document;utilities</PackageTags>
+    <RepositoryType>git</RepositoryType>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\LICENSE" Pack="true" PackagePath="" />
+    <None Include="..\README.md" Pack="true" PackagePath="" />
+  </ItemGroup>
     <ItemGroup>
     <!-- Text Extraction -->
     <PackageReference Include="UTF.Unknown" Version="2.5.1" />

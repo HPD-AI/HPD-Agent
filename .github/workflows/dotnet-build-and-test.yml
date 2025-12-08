@@ -92,6 +92,9 @@ jobs:
     - name: Pack HPD-Agent.Plugins.WebSearch
       run: dotnet pack HPD-Agent.Plugins/HPD-Agent.Plugins.WebSearch/HPD-Agent.Plugins.WebSearch.csproj --configuration Release --no-build --output ./nupkg -p:PackageVersion=${{ steps.version.outputs.version }}
     
+    - name: Pack HPD-Agent.TextExtraction
+      run: dotnet pack HPD-Agent.TextExtraction/HPD-Agent.TextExtraction.csproj --configuration Release --no-build --output ./nupkg -p:PackageVersion=${{ steps.version.outputs.version }}
+    
     - name: Pack HPD-Agent.Memory
       run: dotnet pack HPD-Agent.Memory/HPD-Agent.Memory.csproj --configuration Release --no-build --output ./nupkg -p:PackageVersion=${{ steps.version.outputs.version }}
     
@@ -150,27 +153,29 @@ jobs:
           
           ### Install
           ```bash
-          dotnet add package HPD-Agent.Framework --version ${{ steps.version.outputs.version }}
-          dotnet add package HPD-Agent.Memory --version ${{ steps.version.outputs.version }}
-          dotnet add package HPD-Agent.MCP --version ${{ steps.version.outputs.version }}
+          dotnet add package HPD.Agent.Framework --version ${{ steps.version.outputs.version }}
+          dotnet add package HPD.Agent.TextExtraction --version ${{ steps.version.outputs.version }}
+          dotnet add package HPD.Agent.Memory --version ${{ steps.version.outputs.version }}
+          dotnet add package HPD.Agent.MCP --version ${{ steps.version.outputs.version }}
           ```
           
           ### Packages Released
-          - HPD-Agent.Framework
-          - HPD-Agent.Plugins.FileSystem
-          - HPD-Agent.Plugins.WebSearch
-          - HPD-Agent.Memory
-          - HPD-Agent.MCP
-          - HPD-Agent.Providers.OpenAI
-          - HPD-Agent.Providers.Anthropic
-          - HPD-Agent.Providers.GoogleAI
-          - HPD-Agent.Providers.Mistral
-          - HPD-Agent.Providers.OpenRouter
-          - HPD-Agent.Providers.Ollama
-          - HPD-Agent.Providers.HuggingFace
-          - HPD-Agent.Providers.Bedrock
-          - HPD-Agent.Providers.AzureAIInference
-          - HPD-Agent.Providers.OnnxRuntime
+          - HPD.Agent.Framework
+          - HPD.Agent.TextExtraction
+          - HPD.Agent.Plugins.FileSystem
+          - HPD.Agent.Plugins.WebSearch
+          - HPD.Agent.Memory
+          - HPD.Agent.MCP
+          - HPD.Providers.OpenAI
+          - HPD.Providers.Anthropic
+          - HPD.Providers.GoogleAI
+          - HPD.Providers.Mistral
+          - HPD.Providers.OpenRouter
+          - HPD.Providers.Ollama
+          - HPD.Providers.HuggingFace
+          - HPD.Providers.Bedrock
+          - HPD.Providers.AzureAIInference
+          - HPD.Providers.OnnxRuntime
           
           ### Links
           - NuGet Search: https://www.nuget.org/packages?q=HPD.Agent

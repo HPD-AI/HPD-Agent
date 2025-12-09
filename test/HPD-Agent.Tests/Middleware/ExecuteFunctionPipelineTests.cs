@@ -228,7 +228,7 @@ public class ExecuteFunctionPipelineTests
     {
         // Arrange
         var globalMiddleware = new TrackingMiddleware("Global");
-        var CollapsedMiddleware = new CollapsedTrackingMiddleware("Collapsed", Collapse: MiddlewareCollapse.Function);
+        var CollapsedMiddleware = new CollapsedTrackingMiddleware("Collapsed", Collapse: MiddlewareScope.Function);
 
         var pipeline = new AgentMiddlewarePipeline(new IAgentMiddleware[] { globalMiddleware, CollapsedMiddleware });
         var context = CreateContext();
@@ -336,14 +336,14 @@ public class ExecuteFunctionPipelineTests
 
     private class CollapsedTrackingMiddleware : TrackingMiddleware
     {
-        private readonly MiddlewareCollapse _Collapse;
+        private readonly MiddlewareScope _Collapse;
 
-        public CollapsedTrackingMiddleware(string name, MiddlewareCollapse Collapse) : base(name)
+        public CollapsedTrackingMiddleware(string name, MiddlewareScope Collapse) : base(name)
         {
             _Collapse = Collapse;
         }
 
-        public MiddlewareCollapse Collapse => _Collapse;
+        public MiddlewareScope Collapse => _Collapse;
     }
 
     private class ResultTransformMiddleware : IAgentMiddleware

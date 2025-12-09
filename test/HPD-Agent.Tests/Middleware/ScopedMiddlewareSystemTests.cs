@@ -46,16 +46,16 @@ public class CollapsedMiddlewareSystemTests
             => Task.CompletedTask;
     }
 
-    #region MiddlewareCollapse Enum Tests
+    #region MiddlewareScope Enum Tests
 
     [Fact]
-    public void MiddlewareCollapse_HasCorrectValues()
+    public void MiddlewareScope_HasCorrectValues()
     {
         // Ensure Collapse values are in correct order for priority
-        Assert.Equal(0, (int)MiddlewareCollapse.Global);
-        Assert.Equal(1, (int)MiddlewareCollapse.Plugin);
-        Assert.Equal(2, (int)MiddlewareCollapse.Skill);
-        Assert.Equal(3, (int)MiddlewareCollapse.Function);
+        Assert.Equal(0, (int)MiddlewareScope.Global);
+        Assert.Equal(1, (int)MiddlewareScope.Plugin);
+        Assert.Equal(2, (int)MiddlewareScope.Skill);
+        Assert.Equal(3, (int)MiddlewareScope.Function);
     }
 
     #endregion

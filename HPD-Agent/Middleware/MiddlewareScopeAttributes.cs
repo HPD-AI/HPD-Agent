@@ -1,10 +1,10 @@
 namespace HPD.Agent.Middleware;
 
 /// <summary>
-/// Specifies the Collapse at which a middleware operates.
+/// Specifies the scope at which a middleware operates.
 /// Used for filtering middleware execution based on context.
 /// </summary>
-public enum MiddlewareCollapse
+public enum MiddlewareScope
 {
     /// <summary>Middleware applies to all functions globally</summary>
     Global = 0,
@@ -20,17 +20,17 @@ public enum MiddlewareCollapse
 }
 
 /// <summary>
-/// Internal metadata for Collapsed middleware registration.
-/// Stores Collapse information attached to middleware instances.
+/// Internal metadata for scoped middleware registration.
+/// Stores scope information attached to middleware instances.
 /// </summary>
-internal class MiddlewareCollapseMetadata
+internal class MiddlewareScopeMetadata
 {
-    public MiddlewareCollapse Collapse { get; init; } = MiddlewareCollapse.Global;
+    public MiddlewareScope Scope { get; init; } = MiddlewareScope.Global;
     public string? Target { get; init; } // Plugin type name, skill name, or function name
 
-    public MiddlewareCollapseMetadata(MiddlewareCollapse Collapse, string? target = null)
+    public MiddlewareScopeMetadata(MiddlewareScope scope, string? target = null)
     {
-        Collapse = Collapse;
+        Scope = scope;
         Target = target;
     }
 
@@ -44,20 +44,20 @@ internal class MiddlewareCollapseMetadata
         var skillName = context.SkillName;
         var isSkillContainer = context.IsSkillContainer;
 
-        return Collapse switch
+        return Scope switch
         {
-            MiddlewareCollapse.Global => true,
+            MiddlewareScope.Global => true,
 
-            MiddlewareCollapse.Plugin => !string.IsNullOrEmpty(pluginName) &&
+            MiddlewareScope.Plugin => !string.IsNullOrEmpty(pluginName) &&
                                        string.Equals(Target, pluginName, StringComparison.Ordinal),
 
-            MiddlewareCollapse.Skill =>
+            MiddlewareScope.Skill =>
                 // Apply if this function IS the skill container itself
                 (isSkillContainer && string.Equals(Target, functionName, StringComparison.Ordinal)) ||
                 // OR if this function is called FROM this skill (via mapping)
                 (!string.IsNullOrEmpty(skillName) && string.Equals(Target, skillName, StringComparison.Ordinal)),
 
-            MiddlewareCollapse.Function => string.Equals(Target, functionName, StringComparison.Ordinal),
+            MiddlewareScope.Function => string.Equals(Target, functionName, StringComparison.Ordinal),
 
             _ => false
         };
@@ -65,27 +65,27 @@ internal class MiddlewareCollapseMetadata
 }
 
 /// <summary>
-/// Extension methods for Collapsed middleware registration.
-/// Provides fluent API for attaching Collapse metadata to middleware instances.
+/// Extension methods for scoped middleware registration.
+/// Provides fluent API for attaching scope metadata to middleware instances.
 /// </summary>
-public static class MiddlewareCollapseExtensions
+public static class MiddlewareScopeExtensions
 {
-    // Internal dictionary to store Collapse metadata per middleware instance
-    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<IAgentMiddleware, MiddlewareCollapseMetadata>
-        _CollapseMetadata = new();
+    // Internal dictionary to store scope metadata per middleware instance
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<IAgentMiddleware, MiddlewareScopeMetadata>
+        _scopeMetadata = new();
 
     /// <summary>
     /// Marks this middleware as global (applies to all functions).
-    /// This is the default if no Collapse is specified.
+    /// This is the default if no scope is specified.
     /// </summary>
     public static IAgentMiddleware AsGlobal(this IAgentMiddleware middleware)
     {
-        _CollapseMetadata.AddOrUpdate(middleware, new MiddlewareCollapseMetadata(MiddlewareCollapse.Global));
+        _scopeMetadata.AddOrUpdate(middleware, new MiddlewareScopeMetadata(MiddlewareScope.Global));
         return middleware;
     }
 
     /// <summary>
-    /// Marks this middleware as plugin-Collapsed (applies only to functions from the specified plugin).
+    /// Marks this middleware as plugin-scoped (applies only to functions from the specified plugin).
     /// </summary>
     /// <param name="middleware">The middleware instance</param>
     /// <param name="pluginTypeName">The plugin type name (e.g., "FileSystemPlugin")</param>
@@ -94,12 +94,12 @@ public static class MiddlewareCollapseExtensions
         if (string.IsNullOrWhiteSpace(pluginTypeName))
             throw new ArgumentException("Plugin type name cannot be null or empty", nameof(pluginTypeName));
 
-        _CollapseMetadata.AddOrUpdate(middleware, new MiddlewareCollapseMetadata(MiddlewareCollapse.Plugin, pluginTypeName));
+        _scopeMetadata.AddOrUpdate(middleware, new MiddlewareScopeMetadata(MiddlewareScope.Plugin, pluginTypeName));
         return middleware;
     }
 
     /// <summary>
-    /// Marks this middleware as skill-Collapsed (applies to skill container and functions called by the skill).
+    /// Marks this middleware as skill-scoped (applies to skill container and functions called by the skill).
     /// </summary>
     /// <param name="middleware">The middleware instance</param>
     /// <param name="skillName">The skill name (e.g., "analyze_codebase")</param>
@@ -108,12 +108,12 @@ public static class MiddlewareCollapseExtensions
         if (string.IsNullOrWhiteSpace(skillName))
             throw new ArgumentException("Skill name cannot be null or empty", nameof(skillName));
 
-        _CollapseMetadata.AddOrUpdate(middleware, new MiddlewareCollapseMetadata(MiddlewareCollapse.Skill, skillName));
+        _scopeMetadata.AddOrUpdate(middleware, new MiddlewareScopeMetadata(MiddlewareScope.Skill, skillName));
         return middleware;
     }
 
     /// <summary>
-    /// Marks this middleware as function-Collapsed (applies only to the specified function).
+    /// Marks this middleware as function-scoped (applies only to the specified function).
     /// </summary>
     /// <param name="middleware">The middleware instance</param>
     /// <param name="functionName">The function name (e.g., "ReadFile")</param>
@@ -122,21 +122,21 @@ public static class MiddlewareCollapseExtensions
         if (string.IsNullOrWhiteSpace(functionName))
             throw new ArgumentException("Function name cannot be null or empty", nameof(functionName));
 
-        _CollapseMetadata.AddOrUpdate(middleware, new MiddlewareCollapseMetadata(MiddlewareCollapse.Function, functionName));
+        _scopeMetadata.AddOrUpdate(middleware, new MiddlewareScopeMetadata(MiddlewareScope.Function, functionName));
         return middleware;
     }
 
     /// <summary>
-    /// Gets the Collapse metadata for a middleware instance.
-    /// Returns global Collapse if no metadata is attached.
+    /// Gets the scope metadata for a middleware instance.
+    /// Returns global scope if no metadata is attached.
     /// </summary>
-    internal static MiddlewareCollapseMetadata GetCollapseMetadata(this IAgentMiddleware middleware)
+    internal static MiddlewareScopeMetadata GetScopeMetadata(this IAgentMiddleware middleware)
     {
-        if (_CollapseMetadata.TryGetValue(middleware, out var metadata))
+        if (_scopeMetadata.TryGetValue(middleware, out var metadata))
             return metadata;
 
-        // Default to global Collapse if no metadata is attached
-        return new MiddlewareCollapseMetadata(MiddlewareCollapse.Global);
+        // Default to global scope if no metadata is attached
+        return new MiddlewareScopeMetadata(MiddlewareScope.Global);
     }
 
     /// <summary>
@@ -144,7 +144,7 @@ public static class MiddlewareCollapseExtensions
     /// </summary>
     internal static bool ShouldExecute(this IAgentMiddleware middleware, AgentMiddlewareContext context)
     {
-        var metadata = middleware.GetCollapseMetadata();
+        var metadata = middleware.GetScopeMetadata();
         return metadata.AppliesTo(context);
     }
 }

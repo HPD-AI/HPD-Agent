@@ -1,0 +1,51 @@
+<Project>
+  <!--
+    This file is automatically imported by all projects in this directory and subdirectories.
+    It provides centralized configuration for all HPD-Agent packages.
+  -->
+
+  <PropertyGroup>
+    <!-- Centralized version for ALL packages -->
+    <VersionPrefix>0.1.2</VersionPrefix>
+    <!-- Uncomment to add suffix like "alpha", "beta", "preview" -->
+    <!-- <VersionSuffix>preview</VersionSuffix> -->
+
+    <!-- PackageVersion is what gets used in NuGet -->
+    <PackageVersion Condition="'$(VersionSuffix)' != ''">$(VersionPrefix)-$(VersionSuffix)</PackageVersion>
+    <PackageVersion Condition="'$(VersionSuffix)' == ''">$(VersionPrefix)</PackageVersion>
+
+    <!-- Use PackageVersion as Version for all packages -->
+    <Version>$(PackageVersion)</Version>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- Common build settings -->
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+
+    <!-- Package defaults (individual projects can override) -->
+    <IsPackable>false</IsPackable>
+
+    <!-- Common NuGet package metadata -->
+    <Authors>Einstein Essibu</Authors>
+    <Company>HPD</Company>
+    <Product>HPD-Agent Framework</Product>
+    <Copyright>Copyright © 2024 Einstein Essibu. All rights reserved.</Copyright>
+    <PackageLicenseFile>LICENSE</PackageLicenseFile>
+    <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+
+    <!-- Symbol packages -->
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <!-- Include LICENSE and README in all packages (projects can override) -->
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)LICENSE" Pack="true" PackagePath="" Visible="false" Condition="Exists('$(MSBuildThisFileDirectory)LICENSE')" />
+    <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="" Visible="false" Condition="Exists('$(MSBuildThisFileDirectory)README.md')" />
+  </ItemGroup>
+</Project>

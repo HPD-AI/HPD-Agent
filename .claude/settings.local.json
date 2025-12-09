@@ -17,7 +17,13 @@
       "Bash(awk:*)",
       "Bash(git -C /Users/einsteinessibu/Documents/HPD-Agent show HEAD~1:HPD-Agent/Agent/Agent.cs)",
       "Bash(dotnet new:*)",
-      "Bash(xargs cat:*)"
+      "Bash(xargs cat:*)",
+      "Bash(./nuget-publish.sh:*)",
+      "Bash(chmod:*)",
+      "Bash(./set-version.sh:*)",
+      "Bash(curl:*)",
+      "Bash(python3:*)",
+      "Bash(ls:*)"
     ],
     "deny": [],
     "ask": []

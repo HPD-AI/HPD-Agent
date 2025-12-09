@@ -1,20 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <IsPackable>true</IsPackable>
     <TargetFramework>net10.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
     <RootNamespace>HPD.Agent.Plugins.WebSearch</RootNamespace>
 
-    <!-- Package Metadata -->
+    <!-- Package Metadata (inherits Version, Authors, License from Directory.Build.props) -->
     <PackageId>HPD.Agent.Plugins.WebSearch</PackageId>
-    <Version>1.0.0</Version>
-    <Authors>HPD-Agent Contributors</Authors>
     <Description>Web search plugin for HPD-Agent. Provides AI functions for searching the web using Tavily, Brave, and Bing search APIs.</Description>
     <PackageTags>ai;agent;websearch;search;plugin;hpd-agent;tavily;brave;bing</PackageTags>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <RepositoryUrl>https://github.com/your-repo/HPD-Agent</RepositoryUrl>
-    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
   </PropertyGroup>
 
   <ItemGroup>

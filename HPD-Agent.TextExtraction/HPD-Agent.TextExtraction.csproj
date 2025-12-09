@@ -1,6 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <IsPackable>true</IsPackable>
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>HPD.Agent.TextExtraction</RootNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -12,6 +13,7 @@
 
   <!-- NuGet Package Metadata -->
   <PropertyGroup>
+    <IsPackable>true</IsPackable>
     <PackageId>HPD.Agent.TextExtraction</PackageId>
     <Version>0.1.1</Version>
     <Authors>Einstein Essibu</Authors>

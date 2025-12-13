@@ -6,8 +6,6 @@ using Microsoft.CodeAnalysis.CSharp;
 using Xunit;
 using Microsoft.Extensions.AI; // For AIFunction
 using HPD.Agent; // For CollapseAttribute
-using System.IO; // For Path.Combine
-using System; // For AppDomain.CurrentDomain.BaseDirectory
 
 
 namespace HPD.Agent.Tests.SourceGenerator;
@@ -28,9 +26,6 @@ public class HPDPluginSourceGeneratorTests
                 MetadataReference.CreateFromFile(typeof(CollapseAttribute).Assembly.Location), // CollapseAttribute is in HPD-Agent assembly
                 MetadataReference.CreateFromFile(typeof(System.Collections.Generic.List<>).Assembly.Location),
                 MetadataReference.CreateFromFile(typeof(System.Linq.Enumerable).Assembly.Location),
-                
-                // Reference the source generator's assembly directly to get the HPDPluginSourceGenerator type
-                MetadataReference.CreateFromFile("/Users/einsteinessibu/Documents/HPD-Agent/HPD-Agent.SourceGenerator/bin/Debug/netstandard2.0/HPD-Agent.SourceGenerator.dll")
             },
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
 

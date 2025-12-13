@@ -26,7 +26,6 @@ public class InstanceMethodContextTests
                 MetadataReference.CreateFromFile(typeof(CollapseAttribute).Assembly.Location),
                 MetadataReference.CreateFromFile(typeof(System.Collections.Generic.List<>).Assembly.Location),
                 MetadataReference.CreateFromFile(typeof(System.Linq.Enumerable).Assembly.Location),
-                MetadataReference.CreateFromFile("/Users/einsteinessibu/Documents/HPD-Agent/HPD-Agent.SourceGenerator/bin/Debug/netstandard2.0/HPD-Agent.SourceGenerator.dll")
             },
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
 

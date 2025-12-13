@@ -270,6 +270,22 @@ internal static class SkillCodeGenerator
 
         // Store instructions separately for prompt Middleware to use
         // Middleware will build complete context from metadata (functions + documents + instructions)
+
+        // NEW: Store SystemPromptContext for middleware injection
+        if (!string.IsNullOrEmpty(skill.SystemPromptContext))
+        {
+            var escapedSysPrompt = skill.SystemPromptContext.Replace("\"", "\"\"");
+            sb.AppendLine($"                        [\"SystemPromptContext\"] = @\"{escapedSysPrompt}\",");
+        }
+
+        // Store FunctionResultContext for introspection
+        if (!string.IsNullOrEmpty(skill.FunctionResultContext))
+        {
+            var escapedFuncResult = skill.FunctionResultContext.Replace("\"", "\"\"");
+            sb.AppendLine($"                        [\"FunctionResultContext\"] = @\"{escapedFuncResult}\",");
+        }
+
+        // LEGACY: Keep Instructions for backward compatibility (auto-maps to both contexts)
         if (!string.IsNullOrEmpty(skill.Instructions))
         {
             var escapedInstructions = skill.Instructions.Replace("\"", "\"\"");

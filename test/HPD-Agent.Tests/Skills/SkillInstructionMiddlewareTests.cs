@@ -1,12 +1,13 @@
 using FluentAssertions;
 using HPD.Agent;
+using HPD.Agent.Middleware;
 using Microsoft.Extensions.AI;
 using Xunit;
 
 namespace HPD.Agent.Tests.Skills;
 
 /// <summary>
-/// Tests for SkillInstructionMiddleware - validates that it prefers new type-safe format
+/// Tests for ContainerMiddleware document building - validates that it prefers new type-safe format
 /// </summary>
 public class SkillInstructionMiddlewareTests
 {
@@ -38,7 +39,7 @@ public class SkillInstructionMiddlewareTests
             });
 
         // Act
-        var result = SkillInstructionMiddleware.BuildDocumentSectionForTesting(skillFunction);
+        var result = ContainerMiddleware.BuildDocumentSectionForTesting(skillFunction);
 
         // Assert
         result.Should().Contain("📚 **Available Documents:**");
@@ -61,7 +62,7 @@ public class SkillInstructionMiddlewareTests
             });
 
         // Act
-        var result = SkillInstructionMiddleware.BuildDocumentSectionForTesting(skillFunction);
+        var result = ContainerMiddleware.BuildDocumentSectionForTesting(skillFunction);
 
         // Assert
         result.Should().NotContain("📚 **Available Documents:**");
@@ -90,7 +91,7 @@ public class SkillInstructionMiddlewareTests
             });
 
         // Act
-        var result = SkillInstructionMiddleware.BuildDocumentSectionForTesting(skillFunction);
+        var result = ContainerMiddleware.BuildDocumentSectionForTesting(skillFunction);
 
         // Assert
         result.Should().Contain("🔗 URL");

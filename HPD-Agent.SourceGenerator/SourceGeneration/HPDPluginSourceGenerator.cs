@@ -144,7 +144,7 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
         if (!functions.Any() && !skills.Any() && !subAgents.Any()) return null;
 
         // Check for [Collapse] attribute
-        var (hasCollapseAttribute, CollapseDescription, postExpansionInstructions, postExpansionInstructionsExpression) = GetCollapseAttribute(classDecl, semanticModel);
+        var (hasCollapseAttribute, CollapseDescription, functionResultContext, functionResultContextExpression, functionResultContextIsStatic, systemPromptContext, systemPromptContextExpression, systemPromptContextIsStatic) = GetCollapseAttribute(classDecl, semanticModel);
 
         // Check if the class has a parameterless constructor (either explicit or implicit)
         var hasParameterlessConstructor = HasParameterlessConstructor(classDecl);
@@ -166,8 +166,12 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
             SubAgents = subAgents!,
             HasCollapseAttribute = hasCollapseAttribute,
             CollapseDescription = CollapseDescription,
-            PostExpansionInstructions = postExpansionInstructions,
-            PostExpansionInstructionsExpression = postExpansionInstructionsExpression,
+            FunctionResultContext = functionResultContext,
+            FunctionResultContextExpression = functionResultContextExpression,
+            FunctionResultContextIsStatic = functionResultContextIsStatic,
+            SystemPromptContext = systemPromptContext,
+            SystemPromptContextExpression = systemPromptContextExpression,
+            SystemPromptContextIsStatic = systemPromptContextIsStatic,
             HasParameterlessConstructor = hasParameterlessConstructor,
             IsPubliclyAccessible = isPubliclyAccessible
         };
@@ -277,6 +281,14 @@ public class HPDPluginSourceGenerator : IIncrementalGenerator
                     SubAgents = allSubAgents,
                     HasCollapseAttribute = hasCollapseAttribute,
                     CollapseDescription = CollapseDescription,
+                    // NEW: Dual-context properties
+                    FunctionResultContext = group.FirstOrDefault(p => p?.FunctionResultContext != null)?.FunctionResultContext,
+                    FunctionResultContextExpression = group.FirstOrDefault(p => p?.FunctionResultContextExpression != null)?.FunctionResultContextExpression,
+                    FunctionResultContextIsStatic = group.FirstOrDefault(p => p?.FunctionResultContextExpression != null)?.FunctionResultContextIsStatic ?? true,
+                    SystemPromptContext = group.FirstOrDefault(p => p?.SystemPromptContext != null)?.SystemPromptContext,
+                    SystemPromptContextExpression = group.FirstOrDefault(p => p?.SystemPromptContextExpression != null)?.SystemPromptContextExpression,
+                    SystemPromptContextIsStatic = group.FirstOrDefault(p => p?.SystemPromptContextExpression != null)?.SystemPromptContextIsStatic ?? true,
+                    // LEGACY: Backward compatibility
                     PostExpansionInstructions = postExpansionInstructions,
                     PostExpansionInstructionsExpression = postExpansionInstructionsExpression,
                     HasParameterlessConstructor = hasParameterlessConstructor,
@@ -1565,46 +1577,180 @@ private static string GenerateContextResolutionMethods(PluginInfo plugin)
     }
 
     /// <summary>
-    /// Detects [Collapse] or [Collapse] attribute on a class and extracts its description and post-expansion instructions.
-    /// [Collapse] is deprecated but still supported for backward compatibility.
+    /// Detects [Collapse] attribute on a class and extracts its description and instruction contexts.
+    /// Supports both legacy postExpansionInstructions and new dual-context (functionResultContext, systemPromptContext).
+    /// Analyzes expressions to determine if they're static or instance methods/properties.
     /// </summary>
-    private static (bool hasCollapseAttribute, string? CollapseDescription, string? postExpansionInstructions, string? postExpansionInstructionsExpression) GetCollapseAttribute(ClassDeclarationSyntax classDecl, SemanticModel semanticModel)
+    private static (
+        bool hasCollapseAttribute,
+        string? collapseDescription,
+        string? functionResultContext,
+        string? functionResultContextExpression,
+        bool functionResultContextIsStatic,
+        string? systemPromptContext,
+        string? systemPromptContextExpression,
+        bool systemPromptContextIsStatic
+    ) GetCollapseAttribute(ClassDeclarationSyntax classDecl, SemanticModel semanticModel)
     {
-        // Check for both [Collapse] (new) and [Collapse] (deprecated) attributes
-        var CollapseAttributes = classDecl.AttributeLists
+        var collapseAttributes = classDecl.AttributeLists
             .SelectMany(attrList => attrList.Attributes)
-            .Where(attr => attr.Name.ToString() == "Collapse" || attr.Name.ToString() == "Collapse");
+            .Where(attr => attr.Name.ToString() == "Collapse");
 
-        foreach (var attr in CollapseAttributes)
+        foreach (var attr in collapseAttributes)
         {
             var arguments = attr.ArgumentList?.Arguments;
-            if (arguments.HasValue && arguments.Value.Count >= 1)
+            if (!arguments.HasValue || arguments.Value.Count < 1)
             {
-                var description = ExtractStringLiteral(arguments.Value[0].Expression);
-                string? postExpansionInstructions = null;
-                string? postExpansionInstructionsExpression = null;
+                // Attribute present but no description
+                return (true, null, null, null, true, null, null, true);
+            }
 
-                if (arguments.Value.Count >= 2)
+            // First argument is always the description
+            var description = ExtractStringLiteral(arguments.Value[0].Expression);
+
+            string? funcResultCtx = null, funcResultExpr = null;
+            bool funcResultIsStatic = true;
+            string? sysPromptCtx = null, sysPromptExpr = null;
+            bool sysPromptIsStatic = true;
+
+            // Parse remaining arguments (positional or named)
+            for (int i = 1; i < arguments.Value.Count; i++)
+            {
+                var arg = arguments.Value[i];
+                var argName = arg.NameColon?.Name.Identifier.ValueText;
+
+                // Check if argument is named or positional
+                if (argName == "functionResultContext" || (argName == null && i == 1))
                 {
-                    var instructionArgument = arguments.Value[1].Expression;
-                    if (instructionArgument is LiteralExpressionSyntax literal && literal.Token.IsKind(SyntaxKind.StringLiteralToken))
+                    // functionResultContext (or 2nd positional argument)
+                    if (arg.Expression is LiteralExpressionSyntax literal && literal.Token.IsKind(SyntaxKind.StringLiteralToken))
                     {
-                        postExpansionInstructions = literal.Token.ValueText;
+                        funcResultCtx = literal.Token.ValueText;
                     }
                     else
                     {
-                        postExpansionInstructionsExpression = instructionArgument.ToString();
+                        funcResultExpr = arg.Expression.ToString();
+                        funcResultIsStatic = IsExpressionStatic(arg.Expression, semanticModel, classDecl);
                     }
                 }
-                
-                return (true, description, postExpansionInstructions, postExpansionInstructionsExpression);
+                else if (argName == "systemPromptContext" || (argName == null && i == 2))
+                {
+                    // systemPromptContext (or 3rd positional argument)
+                    if (arg.Expression is LiteralExpressionSyntax literal && literal.Token.IsKind(SyntaxKind.StringLiteralToken))
+                    {
+                        sysPromptCtx = literal.Token.ValueText;
+                    }
+                    else
+                    {
+                        sysPromptExpr = arg.Expression.ToString();
+                        sysPromptIsStatic = IsExpressionStatic(arg.Expression, semanticModel, classDecl);
+                    }
+                }
+                else if (argName == "postExpansionInstructions")
+                {
+                    // Legacy parameter - maps to functionResultContext
+                    if (arg.Expression is LiteralExpressionSyntax literal && literal.Token.IsKind(SyntaxKind.StringLiteralToken))
+                    {
+                        funcResultCtx = literal.Token.ValueText;
+                    }
+                    else
+                    {
+                        funcResultExpr = arg.Expression.ToString();
+                        funcResultIsStatic = IsExpressionStatic(arg.Expression, semanticModel, classDecl);
+                    }
+                }
             }
 
-            // Attribute present but no description
-            return (true, null, null, null);
+            return (true, description, funcResultCtx, funcResultExpr, funcResultIsStatic, sysPromptCtx, sysPromptExpr, sysPromptIsStatic);
         }
 
-        return (false, null, null, null);
+        return (false, null, null, null, true, null, null, true);
+    }
+
+    /// <summary>
+    /// Analyzes an expression to determine if it refers to a static member or requires instance access.
+    /// Returns true if static, false if instance is required.
+    /// </summary>
+    private static bool IsExpressionStatic(ExpressionSyntax expression, SemanticModel semanticModel, ClassDeclarationSyntax classDecl)
+    {
+        // For member access expressions like ClassName.Method() or OtherClass.Property
+        if (expression is MemberAccessExpressionSyntax memberAccess)
+        {
+            var leftSymbol = semanticModel.GetSymbolInfo(memberAccess.Expression).Symbol;
+
+            // If left side is a type (not an instance), it's static access
+            if (leftSymbol is INamedTypeSymbol)
+            {
+                return true; // External static class or static member access
+            }
+
+            // Otherwise it's instance member access
+            return false;
+        }
+
+        // For invocation expressions like Method() or Property
+        if (expression is InvocationExpressionSyntax invocation)
+        {
+            // Get the identifier from the invocation
+            if (invocation.Expression is IdentifierNameSyntax identifier)
+            {
+                // Check if this is a member of the current class
+                var members = classDecl.Members;
+                foreach (var member in members)
+                {
+                    if (member is MethodDeclarationSyntax method && method.Identifier.ValueText == identifier.Identifier.ValueText)
+                    {
+                        // Found the method in the class - check if it's static
+                        return method.Modifiers.Any(m => m.IsKind(SyntaxKind.StaticKeyword));
+                    }
+                    else if (member is PropertyDeclarationSyntax property && property.Identifier.ValueText == identifier.Identifier.ValueText)
+                    {
+                        // Found the property in the class - check if it's static
+                        return property.Modifiers.Any(m => m.IsKind(SyntaxKind.StaticKeyword));
+                    }
+                }
+            }
+        }
+
+        // For simple identifiers like Property or Method() without parentheses
+        if (expression is IdentifierNameSyntax simpleIdentifier)
+        {
+            // Check if this is a member of the current class
+            var members = classDecl.Members;
+            foreach (var member in members)
+            {
+                if (member is MethodDeclarationSyntax method && method.Identifier.ValueText == simpleIdentifier.Identifier.ValueText)
+                {
+                    // Found the method in the class - check if it's static
+                    return method.Modifiers.Any(m => m.IsKind(SyntaxKind.StaticKeyword));
+                }
+                else if (member is PropertyDeclarationSyntax property && property.Identifier.ValueText == simpleIdentifier.Identifier.ValueText)
+                {
+                    // Found the property in the class - check if it's static
+                    return property.Modifiers.Any(m => m.IsKind(SyntaxKind.StaticKeyword));
+                }
+            }
+        }
+
+        // Try semantic model as fallback
+        var symbolInfo = semanticModel.GetSymbolInfo(expression);
+        var symbol = symbolInfo.Symbol;
+
+        if (symbol != null)
+        {
+            // Check if it's a method or property
+            if (symbol is IMethodSymbol methodSymbol)
+            {
+                return methodSymbol.IsStatic;
+            }
+            else if (symbol is IPropertySymbol propertySymbol)
+            {
+                return propertySymbol.IsStatic;
+            }
+        }
+
+        // Default to static if we can't determine (safer - won't add instance prefix)
+        return true;
     }
 
     /// <summary>
@@ -1870,23 +2016,11 @@ private static string GenerateContextResolutionMethods(PluginInfo plugin)
         sb.AppendLine("            return HPDAIFunctionFactory.Create(");
         sb.AppendLine("                async (arguments, cancellationToken) =>");
         sb.AppendLine("                {");
-        
-        string postExpansionInstructions;
-        if (!string.IsNullOrEmpty(plugin.PostExpansionInstructionsExpression))
-        {
-            // If it's a method call or property access, call it dynamically
-            postExpansionInstructions = plugin.PostExpansionInstructionsExpression;
-        }
-        else
-        {
-            // Otherwise, use the string literal
-            postExpansionInstructions = $"\"{plugin.PostExpansionInstructions?.Replace("\"", "\\\"") ?? ""}\"";
-        }
 
         // Use the CollapseDescription (or plugin description as fallback) in the return message
-        var returnMessage = CollapseContainerHelper.GenerateReturnMessage(description, allCapabilities, plugin.PostExpansionInstructions);
-        
-        if (!string.IsNullOrEmpty(plugin.PostExpansionInstructionsExpression))
+        var returnMessage = CollapseContainerHelper.GenerateReturnMessage(description, allCapabilities, plugin.FunctionResultContext);
+
+        if (!string.IsNullOrEmpty(plugin.FunctionResultContextExpression))
         {
             // Using an interpolated string to combine the base message and the dynamic instructions
             var baseMessage = CollapseContainerHelper.GenerateReturnMessage(description, allCapabilities, null);
@@ -1894,7 +2028,13 @@ private static string GenerateContextResolutionMethods(PluginInfo plugin)
             baseMessage = baseMessage.Replace("\\", "\\\\").Replace("\n", "\\n").Replace("\"", "\\\"");
             // Add separator between capabilities list and dynamic instructions
             var separator = "\\n\\n";  // This will be two backslash-n sequences in the source code
-            sb.AppendLine($"                    var dynamicInstructions = {plugin.PostExpansionInstructionsExpression};");
+
+            // Use instance. prefix for instance methods, nothing for static
+            var expressionCall = plugin.FunctionResultContextIsStatic
+                ? plugin.FunctionResultContextExpression
+                : $"instance.{plugin.FunctionResultContextExpression}";
+
+            sb.AppendLine($"                    var dynamicInstructions = {expressionCall};");
             sb.AppendLine($"                    return $\"{baseMessage}{separator}{{dynamicInstructions}}\";");
         }
         else
@@ -1919,7 +2059,44 @@ private static string GenerateContextResolutionMethods(PluginInfo plugin)
         sb.AppendLine("                        [\"IsContainer\"] = true,");
         sb.AppendLine($"                        [\"PluginName\"] = \"{plugin.Name}\",");
         sb.AppendLine($"                        [\"FunctionNames\"] = new string[] {{ {string.Join(", ", allCapabilities.Select(c => $"\"{c}\""))} }},");
-        sb.AppendLine($"                        [\"FunctionCount\"] = {totalCount}");
+        sb.AppendLine($"                        [\"FunctionCount\"] = {totalCount},");
+
+        // Add SystemPromptContext to metadata (for middleware injection)
+        if (!string.IsNullOrEmpty(plugin.SystemPromptContext))
+        {
+            // Use verbatim string literal - only escape quotes (double them), NOT newlines
+            var escapedSysPrompt = plugin.SystemPromptContext.Replace("\"", "\"\"");
+            sb.AppendLine($"                        [\"SystemPromptContext\"] = @\"{escapedSysPrompt}\",");
+        }
+        else if (!string.IsNullOrEmpty(plugin.SystemPromptContextExpression))
+        {
+            // Expression - evaluate at container creation time
+            // Use instance. prefix for instance methods, nothing for static
+            var expressionCall = plugin.SystemPromptContextIsStatic
+                ? plugin.SystemPromptContextExpression
+                : $"instance.{plugin.SystemPromptContextExpression}";
+
+            sb.AppendLine($"                        [\"SystemPromptContext\"] = {expressionCall},");
+        }
+
+        // Optionally store FunctionResultContext for introspection
+        if (!string.IsNullOrEmpty(plugin.FunctionResultContext))
+        {
+            // Use verbatim string literal - only escape quotes (double them), NOT newlines
+            var escapedFuncResult = plugin.FunctionResultContext.Replace("\"", "\"\"");
+            sb.AppendLine($"                        [\"FunctionResultContext\"] = @\"{escapedFuncResult}\"");
+        }
+        else if (!string.IsNullOrEmpty(plugin.FunctionResultContextExpression))
+        {
+            // Don't store expression in metadata (it's already executed in return statement)
+            sb.AppendLine($"                        // FunctionResultContext is dynamic: {plugin.FunctionResultContextExpression}");
+        }
+        else
+        {
+            // Remove trailing comma from FunctionCount if no context properties
+            // This is handled by checking if we added anything after FunctionCount
+        }
+
         sb.AppendLine("                    }");
         sb.AppendLine("                });");
         sb.AppendLine("        }");

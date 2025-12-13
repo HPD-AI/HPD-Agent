@@ -23,9 +23,31 @@ internal class SkillInfo
     public string Description { get; set; } = string.Empty;
 
     /// <summary>
-    /// Instructions shown after activation
+    /// Instructions returned as FUNCTION RESULT when skill is activated.
     /// </summary>
-    public string? Instructions { get; set; }
+    public string? FunctionResultContext { get; set; }
+
+    /// <summary>
+    /// Instructions injected into SYSTEM PROMPT persistently after activation.
+    /// </summary>
+    public string? SystemPromptContext { get; set; }
+
+    /// <summary>
+    /// Instructions shown after activation.
+    /// DEPRECATED: Use FunctionResultContext and SystemPromptContext for explicit control.
+    /// For backward compatibility, this maps to both contexts.
+    /// </summary>
+    [Obsolete("Use FunctionResultContext and SystemPromptContext instead. Will be removed in v2.0.")]
+    public string? Instructions
+    {
+        get => FunctionResultContext ?? SystemPromptContext;
+        set
+        {
+            // Backward compatibility: Skills use BOTH contexts with same instructions
+            FunctionResultContext = value;
+            SystemPromptContext = value;
+        }
+    }
 
     /// <summary>
     /// Skill options extracted from SkillFactory.Create() call

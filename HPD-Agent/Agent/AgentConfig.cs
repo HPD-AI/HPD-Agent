@@ -866,6 +866,15 @@ public class CollapsingConfig
     public SkillInstructionMode SkillInstructionMode { get; set; } = SkillInstructionMode.Both;
 
     /// <summary>
+    /// Whether SystemPromptContext injections persist across message turns.
+    /// Default: false (instructions cleared at end of each message turn for clean prompts).
+    ///
+    /// Set to true if you need container instructions to remain in system prompt even after
+    /// the message turn ends. WARNING: Can cause prompt bloat in long conversations.
+    /// </summary>
+    public bool PersistSystemPromptInjections { get; set; } = false;
+
+    /// <summary>
     /// Optional post-expansion instructions for specific MCP servers.
     /// Key = MCP server name (e.g., "filesystem", "github")
     /// Value = Instructions shown to the agent after that server's container is expanded.

@@ -56,6 +56,9 @@ public class AgentBuilder
     internal readonly List<Middleware.IAgentMiddleware> _middlewares = new(); // Unified middleware list
     internal readonly HPD.Agent.Permissions.PermissionOverrideRegistry _permissionOverrides = new(); // Permission overrides
 
+    // Logging configuration - stored here and applied LAST in RegisterAutoMiddleware
+    private LoggingMiddlewareOptions? _loggingOptions = null;
+
     // Function Collapse tracking for middleware Collapsing
     internal readonly Dictionary<string, string> _functionToPluginMap = new(); // functionName -> pluginTypeName
     internal readonly Dictionary<string, string> _functionToSkillMap = new(); // functionName -> skillName
@@ -823,10 +826,9 @@ public class AgentBuilder
             _observers.Add(loggingObserver);
         }
 
-        // 3. Add unified LoggingMiddleware with configurable options
-        var loggingOptions = options ?? LoggingMiddlewareOptions.Default;
-        var loggingMiddleware = new LoggingMiddleware(_logger, loggingOptions);
-        _middlewares.Add(loggingMiddleware);
+        // 3. Store logging options - LoggingMiddleware will be added LAST in RegisterAutoMiddleware()
+        // This ensures logging happens AFTER all other middleware (so it shows the final state)
+        _loggingOptions = options ?? LoggingMiddlewareOptions.Default;
 
         return this;
     }
@@ -1228,15 +1230,19 @@ public class AgentBuilder
             _middlewares.Add(new Middleware.Function.FunctionTimeoutMiddleware(_config.ErrorHandling.SingleFunctionTimeout.Value));
         }
 
-        // Register ToolCollapsingMiddleware if enabled
-        // This middleware owns the ToolVisibilityManager and handles all tool Collapsing logic
+        // Register ContainerMiddleware if enabled
+        // This unified middleware handles all container operations:
+        // - Tool visibility filtering (collapsing)
+        // - SystemPromptContext injection
+        // - Expansion detection
+        // - Ephemeral result filtering
         if (_config.Collapsing?.Enabled == true && buildData.MergedOptions?.Tools != null)
         {
-            var CollapsingMiddleware = new ToolCollapsingMiddleware(
+            var containerMiddleware = new ContainerMiddleware(
                 buildData.MergedOptions.Tools,
                 _explicitlyRegisteredPlugins.ToImmutableHashSet(StringComparer.OrdinalIgnoreCase),
                 _config.Collapsing);
-            _middlewares.Add(CollapsingMiddleware);
+            _middlewares.Add(containerMiddleware);
         }
 
         // Register FrontendToolMiddleware automatically
@@ -1246,6 +1252,14 @@ public class AgentBuilder
         if (!_middlewares.Any(m => m is FrontendTools.FrontendToolMiddleware))
         {
             _middlewares.Add(new FrontendTools.FrontendToolMiddleware());
+        }
+
+        // Register LoggingMiddleware LAST (if enabled via WithLogging())
+        // This ensures it logs the FINAL state after all other middleware have run
+        if (_loggingOptions != null)
+        {
+            var loggingMiddleware = new LoggingMiddleware(_logger, _loggingOptions);
+            _middlewares.Add(loggingMiddleware);
         }
     }
 

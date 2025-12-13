@@ -112,4 +112,79 @@ public sealed record CollapsingStateData
             ActiveSkillInstructions = ImmutableDictionary<string, string>.Empty
         };
     }
+
+    //
+    // UNIFIED CONTAINER TRACKING (V2 Architecture)
+    //
+
+    /// <summary>
+    /// UNIFIED: All expanded containers (plugins AND skills).
+    /// Replaces separate ExpandedPlugins/ExpandedSkills tracking.
+    /// </summary>
+    public ImmutableHashSet<string> ExpandedContainers { get; init; }
+        = ImmutableHashSet<string>.Empty;
+
+    /// <summary>
+    /// UNIFIED: Active container instructions for prompt injection.
+    /// Maps container name to its instruction contexts.
+    /// Replaces skill-only ActiveSkillInstructions.
+    /// </summary>
+    public ImmutableDictionary<string, ContainerInstructionSet> ActiveContainerInstructions { get; init; }
+        = ImmutableDictionary<string, ContainerInstructionSet>.Empty;
+
+    /// <summary>
+    /// Records a container expansion (plugin or skill).
+    /// </summary>
+    /// <param name="containerName">Name of the container being expanded</param>
+    /// <returns>New state with container added to expanded set</returns>
+    public CollapsingStateData WithExpandedContainer(string containerName)
+    {
+        return this with
+        {
+            ExpandedContainers = ExpandedContainers.Add(containerName),
+            // Also update legacy tracking for backward compatibility
+            ExpandedPlugins = ExpandedPlugins.Add(containerName),
+            ExpandedSkills = ExpandedSkills.Add(containerName)
+        };
+    }
+
+    /// <summary>
+    /// Adds or updates container instructions.
+    /// </summary>
+    /// <param name="containerName">Name of the container</param>
+    /// <param name="instructions">Instruction contexts to inject</param>
+    /// <returns>New state with updated instructions</returns>
+    public CollapsingStateData WithContainerInstructions(string containerName, ContainerInstructionSet instructions)
+    {
+        return this with
+        {
+            ActiveContainerInstructions = ActiveContainerInstructions.SetItem(containerName, instructions),
+            // Update legacy skill instructions if SystemPromptContext is present
+            ActiveSkillInstructions = !string.IsNullOrEmpty(instructions.SystemPromptContext)
+                ? ActiveSkillInstructions.SetItem(containerName, instructions.SystemPromptContext)
+                : ActiveSkillInstructions
+        };
+    }
+
+    /// <summary>
+    /// Clears all active container instructions (typically at end of message turn).
+    /// </summary>
+    /// <returns>New state with cleared instructions</returns>
+    public CollapsingStateData ClearContainerInstructions()
+    {
+        return this with
+        {
+            ActiveContainerInstructions = ImmutableDictionary<string, ContainerInstructionSet>.Empty,
+            ActiveSkillInstructions = ImmutableDictionary<string, string>.Empty
+        };
+    }
 }
+
+/// <summary>
+/// Instruction contexts for a container (plugin or skill).
+/// Supports dual-injection: function result (ephemeral) + system prompt (persistent).
+/// </summary>
+public sealed record ContainerInstructionSet(
+    string? FunctionResultContext,
+    string? SystemPromptContext
+);

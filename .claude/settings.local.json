@@ -24,7 +24,9 @@
       "Bash(curl:*)",
       "Bash(python3:*)",
       "Bash(ls:*)",
-      "Bash(dotnet pack:*)"
+      "Bash(dotnet pack:*)",
+      "Bash(dotnet run:*)",
+      "Bash(git log:*)"
     ],
     "deny": [],
     "ask": []

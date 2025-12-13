@@ -1,5 +1,6 @@
 using HPD.Agent;
 using HPD.Agent.Middleware;
+using HPD.Agent.Collapsing;
 using Microsoft.Extensions.AI;
 using System.Collections.Immutable;
 using Xunit;
@@ -7,7 +8,7 @@ using Xunit;
 namespace HPD.Agent.Tests.Middleware;
 
 /// <summary>
-/// Tests for SkillInstructionIterationMiddleware functionality.
+/// Legacy tests for SkillInstructionMiddleware functionality (now merged into ContainerMiddleware).
 /// Ported from SkillInstructionIterationFilterTests.cs with updates for new architecture.
 /// </summary>
 public class SkillInstructionMiddlewareTests
@@ -16,7 +17,7 @@ public class SkillInstructionMiddlewareTests
     public async Task Middleware_DoesNotModifyInstructions_WhenNoActiveSkills()
     {
         // Arrange
-        var middleware = new SkillInstructionMiddleware();
+        var middleware = CreateContainerMiddleware();
         var context = CreateContext(activeSkills: ImmutableDictionary<string, string>.Empty);
         var originalInstructions = context.Options!.Instructions;
 
@@ -31,7 +32,7 @@ public class SkillInstructionMiddlewareTests
     public async Task Middleware_InjectsSkillInstructions_WhenActiveSkillsExist()
     {
         // Arrange
-        var middleware = new SkillInstructionMiddleware();
+        var middleware = CreateContainerMiddleware();
         var activeSkills = ImmutableDictionary<string, string>.Empty
             .Add("trading", "Trading skill instructions for buying and selling stocks");
         var context = CreateContext(activeSkills: activeSkills);
@@ -50,7 +51,7 @@ public class SkillInstructionMiddlewareTests
     public async Task Middleware_InjectsMultipleSkillInstructions_WhenMultipleActiveSkills()
     {
         // Arrange
-        var middleware = new SkillInstructionMiddleware();
+        var middleware = CreateContainerMiddleware();
         var activeSkills = ImmutableDictionary<string, string>.Empty
             .Add("trading", "Trading skill instructions")
             .Add("weather", "Weather skill instructions");
@@ -67,23 +68,18 @@ public class SkillInstructionMiddlewareTests
     }
 
     [Fact]
-    public async Task Middleware_SignalsClearSkills_OnFinalIteration()
+    public async Task Middleware_ClearsSkills_AfterMessageTurn()
     {
         // Arrange
-        var middleware = new SkillInstructionMiddleware();
+        var middleware = CreateContainerMiddleware();
         var activeSkills = ImmutableDictionary<string, string>.Empty
             .Add("trading", "Trading skill instructions");
         var context = CreateContext(activeSkills: activeSkills);
 
-        // Simulate LLM response with no tool calls (final iteration)
-        context.Response = new ChatMessage(ChatRole.Assistant, "Final response");
-        context.ToolCalls = Array.Empty<FunctionCallContent>();
+        // Act - Cleanup happens at AfterMessageTurnAsync
+        await middleware.AfterMessageTurnAsync(context, CancellationToken.None);
 
-        // Act
-        await middleware.AfterIterationAsync(context, CancellationToken.None);
-
-        // Assert - Check that middleware updated state to clear active skills
-        Assert.True(context.IsFinalIteration);
+        // Assert - Check that middleware cleared active skill instructions
         var pendingState = context.GetPendingState();
         Assert.NotNull(pendingState);
         var CollapsingState = pendingState!.MiddlewareState.Collapsing;
@@ -95,7 +91,7 @@ public class SkillInstructionMiddlewareTests
     public async Task Middleware_DoesNotSignalClearSkills_WhenNotFinalIteration()
     {
         // Arrange
-        var middleware = new SkillInstructionMiddleware();
+        var middleware = CreateContainerMiddleware();
         var activeSkills = ImmutableDictionary<string, string>.Empty
             .Add("trading", "Trading skill instructions");
         var context = CreateContext(activeSkills: activeSkills);
@@ -116,7 +112,7 @@ public class SkillInstructionMiddlewareTests
     public async Task Middleware_DoesNotSignalClearSkills_WhenNoActiveSkills()
     {
         // Arrange
-        var middleware = new SkillInstructionMiddleware();
+        var middleware = CreateContainerMiddleware();
         var context = CreateContext(activeSkills: ImmutableDictionary<string, string>.Empty);
 
         // Simulate final iteration
@@ -135,7 +131,7 @@ public class SkillInstructionMiddlewareTests
     public async Task Middleware_HandlesNullOptions_Gracefully()
     {
         // Arrange
-        var middleware = new SkillInstructionMiddleware();
+        var middleware = CreateContainerMiddleware();
         var activeSkills = ImmutableDictionary<string, string>.Empty
             .Add("trading", "Trading skill instructions");
         var context = CreateContext(activeSkills: activeSkills);
@@ -149,10 +145,10 @@ public class SkillInstructionMiddlewareTests
     }
 
     [Fact]
-    public async Task Middleware_InjectsInBefore_DetectsFinalInAfter()
+    public async Task Middleware_InjectsInBefore_ClearsAfterMessageTurn()
     {
         // Arrange
-        var middleware = new SkillInstructionMiddleware();
+        var middleware = CreateContainerMiddleware();
         var activeSkills = ImmutableDictionary<string, string>.Empty
             .Add("trading", "Trading instructions");
         var context = CreateContext(activeSkills: activeSkills);
@@ -163,12 +159,8 @@ public class SkillInstructionMiddlewareTests
         // Assert - Instructions injected
         Assert.Contains("Trading instructions", context.Options!.Instructions!);
 
-        // Simulate final LLM response
-        context.Response = new ChatMessage(ChatRole.Assistant, "Done");
-        context.ToolCalls = Array.Empty<FunctionCallContent>();
-
-        // Act - After phase
-        await middleware.AfterIterationAsync(context, CancellationToken.None);
+        // Act - Cleanup happens at AfterMessageTurnAsync
+        await middleware.AfterMessageTurnAsync(context, CancellationToken.None);
 
         // Assert - State updated to clear skills
         var pendingState = context.GetPendingState();
@@ -182,7 +174,7 @@ public class SkillInstructionMiddlewareTests
     public async Task Middleware_PreservesOriginalInstructions_WhenInjecting()
     {
         // Arrange
-        var middleware = new SkillInstructionMiddleware();
+        var middleware = CreateContainerMiddleware();
         var activeSkills = ImmutableDictionary<string, string>.Empty
             .Add("trading", "Trading instructions");
         var context = CreateContext(activeSkills: activeSkills);
@@ -197,8 +189,29 @@ public class SkillInstructionMiddlewareTests
         Assert.Contains("Trading instructions", context.Options.Instructions);
     }
 
+    private static ContainerMiddleware CreateContainerMiddleware()
+    {
+        // Create a dummy tool so ContainerMiddleware doesn't early-return
+        var dummyFunction = AIFunctionFactory.Create(
+            () => "test",
+            name: "DummyFunction",
+            description: "Dummy function for testing");
+
+        var tools = new List<AITool> { dummyFunction };
+        var emptyPlugins = ImmutableHashSet<string>.Empty;
+        var config = new CollapsingConfig { Enabled = true };
+
+        return new ContainerMiddleware(tools, emptyPlugins, config);
+    }
+
     private static AgentMiddlewareContext CreateContext(ImmutableDictionary<string, string> activeSkills)
     {
+        // Create dummy tools for the context (required by ContainerMiddleware)
+        var dummyTool = AIFunctionFactory.Create(
+            () => "test",
+            name: "DummyFunction",
+            description: "Dummy");
+
         var state = AgentLoopState.Initial(
             messages: new List<ChatMessage>(),
             runId: "test-run-id",
@@ -215,7 +228,11 @@ public class SkillInstructionMiddlewareTests
             AgentName = "TestAgent",
             ConversationId = "test-conv-id",
             Messages = new List<ChatMessage>(),
-            Options = new ChatOptions { Instructions = "Base instructions" },
+            Options = new ChatOptions
+            {
+                Instructions = "Base instructions",
+                Tools = new List<AITool> { dummyTool }
+            },
             ToolCalls = Array.Empty<FunctionCallContent>(), // Initialize to empty array
             Iteration = 0,
             CancellationToken = CancellationToken.None

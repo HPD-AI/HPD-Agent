@@ -1,6 +1,7 @@
 ﻿using HPD.Agent;
 using HPD.Agent.MCP;
 using HPD.Agent.Memory;
+using HPD.Agent.Middleware;
 
 Console.WriteLine("🚀 HPD-Agent Console Test\n");
 
@@ -22,14 +23,15 @@ var config = new AgentConfig
 var eventHandler = new ConsoleEventHandler();
 var agent = await new AgentBuilder(config)
     .WithEventHandler(eventHandler)
-    .WithPlugin<FinancialAnalysisSkills>()
+    .WithPlugin<FinancialAnalysisPlugin>()
+    .WithPlugin<MathPlugin>()
     .WithPlanMode()
     .WithPermissions()
     .WithCircuitBreaker(maxConsecutiveCalls: 3)
     .WithErrorTracking(maxConsecutiveErrors: 3)
     .WithTotalErrorThreshold(maxTotalErrors: 10)
     .WithMCP("./MCP.json")
-    .WithLogging()
+    .WithLogging(options: LoggingMiddlewareOptions.Verbose)
     .Build();
 
 eventHandler.SetAgent(agent);

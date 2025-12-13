@@ -52,7 +52,43 @@ public class FinancialAnalysisPluginMetadataContext : IPluginMetadataContext
 }
 
 
-[Collapse("Financial Analysis Plugin")]
+[Collapse(
+    description: "Financial Analysis Plugin",
+    functionResultContext: @"Financial Analysis Plugin activated.
+
+Available capabilities:
+• Common-size analysis (balance sheet ratios)
+• Liquidity ratios (current, quick, working capital)
+• Leverage ratios (debt-to-equity, debt-to-assets, equity multiplier)
+• Period-over-period change analysis
+• Balance sheet equation validation
+• Comprehensive multi-period analysis",
+    systemPromptContext: @"# FINANCIAL ANALYSIS RULES
+
+## Core Principles
+- ALWAYS validate the accounting equation: Assets = Liabilities + Equity
+- ALWAYS use consistent decimal places (default: 2 for ratios, 0 for dollar amounts)
+- ALWAYS show calculations step-by-step for transparency
+- NEVER mix different reporting periods in the same calculation
+
+## Common-Size Analysis Protocol
+1. Calculate each line item as % of base amount (Total Assets or Total Liabilities)
+2. Verify percentages sum to 100% within category
+3. Compare period-over-period using percentage POINT changes (not percentage changes)
+4. Identify top 3 changes by magnitude for executive summary
+
+## Ratio Interpretation Guidelines
+- Current Ratio > 2.0: Strong liquidity
+- Current Ratio 1.0-2.0: Adequate liquidity
+- Current Ratio < 1.0: Liquidity concerns
+- Quick Ratio > 1.0: Good short-term solvency
+- Debt-to-Equity > 2.0: High financial leverage/risk
+
+## Error Prevention
+- Check for zero denominators BEFORE calculation
+- Round final results only (maintain precision in intermediate steps)
+- Express percentage point changes with sign (+/-)
+- Format dollar amounts with millions suffix when appropriate")]
 public class FinancialAnalysisPlugin
 {
     // ==================== COMMON-SIZE ANALYSIS ====================

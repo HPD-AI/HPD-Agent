@@ -62,16 +62,58 @@ internal class PluginInfo
     public string? CollapseDescription { get; set; }
 
     /// <summary>
+    /// Instructions returned as FUNCTION RESULT when container is activated (literal value).
+    /// </summary>
+    public string? FunctionResultContext { get; set; }
+
+    /// <summary>
+    /// Instructions returned as FUNCTION RESULT when container is activated (expression/method call).
+    /// </summary>
+    public string? FunctionResultContextExpression { get; set; }
+
+    /// <summary>
+    /// Whether FunctionResultContextExpression is a static member (true) or instance member (false).
+    /// </summary>
+    public bool FunctionResultContextIsStatic { get; set; } = true;
+
+    /// <summary>
+    /// Instructions injected into SYSTEM PROMPT persistently after activation (literal value).
+    /// </summary>
+    public string? SystemPromptContext { get; set; }
+
+    /// <summary>
+    /// Instructions injected into SYSTEM PROMPT persistently after activation (expression/method call).
+    /// </summary>
+    public string? SystemPromptContextExpression { get; set; }
+
+    /// <summary>
+    /// Whether SystemPromptContextExpression is a static member (true) or instance member (false).
+    /// </summary>
+    public bool SystemPromptContextIsStatic { get; set; } = true;
+
+    /// <summary>
     /// Post-expansion instructions from [Collapse] attribute (if present)
     /// These instructions are shown to the agent after the container is expanded.
+    /// DEPRECATED: Use FunctionResultContext instead.
     /// </summary>
-    public string? PostExpansionInstructions { get; set; }
+    [Obsolete("Use FunctionResultContext instead. Will be removed in v2.0.")]
+    public string? PostExpansionInstructions
+    {
+        get => FunctionResultContext;
+        set => FunctionResultContext = value;
+    }
 
     /// <summary>
     /// Post-expansion instructions from [Collapse] attribute (if it's an expression)
     /// This stores the method call or property access as a string.
+    /// DEPRECATED: Use FunctionResultContextExpression instead.
     /// </summary>
-    public string? PostExpansionInstructionsExpression { get; set; }
+    [Obsolete("Use FunctionResultContextExpression instead. Will be removed in v2.0.")]
+    public string? PostExpansionInstructionsExpression
+    {
+        get => FunctionResultContextExpression;
+        set => FunctionResultContextExpression = value;
+    }
 }
 
 /// <summary>

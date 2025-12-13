@@ -9,10 +9,10 @@ using Xunit;
 namespace HPD.Agent.Tests.Middleware;
 
 /// <summary>
-/// Comprehensive tests for ToolCollapsingMiddleware.
+/// Comprehensive tests for ContainerMiddleware.
 /// Tests the full lifecycle: visibility filtering (BeforeIteration) and container detection (AfterIteration).
 /// </summary>
-public class ToolCollapsingMiddlewareTests
+public class ContainerMiddlewareTests
 {
     //      
     // BEFORE ITERATION TESTS - Tool Visibility Filtering
@@ -25,7 +25,7 @@ public class ToolCollapsingMiddlewareTests
         var (container, members) = CreateCollapsedPlugin("TestPlugin", "Test plugin", "Add", "Subtract");
         var allTools = new List<AITool> { container, members[0], members[1] };
 
-        var middleware = new ToolCollapsingMiddleware(
+        var middleware = new ContainerMiddleware(
             allTools,
             ImmutableHashSet<string>.Empty,
             new CollapsingConfig { Enabled = false });
@@ -48,7 +48,7 @@ public class ToolCollapsingMiddlewareTests
         var nonCollapsed = CreateNonCollapsedFunction("Echo");
         var allTools = new List<AITool> { container, members[0], members[1], nonCollapsed };
 
-        var middleware = new ToolCollapsingMiddleware(
+        var middleware = new ContainerMiddleware(
             allTools,
             ImmutableHashSet<string>.Empty,
             new CollapsingConfig { Enabled = true });
@@ -74,7 +74,7 @@ public class ToolCollapsingMiddlewareTests
         var (container, members) = CreateCollapsedPlugin("TestPlugin", "Test plugin", "Add", "Subtract");
         var allTools = new List<AITool> { container, members[0], members[1] };
 
-        var middleware = new ToolCollapsingMiddleware(
+        var middleware = new ContainerMiddleware(
             allTools,
             ImmutableHashSet<string>.Empty,
             new CollapsingConfig { Enabled = true });
@@ -100,7 +100,7 @@ public class ToolCollapsingMiddlewareTests
     public async Task BeforeIteration_WhenNoTools_DoesNothing()
     {
         // Arrange
-        var middleware = new ToolCollapsingMiddleware(
+        var middleware = new ContainerMiddleware(
             Array.Empty<AITool>(),
             ImmutableHashSet<string>.Empty);
 
@@ -121,7 +121,7 @@ public class ToolCollapsingMiddlewareTests
         var function = CreateNonCollapsedFunction("TestFunc");
         var allTools = new List<AITool> { function };
 
-        var middleware = new ToolCollapsingMiddleware(
+        var middleware = new ContainerMiddleware(
             allTools,
             ImmutableHashSet<string>.Empty);
 
@@ -156,7 +156,7 @@ public class ToolCollapsingMiddlewareTests
         var (container, _) = CreateCollapsedPlugin("TestPlugin", "Test plugin", "Add");
         var allTools = new List<AITool> { container };
 
-        var middleware = new ToolCollapsingMiddleware(
+        var middleware = new ContainerMiddleware(
             allTools,
             ImmutableHashSet<string>.Empty,
             new CollapsingConfig { Enabled = false });
@@ -176,7 +176,7 @@ public class ToolCollapsingMiddlewareTests
     public async Task AfterIteration_WhenNoToolCalls_DoesNothing()
     {
         // Arrange
-        var middleware = new ToolCollapsingMiddleware(
+        var middleware = new ContainerMiddleware(
             Array.Empty<AITool>(),
             ImmutableHashSet<string>.Empty);
 
@@ -197,7 +197,7 @@ public class ToolCollapsingMiddlewareTests
         var (container, members) = CreateCollapsedPlugin("FinancialPlugin", "Financial tools", "Add", "Subtract");
         var allTools = new List<AITool> { container, members[0], members[1] };
 
-        var middleware = new ToolCollapsingMiddleware(
+        var middleware = new ContainerMiddleware(
             allTools,
             ImmutableHashSet<string>.Empty);
 
@@ -226,7 +226,7 @@ public class ToolCollapsingMiddlewareTests
         var func2 = CreateNonCollapsedFunction("func2");
         var allTools = new List<AITool> { skill, func1, func2 };
 
-        var middleware = new ToolCollapsingMiddleware(
+        var middleware = new ContainerMiddleware(
             allTools,
             ImmutableHashSet<string>.Empty);
 
@@ -254,7 +254,7 @@ public class ToolCollapsingMiddlewareTests
         var skill = CreateSkillContainerWithInstructions("MetricSkill", "Metric calculations", instructions);
         var allTools = new List<AITool> { skill };
 
-        var middleware = new ToolCollapsingMiddleware(
+        var middleware = new ContainerMiddleware(
             allTools,
             ImmutableHashSet<string>.Empty);
 
@@ -283,7 +283,7 @@ public class ToolCollapsingMiddlewareTests
         var regularFunc = CreateNonCollapsedFunction("RegularFunction");
         var allTools = new List<AITool> { regularFunc };
 
-        var middleware = new ToolCollapsingMiddleware(
+        var middleware = new ContainerMiddleware(
             allTools,
             ImmutableHashSet<string>.Empty);
 
@@ -307,7 +307,7 @@ public class ToolCollapsingMiddlewareTests
         var skill = CreateSkillContainer("Skill1", "First skill");
         var allTools = new List<AITool> { plugin1, plugin2, skill };
 
-        var middleware = new ToolCollapsingMiddleware(
+        var middleware = new ContainerMiddleware(
             allTools,
             ImmutableHashSet<string>.Empty);
 
@@ -345,7 +345,7 @@ public class ToolCollapsingMiddlewareTests
         var (container, members) = CreateCollapsedPlugin("TestPlugin", "Test plugin", "Add", "Subtract");
         var allTools = new List<AITool> { container, members[0], members[1] };
 
-        var middleware = new ToolCollapsingMiddleware(
+        var middleware = new ContainerMiddleware(
             allTools,
             ImmutableHashSet<string>.Empty);
 
@@ -503,7 +503,7 @@ public class ToolCollapsingMiddlewareTests
             new AIFunctionFactoryOptions { Name = "GetGreeting", Description = "Gets greeting" });
 
         var allTools = new List<AITool> { containerFunc, regularFunc1, regularFunc2 };
-        var middleware = new ToolCollapsingMiddleware(allTools, ImmutableHashSet<string>.Empty);
+        var middleware = new ContainerMiddleware(allTools, ImmutableHashSet<string>.Empty);
 
         var turnHistory = new List<ChatMessage>
         {
@@ -540,7 +540,7 @@ public class ToolCollapsingMiddlewareTests
             new AIFunctionFactoryOptions { Name = "RegularFunction", Description = "Regular" });
 
         var allTools = new List<AITool> { regularFunc };
-        var middleware = new ToolCollapsingMiddleware(allTools, ImmutableHashSet<string>.Empty);
+        var middleware = new ContainerMiddleware(allTools, ImmutableHashSet<string>.Empty);
 
         var turnHistory = new List<ChatMessage>
         {
@@ -564,7 +564,7 @@ public class ToolCollapsingMiddlewareTests
     public async Task AfterMessageTurn_HandlesEmptyTurnHistory()
     {
         // Arrange
-        var middleware = new ToolCollapsingMiddleware(
+        var middleware = new ContainerMiddleware(
             Array.Empty<AITool>(),
             ImmutableHashSet<string>.Empty);
 
@@ -604,7 +604,7 @@ public class ToolCollapsingMiddlewareTests
             new AIFunctionFactoryOptions { Name = "DoWork", Description = "Does work" });
 
         var allTools = new List<AITool> { containerA, containerB, regularFunc };
-        var middleware = new ToolCollapsingMiddleware(allTools, ImmutableHashSet<string>.Empty);
+        var middleware = new ContainerMiddleware(allTools, ImmutableHashSet<string>.Empty);
 
         var turnHistory = new List<ChatMessage>
         {
@@ -645,7 +645,7 @@ public class ToolCollapsingMiddlewareTests
             });
 
         var allTools = new List<AITool> { containerFunc };
-        var middleware = new ToolCollapsingMiddleware(allTools, ImmutableHashSet<string>.Empty);
+        var middleware = new ContainerMiddleware(allTools, ImmutableHashSet<string>.Empty);
 
         var turnHistory = new List<ChatMessage>
         {
@@ -702,7 +702,7 @@ public class ToolCollapsingMiddlewareTests
             new AIFunctionFactoryOptions { Name = "Calculate", Description = "Calculates" });
 
         var allTools = new List<AITool> { CollapsedPluginContainer, skillContainer, regularFunc };
-        var middleware = new ToolCollapsingMiddleware(allTools, ImmutableHashSet<string>.Empty);
+        var middleware = new ContainerMiddleware(allTools, ImmutableHashSet<string>.Empty);
 
         var turnHistory = new List<ChatMessage>
         {
@@ -739,7 +739,7 @@ public class ToolCollapsingMiddlewareTests
             new AIFunctionFactoryOptions { Name = "Calculate", Description = "Calculates" });
 
         var allTools = new List<AITool> { regularFunc };
-        var middleware = new ToolCollapsingMiddleware(allTools, ImmutableHashSet<string>.Empty);
+        var middleware = new ContainerMiddleware(allTools, ImmutableHashSet<string>.Empty);
 
         var turnHistory = new List<ChatMessage>
         {

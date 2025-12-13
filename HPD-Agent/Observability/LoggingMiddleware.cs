@@ -224,11 +224,18 @@ public class LoggingMiddleware : IAgentMiddleware
 
         var iterationNumber = Interlocked.Increment(ref _iterationCounter);
         var sb = new StringBuilder();
-
+        
+        sb.AppendLine();
         sb.AppendLine("───────────────────────────────────────────────────────");
         sb.AppendLine($"{_options.LogPrefix} ITERATION #{iterationNumber} (Agent iteration: {context.Iteration})");
         sb.AppendLine($"  Agent: {context.AgentName}");
-        sb.AppendLine($"  Messages to LLM: {context.Messages?.Count ?? 0}");
+
+        if (_options.IncludeInstructions && !string.IsNullOrEmpty(context.Options?.Instructions))
+        {
+            var instructions = TruncateString(context.Options.Instructions);
+            sb.AppendLine($"  System Instructions: {instructions}");
+        }
+
         sb.AppendLine("───────────────────────────────────────────────────────");
 
         LogMessage(sb.ToString());

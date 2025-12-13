@@ -99,18 +99,35 @@ public List<Product> SearchProducts(
 
 #### `CollapseAttribute`
 
-Use `[Collapse]` on plugin classes to group related functions behind a single expandable container. 
+Use `[Collapse]` on plugin classes to group related functions behind a single expandable container.
 Collapsed containers keep your agent's tool surface small; the agent expands a container only when it decides the contained functions are relevant.
 
 Constructor parameters:
 - `description` (required): Short explanation of what the container provides and when to expand it.
-- `postExpansionInstructions` (optional): Guidance shown after expansion (best practices, safety notes, or workflow tips). These instructions only consume tokens when the container is expanded. This can be a string literal or a call to a `static` method/property that returns a string.
+- `functionResultContext` (optional): One-time message returned when the container first expands. Use this for activation confirmations or to list available capabilities.
+- `systemPromptContext` (optional): Persistent instructions injected into the system prompt on every iteration after expansion. Use this for behavioral rules, safety guidelines, or workflow requirements that must persist throughout the conversation.
 
-**Example with string literal:**
+**Important**: Both instruction contexts can be string literals or calls to methods/properties (static or instance) that return strings. Instance methods can access plugin state for dynamic instructions.
+
+> **Deprecated**: `postExpansionInstructions` is deprecated in favor of the dual-context approach. For backward compatibility, it maps to `functionResultContext`.
+
+##### When to Use Each Context
+
+- **`functionResultContext`**: For one-time activation messages
+  - "Search plugin activated. Available functions: WebSearch, CodeSearch, DocumentSearch"
+  - "Financial analysis tools now available. Run GetStockPrice to start."
+  - Shown once in the function result when the container expands
+
+- **`systemPromptContext`**: For persistent behavioral rules
+  - "Always paginate large datasets. Prefer provider-specific searches for accuracy."
+  - "CRITICAL: Verify all trades before execution. Never auto-execute without confirmation."
+  - Injected into system prompt on every iteration after activation
+
+##### Example 1: Activation Message Only
 
 ```csharp
 [Collapse("Search operations across web, code, and documentation",
-    postExpansionInstructions: @"When expanded, prefer provider-specific searches for accuracy. Use pagination when querying large datasets.")]
+    functionResultContext: "Search plugin activated. Available: WebSearch, CodeSearch, DocumentSearch.")]
 public class SearchPlugin
 {
     [AIFunction]
@@ -119,31 +136,154 @@ public class SearchPlugin
 
     [AIFunction]
     public Task<string> CodeSearch(string query) => ...;
+
+    [AIFunction]
+    public Task<string> DocumentSearch(string query) => ...;
 }
 ```
 
-**Example with dynamic instructions from a method call:**
+##### Example 2: Persistent Rules Only
+
+```csharp
+[Collapse("Financial trading operations",
+    systemPromptContext: @"CRITICAL TRADING RULES:
+- ALWAYS verify trade parameters before execution
+- NEVER auto-execute trades without explicit user confirmation
+- Check account balance before placing orders
+- Log all trade attempts for audit compliance")]
+public class TradingPlugin
+{
+    [AIFunction]
+    public Task<TradeResult> ExecuteTrade(string symbol, decimal amount) => ...;
+}
+```
+
+##### Example 3: Both Contexts (Recommended)
+
+```csharp
+[Collapse("Database operations for user and order management",
+    functionResultContext: "Database plugin activated. Available: QueryUsers, QueryOrders, UpdateUser.",
+    systemPromptContext: @"DATABASE SAFETY PROTOCOLS:
+- Always use parameterized queries (never string concatenation)
+- Limit query results to 100 rows by default unless user specifies otherwise
+- Log all write operations for audit trail")]
+public class DatabasePlugin
+{
+    [AIFunction]
+    public Task<List<User>> QueryUsers(string filter) => ...;
+
+    [AIFunction]
+    public Task<List<Order>> QueryOrders(string userId) => ...;
+
+    [AIFunction]
+    public Task UpdateUser(string userId, UserUpdate update) => ...;
+}
+```
+
+##### Example 4: Dynamic Instructions from Method Calls
 
 ```csharp
 public static class SearchInstructionBuilder
 {
-    public static string GetInstructions()
+    public static string GetActivationMessage()
     {
-        // Instructions could be loaded from a file, a database, or built dynamically
-        return $"Search instructions for version {GetVersion()}. Always use safe search.";
+        return $"Search plugin v{GetVersion()} activated. Available: WebSearch, CodeSearch, DocumentSearch.";
+    }
+
+    public static string GetSearchRules()
+    {
+        // Instructions could be loaded from a file, database, or built dynamically
+        return $@"SEARCH PROTOCOL (v{GetVersion()}):
+- Prefer provider-specific searches for better accuracy
+- Use pagination for large datasets (max 50 results per page)
+- Cache results for 5 minutes to reduce API calls";
     }
 
     private static string GetVersion() => "2.1";
 }
 
 [Collapse("Search operations across web, code, and documentation",
-    postExpansionInstructions: SearchInstructionBuilder.GetInstructions())]
-public class DynamicSearchPlugin 
+    functionResultContext: SearchInstructionBuilder.GetActivationMessage(),
+    systemPromptContext: SearchInstructionBuilder.GetSearchRules())]
+public class DynamicSearchPlugin
 {
-    // ... plugin functions
-}
+    [AIFunction]
+    public Task<string> WebSearch(string query) => ...;
 
+    [AIFunction]
+    public Task<string> CodeSearch(string query) => ...;
+}
 ```
+
+##### Example 5: Instance Methods for State-Based Instructions
+
+Instance methods can access plugin state to generate dynamic instructions based on configuration, environment, or runtime values:
+
+```csharp
+[Collapse("Environment-aware configuration plugin",
+    functionResultContext: GetActivationMessage(),
+    systemPromptContext: GetEnvironmentRules())]
+public class ConfigurationPlugin
+{
+    private readonly string _environment;
+    private readonly string _version;
+    private readonly DateTime _activatedAt;
+
+    public ConfigurationPlugin(IConfiguration config)
+    {
+        _environment = config["Environment"] ?? "Development";
+        _version = config["Version"] ?? "1.0";
+        _activatedAt = DateTime.UtcNow;
+    }
+
+    public string GetActivationMessage()
+    {
+        return $"Configuration plugin v{_version} activated in {_environment} environment at {_activatedAt:HH:mm:ss} UTC";
+    }
+
+    public string GetEnvironmentRules()
+    {
+        return _environment switch
+        {
+            "Production" => @"PRODUCTION RULES:
+- ALWAYS validate configuration changes before applying
+- NEVER expose sensitive configuration values
+- Log all configuration reads for audit compliance",
+            "Staging" => @"STAGING RULES:
+- Validate configuration changes before applying
+- Allow reading sensitive values for debugging
+- Log configuration changes",
+            _ => @"DEVELOPMENT RULES:
+- Allow direct configuration changes
+- Allow reading all configuration values
+- Minimal logging"
+        };
+    }
+
+    [AIFunction]
+    [AIDescription("Get a configuration value")]
+    public Task<string> GetConfig(string key) => ...;
+
+    [AIFunction]
+    [AIDescription("Update a configuration value")]
+    public Task UpdateConfig(string key, string value) => ...;
+}
+```
+
+**Benefits of instance methods:**
+- Access plugin fields and properties for runtime-specific instructions
+- Adapt instructions based on constructor-injected dependencies
+- Generate dynamic content based on environment, configuration, or state
+
+##### Instruction Persistence
+
+By default, `systemPromptContext` instructions are cleared at the end of each message turn to keep prompts clean. To make instructions persist across multiple turns, configure:
+
+```csharp
+agent.Config.Collapsing.PersistSystemPromptInjections = true;
+```
+
+**Warning**: Persistent injections can cause prompt bloat in long conversations. Only enable if your workflow requires container rules to remain active across multiple user messages.
 ---
 ## Dependency Injection
 

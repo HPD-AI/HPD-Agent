@@ -1,0 +1,81 @@
+name: Publish NPM Package
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g., 0.2.0 or 0.2.0-alpha)'
+        required: true
+        type: string
+
+defaults:
+  run:
+    working-directory: hpd-agent-client
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "release" ]; then
+            VERSION="${{ github.event.release.tag_name }}"
+            VERSION="${VERSION#client-v}"  # Remove 'client-v' prefix
+            VERSION="${VERSION#v}"          # Remove 'v' prefix if present
+          else
+            VERSION="${{ inputs.version }}"
+          fi
+
+          # Determine npm tag
+          if [[ "$VERSION" == *-alpha* ]]; then
+            NPM_TAG="alpha"
+          elif [[ "$VERSION" == *-beta* ]]; then
+            NPM_TAG="beta"
+          elif [[ "$VERSION" == *-preview* ]] || [[ "$VERSION" == *-rc* ]]; then
+            NPM_TAG="next"
+          else
+            NPM_TAG="latest"
+          fi
+
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "npm_tag=$NPM_TAG" >> $GITHUB_OUTPUT
+          echo "Publishing version: $VERSION with tag: $NPM_TAG"
+
+      - name: Update package.json version
+        run: npm version ${{ steps.version.outputs.version }} --no-git-tag-version
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Publish to npm
+        run: npm publish --tag ${{ steps.version.outputs.npm_tag }} --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Summary
+        run: |
+          echo "## Published NPM Package" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Package:** @hpd/hpd-agent-client" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Tag:** ${{ steps.version.outputs.npm_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "[View on npm](https://www.npmjs.com/package/@hpd/hpd-agent-client)" >> $GITHUB_STEP_SUMMARY

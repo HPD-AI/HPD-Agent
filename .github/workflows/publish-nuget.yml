@@ -1,0 +1,137 @@
+name: Publish NuGet Packages
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g., 0.2.0 or 0.2.0-alpha)'
+        required: true
+        type: string
+
+env:
+  DOTNET_VERSION: '10.0.x'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "release" ]; then
+            VERSION="${{ github.event.release.tag_name }}"
+            VERSION="${VERSION#v}"  # Remove 'v' prefix
+          else
+            VERSION="${{ inputs.version }}"
+          fi
+
+          # Parse version prefix and suffix
+          # Supports: 0.2.0, 0.2.0-alpha, 0.2.0-preview.1
+          if [[ "$VERSION" == *-* ]]; then
+            VERSION_PREFIX="${VERSION%%-*}"
+            VERSION_SUFFIX="${VERSION#*-}"
+            echo "version_prefix=$VERSION_PREFIX" >> $GITHUB_OUTPUT
+            echo "version_suffix=$VERSION_SUFFIX" >> $GITHUB_OUTPUT
+            echo "Publishing: $VERSION_PREFIX with suffix: $VERSION_SUFFIX"
+          else
+            VERSION_PREFIX="$VERSION"
+            echo "version_prefix=$VERSION_PREFIX" >> $GITHUB_OUTPUT
+            echo "version_suffix=" >> $GITHUB_OUTPUT
+            echo "Publishing stable version: $VERSION_PREFIX"
+          fi
+
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Run tests
+        run: dotnet test test/HPD-Agent.Tests/HPD-Agent.Tests.csproj --configuration Release --no-build --verbosity normal
+
+      - name: Pack packages
+        run: |
+          mkdir -p ./nupkg
+
+          PROJECTS=(
+            "HPD-Agent/HPD-Agent.csproj"
+            "HPD-Agent.FFI/HPD-Agent.FFI.csproj"
+            "HPD-Agent.MCP/HPD-Agent.MCP.csproj"
+            "HPD-Agent.Memory/HPD-Agent.Memory.csproj"
+            "HPD-Agent.TextExtraction/HPD-Agent.TextExtraction.csproj"
+            "HPD-Agent.Plugins/HPD-Agent.Plugins.FileSystem/HPD-Agent.Plugins.FileSystem.csproj"
+            "HPD-Agent.Plugins/HPD-Agent.Plugins.WebSearch/HPD-Agent.Plugins.WebSearch.csproj"
+            "HPD-Agent.Providers/HPD-Agent.Providers.Anthropic/HPD-Agent.Providers.Anthropic.csproj"
+            "HPD-Agent.Providers/HPD-Agent.Providers.AzureAIInference/HPD-Agent.Providers.AzureAIInference.csproj"
+            "HPD-Agent.Providers/HPD-Agent.Providers.Bedrock/HPD-Agent.Providers.Bedrock.csproj"
+            "HPD-Agent.Providers/HPD-Agent.Providers.GoogleAI/HPD-Agent.Providers.GoogleAI.csproj"
+            "HPD-Agent.Providers/HPD-Agent.Providers.HuggingFace/HPD-Agent.Providers.HuggingFace.csproj"
+            "HPD-Agent.Providers/HPD-Agent.Providers.Mistral/HPD-Agent.Providers.Mistral.csproj"
+            "HPD-Agent.Providers/HPD-Agent.Providers.Ollama/HPD-Agent.Providers.Ollama.csproj"
+            "HPD-Agent.Providers/HPD-Agent.Providers.OnnxRuntime/HPD-Agent.Providers.OnnxRuntime.csproj"
+            "HPD-Agent.Providers/HPD-Agent.Providers.OpenAI/HPD-Agent.Providers.OpenAI.csproj"
+            "HPD-Agent.Providers/HPD-Agent.Providers.OpenRouter/HPD-Agent.Providers.OpenRouter.csproj"
+          )
+
+          VERSION_PREFIX="${{ steps.version.outputs.version_prefix }}"
+          VERSION_SUFFIX="${{ steps.version.outputs.version_suffix }}"
+
+          for PROJECT in "${PROJECTS[@]}"; do
+            echo "Packing $PROJECT..."
+            if [ -n "$VERSION_SUFFIX" ]; then
+              dotnet pack "$PROJECT" -c Release -o ./nupkg \
+                -p:VersionPrefix="$VERSION_PREFIX" \
+                -p:VersionSuffix="$VERSION_SUFFIX" \
+                --no-build
+            else
+              dotnet pack "$PROJECT" -c Release -o ./nupkg \
+                -p:VersionPrefix="$VERSION_PREFIX" \
+                --no-build
+            fi
+          done
+
+      - name: Upload packages as artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-packages
+          path: ./nupkg/*.nupkg
+
+      - name: Push to NuGet
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          if [ -z "$NUGET_API_KEY" ]; then
+            echo "Error: NUGET_API_KEY secret is not set"
+            exit 1
+          fi
+          dotnet nuget push ./nupkg/*.nupkg --source https://api.nuget.org/v3/index.json --api-key $NUGET_API_KEY --skip-duplicate
+
+      - name: Summary
+        run: |
+          echo "## Published Packages" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          if [ -n "${{ steps.version.outputs.version_suffix }}" ]; then
+            echo "**Type:** Pre-release (${{ steps.version.outputs.version_suffix }})" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**Type:** Stable release" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Packages:" >> $GITHUB_STEP_SUMMARY
+          for pkg in ./nupkg/*.nupkg; do
+            echo "- $(basename $pkg)" >> $GITHUB_STEP_SUMMARY
+          done
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "[View on NuGet](https://www.nuget.org/packages?q=HPD-Agent)" >> $GITHUB_STEP_SUMMARY

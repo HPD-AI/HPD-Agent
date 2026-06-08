@@ -1,0 +1,748 @@
+@font-face {
+  font-family: "Bear Sans UI";
+  src: url("/fonts/BearSansUI-Regular.otf") format("opentype");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Bear Sans UI";
+  src: url("/fonts/BearSansUI-Medium.otf") format("opentype");
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Bear Sans UI";
+  src: url("/fonts/BearSansUI-Bold.otf") format("opentype");
+  font-style: normal;
+  font-weight: 700 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Bear Sans UI";
+  src: url("/fonts/BearSansUI-Italic.otf") format("opentype");
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Bear Sans UI Heading";
+  src: url("/fonts/BearSansUIHeading-Regular.otf") format("opentype");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Bear Sans UI Heading";
+  src: url("/fonts/BearSansUIHeading-Bold.otf") format("opentype");
+  font-style: normal;
+  font-weight: 700 900;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: light;
+
+  --hpd-foreground: #25262a;
+  --hpd-muted-foreground: #6f7480;
+  --hpd-background: #f4f5f7;
+  --hpd-background-accent: #365fba;
+  --hpd-sidebar-background: #eef0f4;
+  --hpd-panel-background: #ffffff;
+  --hpd-panel-background-translucent: color-mix(in oklab, var(--hpd-panel-background) 86%, transparent);
+  --hpd-muted-background: #e5e8ee;
+  --hpd-elevated-background: #ffffff;
+  --hpd-app-surface-background: #f9fafb;
+  --hpd-input-background: #ffffff;
+  --hpd-border: rgb(17 24 39 / 0.10);
+  --hpd-border-strong: rgb(17 24 39 / 0.16);
+  --hpd-accent: #365fba;
+  --hpd-accent-foreground: #ffffff;
+  --hpd-success: #4d7f05;
+  --hpd-warning: #b87417;
+  --hpd-error: #c43747;
+  --hpd-code-background: #f0f2f6;
+  --hpd-code-foreground: #2f333a;
+  --hpd-inline-code-background: #e7edf9;
+  --hpd-inline-code-foreground: #244eaa;
+  --hpd-selection-background: #dfe7f9;
+  --hpd-selection-border: color-mix(in oklab, var(--hpd-accent) 30%, transparent);
+  --hpd-hover-background: #e9edf5;
+  --hpd-shadow-color: 15 23 42;
+  --hpd-shadow: 0 2px 8px rgb(var(--hpd-shadow-color) / 0.08);
+  --hpd-glass-border:
+    inset 0 1px 0 0 rgb(255 255 255 / 0.82),
+    inset 1px 0 0 0 rgb(255 255 255 / 0.48),
+    inset 0 -1px 0 0 rgb(17 24 39 / 0.03),
+    inset -1px 0 0 0 rgb(17 24 39 / 0.03);
+  --hpd-panel-shadow: var(--hpd-glass-border), 0 2px 12px rgb(var(--hpd-shadow-color) / 0.08);
+  --hpd-radius: 1.5rem;
+  --hpd-panel-radius: 1.5rem;
+  --hpd-widget-radius: 0.875rem;
+  --hpd-input-radius: 0.75rem;
+  --hpd-item-radius: 0.375rem;
+  --hpd-text-size: 13px;
+  --hpd-title-size: 18px;
+  --hpd-title-sm-size: 13px;
+  --hpd-meta-size: 12px;
+  --hpd-label-size: 11px;
+  --hpd-code-size: 12px;
+  --hpd-line-height: 1.45;
+  --hpd-message-line-height: 1.65;
+  --hpd-code-line-height: 1.8;
+
+  --vp-c-brand-1: var(--hpd-accent);
+  --vp-c-brand-2: color-mix(in oklab, var(--hpd-accent) 82%, var(--hpd-foreground));
+  --vp-c-brand-3: var(--hpd-accent);
+  --vp-c-brand-soft: color-mix(in oklab, var(--hpd-accent) 17%, transparent);
+
+  --vp-c-bg: var(--hpd-background);
+  --vp-c-bg-alt: var(--hpd-sidebar-background);
+  --vp-c-bg-elv: var(--hpd-panel-background);
+  --vp-c-bg-soft: var(--hpd-muted-background);
+  --vp-c-text-1: var(--hpd-foreground);
+  --vp-c-text-2: var(--hpd-muted-foreground);
+  --vp-c-text-3: color-mix(in oklab, var(--hpd-muted-foreground) 76%, transparent);
+  --vp-c-divider: var(--hpd-border);
+  --vp-c-border: var(--hpd-border);
+  --vp-c-gutter: var(--hpd-border);
+  --vp-code-block-bg: var(--hpd-code-background);
+  --vp-code-bg: var(--hpd-inline-code-background);
+  --vp-sidebar-bg-color: transparent;
+
+  --vp-font-family-base: "Bear Sans UI", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --vp-font-family-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --vp-home-hero-name-color: var(--hpd-foreground);
+  --vp-home-hero-name-background: none;
+
+  --vp-button-brand-bg: var(--hpd-accent);
+  --vp-button-brand-hover-bg: color-mix(in oklab, var(--hpd-accent) 88%, var(--hpd-foreground));
+  --vp-button-brand-active-bg: color-mix(in oklab, var(--hpd-accent) 76%, black);
+  --vp-button-brand-text: var(--hpd-accent-foreground);
+  --vp-button-alt-bg: var(--hpd-panel-background);
+  --vp-button-alt-hover-bg: var(--hpd-hover-background);
+  --vp-button-alt-text: var(--hpd-foreground);
+  --vp-button-alt-border: var(--hpd-border);
+}
+
+.dark {
+  color-scheme: dark;
+
+  --hpd-foreground: #bcbec4;
+  --hpd-muted-foreground: #7a7e85;
+  --hpd-background: #121216;
+  --hpd-background-accent: #365fba;
+  --hpd-sidebar-background: #181818;
+  --hpd-panel-background: #181a1d;
+  --hpd-panel-background-translucent: color-mix(in oklab, var(--hpd-panel-background) 88%, transparent);
+  --hpd-muted-background: #25262a;
+  --hpd-elevated-background: #2b2d30;
+  --hpd-app-surface-background: #202226;
+  --hpd-input-background: #181a1d;
+  --hpd-border: rgb(255 255 255 / 0.06);
+  --hpd-border-strong: rgb(255 255 255 / 0.1);
+  --hpd-accent: #365fba;
+  --hpd-accent-foreground: #ffffff;
+  --hpd-success: #73b00a;
+  --hpd-warning: #e8a33e;
+  --hpd-error: #f75464;
+  --hpd-code-background: #161619;
+  --hpd-code-foreground: #d8dce3;
+  --hpd-inline-code-background: #25324d;
+  --hpd-inline-code-foreground: #7cacf8;
+  --hpd-selection-background: #25262a90;
+  --hpd-selection-border: color-mix(in oklab, var(--hpd-accent) 30%, transparent);
+  --hpd-hover-background: #25262a50;
+  --hpd-shadow-color: 0 0 0;
+  --hpd-shadow: 0 2px 8px rgb(var(--hpd-shadow-color) / 0.30);
+  --hpd-glass-border:
+    inset 0 1px 0 0 rgb(255 255 255 / 0.1),
+    inset 1px 0 0 0 rgb(255 255 255 / 0.06),
+    inset 0 -1px 0 0 rgb(255 255 255 / 0.02),
+    inset -1px 0 0 0 rgb(255 255 255 / 0.02);
+  --hpd-panel-shadow: var(--hpd-glass-border), 0 2px 8px rgb(var(--hpd-shadow-color) / 0.30);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+  background: var(--hpd-background);
+  color: var(--hpd-foreground);
+  font-family: var(--vp-font-family-base);
+  font-size: var(--hpd-text-size);
+  letter-spacing: 0;
+}
+
+body {
+  background:
+    radial-gradient(circle at 82% -12%, color-mix(in oklab, var(--hpd-accent) 24%, transparent), transparent 26rem),
+    linear-gradient(180deg, color-mix(in oklab, var(--hpd-background) 92%, white) 0%, var(--hpd-background) 44%, color-mix(in oklab, var(--hpd-background) 94%, black) 100%);
+}
+
+button,
+input,
+textarea {
+  font-family: inherit;
+}
+
+.VPNav {
+  background: color-mix(in oklab, var(--hpd-sidebar-background) 86%, transparent);
+  border-bottom: 1px solid var(--hpd-border);
+  backdrop-filter: blur(18px);
+}
+
+.VPNavBar .container {
+  max-width: none;
+}
+
+.VPNavBarTitle .title {
+  color: var(--hpd-foreground);
+  font-family: "Bear Sans UI Heading", var(--vp-font-family-base);
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.VPNavBarTitle .logo {
+  width: 22px;
+  height: 22px;
+}
+
+.VPNavBarMenuLink,
+.VPNavBarMenuGroup .button,
+.VPMenuLink .link {
+  color: var(--hpd-muted-foreground);
+  font-size: var(--hpd-text-size);
+  font-weight: 700;
+}
+
+.VPNavBarMenuLink:hover,
+.VPNavBarMenuGroup .button:hover,
+.VPMenuLink .link:hover {
+  color: var(--hpd-foreground);
+}
+
+.VPMenu {
+  border: 1px solid var(--hpd-border);
+  border-radius: var(--hpd-widget-radius);
+  background: color-mix(in oklab, var(--hpd-panel-background) 96%, transparent);
+  box-shadow: 0 18px 40px rgb(var(--hpd-shadow-color) / 0.36);
+}
+
+.DocSearch-Button {
+  min-height: 2rem !important;
+  border: 1px solid var(--hpd-border) !important;
+  border-radius: var(--hpd-input-radius) !important;
+  background: var(--hpd-input-background) !important;
+  color: var(--hpd-muted-foreground) !important;
+}
+
+.VPButton {
+  min-height: 2.25rem !important;
+  border-radius: var(--hpd-input-radius) !important;
+  font-size: var(--hpd-text-size) !important;
+  font-weight: 900 !important;
+}
+
+.VPButton.alt {
+  border: 1px solid var(--hpd-border) !important;
+}
+
+.VPHome {
+  padding: 0 0 4rem;
+}
+
+.VPHomeHero {
+  position: relative;
+  padding: 4.75rem 1rem 1.5rem !important;
+}
+
+.VPHomeHero .container {
+  max-width: 74rem;
+  min-height: auto;
+  display: grid;
+  justify-items: center;
+}
+
+.VPHomeHero .main {
+  max-width: 62rem;
+  margin: 0 auto;
+  text-align: center;
+  order: 1;
+}
+
+.VPHomeHero .name {
+  color: var(--hpd-muted-foreground);
+  font-family: "Bear Sans UI Heading", var(--vp-font-family-base);
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0.0625rem;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.VPHomeHero .text {
+  margin-top: 0.75rem;
+  color: var(--hpd-foreground);
+  font-family: "Bear Sans UI Heading", var(--vp-font-family-base);
+  font-size: clamp(2.4rem, 7vw, 5.25rem);
+  font-weight: 900;
+  letter-spacing: 0;
+  line-height: 0.96;
+}
+
+.VPHomeHero .tagline {
+  max-width: 47rem;
+  margin-left: auto;
+  margin-right: auto;
+  color: var(--hpd-muted-foreground);
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.65;
+}
+
+.VPHomeHero .actions {
+  padding-top: 1.5rem;
+  justify-content: center;
+}
+
+.VPHomeHero .image {
+  order: 0;
+  margin-bottom: 1.25rem;
+  transform: none;
+}
+
+.VPHomeHero .image-container {
+  width: 5.25rem;
+  height: 5.25rem;
+  border: 1px solid var(--hpd-border);
+  border-radius: var(--hpd-widget-radius);
+  background:
+    linear-gradient(145deg, color-mix(in oklab, var(--hpd-accent) 16%, transparent), transparent 62%),
+    color-mix(in oklab, var(--hpd-panel-background) 88%, transparent);
+  backdrop-filter: blur(18px);
+  box-shadow: var(--hpd-panel-shadow);
+}
+
+.VPHomeHero .image-bg {
+  display: none;
+}
+
+.VPHomeHero .image-src {
+  width: 2.75rem;
+  max-width: 2.75rem;
+  filter: none;
+}
+
+.VPFeatures {
+  padding: 1.5rem 1rem 0 !important;
+}
+
+.VPFeatures .container,
+.hpd-home-lanes,
+.hpd-runtime-panel {
+  max-width: 74rem;
+}
+
+.VPFeatures .items {
+  gap: var(--hpd-panel-gap);
+}
+
+.VPFeatures .VPFeature {
+  height: 100%;
+  border: 1px solid var(--hpd-border);
+  border-radius: var(--hpd-widget-radius);
+  background: color-mix(in oklab, var(--hpd-panel-background) 90%, transparent);
+  box-shadow: none;
+  transition: color 150ms, background-color 150ms, border-color 150ms, box-shadow 150ms;
+}
+
+.VPFeatures .VPFeature:hover {
+  border-color: var(--hpd-selection-border);
+  background: var(--hpd-hover-background);
+  box-shadow: var(--hpd-shadow);
+}
+
+.VPFeatures .VPFeature .box {
+  padding: 1rem;
+}
+
+.VPFeatures .VPFeature .icon,
+.VPFeatures .VPFeature .VPImage {
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--hpd-item-radius);
+}
+
+.VPFeatures .VPFeature .icon,
+.VPFeatures .VPFeature .VPImage {
+  padding: 0.375rem;
+  border: 1px solid var(--hpd-border);
+  background: var(--hpd-muted-background);
+}
+
+.VPFeatures .VPFeature .title {
+  color: var(--hpd-foreground);
+  font-family: "Bear Sans UI Heading", var(--vp-font-family-base);
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.VPFeatures .VPFeature .details,
+.VPFeatures .VPFeature .link-text {
+  color: var(--hpd-muted-foreground);
+  font-size: var(--hpd-text-size);
+  line-height: 1.55;
+}
+
+.VPFeatures .VPFeature .link-text-value {
+  color: color-mix(in oklab, var(--hpd-accent) 82%, var(--hpd-foreground));
+  font-weight: 800;
+}
+
+.hpd-home-lanes {
+  display: grid;
+  grid-template-columns: 1.08fr 1fr 1fr;
+  gap: var(--hpd-panel-gap);
+  margin: 2rem auto 0;
+  padding: 0 1rem;
+}
+
+.hpd-lane {
+  display: grid;
+  min-height: 10rem;
+  padding: 1rem;
+  align-content: space-between;
+  border: 1px solid var(--hpd-border);
+  border-radius: var(--hpd-widget-radius);
+  color: var(--hpd-foreground);
+  background: color-mix(in oklab, var(--hpd-panel-background) 88%, transparent);
+  text-decoration: none !important;
+  transition: color 150ms, background-color 150ms, border-color 150ms, box-shadow 150ms;
+}
+
+.hpd-lane:hover {
+  border-color: var(--hpd-selection-border);
+  background: var(--hpd-hover-background);
+  box-shadow: var(--hpd-shadow);
+}
+
+.hpd-lane-primary {
+  border-color: color-mix(in oklab, var(--hpd-accent) 45%, var(--hpd-border));
+  background:
+    linear-gradient(145deg, color-mix(in oklab, var(--hpd-accent) 42%, transparent), transparent 78%),
+    var(--hpd-panel-background);
+}
+
+.hpd-lane-kicker {
+  color: var(--hpd-muted-foreground);
+  font-family: "Bear Sans UI Heading", var(--vp-font-family-base);
+  font-size: var(--hpd-label-size);
+  font-weight: 900;
+  letter-spacing: 0.0625rem;
+  text-transform: uppercase;
+}
+
+.hpd-lane strong {
+  display: block;
+  margin-top: 0.75rem;
+  color: var(--hpd-foreground);
+  font-family: "Bear Sans UI Heading", var(--vp-font-family-base);
+  font-size: 17px;
+  line-height: 1.35;
+}
+
+.hpd-lane span:last-child {
+  margin-top: 1.25rem;
+  color: var(--hpd-muted-foreground);
+  font-size: var(--hpd-text-size);
+  line-height: 1.5;
+}
+
+.hpd-runtime-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+  gap: 1.25rem;
+  align-items: center;
+  margin: 0.375rem auto 3rem;
+  padding: 1rem;
+  border: 1px solid var(--hpd-border);
+  border-radius: var(--hpd-panel-radius);
+  background: var(--hpd-panel-background-translucent);
+  backdrop-filter: blur(18px);
+  box-shadow: var(--hpd-panel-shadow);
+}
+
+.hpd-eyebrow {
+  margin: 0 0 0.75rem;
+  color: var(--hpd-muted-foreground);
+  font-family: "Bear Sans UI Heading", var(--vp-font-family-base);
+  font-size: var(--hpd-label-size);
+  font-weight: 900;
+  letter-spacing: 0.0625rem;
+  text-transform: uppercase;
+}
+
+.hpd-runtime-panel h2 {
+  margin: 0;
+  border: 0;
+  padding: 0;
+  color: var(--hpd-foreground);
+  font-family: "Bear Sans UI Heading", var(--vp-font-family-base);
+  font-size: clamp(1.5rem, 3vw, 2.25rem);
+  font-weight: 900;
+  line-height: 1.08;
+}
+
+.hpd-runtime-panel p:not(.hpd-eyebrow) {
+  margin: 1rem 0 0;
+  color: var(--hpd-muted-foreground);
+  font-size: 14px;
+  line-height: var(--hpd-message-line-height);
+}
+
+.hpd-runtime-panel div[class*='language-'] {
+  margin: 0;
+}
+
+.Layout {
+  background: transparent;
+}
+
+.VPSidebar {
+  border-right: 1px solid var(--hpd-border);
+  background: color-mix(in oklab, var(--hpd-sidebar-background) 90%, transparent) !important;
+  backdrop-filter: blur(18px);
+}
+
+.VPSidebarItem.level-0 > .item > .text {
+  color: var(--hpd-muted-foreground);
+  font-family: "Bear Sans UI Heading", var(--vp-font-family-base);
+  font-size: var(--hpd-label-size);
+  font-weight: 900;
+  letter-spacing: 0.0625rem;
+  text-transform: uppercase;
+}
+
+.VPSidebarItem .link {
+  border-radius: var(--hpd-item-radius);
+}
+
+.VPSidebarItem .link:hover,
+.VPSidebarItem.is-active > .item .link {
+  background: var(--hpd-hover-background);
+}
+
+.VPSidebarItem .text {
+  color: var(--hpd-muted-foreground);
+  font-size: var(--hpd-text-size);
+  font-weight: 700;
+}
+
+.VPSidebarItem.is-active > .item .text,
+.VPSidebarItem .link:hover .text {
+  color: var(--hpd-foreground);
+}
+
+.VPDoc {
+  padding-top: 2.25rem;
+}
+
+.VPDoc .container {
+  max-width: 94rem;
+}
+
+.VPDoc .content {
+  max-width: 50rem;
+}
+
+.VPDoc .content-container {
+  max-width: 50rem;
+}
+
+.vp-doc {
+  color: var(--hpd-foreground);
+  font-size: 14px;
+}
+
+.vp-doc h1,
+.vp-doc h2,
+.vp-doc h3,
+.vp-doc h4 {
+  color: var(--hpd-foreground);
+  font-family: "Bear Sans UI Heading", var(--vp-font-family-base);
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.vp-doc h1 {
+  font-size: clamp(2rem, 4vw, 3rem);
+  line-height: 1.05;
+}
+
+.vp-doc h2 {
+  margin-top: 2.5rem;
+  border-top: 1px solid var(--hpd-border);
+  padding-top: 1.75rem;
+  font-size: 1.45rem;
+}
+
+.vp-doc h3 {
+  font-size: 1rem;
+}
+
+.vp-doc p,
+.vp-doc li {
+  color: color-mix(in oklab, var(--hpd-foreground) 88%, var(--hpd-muted-foreground));
+  line-height: var(--hpd-message-line-height);
+}
+
+.vp-doc a {
+  color: color-mix(in oklab, var(--hpd-accent) 82%, var(--hpd-foreground));
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+.vp-doc blockquote {
+  border-left-color: color-mix(in oklab, var(--hpd-accent) 35%, var(--hpd-border));
+  color: var(--hpd-muted-foreground);
+  background: color-mix(in oklab, var(--hpd-muted-background) 45%, transparent);
+  border-radius: 0 var(--hpd-item-radius) var(--hpd-item-radius) 0;
+  padding: 0.75rem 1rem;
+}
+
+.vp-doc div[class*='language-'] {
+  border: 1px solid var(--hpd-border);
+  border-radius: var(--hpd-widget-radius);
+  background: var(--hpd-code-background);
+  box-shadow: none;
+}
+
+.vp-doc div[class*='language-'] pre {
+  font-size: var(--hpd-code-size);
+  line-height: var(--hpd-code-line-height);
+}
+
+.vp-doc :not(pre) > code {
+  border: 1px solid color-mix(in oklab, var(--hpd-accent) 28%, transparent);
+  border-radius: var(--hpd-item-radius);
+  padding: 0.125rem 0.35rem;
+  color: var(--hpd-inline-code-foreground);
+  background: var(--hpd-inline-code-background);
+  font-size: 0.88em;
+  font-weight: 700;
+}
+
+.vp-doc table {
+  display: table;
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--hpd-border);
+  border-radius: var(--hpd-widget-radius);
+  background: color-mix(in oklab, var(--hpd-panel-background) 76%, transparent);
+  font-size: var(--hpd-text-size);
+}
+
+.vp-doc th,
+.vp-doc td {
+  border-color: color-mix(in oklab, var(--hpd-border) 78%, transparent);
+  padding: 0.625rem 0.75rem;
+}
+
+.vp-doc th {
+  color: var(--hpd-foreground);
+  background: color-mix(in oklab, var(--hpd-muted-background) 64%, transparent);
+  font-weight: 800;
+}
+
+.vp-doc td {
+  color: color-mix(in oklab, var(--hpd-foreground) 86%, var(--hpd-muted-foreground));
+}
+
+.custom-block {
+  border: 1px solid var(--hpd-border);
+  border-radius: var(--hpd-widget-radius);
+  background: color-mix(in oklab, var(--hpd-muted-background) 58%, transparent);
+}
+
+.custom-block-title {
+  color: var(--hpd-foreground);
+}
+
+.VPDocAsideOutline .content {
+  border-left-color: var(--hpd-border);
+}
+
+.VPDocAsideOutline .outline-link {
+  color: var(--hpd-muted-foreground);
+  font-size: var(--hpd-meta-size);
+}
+
+.VPDocAsideOutline .outline-link:hover,
+.VPDocAsideOutline .outline-link.active {
+  color: var(--hpd-foreground);
+}
+
+.VPFooter {
+  border-top: 1px solid var(--hpd-border);
+  background: var(--hpd-background);
+}
+
+::selection {
+  background: var(--hpd-selection-background);
+}
+
+::-webkit-scrollbar {
+  width: 0.5rem;
+  height: 0.5rem;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--hpd-muted-foreground) 42%, transparent);
+}
+
+@media (max-width: 960px) {
+  .VPHomeHero .image {
+    display: none;
+  }
+
+  .hpd-home-lanes,
+  .hpd-runtime-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .VPHomeHero {
+    padding-top: 3.25rem !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .VPHomeHero .text {
+    font-size: 2.5rem;
+  }
+
+  .VPHomeHero .tagline {
+    font-size: 14px;
+  }
+
+  .hpd-home-lanes,
+  .hpd-runtime-panel {
+    padding-inline: 1rem;
+  }
+}

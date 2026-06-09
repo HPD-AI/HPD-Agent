@@ -5,7 +5,7 @@ Middleware is for cross-cutting behavior that belongs inside the agent loop: log
 Use the core framework package and middleware namespace:
 
 ```bash
-dotnet add package HPD-Agent.Framework
+dotnet add package HPD-Agent.Framework --version 0.5.0
 ```
 
 ```csharp
@@ -16,7 +16,7 @@ using HPD.Agent.Middleware;
 If your sample builds an agent with OpenAI, also reference the provider package and namespace:
 
 ```bash
-dotnet add package HPD-Agent.Providers.OpenAI
+dotnet add package HPD-Agent.Providers.OpenAI --version 0.5.0
 ```
 
 ```csharp

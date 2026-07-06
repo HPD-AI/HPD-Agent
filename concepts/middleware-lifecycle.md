@@ -56,7 +56,7 @@ Runtime start/stop hooks run when an agent is used as a started runtime, such as
 
 `BeforeThreadForkCommitAsync` is the fork hook. It sees both the source thread and the not-yet-persisted target thread, plus the fork point and `ThreadForkOptions`. Use it when the target thread should start differently from a raw copy, such as compacting copied history, adding thread-local metadata, or adjusting copied middleware state before the new thread becomes durable.
 
-Fork events are a different surface. After a fork is committed, thread event projection can include durable events such as `THREAD_FORKED` and `THREAD_MIDDLEWARE_STATE_COMMITTED`. Those events describe what was committed; they are not pre-commit mutation hooks.
+Fork events are a different surface. After a fork is committed, thread event projection records the committed state with durable events such as `THREAD_CREATED` with fork metadata, later `THREAD_UPDATED` header/tree changes, and `THREAD_MIDDLEWARE_STATE_COMMITTED`. Those events describe what was committed; they are not pre-commit mutation hooks.
 
 ## Streaming Wrapper Probe
 

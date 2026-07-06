@@ -73,6 +73,30 @@ The key is shared. The family is selected by the config slot.
 | `elevenlabs` | Speech to text, text to speech | Realtime Scribe uses the speech-to-text streaming path; it is not the `Realtime` provider family. See [ElevenLabs Audio](../guides/providers/elevenlabs-audio.md). |
 | `onnx-runtime` | Chat | Requires an existing local model path. Compatible ONNX Runtime GenAI instruct models can opt into structured tool calling. See [ONNX Runtime](../guides/providers/onnx-runtime.md). |
 | `anthropic` | Chat | Chat provider package. |
+| `cohere` | Chat, embeddings | Net10-only provider package. Chat streaming currently yields a single final update. See [Cohere](../guides/providers/cohere.md). |
+| `dashscope` | Chat, embeddings | Net10-only provider package. Chat supports streaming, function tools, reasoning content, and multimodal models through the Cnblogs DashScope adapter. See [DashScope](../guides/providers/dashscope.md). |
+| `cerebras` | Chat | Provider package. Chat uses Cerebras' OpenAI-compatible chat completions API. See [Cerebras](../guides/providers/cerebras.md). |
+| `deepseek` | Chat | Provider package. Chat uses DeepSeek's OpenAI-compatible chat completions API. See [DeepSeek](../guides/providers/deepseek.md). |
+| `deepinfra` | Chat | Chat provider package backed by the shared OpenAI-compatible chat-completions client. See [DeepInfra](../guides/providers/deepinfra.md). |
+| `fireworks` | Chat | Net10-only provider package. Chat uses the shared OpenAI-compatible chat-completions base. See [Fireworks AI](../guides/providers/fireworks.md). |
+| `sambanova` | Chat | Provider package. Chat uses SambaNova's OpenAI-compatible chat completions API. See [SambaNova](../guides/providers/sambanova.md). |
+| `hyperbolic` | Chat | Provider package. Chat uses Hyperbolic's OpenAI-compatible chat completions API. See [Hyperbolic](../guides/providers/hyperbolic.md). |
+| `ovhcloud` | Chat | Provider package. Chat uses OVHcloud AI Endpoints' OpenAI-compatible chat completions API. See [OVHcloud AI Endpoints](../guides/providers/ovhcloud.md). |
+| `nscale` | Chat | Provider package. Chat uses Nscale's OpenAI-compatible chat completions API. See [Nscale](../guides/providers/nscale.md). |
+| `venice` | Chat | Provider package. Chat uses Venice.ai's OpenAI-compatible chat completions API. See [Venice.ai](../guides/providers/venice.md). |
+| `perplexity` | Chat | Provider package. Chat uses Perplexity's OpenAI-compatible Sonar API. See [Perplexity](../guides/providers/perplexity.md). |
+| `lmstudio` | Chat | Local provider package. Chat uses LM Studio's OpenAI-compatible local server and does not require an API key by default. See [LM Studio](../guides/providers/lmstudio.md). |
+| `nebius` | Chat | Provider package. Chat uses Nebius Token Factory's OpenAI-compatible API. See [Nebius Token Factory](../guides/providers/nebius.md). |
+| `nvidia-nim` | Chat | Provider package. Chat uses NVIDIA NIM's OpenAI-compatible API. See [NVIDIA NIM](../guides/providers/nvidia-nim.md). |
+| `siliconflow` | Chat | Provider package. Chat uses SiliconFlow's OpenAI-compatible API. See [SiliconFlow](../guides/providers/siliconflow.md). |
+| `scaleway` | Chat | Provider package. Chat uses Scaleway Generative APIs' OpenAI-compatible API. See [Scaleway Generative APIs](../guides/providers/scaleway.md). |
+| `zai` | Chat | Provider package. Chat uses Z.AI's OpenAI-compatible API. See [Z.AI](../guides/providers/zai.md). |
+| `minimax` | Chat | Provider package. Chat uses MiniMax's OpenAI-compatible API. See [MiniMax](../guides/providers/minimax.md). |
+| `together` | Chat, embeddings | Net10-only provider package. Chat supports token streaming, function tools, reasoning content, and JSON object responses. See [Together AI](../guides/providers/together.md). |
+| `xai` | Chat | Chat provider package backed by the shared OpenAI-compatible chat-completions client. Images, embeddings, audio, files, batches, and deferred completions are not registered yet. See [xAI](../guides/providers/xai.md). |
+| `groq` | Chat | Net10-only provider package. Chat uses Groq's OpenAI-compatible chat completions API and supports token streaming, function tools, and JSON object responses. See [Groq](../guides/providers/groq.md). |
+| `moonshot` | Chat | Net10-only provider package. Chat uses Moonshot/Kimi's OpenAI-compatible chat completions API and supports token streaming, function tools, JSON object responses, seed, and optional Kimi thinking fields. See [Moonshot](../guides/providers/moonshot.md). |
+| `replicate` | Image generation | Net10-only provider package. Exposes bounded Replicate model predictions that return image URLs through `IImageGenerator`; it does not register a general prediction/model-run family. See [Replicate](../guides/providers/replicate.md). |
 | `google-ai` | Chat | Chat provider package. |
 | `huggingface` | Chat | Chat provider package. |
 | `mistral` | Chat | Chat provider package. |

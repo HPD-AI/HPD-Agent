@@ -1,6 +1,6 @@
 # Subagents
 
-A subagent is a real HPD agent exposed to a parent agent as a tool. The parent model sees one generated function with a `query` argument. When the model calls it, HPD builds or loads the child agent, routes the child run into the selected session and thread, streams child events through the parent event path, and returns the child answer as the tool result.
+A subagent is a real HPD agent exposed to a parent agent as a tool. The parent model sees one generated function with an `input` argument. By default, when the model calls it, HPD builds or loads the child agent, routes the child run into the selected session and thread, streams child events through the parent event path, and returns the child answer as the tool result.
 
 Use subagents when the parent should delegate to a specialist during normal tool calling. Use multi-agent workflows when the whole task should follow an explicit graph of roles and routes.
 
@@ -41,17 +41,57 @@ var agent = await new AgentBuilder()
 
 ## Tool Shape
 
-The generated tool takes one model-facing argument:
+By default, the generated tool takes one model-facing argument:
 
 ```json
 {
-  "query": "Summarize this request."
+  "input": "Summarize this request."
 }
 ```
 
 The subagent name becomes the tool name. The description becomes the tool description, so write it as guidance for the parent model. Subagent tools require permission by default.
 
-The tool result is the child agent's text response. HPD also records subagent metadata on the tool result, including `subAgentStatus`, `subAgentSessionId`, `subAgentThreadId`, `subAgentName`, and `subAgentRunId`.
+For synchronous calls, the tool result is the child agent's text response. HPD also records subagent metadata on the tool result, including `subAgentStatus`, `subAgentSessionId`, `subAgentThreadId`, `subAgentName`, and `subAgentRunId`.
+
+## Invocation Mode
+
+Subagents are synchronous by default: the parent model calls the tool, HPD waits for the child agent, and the tool result is the child text.
+
+For long-running delegation, set an invocation mode policy on the `SubAgent` definition:
+
+```csharp
+[SubAgent]
+public SubAgent Reviewer() =>
+    SubAgent.FromConfig(
+        "reviewer",
+        "Reviews a draft and reports actionable issues.",
+        reviewerConfig,
+        executionPolicy: null,
+        metadata: null,
+        invocationModePolicy: AgentInvocationModePolicy.ModelChoice,
+        backgroundNotification: null);
+```
+
+Policies:
+
+| Policy | Tool Shape | Tool Result |
+| --- | --- | --- |
+| `SynchronousOnly` | `input` | Final child text |
+| `BackgroundOnly` | `input` | Background launch receipt |
+| `ModelChoice` | `input`, `invocationMode` | Final child text or background launch receipt |
+
+For `ModelChoice`, the model can pass:
+
+```json
+{
+  "input": "Review this draft.",
+  "invocationMode": "background"
+}
+```
+
+Background subagent calls return immediately with a structured receipt that includes the background `taskId`. The child result is delivered later through the background task notification system, using the child text as the completion summary.
+
+See [Background Tasks And Notifications](../../concepts/background-tasks-and-notifications.md).
 
 ## Choose The Source
 
@@ -176,7 +216,7 @@ This controls the fork operation. It does not define the compaction strategy. Th
 
 Subagent tools require permission by default because they can run another agent, call child tools, and write durable history. Treat permission prompts as a parent-level decision: the parent is asking to delegate work to the named specialist.
 
-If you build a custom permission middleware, you can approve at whatever level your product needs: the subagent tool call, the generated query, the child's own tools, or a higher-level command signature stored in middleware state.
+If you build a custom permission middleware, you can approve at whatever level your product needs: the subagent tool call, the generated input, the child's own tools, or a higher-level command signature stored in middleware state.
 
 See [Permissions](../middleware/permissions.md) and [Bidirectional Events](../events/bidirectional-events.md).
 

@@ -117,7 +117,7 @@ using var permissionRequests = agent.Subscribe<PermissionRequestEvent>(request =
     Console.WriteLine($"Allow {request.FunctionName} from {request.SourceName}?");
 
     // In a real UI, collect the user's choice before sending the response.
-    _ = agent.TryRespondAsync(new PermissionResponseEvent(
+    _ = agent.TryAnswerRequestAsync(new PermissionResponseEvent(
         PermissionId: request.PermissionId,
         SourceName: request.SourceName,
         Approved: true,

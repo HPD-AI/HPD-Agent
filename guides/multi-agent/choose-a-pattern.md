@@ -52,7 +52,7 @@ public sealed class SpecialistTools
 }
 ```
 
-The parent sees one generated tool with a `query` argument. HPD runs the child agent, streams child events through the parent event path, and returns the child answer as the tool result.
+The parent sees one generated tool with an `input` argument. HPD runs the child agent, streams child events through the parent event path, and returns the child answer as the tool result. Subagents can also opt into background invocation with `AgentInvocationModePolicy.BackgroundOnly` or `AgentInvocationModePolicy.ModelChoice`.
 
 Subagents are strongest when thread policy matters:
 
@@ -94,7 +94,10 @@ Use `[MultiAgent]` when a parent agent should choose whether to run an entire wo
 ```csharp
 public sealed class WorkflowTools
 {
-    [MultiAgent("Drafts and reviews an answer.", Name = "draft_and_review")]
+    [MultiAgent(
+        "Drafts and reviews an answer.",
+        Name = "draft_and_review",
+        InvocationModePolicy = AgentInvocationModePolicy.ModelChoice)]
     public Task<AgentWorkflowInstance> DraftAndReview() =>
         AgentWorkflow.Create()
             .WithName("DraftAndReview")
@@ -105,7 +108,7 @@ public sealed class WorkflowTools
 }
 ```
 
-The parent sees one workflow tool with an `input` argument. HPD executes the workflow and can bubble workflow events and child-agent events through the parent event stream.
+The parent sees one workflow tool with an `input` argument. With `ModelChoice`, the schema also exposes `invocationMode` so the parent can choose `"synchronous"` or `"background"` per call. Synchronous calls return the final workflow text as the tool result. Background calls return a launch receipt immediately, then deliver completion through background task notifications.
 
 See [Multi-Agent Capabilities](../tools/multi-agent-capabilities.md).
 

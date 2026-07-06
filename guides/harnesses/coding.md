@@ -54,3 +54,40 @@ var result = await agent.RunAsync(
 Command execution depends on an `IProcessProvider`. `WithLocalSandbox()` provides one for local runs. Without a process provider, command execution should be treated as a setup error.
 
 Sandbox enforcement is platform-dependent. Use permissions and narrow workspace roots even when sandboxing is enabled.
+
+### Background Commands
+
+Use `invocationMode: "background"` for long-running commands such as dev servers, file watchers, or test watchers. The tool returns after the process launches instead of waiting for the command to finish.
+
+Background command results include:
+
+```xml
+<execute_command
+  background="true"
+  background_handle_id="cmd_..."
+  startup_status="launched_not_verified" />
+```
+
+The handle id identifies the live command process. Use it for follow-up control operations:
+
+```json
+{
+  "action": "ReadOutput",
+  "backgroundHandleId": "cmd_...",
+  "delayMilliseconds": 1000
+}
+```
+
+```json
+{
+  "action": "Stop",
+  "backgroundHandleId": "cmd_..."
+}
+```
+
+`ListBackground` returns active or recently completed background commands for the current session. Background command launch only means the process started; verify server readiness with `ReadOutput` or another explicit check before reporting that a service is healthy.
+
+Internally, background commands register both a background task and a background handle:
+
+- The background task observes final completion and can trigger notifications.
+- The background handle is the live process resource used for list, read, stop, and artifact inspection.

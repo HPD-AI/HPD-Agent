@@ -18,20 +18,18 @@ Batch evals are the fastest first win. You can run one without provider credenti
 ## Smallest Shape
 
 ```csharp
-var report = await RunEvals.ExecuteAsync(
-    agent,
-    dataset,
-    evaluators:
-    [
-        new EqualsGroundTruthEvaluator(),
-        new OutputContainsEvaluator("Paris"),
-    ],
+using HPD.Agent.Evaluations;
+using HPD.Agent.Evaluations.Integration;
+
+var report = await agent.EvaluateAsync(
+    ["What is the capital of France?"],
+    [Eval.Contains("Paris")],
     experimentName: "capital-smoke");
 
 Console.WriteLine(report.PassRate("Output Contains"));
 ```
 
-That gives you one report with case results, metric values, pass-rate helpers, and JSON output for CI artifacts.
+That gives you one report with case results, metric values, pass-rate helpers, and JSON output for CI artifacts. When cases need stable ids, dataset versions, per-case metadata, or YAML/JSON files, use the full `Dataset<string>` + `RunEvals.ExecuteAsync(...)` shape in [Batch Evals](batch-evals.md).
 
 ## Evaluator Choice
 

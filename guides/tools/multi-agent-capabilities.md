@@ -1,6 +1,6 @@
 # Multi-Agent Capabilities
 
-`[MultiAgent]` lets a tool harness expose a workflow as a model-callable capability. The parent agent sees a normal tool. When the tool runs, HPD executes the workflow and can stream workflow and child-agent events through the parent event path.
+`[MultiAgent]` lets a tool harness expose a workflow as a model-callable capability. The parent agent sees a normal tool. When the tool runs synchronously, HPD executes the workflow and can stream workflow and child-agent events through the parent event path.
 
 Use this page when a parent agent should decide whether to run a workflow. Use [Build A Multi-Agent Workflow](../multi-agent/build-a-workflow.md) when application code should run the workflow directly.
 
@@ -44,7 +44,7 @@ var agent = await new AgentBuilder()
 
 ## Generated Tool Shape
 
-The generated tool takes one model-facing argument:
+By default, the generated tool takes one model-facing argument:
 
 ```json
 {
@@ -54,6 +54,30 @@ The generated tool takes one model-facing argument:
 
 If `input` is empty, the generated wrapper can fall back to the last user message. The wrapper passes the parent chat client into workflow execution when child agents do not configure their own provider.
 
+## Invocation Mode
+
+`[MultiAgent]` capabilities are synchronous by default: the parent calls the workflow tool, HPD waits for completion, and the tool result is the final workflow text.
+
+Use `InvocationModePolicy` when the workflow can run independently:
+
+```csharp
+[MultiAgent(
+    "Runs a draft and review workflow.",
+    Name = "draft_and_review",
+    InvocationModePolicy = AgentInvocationModePolicy.ModelChoice)]
+public Task<AgentWorkflowInstance> DraftAndReview() => ...
+```
+
+Policies:
+
+| Policy | Tool Shape | Tool Result |
+| --- | --- | --- |
+| `SynchronousOnly` | `input` | Final workflow text |
+| `BackgroundOnly` | `input` | Background launch receipt |
+| `ModelChoice` | `input`, `invocationMode` | Final workflow text or background launch receipt |
+
+For background calls, the workflow starts as runtime-owned background work. The immediate tool result is a structured receipt with the background `taskId`; the final workflow text is delivered later through background task notifications.
+
 The generated function metadata marks the capability as multi-agent:
 
 - `CapabilityType = MultiAgent`
@@ -62,6 +86,7 @@ The generated function metadata marks the capability as multi-agent:
 - `ParentToolHarness = ...`
 - `StreamEvents = ...`
 - `TimeoutSeconds = ...`
+- `InvocationModePolicy = ...`
 
 The tool requires permission by default.
 

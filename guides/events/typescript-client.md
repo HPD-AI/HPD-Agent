@@ -56,6 +56,76 @@ await chat.submitText('Summarize this thread.');
 
 Subscribe before submitting input when the UI needs to render the turn as it happens.
 
+## Message Policy And Transcript Visibility
+
+Message roles are provider-facing model roles. They are not enough to decide whether something belongs in a human transcript.
+
+Message and text-start events can include HPD-owned policy fields:
+
+```typescript
+client.on(EventTypes.TEXT_MESSAGE_START, (event) => {
+  if (event.visibility === 'Hidden') {
+    transcript.hide(event.messageId);
+    return;
+  }
+
+  if (event.source === 'UserInput') {
+    transcript.startUserMessage(event.messageId);
+  } else if (event.source === 'AssistantOutput') {
+    transcript.startAssistantMessage(event.messageId);
+  } else if (event.visibility === 'Diagnostic') {
+    transcript.startDiagnosticMessage(event.messageId, event.source);
+  }
+});
+```
+
+Use `source`, `visibility`, and `persistence` for HPD behavior:
+
+| Field | Meaning |
+| --- | --- |
+| `role` | Provider/model role such as `user`, `assistant`, `system`, or `tool` |
+| `source` | HPD reason the message exists, such as `UserInput`, `AssistantOutput`, `BackgroundNotification`, or `Steering` |
+| `visibility` | Transcript policy: `Transcript`, `Hidden`, or `Diagnostic` |
+| `persistence` | Durable message policy when present on message-start events |
+
+For example, background task notifications are sent to the model as `role: "system"` context, but use `source: "BackgroundNotification"` and `visibility: "Hidden"`. A chat UI should not render their XML payload as assistant text.
+
+The helper `mapThreadMessages(...)` filters hidden messages from the transcript read model. Use `projectThreadEventsToMessages(...)` directly when an app needs the complete projected thread state, including hidden model/runtime context.
+
+## Background Task Notification Rules
+
+Background task lifecycle events carry a `notification` rule. Older clients may remember this as a simple policy string; current events use a rule object so framework code can stay source-neutral while harnesses add richer behavior.
+
+```typescript
+type BackgroundTaskNotificationRule =
+  | { kind: 'none' }
+  | {
+      kind: 'on_final_state';
+      completed?: boolean;
+      faulted?: boolean;
+      cancelled?: boolean;
+    }
+  | {
+      kind: 'strategy';
+      name: string;
+      parameters?: Record<string, string> | null;
+      fallback?: BackgroundTaskNotificationRule | null;
+    };
+```
+
+Use the rule as descriptive metadata for UI/debugging. Do not infer shell, process, or test-runner behavior from it. When a rule queues model input, the runtime emits `BackgroundTaskNotificationQueuedEvent`; when it suppresses input, it emits `BackgroundTaskNotificationSuppressedEvent`.
+
+Thread-run API projections expose a smaller shape:
+
+```typescript
+interface ThreadRunBackgroundTaskNotification {
+  kind: string;
+  strategyName?: string | null;
+}
+```
+
+That projection is for run lists and status panes. Use live background task events when an app needs the full rule payload.
+
 ## Typed Handlers And Projection
 
 Use `client.on(...)` for event families your app knows how to handle directly:
@@ -113,7 +183,7 @@ client.on(EventTypes.PERMISSION_REQUEST, async (request) => {
 
 The same pattern applies to `CLARIFICATION_REQUEST` and `CONTINUATION_REQUEST`. With SSE, the client posts response event envelopes to the hosted `/responses` route for the current chat scope. With WebSocket, it sends the same response envelope over the socket. In both cases, preserve the request id from the request event so the hosted runtime can match the pending waiter.
 
-Client tools are the exception. If you register a tool handler, the client automatically answers `CLIENT_TOOL_INVOKE_REQUEST` with `CLIENT_TOOL_INVOKE_RESPONSE`:
+Client tools are the exception. If you register a tool handler, the client automatically answers `CLIENT_TOOL_INVOKE_REQUEST` with `CLIENT_TOOL_INVOKE_OUTCOME`:
 
 ```typescript
 client.tools.register('get_active_view', () => ({

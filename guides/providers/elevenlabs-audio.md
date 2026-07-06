@@ -70,7 +70,7 @@ The helper selects the speech-to-text client family. Audio runtime attachment st
 
 ElevenLabs also supports realtime speech-to-text through the same `ISpeechToTextClient` streaming method. This is not the `Clients.Realtime` model family and should not be configured as the agent realtime transport. Use it when the app wants live transcript updates from ElevenLabs, then passes committed text into the agent flow.
 
-ElevenLabs STT options use `ElevenLabsSttConfig` through `ProviderOptionsJson`:
+ElevenLabs STT options use `ElevenLabsSttConfig` through `ProviderOptions`:
 
 ```json
 {
@@ -78,7 +78,11 @@ ElevenLabs STT options use `ElevenLabsSttConfig` through `ProviderOptionsJson`:
     "SpeechToText": {
       "ProviderKey": "elevenlabs",
       "ModelName": "scribe_v2",
-      "ProviderOptionsJson": "{\"languageCode\":\"en\",\"diarize\":true,\"timestampsGranularity\":\"word\"}"
+      "ProviderOptions": {
+        "languageCode": "en",
+        "diarize": true,
+        "timestampsGranularity": "word"
+      }
     }
   }
 }
@@ -112,7 +116,7 @@ Source-confirmed STT provider options:
 
 ## Text To Speech
 
-ElevenLabs TTS options use `ElevenLabsTtsConfig` through `ProviderOptionsJson`:
+ElevenLabs TTS options use `ElevenLabsTtsConfig` through `ProviderOptions`:
 
 In C# apps, the fluent helper configures the same `Clients.TextToSpeech` family slot:
 
@@ -146,7 +150,12 @@ var agent = await new AgentBuilder()
     "TextToSpeech": {
       "ProviderKey": "elevenlabs",
       "ModelName": "eleven_turbo_v2_5",
-      "ProviderOptionsJson": "{\"defaultVoiceId\":\"21m00Tcm4TlvDq8ikWAM\",\"outputFormat\":\"mp3_44100_128\",\"stability\":0.5,\"similarityBoost\":0.75}"
+      "ProviderOptions": {
+        "defaultVoiceId": "21m00Tcm4TlvDq8ikWAM",
+        "outputFormat": "mp3_44100_128",
+        "stability": 0.5,
+        "similarityBoost": 0.75
+      }
     }
   }
 }

@@ -2,7 +2,7 @@
 
 Batch evals are the shortest path from "does this agent still behave?" to a repeatable regression check. Start with one deterministic case, make the output visible, then wire the same run into CI.
 
-The examples below are grounded in the current `HPD-Agent.Evaluations` source: `RunEvals.ExecuteAsync(...)` runs each dataset case through an `Agent`, evaluates the captured turn, returns an `EvaluationReport`, and disables live evaluators for that batch turn so the evaluator list you pass to the batch run is the report source of truth.
+The examples below are grounded in the current `HPD-Agent.Evaluations` source: the quick `agent.EvaluateAsync(...)` helpers build a `Dataset<string>` for you, then call `RunEvals.ExecuteAsync(...)`. `RunEvals.ExecuteAsync(...)` runs each dataset case through an `Agent`, evaluates the captured turn, returns an `EvaluationReport`, and disables live evaluators for that batch turn so the evaluator list you pass to the batch run is the report source of truth.
 
 ## Add References
 
@@ -25,8 +25,10 @@ Common imports for a first deterministic batch eval:
 
 ```csharp
 using HPD.Agent;
+using HPD.Agent.Evaluations;
 using HPD.Agent.Evaluations.Batch;
 using HPD.Agent.Evaluations.Evaluators.Deterministic;
+using HPD.Agent.Evaluations.Integration;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Evaluation;
 using System.Runtime.CompilerServices;
@@ -45,31 +47,9 @@ var agent = await new AgentBuilder()
     .WithChatClient(new FixedResponseChatClient("Paris"))
     .BuildAsync();
 
-var dataset = new Dataset<string>
-{
-    DatasetId = "capital-smoke",
-    Version = "1",
-    Cases =
-    [
-        new EvalCase<string>
-        {
-            CaseId = "france-capital",
-            Name = "france-capital",
-            Version = "1",
-            Input = "What is the capital of France?",
-            GroundTruth = "Paris",
-        },
-    ],
-};
-
-var report = await RunEvals.ExecuteAsync(
-    agent,
-    dataset,
-    evaluators:
-    [
-        new EqualsGroundTruthEvaluator(),
-        new OutputContainsEvaluator("Paris"),
-    ],
+var report = await agent.EvaluateAsync(
+    [("What is the capital of France?", "Paris")],
+    [new EqualsGroundTruthEvaluator(), Eval.Contains("Paris")],
     experimentName: "local-smoke");
 
 report.Print();
@@ -121,6 +101,33 @@ Expected console shape:
 ```
 
 `ToJson()` also includes the experiment name, cases, metric values, task duration, provider/model fields when known, and `infrastructure_error_rate`.
+
+For larger suites, explicit datasets give you stable case ids, dataset versions, metadata, YAML/JSON loading, and dataset registration:
+
+```csharp
+var dataset = new Dataset<string>
+{
+    DatasetId = "capital-smoke",
+    Version = "1",
+    Cases =
+    [
+        new EvalCase<string>
+        {
+            CaseId = "france-capital",
+            Name = "france-capital",
+            Version = "1",
+            Input = "What is the capital of France?",
+            GroundTruth = "Paris",
+        },
+    ],
+};
+
+var report = await RunEvals.ExecuteAsync(
+    agent,
+    dataset,
+    evaluators: [new EqualsGroundTruthEvaluator(), Eval.Contains("Paris")],
+    experimentName: "local-smoke");
+```
 
 ## Fail CI On Regressions
 

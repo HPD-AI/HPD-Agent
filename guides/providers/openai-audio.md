@@ -70,7 +70,7 @@ Source defaults include:
 
 The provider metadata also lists newer TTS model ids such as `tts-1-hd` and `gpt-4o-mini-tts`.
 
-Provider-specific TTS options use `OpenAITtsConfig` through `ProviderOptionsJson`:
+Provider-specific TTS options use `OpenAITtsConfig` through `ProviderOptions`:
 
 ```json
 {
@@ -78,7 +78,11 @@ Provider-specific TTS options use `OpenAITtsConfig` through `ProviderOptionsJson
     "TextToSpeech": {
       "ProviderKey": "openai",
       "ModelName": "tts-1",
-      "ProviderOptionsJson": "{\"defaultVoiceId\":\"nova\",\"outputFormat\":\"mp3\",\"speed\":1.0}"
+      "ProviderOptions": {
+        "defaultVoiceId": "nova",
+        "outputFormat": "mp3",
+        "speed": 1.0
+      }
     }
   }
 }
@@ -127,7 +131,7 @@ The provider metadata also lists `gpt-4o-transcribe` and `gpt-4o-mini-transcribe
 
 Finite audio input uses HPD audio runtime wiring; see [Speech To Text Input](../audio/speech-to-text-input.md).
 
-Provider-specific STT options use `OpenAISttConfig` through `ProviderOptionsJson`:
+Provider-specific STT options use `OpenAISttConfig` through `ProviderOptions`:
 
 ```json
 {
@@ -135,7 +139,10 @@ Provider-specific STT options use `OpenAISttConfig` through `ProviderOptionsJson
     "SpeechToText": {
       "ProviderKey": "openai",
       "ModelName": "whisper-1",
-      "ProviderOptionsJson": "{\"prompt\":\"Technical support call\",\"responseFormat\":\"json\"}"
+      "ProviderOptions": {
+        "prompt": "Technical support call",
+        "responseFormat": "json"
+      }
     }
   }
 }
@@ -177,7 +184,7 @@ var agent = await new AgentBuilder()
 
 Use realtime with `AgentModelTransportMode.Realtime`. The ordinary chat path and finite speech-to-text path are separate from native realtime transport.
 
-Provider-specific realtime options use `OpenAIRealtimeConfig` through `ProviderOptionsJson`:
+Provider-specific realtime options use `OpenAIRealtimeConfig` through `ProviderOptions`:
 
 ```json
 {
@@ -185,7 +192,10 @@ Provider-specific realtime options use `OpenAIRealtimeConfig` through `ProviderO
     "Realtime": {
       "ProviderKey": "openai",
       "ModelName": "gpt-realtime",
-      "ProviderOptionsJson": "{\"organizationId\":\"org_...\",\"projectId\":\"proj_...\"}"
+      "ProviderOptions": {
+        "organizationId": "org_...",
+        "projectId": "proj_..."
+      }
     }
   }
 }

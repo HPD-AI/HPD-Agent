@@ -37,7 +37,7 @@ Configuration-based setup uses the same model, but writes the client selection d
 }
 ```
 
-Do not use older top-level provider JSON shapes for new docs or new apps. Current configuration belongs under `Clients`, with `Clients.Chat` for the primary chat model.
+Current configuration belongs under `Clients`, with `Clients.Chat` for the primary chat model.
 
 ## Client Families
 
@@ -58,6 +58,30 @@ Provider setup pages focus first on `Clients.Chat`. Some provider packages expos
 The family slot matters as much as the provider key. `openai` can mean chat, text-to-speech, speech-to-text, realtime, image generation, embeddings, or hosted files depending on the slot and referenced provider packages. `elevenlabs` can mean speech-to-text or text-to-speech, but not chat. A provider key is not a promise that every family exists.
 
 Provider selection does not replace the HPD runtime. The same `Agent` runtime still owns `RunAsync(...)`, tools, middleware, sessions, threads, events, permissions, compaction, hosting, and stored definitions.
+
+## Provider Options And Runtime Chat Options
+
+Provider configuration is for constructing a client and setting provider-native behavior. Use it for credentials, endpoints, deployment names, SDK connection settings, audio voices/formats, and options that only exist in one provider's API.
+
+Runtime chat behavior belongs in `ChatRunConfig`. Agent-level defaults live on `ClientProviderConfig.ChatDefaults`; per-run and per-session overrides flow through `AgentRunConfig.Chat`.
+
+Use `ChatRunConfig` for serializable chat controls:
+
+- model selection
+- temperature, top-p, top-k, seed, max output tokens, and stop sequences
+- response format and structured-output shape
+- generic reasoning options
+
+Use the normal HPD tool registration APIs for model-callable tools. Advanced in-process integrations can still use MEAI `ChatOptions` where HPD exposes runtime-only hooks for non-serializable objects.
+
+Use provider options for:
+
+- provider-native service tiers, regions, deployments, hosted resource ids, or SDK connection settings
+- provider-native content handling such as prompt-cache markers
+- audio-specific voice, format, speed, transcript, or realtime settings
+- advanced API controls that do not have a generic MEAI/HPD chat option
+
+In C#, store typed provider options with `SetProviderConfig(...)`. In JSON or stored agent definitions, put the provider-specific object under `ProviderOptions`.
 
 ## Secret Resolution
 

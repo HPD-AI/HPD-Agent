@@ -49,9 +49,12 @@ var agent = await new AgentBuilder()
         options =>
         {
             options.EnableStructuredToolCalling = true;
-            options.Temperature = 0;
-            options.MaxLength = 128;
         })
+    .WithChatDefaults(new ChatRunConfig
+    {
+        Temperature = 0,
+        MaxOutputTokens = 128
+    })
     .BuildAsync();
 ```
 
@@ -65,8 +68,6 @@ Use the same tool registration style you use for any other provider. A generated
 
 ```csharp
 using HPD.Agent;
-using Microsoft.Extensions.AI;
-
 public sealed class MathTools
 {
     [AIFunction]
@@ -77,8 +78,11 @@ var agent = await new AgentBuilder()
     .WithOnnxRuntime(modelPath, options =>
     {
         options.EnableStructuredToolCalling = true;
-        options.Temperature = 0;
-        options.MaxLength = 128;
+    })
+    .WithChatDefaults(new ChatRunConfig
+    {
+        Temperature = 0,
+        MaxOutputTokens = 128
     })
     .WithToolHarness<MathTools>()
     .WithOptionsConfiguration(options =>
@@ -148,7 +152,6 @@ Useful variables:
 | `ONNX_MODEL_PATH` | ONNX Runtime GenAI model directory |
 | `ONNX_TOOL_CALL_SMOKE` | Set to `1` to run live tool-call smokes |
 | `ONNX_TOOL_CALL_PROMPT` | Override the default arithmetic smoke prompt |
-| `ONNX_TOOL_CALL_MAX_LENGTH` | Provider max-length setting |
 | `ONNX_TOOL_CALL_OUTPUT_TOKENS` | Request output token cap |
 | `ONNX_TOOL_CALL_TIMEOUT_SECONDS` | Whole smoke timeout |
 | `ONNX_TOOL_CALL_EVENT_TIMEOUT_SECONDS` | Tool-result event wait timeout |

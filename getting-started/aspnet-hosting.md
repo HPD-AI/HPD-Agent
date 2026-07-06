@@ -110,7 +110,7 @@ Choose a next track:
 | Track | Start Here |
 | --- | --- |
 | Build a web client | [Hosted Streaming API](../guides/hosting/hosted-streaming-api.md) and [TypeScript Client Events](../guides/events/typescript-client.md) |
-| Add real tool surfaces | [Author A Tool Harness](../guides/tools/author-a-tool-harness.md), [MCP Tools](../guides/tools/mcp-tools.md), and [OpenAPI Tools](../guides/tools/openapi-tools.md) |
+| Add real tool surfaces | [Author A Tool Harness](../guides/tools/author-a-tool-harness.md), [MCP Servers](../guides/tools/mcp-servers.md), and [OpenAPI Tools](../guides/tools/openapi-tools.md) |
 | Add safety and control | [Middleware Overview](../guides/middleware/overview.md) and [Permissions Middleware](../guides/middleware/permissions.md) |
 | Add orchestration | [Subagents](../guides/agents/subagents.md) and [Multi-Agent Overview](../guides/multi-agent/overview.md) |
 | Ship the runtime | [ASP.NET Core Hosting](../guides/hosting/aspnet-core.md), [Stored Agent Definitions](../guides/hosting/stored-agent-definitions.md), and [Logging And Telemetry](../guides/observability/logging-and-telemetry.md) |

@@ -116,7 +116,7 @@ The source thread is unchanged. The target thread starts with the already-compac
 
 Hosted `ForkThreadRequest` does not expose a per-request compaction intent today. Hosted fork compaction is controlled by server-side agent and middleware configuration.
 
-The middleware hook for this phase is `BeforeThreadForkCommitAsync`. It receives the source thread, the in-memory target thread, the fork point, and `ThreadForkOptions`. This is the place for middleware that needs to change the target thread before it becomes durable. After the fork is committed, durable thread events such as `THREAD_FORKED` describe the committed thread state; they are not mutation hooks.
+The middleware hook for this phase is `BeforeThreadForkCommitAsync`. It receives the source thread, the in-memory target thread, the fork point, and `ThreadForkOptions`. This is the place for middleware that needs to change the target thread before it becomes durable. After the fork is committed, durable thread events such as `THREAD_CREATED` with fork metadata and later `THREAD_UPDATED` changes describe the committed thread state; they are not mutation hooks.
 
 ## Sibling Navigation
 

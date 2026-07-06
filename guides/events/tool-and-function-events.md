@@ -112,6 +112,7 @@ Middleware can emit with `context.Emit(...)` before or after function execution.
 - `Emit(...)`, `TryEmit(...)`, and `RequestAsync(...)`
 - `StructEvents` for process-local realtime sample lanes
 - background task registration when the active runtime supports it
+- background handle registration when the active runtime supports controllable handles
 
 It does not expose mutable agent state or hook contexts. Use middleware when the behavior needs to mutate middleware state or wrap scheduler-owned phases.
 
@@ -140,16 +141,25 @@ public Task<string> StartIndexing(
 }
 ```
 
-The registered task receives a `FunctionBackgroundContext` with an assigned task id, the task name, the original function invocation snapshot, event access, and services.
+The registered task receives a `BackgroundTaskContext` with an assigned task id, the task name, the original function invocation snapshot, event access, and services.
 
-The runtime emits lifecycle events for registered function background work:
+The runtime emits lifecycle events for registered background work:
 
-- `ToolCallBackgroundTaskStartedEvent`
-- `ToolCallBackgroundTaskCompletedEvent`
-- `ToolCallBackgroundTaskCancelledEvent`
-- `ToolCallBackgroundTaskFaultedEvent`
+- `BackgroundTaskStartedEvent`
+- `BackgroundTaskCompletedEvent`
+- `BackgroundTaskCancelledEvent`
+- `BackgroundTaskFaultedEvent`
 
 Group these events by `TaskId`, and use `Invocation.FunctionCallId` when you want to attach the background task back to the original tool call. The runtime waits for registered background tasks during cleanup and cancels them through the provided `CancellationToken` when the runtime is stopping.
+
+Use `RegisterBackgroundHandle(...)` when the background work also creates a live resource that can be operated later. Handles are for things such as command processes, browser sessions, file watchers, or long-running workflow jobs. A handle can advertise supported operations such as `Status`, `Read`, `Stop`, `Cancel`, `Artifacts`, or `Events`.
+
+The runtime emits handle events separately from task lifecycle events:
+
+- `BackgroundHandleRegisteredEvent`
+- `BackgroundHandleStatusChangedEvent`
+
+Use task ids for lifecycle and notification. Use handle ids for control operations such as read, stop, or inspect artifacts.
 
 ## Related Pages
 

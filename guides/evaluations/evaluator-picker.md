@@ -20,6 +20,16 @@ Draft boundary: this catalog is source-grounded against the evaluator classes un
 
 Default policy in batch evals is source-defined: deterministic evaluators are `MustAlwaysPass`; other evaluators default to `TrackTrend`. Live `AddEvaluator` defaults to `MustAlwaysPass`, so pass `policy: EvalPolicy.TrackTrend` explicitly for judge metrics you want to monitor rather than fail.
 
+For quick deterministic checks, `HPD.Agent.Evaluations.Eval` provides aliases over the same evaluator classes:
+
+```csharp
+await agent.CheckAsync(
+    "What is the capital of France?",
+    Eval.Contains("Paris"));
+```
+
+Use the concrete evaluator classes when you need constructor options not exposed by the alias, or when the class name is clearer in a reusable suite.
+
 ## CI Gate Or Trend Signal?
 
 Use `MustAlwaysPass` when the answer is mechanically checkable and a failure means the agent is broken: exact output, output contract, required tool call, no tool call, maximum tokens, or a bounded duration.

@@ -9,8 +9,8 @@ The connected client can be a TypeScript UI, desktop app, mobile app, editor ext
 3. The model calls one of the tools.
 4. HPD emits a `CLIENT_TOOL_INVOKE_REQUEST` event.
 5. The connected client runs the local handler.
-6. The client sends `CLIENT_TOOL_INVOKE_RESPONSE` back to HPD.
-7. HPD resumes the tool call with the returned result.
+6. The client sends `CLIENT_TOOL_INVOKE_OUTCOME` back to HPD.
+7. HPD either resumes the tool call with the returned result or starts observing accepted background work.
 
 Registering a handler tells the client how to execute a tool if HPD asks for it. Supplying `clientToolInput.clientToolHarnesses` tells HPD which external tools should be visible to the agent for that run.
 
@@ -22,8 +22,8 @@ Use a client tool harness when the agent needs to invoke capabilities that only 
 import {
   AgentClient,
   createCollapsedToolHarness,
-  createErrorResponse,
-  createTextResponse,
+  completeClientToolWithText,
+  failClientTool,
 } from '@hpd/hpd-agent-client';
 
 const client = new AgentClient({
@@ -65,14 +65,14 @@ client.tools.registerToolHarness(uiHarness, async (request) => {
   switch (request.toolName) {
     case 'open_command_menu':
       app.ui.openCommandMenu();
-      return createTextResponse(request.requestId, 'Command menu opened.');
+      return completeClientToolWithText(request.requestId, 'Command menu opened.');
 
     case 'show_toast':
       app.ui.showToast(String(request.arguments.message ?? ''));
-      return createTextResponse(request.requestId, 'Toast shown.');
+      return completeClientToolWithText(request.requestId, 'Toast shown.');
 
     default:
-      return createErrorResponse(request.requestId, `Unknown UI tool: ${request.toolName}`);
+      return failClientTool(request.requestId, `Unknown UI tool: ${request.toolName}`);
   }
 });
 ```
@@ -132,10 +132,10 @@ Use these fields to control visibility:
 - `expandedContainers`: starts named harnesses expanded.
 - `hiddenTools`: hides named tools for the run.
 
-Tool responses can also return an augmentation that changes the client tool surface before the next iteration:
+Tool outcomes can also return an augmentation that changes the client tool surface before the next iteration:
 
 ```typescript
-return createTextResponse(request.requestId, 'Advanced UI tools are now visible.', {
+return completeClientToolWithText(request.requestId, 'Advanced UI tools are now visible.', {
   expandToolHarnesses: ['ui'],
   showTools: ['show_toast'],
 });
@@ -145,11 +145,13 @@ Augmentation can inject or remove harnesses, expand or collapse harnesses, hide 
 
 ## Events And Transports
 
-With SSE, the TypeScript client observes `CLIENT_TOOL_INVOKE_REQUEST` on the live event stream and posts the matching `CLIENT_TOOL_INVOKE_RESPONSE` to the hosted `/responses` route for the active agent, session, and thread.
+With SSE, the TypeScript client observes `CLIENT_TOOL_INVOKE_REQUEST` on the live event stream and posts the matching `CLIENT_TOOL_INVOKE_OUTCOME` to the hosted `/responses` route for the active agent, session, and thread.
 
 With WebSocket, the same response event is sent over the socket after the connection is attached to a runtime scope.
 
 Applications usually do not need to handle these events manually. If a matching handler is registered, the TypeScript client answers the request automatically. Use explicit event projection only when the UI needs to render, audit, or approve the external tool request.
+
+If the outcome is `AcceptedBackground`, the request session is resolved immediately because the client accepted ownership of later work. The client later sends `CLIENT_TOOL_BACKGROUND_OPERATION_OUTCOME` as runtime input with `state` set to `Completed`, `Faulted`, or `Cancelled`. HPD turns that terminal input into the generic background task lifecycle and notification flow.
 
 ## Boundary
 

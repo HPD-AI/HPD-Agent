@@ -56,6 +56,9 @@ Common fields:
 | `spanId`, `parentSpanId` | Span-style hierarchy when present |
 | `metadata` | Agent attribution, including agent name, id, parent id, chain, and depth |
 | `messageId` | Text, reasoning, and tool activity under a message |
+| `source` | HPD message source for message/text events, such as `UserInput`, `AssistantOutput`, `BackgroundNotification`, or `Steering` |
+| `visibility` | HPD transcript visibility for message/text events: `Transcript`, `Hidden`, or `Diagnostic` |
+| `persistence` | HPD message persistence policy when present on durable message-start events |
 | `callId` | Tool-call lifecycle grouping |
 | `permissionId`, `continuationId`, `requestId` | Request/response grouping through `IRequestCorrelatedEvent.RequestId` |
 
@@ -81,7 +84,7 @@ Durable thread event JSON omits many of those fields. Use live envelopes for API
 | Reasoning streaming | `ReasoningMessageStartEvent`, `ReasoningDeltaEvent`, `ReasoningMessageEndEvent` | streaming | durable |
 | Tool calls | `ToolCallStartEvent`, `ToolCallArgsEvent`, `ToolCallResultEvent`, `ToolCallEndEvent` | default/streaming | durable |
 | Workflow execution | `WorkflowStartedEvent`, `WorkflowAgentStartedEvent`, `WorkflowEdgeTraversedEvent`, `WorkflowCompletedEvent` | default/diagnostic | validate persistence for the workflow path |
-| Background work | `ToolCallBackgroundTask*`, `BackgroundOperationStartedEvent`, `BackgroundOperationStatusEvent` | control/default | task events and selected operation statuses are durable |
+| Background work | `BackgroundTaskStartedEvent`, `BackgroundTaskCompletedEvent`, `BackgroundHandleRegisteredEvent`, `BackgroundHandleStatusChangedEvent` | control/default | task and handle events are durable |
 | Interactive middleware | request events implementing `IRequestEvent` and response events implementing `IResponseEvent` | interactive | generally live only |
 | Retry and error policy | `FunctionRetryEvent`, `ModelCallRetryEvent`, middleware error events | diagnostic/default | generally live only |
 | Compaction observability | `CompactionEvent` | default/diagnostic | live middleware event; not the durable projection instruction |
@@ -92,7 +95,55 @@ Durable thread event JSON omits many of those fields. Use live envelopes for API
 | Struct events | `AgentStructEvent` samples on `StructEventHub` routes | process-local/export | not hosted or durable by default |
 | Planning, schema, structured output | framework diagnostics and state changes | default/diagnostic | event-specific |
 
-`CompactionStatus.CacheHit` exists as an enum value, but current public docs should not describe cached compaction reuse as active middleware behavior.
+`CompactionEvent` can report `CompactionStatus.CacheHit` when middleware reuses a valid cached compaction result. There is no separate compaction-cache event.
+
+## Background Work Notifications
+
+Runtime-owned background work emits lifecycle events when work starts and reaches a final state. Notification rules decide whether completed, cancelled, or faulted facts should wake the model.
+
+| Event | Meaning |
+| --- | --- |
+| `BackgroundTaskStartedEvent` | Runtime-owned background work began. |
+| `BackgroundTaskCompletedEvent` | Background work completed successfully. |
+| `BackgroundTaskCancelledEvent` | Background work observed cancellation. |
+| `BackgroundTaskFaultedEvent` | Background work failed with an exception. |
+| `BackgroundTaskNotificationQueuedEvent` | A notification rule selected final-state facts for model delivery. |
+| `BackgroundTaskNotificationSuppressedEvent` | A notification rule or runtime integrity check suppressed model delivery. |
+| `BackgroundTaskNotificationDeliveredEvent` | The queued notification was delivered into a model turn. |
+
+Background task events carry a `notification` rule. Current rule kinds are:
+
+```json
+{ "kind": "none" }
+```
+
+```json
+{
+  "kind": "on_final_state",
+  "completed": true,
+  "faulted": true,
+  "cancelled": false
+}
+```
+
+```json
+{
+  "kind": "strategy",
+  "name": "coding-command",
+  "parameters": {
+    "commandId": "cmd_123"
+  },
+  "fallback": {
+    "kind": "on_final_state",
+    "completed": true,
+    "faulted": true
+  }
+}
+```
+
+Queued background notifications are injected as hidden model context using `source: "BackgroundNotification"` and `visibility: "Hidden"`. Thread-run projections expose a compact `notification` summary instead of the full rule payload.
+
+For registration examples, suppression reasons, and TypeScript shapes, see [Background Tasks And Notifications](../concepts/background-tasks-and-notifications.md).
 
 ## Struct Events
 
@@ -132,13 +183,25 @@ Value round-trip tests cover `sessionId`, output flow, response, segment, chunk,
 
 ## UI Rendering Guidance
 
-For text output, render `TextMessageStartEvent`, append `TextDeltaEvent`, and close the block on `TextMessageEndEvent`.
+For text output, render `TextMessageStartEvent`, append `TextDeltaEvent`, and close the block on `TextMessageEndEvent`. Do not infer transcript behavior from `role` alone. `role` is provider-facing model protocol; `visibility` and `source` are HPD-owned rendering policy. A text stream with `visibility: "Hidden"` is model/runtime context and should not become a visible transcript row. `visibility: "Diagnostic"` should render as an internal or diagnostic row when the app chooses to show it.
+
+Common visible transcript cases:
+
+| Source | Visibility | Suggested rendering |
+| --- | --- | --- |
+| `UserInput` | `Transcript` | user message |
+| `AssistantOutput` | `Transcript` | assistant message |
+| `BackgroundNotification` | `Hidden` | no transcript row; the model receives this context |
+| `RuntimeContext` | `Hidden` | no transcript row |
+| `Steering` | `Hidden` or `Diagnostic` | hidden runtime input or explicit diagnostic row |
 
 For reasoning output, use the same start/delta/end pattern but render it separately from final user-visible text.
 
 For tool calls, use start/args/result/end events to show activity, arguments, and results. Tool events may arrive interleaved with streaming text depending on the model and middleware.
 
-For interactive middleware, render request events and answer with the matching `IResponseEvent` through WebSocket, the hosted HTTP `/responses` route, or `agent.RespondAsync(...)` in a local app. Permission, continuation, clarification, and client-tool responses are coordination events, not ordinary output. See [Bidirectional Events](../guides/events/bidirectional-events.md).
+For interactive middleware, render request events and answer with the matching `IResponseEvent` through WebSocket, the hosted HTTP `/responses` route, or `agent.AnswerRequestAsync(...)` in a local app. Permission, continuation, clarification, and client-tool responses are coordination events, not ordinary output. See [Bidirectional Events](../guides/events/bidirectional-events.md).
+
+Request-specific event families should define only the domain request and domain response events. Do not add family-specific terminal lifecycle events such as `FooApprovedEvent`, `FooDeniedEvent`, `FooResolvedEvent`, or `FooCancelledEvent`; use the generic request lifecycle events for request-session state.
 
 For JavaScript and TypeScript apps, use `AgentClient` to load thread history, subscribe to live events, handle unknown custom events through `onAny(...)`, and send response events back to the hosted runtime. See [TypeScript Client Events](../guides/events/typescript-client.md).
 
@@ -164,7 +227,7 @@ Persisting families verified for first docs:
 - reasoning start, delta, and end
 - tool start, args, result, and end
 - tool background task events
-- background operation started, plus terminal or meaningful status events
+- model background operation started, plus terminal or meaningful status events
 
 Live-only or caveated families:
 

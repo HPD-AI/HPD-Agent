@@ -6,7 +6,7 @@ A tool is the model-facing callable capability. In native .NET code, a tool is u
 
 A tool harness is a class that groups related capabilities. A harness can contain native `[AIFunction]` methods and other capability methods such as skills or subagents. Register a harness with `WithToolHarness<T>()`, or register one generated function from the harness with `WithTool<T>("FunctionName")`.
 
-An external tool source is a loader that contributes functions from outside the native harness method list, such as MCP servers or OpenAPI operations. Those sources still become `AIFunction`s before the model sees them. See [MCP Tools](../guides/tools/mcp-tools.md) and [OpenAPI Tools](../guides/tools/openapi-tools.md).
+An external tool source is a loader that contributes functions from outside the native harness method list, such as MCP servers or OpenAPI operations. Those sources still become `AIFunction`s before the model sees them. See [MCP Servers](../guides/tools/mcp-servers.md) and [OpenAPI Tools](../guides/tools/openapi-tools.md).
 
 Client tools are another external execution path: the model sees a normal tool declaration, but the implementation runs in a connected client runtime and returns through bidirectional events. Use them when the capability belongs to the UI, editor extension, desktop app, mobile app, or other SDK client instead of the HPD host process. See [Externally Executed Client Tools](../guides/tools/externally-executed-client-tools.md).
 
@@ -57,6 +57,31 @@ Console.WriteLine(result.Text);
 
 `[AIFunction(Kind = ToolKind.Output)]` marks an output tool. In that mode, the tool call represents structured output rather than a normal function execution.
 
+`[AIFunction(InvocationModePolicy = ...)]` controls whether a normal function waits for its result or can be launched as runtime-owned background work:
+
+```csharp
+[AIFunction(
+    Description = "Builds a large search index.",
+    InvocationModePolicy = AgentInvocationModePolicy.ModelChoice)]
+public async Task<string> BuildIndex(string path, CancellationToken cancellationToken)
+{
+    await BuildIndexAsync(path, cancellationToken);
+    return "Index build completed.";
+}
+```
+
+Policies:
+
+| Policy | Tool Shape | Tool Result |
+| --- | --- | --- |
+| `SynchronousOnly` | Original function schema | Final function result |
+| `BackgroundOnly` | Original function schema | Background launch receipt |
+| `ModelChoice` | Original function schema plus `invocationMode` | Final function result or background launch receipt |
+
+When `ModelChoice` is used, the model can pass `"invocationMode": "background"` to start the work and continue immediately. HPD strips `invocationMode` before binding method parameters, registers runtime-owned background work, and delivers the completion later through [Background Tasks And Notifications](background-tasks-and-notifications.md).
+
+Most functions should use the default `SynchronousOnly`. Use background invocation only when the function can safely continue without the parent model waiting on the call.
+
 `[Collapse]` belongs on the harness class. It is not required for discovery; it only controls container visibility.
 
 ## Generated First
@@ -68,7 +93,7 @@ At runtime, `WithToolHarness<T>()` forces the harness assembly module initialize
 ## Related Guides
 
 - [Author A Tool Harness](../guides/tools/author-a-tool-harness.md)
-- [MCP Tools](../guides/tools/mcp-tools.md)
+- [MCP Servers](../guides/tools/mcp-servers.md)
 - [OpenAPI Tools](../guides/tools/openapi-tools.md)
 - [Externally Executed Client Tools](../guides/tools/externally-executed-client-tools.md)
 - [Subagents](../guides/agents/subagents.md)

@@ -153,6 +153,6 @@ For Native AOT or trimming work, treat the generated path as mandatory. Reflecti
 
 ## External Source Guides
 
-- [MCP Tools](mcp-tools.md)
+- [MCP Servers](mcp-servers.md)
 - [OpenAPI Tools](openapi-tools.md)
 - [Multi-Agent Capabilities](multi-agent-capabilities.md)

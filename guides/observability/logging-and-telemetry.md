@@ -34,7 +34,7 @@ var agent = await new AgentBuilder()
 | Surface | What it logs |
 | --- | --- |
 | MEAI `LoggingChatClient` | Chat client invocation start, completion, cancellation, and failure. At `Trace`, it can include raw messages, options, streaming updates, and responses. |
-| HPD `LoggingEventObserver` | Agent events such as message turn start/end, decisions, permission denials, retries, circuit breakers, compaction cache, nested agent calls, and completion. |
+| HPD `LoggingEventObserver` | Agent events such as message turn start/end, decisions, permission denials, retries, circuit breakers, compaction decisions, nested agent calls, and completion. |
 | HPD `LoggingMiddleware` | Lifecycle hook details from message turns, iterations, functions, and tool harness expansion. |
 
 The lifecycle middleware is registered last by `WithLogging(...)`, so it can log after earlier middleware has shaped messages, tools, and state.

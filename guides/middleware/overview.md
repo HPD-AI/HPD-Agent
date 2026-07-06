@@ -198,7 +198,7 @@ var response = await context.RequestAsync<PermissionRequestEvent, PermissionResp
     timeout: TimeSpan.FromSeconds(30));
 ```
 
-In direct in-process code, respond with `agent.RespondAsync(...)` or `agent.TryRespondAsync(...)` for the matching response event. In ASP.NET Core hosted clients, read the request from the hosted event stream and send the matching `IResponseEvent` envelope through WebSocket or the hosted `/responses` route for the active `agentId + sessionId + threadId`.
+In direct in-process code, answer with `agent.AnswerRequestAsync(...)` or `agent.TryAnswerRequestAsync(...)` for the matching response event. In ASP.NET Core hosted clients, read the request from the hosted event stream and send the matching `IResponseEvent` envelope through WebSocket or the hosted `/responses` route for the active `agentId + sessionId + threadId`.
 
 Use this pattern when the user, UI, policy engine, bot adapter, or hosted runtime needs to make a decision during the run.
 

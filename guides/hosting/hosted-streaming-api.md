@@ -73,7 +73,7 @@ GET /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/ws
 Client-to-server frames must be text frames containing either:
 
 - an input event envelope, such as `USER_MESSAGES_INPUT`, or an interruption request where supported by the route
-- a response event envelope implementing `IResponseEvent`, such as `PERMISSION_RESPONSE`, `CONTINUATION_RESPONSE`, `CLARIFICATION_RESPONSE`, or `CLIENT_TOOL_INVOKE_RESPONSE`
+- a response event envelope implementing `IResponseEvent`, such as `PERMISSION_RESPONSE`, `CONTINUATION_RESPONSE`, `CLARIFICATION_RESPONSE`, or `CLIENT_TOOL_INVOKE_OUTCOME`
 
 Server-to-client frames are live event envelopes for the same runtime scope. WebSocket is bidirectional and can observe after a valid client frame initializes the subscription. Use SSE for observer-only clients.
 
@@ -138,7 +138,7 @@ Content-Type: application/json
 }
 ```
 
-The body must be a serialized `AgentEvent` envelope whose event implements `IResponseEvent`, such as `PermissionResponseEvent`, `ContinuationResponseEvent`, `ClarificationResponseEvent`, `ClientToolInvokeResponseEvent`, or an app-owned custom response event.
+The body must be a serialized `AgentEvent` envelope whose event implements `IResponseEvent`, such as `PermissionResponseEvent`, `ContinuationResponseEvent`, `ClarificationResponseEvent`, `ClientToolInvokeOutcomeEvent`, or an app-owned custom response event.
 
 Middleware responses are not thread runs. The route requires an existing session/thread scope, an active thread runtime, and a waiter that accepts the response. If the scope does not exist, it returns `404`. If no runtime is active, the route returns a thread-runtime-not-active conflict. If the runtime exists but no waiter accepts the response, it returns `409` with the `RespondResult` status.
 

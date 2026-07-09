@@ -196,15 +196,24 @@ Only forked-thread subagents can set thread compaction at fork time. This lets t
 
 ```csharp
 SubAgentExecutionPolicies.ParentSessionForkedThread(
-    SubAgentThreadCompaction.PreferCache)
+    new ThreadForkCompactionOptions
+    {
+        Mode = ThreadForkCompactionMode.Enabled,
+        PreferCache = true,
+        Strategy = new MessageCountingCompactionOptions
+        {
+            PreserveRecentUserTurnCount = 3
+        }
+    })
 ```
 
 Use:
 
-- `Inherit` to use the agent's normal `CompactOnFork` behavior
-- `Enabled` to compact the child thread before it is committed, even if normal fork compaction is off
-- `Disabled` to keep the child thread un-compacted, even if normal fork compaction is on
-- `PreferCache` to reuse a matching copied thread compaction cache when possible, and otherwise run normal fork compaction
+- `Mode = Inherit` or `null` to use the agent's normal `CompactionConfig.ForkCompaction` behavior
+- `Mode = Enabled` to compact the child thread before it is committed, even if normal fork compaction is off
+- `Mode = Disabled` to keep the child thread un-compacted, even if normal fork compaction is on
+- `PreferCache = true` to reuse a matching copied thread compaction cache when possible
+- `Strategy` to override the shared compaction strategy for this subagent fork
 
 The compaction runs against the fork target before the subagent starts. In practice, that means a `ParentSessionForkedThread()` subagent can inherit the parent's recent context without copying every parent message into the child thread.
 

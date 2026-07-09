@@ -89,7 +89,7 @@ Built-in examples follow the same split:
 - `PlanModePersistentStateData` is persistent and thread-scoped because `Scope` is omitted and thread is the default.
 - `BatchPermissionStateData`, continuation permission state, error tracking state, total error threshold state, and circuit breaker state are transient unless their attribute says otherwise.
 
-`CompactionStateData` records thread-scoped compaction metadata and trigger observations. It is not the same as `ThreadHistoryCompactedEvent`, which changes durable thread projection under hard retention. See [Compaction](../sessions-and-streaming/compaction.md).
+`CompactionStateData` records thread-scoped compaction metadata and trigger observations. It is not the same as `ThreadHistoryCompactionCheckpointEvent`, which records durable compaction checkpoints for soft and hard compaction. See [Compaction](../sessions-and-streaming/compaction.md).
 
 ## Session Or Thread
 

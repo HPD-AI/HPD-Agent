@@ -121,7 +121,7 @@ For durable thread replay, read the thread event log and rebuild a thread projec
 
 Render durable thread projection, not raw event count.
 
-When thread history contains `THREAD_HISTORY_COMPACTED`, apply the projected result: remove durable compacted messages and insert replacement messages if the event has them. A transcript should show the projected messages as canonical. An event-log or audit view can also show the compaction event, compacted ids, summary text, and timestamp.
+When thread history contains `THREAD_HISTORY_COMPACTION_CHECKPOINT`, apply the checkpoint according to its mode. Hard checkpoints remove durable compacted messages and insert replacement messages if present. Soft checkpoints leave raw replay intact, though a transcript UI may collapse compacted ids and show the checkpoint summary. An event-log or audit view can also show the compaction event, compacted ids, summary text, and timestamp.
 
 Live `CompactionEvent` belongs in a diagnostic lane. It is not the durable thread-history projection instruction.
 

@@ -57,7 +57,7 @@ When in doubt, test the exact session and thread path your app uses.
 
 `CompactionEvent` is live middleware observability. It tells clients that compaction was skipped or performed and can include counts, reason text, and summary details.
 
-`ThreadHistoryCompactedEvent` is different. It is a durable thread-history event written under hard retention. Thread projection uses it to remove durable compacted message ids and insert replacement messages.
+`ThreadHistoryCompactionCheckpointEvent` is different. It is a durable thread-history checkpoint written for soft and hard compaction. Hard checkpoints remove durable compacted message ids and insert replacement messages; soft checkpoints leave raw replay intact so clients can choose whether to collapse or show compacted ranges.
 
 Render `CompactionEvent` in diagnostics. Render projected thread messages as canonical durable history.
 

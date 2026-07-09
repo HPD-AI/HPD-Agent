@@ -74,7 +74,7 @@ Choose the smallest strategy that solves the pressure you are seeing:
 | Older turns matter, but exact wording does not | `SummarizingCompactionOptions` with preserve retention. |
 | The thread projection itself must stay small | A strategy plus `CompactThreadHistoryOptions`. |
 | Tool calls/results are involved | Add boundary options that keep tool-call groups intact. |
-| A new fork should start lighter than its source thread | Fork compaction through `ThreadForkOptions.CompactionIntent`. |
+| A new fork should start lighter than its source thread | Fork compaction through `ThreadForkOptions.Compaction`. |
 | One request needs full context for debugging or a critical decision | `AgentRunConfig.Compaction = new() { Mode = CompactionRunMode.Disabled }`. |
 | One request should compact before continuing | `AgentRunConfig.Compaction = new() { Mode = CompactionRunMode.Force }`. |
 
@@ -161,11 +161,11 @@ Compaction uses three different records:
 | --- | --- |
 | `CompactionEvent` | Live middleware observability for skipped or performed compaction. |
 | `CompactionStateData` | Thread-scoped persistent middleware state with last compaction, trigger counts, and usage observations. |
-| `ThreadHistoryCompactedEvent` | Durable thread event that changes thread projection under hard retention. |
+| `ThreadHistoryCompactionCheckpointEvent` | Durable thread checkpoint written for soft and hard compaction. |
 
 `CompactionEvent` is useful for diagnostics and live UI. It is not the durable projection instruction.
 
-`ThreadHistoryCompactedEvent` is appended when hard retention is applied to a thread with a store. Projection applies it by removing `DurableCompactedMessageIds` and inserting any `ReplacementMessages`.
+`ThreadHistoryCompactionCheckpointEvent` is appended for every successful compaction on a thread with a store. Hard checkpoints remove `DurableCompactedMessageIds` and insert any `ReplacementMessages`. Soft checkpoints leave durable messages intact and let clients choose how to display compacted ranges.
 
 ## Fork And Compact
 
@@ -175,7 +175,7 @@ Fork compaction runs in the pre-commit fork middleware hook. If enabled, `Compac
 
 The source thread is unchanged.
 
-Fork compaction does not append a standalone `ThreadHistoryCompactedEvent`. The target thread starts with the already-compacted initial history.
+Fork compaction appends the same checkpoint event to the target thread. The source thread is unchanged; the target thread is born with a hard checkpoint that records which copied messages were compacted before commit.
 
 Direct in-process callers can override the fork compaction choice with `ThreadForkOptions`:
 
@@ -187,7 +187,15 @@ await agent.ForkThreadAsync(
     fromMessageId,
     new ThreadForkOptions
     {
-        CompactionIntent = ThreadForkCompactionIntent.Enabled,
+        Compaction = new ThreadForkCompactionOptions
+        {
+            Mode = ThreadForkCompactionMode.Enabled,
+            PreferCache = true,
+            Strategy = new MessageCountingCompactionOptions
+            {
+                PreserveRecentUserTurnCount = 3
+            }
+        },
         Metadata = new Dictionary<string, object>
         {
             ["name"] = "Compacted exploration"
@@ -196,7 +204,24 @@ await agent.ForkThreadAsync(
     cancellationToken);
 ```
 
-ASP.NET Core hosted fork requests do not currently include a per-request compaction intent. In hosted apps, fork compaction is controlled by the configured server-side agent and middleware pipeline unless the application exposes its own higher-level route.
+ASP.NET Core hosted fork requests use the same shape:
+
+```json
+{
+  "newThreadId": "compacted-exploration",
+  "fromMessageId": "msg-42",
+  "compaction": {
+    "mode": 1,
+    "preferCache": true,
+    "strategy": {
+      "$type": "messageCounting",
+      "preserveRecentUserTurnCount": 3
+    }
+  }
+}
+```
+
+Fork compaction uses shared strategy options, but it is not a normal run compaction policy. It has no trigger, behavior, or soft retention setting. A fork compaction shapes the new fork target and leaves the source thread unchanged.
 
 ## UI Guidance
 

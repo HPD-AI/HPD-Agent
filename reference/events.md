@@ -88,7 +88,7 @@ Durable thread event JSON omits many of those fields. Use live envelopes for API
 | Interactive middleware | request events implementing `IRequestEvent` and response events implementing `IResponseEvent` | interactive | generally live only |
 | Retry and error policy | `FunctionRetryEvent`, `ModelCallRetryEvent`, middleware error events | diagnostic/default | generally live only |
 | Compaction observability | `CompactionEvent` | default/diagnostic | live middleware event; not the durable projection instruction |
-| Thread-history compaction | `ThreadHistoryCompactedEvent` | thread history | durable when hard retention is applied |
+| Thread-history compaction | `ThreadHistoryCompactionCheckpointEvent` | thread history | durable checkpoint for soft and hard compaction |
 | Content and references | upload/reference events | default/diagnostic | depends on event and content persistence policy |
 | Audio transcripts | `UserAudioTranscriptDeltaEvent`, `UserAudioTranscriptCompletedEvent`, `UserAudioTranscriptFailedEvent` | streaming/default | transcript text projection is policy-dependent; raw audio is not durable by default |
 | Assistant audio output | assistant audio output, stream, artifact, failure, and playback events | default/diagnostic | live/runtime-oriented unless explicitly projected by audio runtime policy |
@@ -211,7 +211,7 @@ For lifecycle, retry, and failure rendering, see [Lifecycle, Retry, And Error Ev
 
 For thread runs, use thread-run started/completed events to track active hosted work. Do not use thread operation lock conflicts as thread-run state.
 
-For compaction, distinguish live observability from durable projection. `CompactionEvent` can explain why middleware skipped or performed compaction. `ThreadHistoryCompactedEvent` changes the thread projection by removing durable compacted messages and inserting replacements when present.
+For compaction, distinguish live observability from durable checkpoints. `CompactionEvent` can explain why middleware skipped or performed compaction. `ThreadHistoryCompactionCheckpointEvent` records the compaction point. Hard checkpoints remove durable compacted messages and insert replacements when present; soft checkpoints leave raw replay intact for clients to display by policy.
 
 For workflows, render workflow lifecycle, layer, node, edge, and diagnostic events as a timeline or graph projection. Child agent, tool, and permission events may also appear in the same live stream when the workflow or subagent execution bubbles events through a parent coordinator.
 

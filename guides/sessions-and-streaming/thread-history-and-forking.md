@@ -96,9 +96,9 @@ For UI projection guidance, see [Render An Event Stream](render-an-event-stream.
 
 ## Thread History Compaction
 
-Hard thread-history compaction changes the projected thread. A `THREAD_HISTORY_COMPACTED` durable thread event removes compacted durable message ids from projection and inserts replacement messages when the retention mode produced them.
+Hard thread-history compaction changes the projected thread. A `THREAD_HISTORY_COMPACTION_CHECKPOINT` durable thread event removes compacted durable message ids from projection and inserts replacement messages when the retention mode produced them.
 
-Soft compaction does not change the durable thread projection. It only reduces what the next model turn sees.
+Soft compaction does not change the durable thread projection, but it still writes a checkpoint so clients can collapse or mark compacted ranges during hydration.
 
 For the full model, see [Compaction](compaction.md).
 
@@ -112,7 +112,7 @@ Use projected thread messages as the source of forkable message ids.
 
 Fork compaction is a separate pre-commit behavior. When configured, the target thread is compacted after it is copied from the source thread and before the target thread is saved.
 
-The source thread is unchanged. The target thread starts with the already-compacted initial history. Fork compaction does not write a standalone `THREAD_HISTORY_COMPACTED` event.
+The source thread is unchanged. The target thread starts with the already-compacted initial history and writes a `THREAD_HISTORY_COMPACTION_CHECKPOINT` event describing the fork-target compaction.
 
 Hosted `ForkThreadRequest` does not expose a per-request compaction intent today. Hosted fork compaction is controlled by server-side agent and middleware configuration.
 

@@ -45,11 +45,16 @@ using Microsoft.Extensions.AI;
 ```csharp
 var audio = AudioContent.Wav(wavBytes).ToRealtimeInputAudio();
 
-await agent.RunAsync(new UserMessagesInputEvent([
-    new ChatMessage(ChatRole.User, [audio])
-]), new AgentRunConfig
+await agent.RunAsync(new UserMessagesInputEvent
 {
-    ModelTransport = AgentModelTransportMode.Realtime
+    Messages =
+    [
+        new ChatMessage(ChatRole.User, [audio])
+    ],
+    RunConfig = new AgentRunConfig
+    {
+        ModelTransport = AgentModelTransportMode.Realtime
+    }
 });
 ```
 

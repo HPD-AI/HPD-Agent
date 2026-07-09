@@ -25,14 +25,16 @@ var image = new DataContent(await File.ReadAllBytesAsync("diagram.png"), "image/
     Name = "diagram.png"
 };
 
-await agent.RunAsync(new UserMessagesInputEvent([
-    new ChatMessage(ChatRole.User,
-    [
-        new TextContent("Describe this diagram."),
-        image
-    ])
-])
+await agent.RunAsync(new UserMessagesInputEvent
 {
+    Messages =
+    [
+        new ChatMessage(ChatRole.User,
+        [
+            new TextContent("Describe this diagram."),
+            image
+        ])
+    ],
     SessionId = "session-1",
     ThreadId = "main"
 });

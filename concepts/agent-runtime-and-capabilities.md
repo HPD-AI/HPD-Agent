@@ -80,7 +80,7 @@ var result = await agent.RunAsync("Summarize this in one sentence.");
 Console.WriteLine(result.Text);
 ```
 
-Use richer input events when the run needs multiple messages, binary content, explicit session/thread routing, or per-run configuration.
+Use richer input events when the run needs multiple messages, binary content, explicit session/thread routing, or per-run configuration. `UserMessagesInputEvent` may also omit messages to resume an existing scoped thread with only run configuration; the thread must already have history.
 
 `AgentTurnResult.Text` is the final concatenated assistant text. Do not treat it as the whole runtime record. Tool calls, permission prompts, retries, errors, reasoning, custom progress, audio artifacts, workflow node activity, and evaluation scores are event-stream concerns.
 

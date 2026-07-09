@@ -41,9 +41,72 @@ You can also submit an event envelope:
 }
 ```
 
+`messages` is optional on `USER_MESSAGES_INPUT`. Normal user submissions should include at least one message. Omitting it or sending an empty array asks the runtime to resume the scoped thread with the supplied run configuration; the thread must already have history.
+
 Accepted input returns `202 Accepted`. That means the input was submitted. Observe SSE or WebSocket events to render output, completion, errors, and interactive requests.
 
 Only one active hosted run is allowed per thread. A second input submitted to the same `sessionId + threadId` while a run is active returns a conflict with a thread-run-active error.
+
+## Estimate Context Usage
+
+Hosted clients can ask the runtime how much context the current thread is using for a candidate run configuration:
+
+```http
+POST /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/context-usage
+Content-Type: application/json
+
+{
+  "runConfig": {
+    "providerKey": "openai",
+    "modelId": "gpt-4.1",
+    "compaction": {
+      "modelContext": {
+        "providerKey": "openai",
+        "modelId": "gpt-4.1",
+        "contextWindow": 128000
+      }
+    }
+  }
+}
+```
+
+The response is `ThreadContextUsage`:
+
+```json
+{
+  "sessionId": "session-1",
+  "threadId": "main",
+  "providerKey": "openai",
+  "modelId": "gpt-4.1",
+  "contextWindow": 128000,
+  "effectiveInputTokens": 64000,
+  "usageRatio": 0.5,
+  "isEstimate": false,
+  "source": "last-observed-provider-usage"
+}
+```
+
+This endpoint does not start a run or mutate thread history. Use it for model-switch warnings, context meters, and deciding whether to submit a config-only compaction run.
+
+## Force Compaction
+
+There is no separate hosted compact endpoint. Compaction is part of the normal input pipeline, so hosted clients force it by submitting a `USER_MESSAGES_INPUT` envelope with empty or omitted `messages` and a run config that sets compaction mode to force:
+
+```json
+{
+  "version": "1.0",
+  "type": "USER_MESSAGES_INPUT",
+  "messages": [],
+  "runConfig": {
+    "compaction": {
+      "mode": 1,
+      "behavior": 2
+    }
+  }
+}
+```
+
+`mode: 1` is `CompactionRunMode.Force`. `behavior: 2` is `CompactionBehavior.StopAfterCompaction`, which compacts and stops before a model call. Enum values use the hosted API's default numeric JSON representation unless the host customizes JSON options.
 
 ## Observe With SSE
 

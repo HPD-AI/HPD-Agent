@@ -20,10 +20,12 @@ using Microsoft.Extensions.AI;
 var audio = AudioContent.Wav(await File.ReadAllBytesAsync("question.wav"));
 audio.Name = "question.wav";
 
-await agent.RunAsync(new UserMessagesInputEvent([
-    new ChatMessage(ChatRole.User, [audio])
-])
+await agent.RunAsync(new UserMessagesInputEvent
 {
+    Messages =
+    [
+        new ChatMessage(ChatRole.User, [audio])
+    ],
     SessionId = "session-1",
     ThreadId = "main"
 });
@@ -39,14 +41,16 @@ Mixed input is additive. If the user sends typed text and an audio attachment in
 var audio = AudioContent.Wav(await File.ReadAllBytesAsync("question.wav"));
 audio.Name = "question.wav";
 
-await agent.RunAsync(new UserMessagesInputEvent([
-    new ChatMessage(ChatRole.User,
-    [
-        new TextContent("Answer briefly and focus on the question in the recording."),
-        audio
-    ])
-])
+await agent.RunAsync(new UserMessagesInputEvent
 {
+    Messages =
+    [
+        new ChatMessage(ChatRole.User,
+        [
+            new TextContent("Answer briefly and focus on the question in the recording."),
+            audio
+        ])
+    ],
     SessionId = "session-1",
     ThreadId = "main"
 });

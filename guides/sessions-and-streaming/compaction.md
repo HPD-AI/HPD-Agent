@@ -26,7 +26,7 @@ builder.WithCompaction(config =>
     config.Enabled = true;
     config.Strategy = new MessageCountingCompactionOptions
     {
-        TargetMessageCount = 50
+        PreserveRecentUserTurnCount = 10
     };
     config.Trigger = new CountCompactionTriggerOptions
     {
@@ -39,15 +39,30 @@ builder.WithCompaction(config =>
 
 This configuration performs soft compaction when the count trigger fires. The next model call sees reduced history, but durable thread history remains intact.
 
-Per-run controls can force or skip compaction. `SkipCompaction` wins over `TriggerCompaction`.
+Per-run controls can force, disable, or tune compaction through `AgentRunConfig.Compaction`:
+
+```csharp
+await agent.RunAsync(
+    "Continue from here.",
+    runConfig: new AgentRunConfig
+    {
+        Compaction = new CompactionRunConfig
+        {
+            Mode = CompactionRunMode.Force,
+            Behavior = CompactionBehavior.StopAfterCompaction
+        }
+    });
+```
+
+`CompactionRunMode.Disabled` wins over configured triggers for that run. `CompactionRunMode.Force` bypasses triggers and runs compaction before the model turn when a strategy is available. `CompactionBehavior.StopAfterCompaction` is useful for explicit compaction operations because it compacts the current thread and ends the run before a model call.
 
 ## Strategies
 
 The strategy decides what remains visible to the next model turn.
 
-`MessageCountingCompactionOptions` keeps recent messages. Its default target is 50 messages.
+`MessageCountingCompactionOptions` keeps recent user turns. Its default preserve target is 10 user turns. The framework translates that into the raw message suffix needed to keep each preserved user request with the assistant, tool-call, and tool-result messages that follow it.
 
-`SummarizingCompactionOptions` summarizes older history and keeps recent messages. The default shape keeps 20 recent messages, resummarizes after 5 new messages, uses a single summary, and uses handoff-style summaries. A summarizing strategy can use a separate summarizer provider through `ClientProviderConfig? SummarizerProvider`; otherwise it can use the main chat client.
+`SummarizingCompactionOptions` summarizes older history and keeps recent user turns. The default shape preserves 5 recent user turns, resummarizes after 5 new messages, uses a single summary, and uses handoff-style summaries. A summarizing strategy can use a separate summarizer provider through `ClientProviderConfig? SummarizerProvider`; otherwise it can use the main chat client.
 
 System messages are separated before reduction and added back before the model call.
 
@@ -57,11 +72,11 @@ Choose the smallest strategy that solves the pressure you are seeing:
 | --- | --- |
 | The chat is simply getting long | `MessageCountingCompactionOptions` with preserve retention. |
 | Older turns matter, but exact wording does not | `SummarizingCompactionOptions` with preserve retention. |
-| The thread projection itself must stay small | A strategy plus `CompactThreadHistoryOptions` or `DeleteCompactedMessagesOptions`. |
+| The thread projection itself must stay small | A strategy plus `CompactThreadHistoryOptions`. |
 | Tool calls/results are involved | Add boundary options that keep tool-call groups intact. |
 | A new fork should start lighter than its source thread | Fork compaction through `ThreadForkOptions.CompactionIntent`. |
-| One request needs full context for debugging or a critical decision | `AgentRunConfig.SkipCompaction = true`. |
-| One request should compact before continuing | `AgentRunConfig.TriggerCompaction = true`. |
+| One request needs full context for debugging or a critical decision | `AgentRunConfig.Compaction = new() { Mode = CompactionRunMode.Disabled }`. |
+| One request should compact before continuing | `AgentRunConfig.Compaction = new() { Mode = CompactionRunMode.Force }`. |
 
 ## Triggers
 
@@ -70,11 +85,46 @@ Triggers decide when compaction runs:
 | Trigger | Behavior |
 | --- | --- |
 | `CountCompactionTriggerOptions` | Runs after message or message-turn count exceeds `TargetCount + Threshold`. |
-| `TokenBudgetCompactionTriggerOptions` | Runs when the last observed input token count exceeds `TargetTokenBudget + TokenBudgetThreshold`. |
-| `ContextWindowCompactionTriggerOptions` | Runs when the last observed input token count crosses a configured percentage of the context window. |
+| `ContextWindowCompactionTriggerOptions` | Runs when the last observed input token count crosses either a configured percentage of the context window or an explicit token count. |
 | `CompositeCompactionTriggerOptions` | Runs when any child trigger in `AnyOf` runs. |
 
-Token and context-window triggers use usage observed from prior turns. They are not preflight token counters for the current turn.
+Context-window triggers use usage observed from prior turns. They are not preflight token counters for the current turn.
+
+`ContextWindowCompactionTriggerOptions.ContextWindowSize` can be omitted when the active run supplies model context metadata:
+
+```csharp
+new AgentRunConfig
+{
+    ProviderKey = "openai",
+    ModelId = "gpt-4.1",
+    Compaction = new CompactionRunConfig
+    {
+        Trigger = new ContextWindowCompactionTriggerOptions
+        {
+            ThresholdMode = ContextWindowCompactionThresholdMode.Percentage,
+            TriggerPercentage = 0.70
+        },
+        ModelContext = new ModelContextWindowOptions
+        {
+            ProviderKey = "openai",
+            ModelId = "gpt-4.1",
+            ContextWindow = 128000
+        }
+    }
+};
+```
+
+For a fixed token threshold, use token-count mode:
+
+```csharp
+new ContextWindowCompactionTriggerOptions
+{
+    ThresholdMode = ContextWindowCompactionThresholdMode.TokenCount,
+    TriggerTokenCount = 64_000
+};
+```
+
+Hosted clients can preflight the same model-aware pressure with `POST /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/context-usage`. The endpoint returns `ThreadContextUsage` and does not start a run or mutate history.
 
 ## Retention
 
@@ -84,11 +134,10 @@ Retention decides what happens to durable thread history after model-visible com
 | --- | --- |
 | `PreserveThreadHistoryOptions` | Preserves thread history. This is the default and safest mode. |
 | `CompactThreadHistoryOptions` | Removes durable compacted messages and inserts replacement messages where the removed range began. |
-| `DeleteCompactedMessagesOptions` | Removes durable compacted messages without replacement messages. |
 
 Preserve retention is soft compaction. It changes what the model sees but does not remove projected thread messages.
 
-Compact and delete retention are hard retention modes. They can change future `LoadThreadAsync(...)` projection and can make old message ids unavailable as fork points.
+Compact retention is hard compaction. It can change future `LoadThreadAsync(...)` projection and can make old message ids unavailable as fork points.
 
 ## Boundary Policies
 

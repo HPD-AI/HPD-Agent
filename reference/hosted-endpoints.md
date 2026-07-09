@@ -93,10 +93,13 @@ Default hosted content storage is in-memory. Do not assume durability unless the
 | `POST` | `/agents/{agentId}/sessions/{sid}/threads/{bid}/inputs` | `StreamTextRequest` or input event envelope | `202` | `400`, `404`, `409`, `500` |
 | `GET` | `/agents/{agentId}/sessions/{sid}/threads/{bid}/events/live` | SSE | `text/event-stream` | `404` before headers |
 | `POST` | `/agents/{agentId}/sessions/{sid}/threads/{bid}/interrupt` | optional interruption envelope or reason body | `202` | `404`, `409`, `400`, `500` |
+| `POST` | `/agents/{agentId}/sessions/{sid}/threads/{bid}/context-usage` | `ContextUsageRequest` | `200 ThreadContextUsage` | `404`, `400`, `500` |
 | `GET` | `/agents/{agentId}/sessions/{sid}/threads/{bid}/ws` | WebSocket text frames | WebSocket stream | pre-upgrade `400`, `404`, `409`; post-upgrade invalid-payload or policy-violation close statuses |
 | `POST` | `/agents/{agentId}/sessions/{sid}/threads/{bid}/responses` | serialized `AgentEvent` envelope implementing `IResponseEvent` | `200` | `404`, `409`, `400` |
 
 SSE sends one live event envelope per `data:` frame. WebSocket accepts text frames containing input envelopes or response event envelopes and sends live event envelopes back after a valid client frame initializes the subscription. HTTP clients post any serialized `AgentEvent` envelope implementing `IResponseEvent` to the single `/responses` route.
+
+`context-usage` estimates the scoped thread's current input-token pressure against the supplied `runConfig`, including model context-window metadata when the client has it. It does not start a thread run and does not compact history.
 
 ## Concurrency
 

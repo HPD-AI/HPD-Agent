@@ -24,6 +24,30 @@ If your app needs command-level, path-level, network-level, tenant-level, risk-b
 
 Use the built-in middleware for ordinary function gating. Use custom permission middleware when the user is approving a more specific subject than "this function may run."
 
+## Per-Run Permission Mode
+
+`AgentRunConfig.PermissionMode` selects the permission enforcement profile for one run:
+
+| Mode | Behavior |
+| --- | --- |
+| `AgentPermissionMode.Ask` | Enforces registered permission middleware and requests approval when required. This is the default. |
+| `AgentPermissionMode.FullAccess` | Bypasses the built-in `PermissionMiddleware` prompts for that run. |
+
+```csharp
+await agent.RunAsync(
+    "Run the trusted maintenance task.",
+    runConfig: new AgentRunConfig
+    {
+        PermissionMode = AgentPermissionMode.FullAccess
+    });
+```
+
+`FullAccess` is run-scoped. It does not unregister middleware, delete remembered `AlwaysAllow` or `AlwaysDeny` choices, or change later runs. `PermissionOverrides` is also ignored by the built-in middleware while the run is in `FullAccess` mode.
+
+Custom permission middleware is not bypassed automatically. A custom implementation must explicitly inspect `context.RunConfig.PermissionMode` if it wants to honor the shared profile. The coding harness's `ExecuteCommandPermissionMiddleware` does honor it, so `FullAccess` also suppresses its command-specific approval requests.
+
+Permission mode and sandbox mode are separate controls. `AgentPermissionMode.FullAccess` does not disable process isolation, expand filesystem access, grant network access, or bypass authorization performed inside a tool. A host that intentionally offers a combined "full access" product setting must configure those other policies separately.
+
 ## Function Permission Flow
 
 `PermissionMiddleware` uses these phases:
@@ -184,5 +208,7 @@ Permissions are a tool/function gate. They do not sandbox the function body, aut
 Stored `AlwaysAllow` and `AlwaysDeny` choices are session-scoped. They are not global user preferences, and they are not thread-local.
 
 `[RequiresPermission]` is metadata, not a universal security boundary. It is consumed by permission middleware. A custom `IAgentPermissionMiddleware` can interpret it differently or ignore it entirely.
+
+`AgentPermissionMode.FullAccess` is also not a universal security bypass. It is a shared run-level signal honored by the built-in permission middleware and by custom middleware that deliberately opts into it.
 
 The snippets above are source-checked example candidates. They have not been clean-compiled in a separate consumer project.

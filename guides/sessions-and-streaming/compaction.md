@@ -64,6 +64,20 @@ The strategy decides what remains visible to the next model turn.
 
 `SummarizingCompactionOptions` summarizes older history and keeps recent user turns. The default shape preserves 5 recent user turns, resummarizes after 5 new messages, uses a single summary, and uses handoff-style summaries. A summarizing strategy can use a separate summarizer provider through `ClientProviderConfig? SummarizerProvider`; otherwise it can use the main chat client.
 
+Set `PreserveRecentUserTurnCount = 0` when the result should retain no existing raw user-turn suffix. Zero is valid for both built-in strategies. For summarization, HPD still gives the reducer an internal sentinel so it can produce a summary when no real message is preserved; that sentinel is removed from the result and is never persisted or sent to the main chat model.
+
+Both strategies also inherit explicit preservation boundaries from `CompactionStrategyOptions`:
+
+```csharp
+new SummarizingCompactionOptions
+{
+    PreserveRecentUserTurnCount = 0,
+    PreserveFromMessageId = "message-42"
+};
+```
+
+`PreserveFromMessageId` or `PreserveFromMessageTurnId` keeps the raw suffix beginning at that exact message or message turn. An explicit boundary takes precedence over `PreserveRecentUserTurnCount`. This is useful for user-directed "compact everything before here" operations.
+
 System messages are separated before reduction and added back before the model call.
 
 Choose the smallest strategy that solves the pressure you are seeing:

@@ -55,6 +55,8 @@ Command execution depends on an `IProcessProvider`. `WithLocalSandbox()` provide
 
 Sandbox enforcement is platform-dependent. Use permissions and narrow workspace roots even when sandboxing is enabled.
 
+Command approval and process isolation are independent. `ExecuteCommandPermissionMiddleware` honors `AgentRunConfig.PermissionMode`: `Ask` applies its command-specific approval analysis, while `FullAccess` skips those approval requests for that run. Changing permission mode does not change `ExecuteCommandSandboxPolicy`; configure sandbox isolation separately through run context.
+
 ### Background Commands
 
 Use `invocationMode: "background"` for long-running commands such as dev servers, file watchers, or test watchers. The tool returns after the process launches instead of waiting for the command to finish.

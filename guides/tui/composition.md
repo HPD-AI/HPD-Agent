@@ -95,6 +95,27 @@ tui.SetRunConfigComposer(context => new AgentRunConfig
 
 Model selection helpers are composition conveniences. They do not change the underlying rule: each submitted prompt can carry run configuration into the agent runtime.
 
+The composer can also attach a run-level permission profile:
+
+```csharp
+tui.SetRunConfigComposer(context => new AgentRunConfig
+{
+    PermissionMode = AgentPermissionMode.Ask
+});
+```
+
+The TUI only transports this setting. Permission middleware decides how it is enforced, and sandbox policy remains a separate host concern.
+
+## Transcript Checkpoint Boundaries
+
+Use `TranscriptModel.ReplaceHistoryWith(...)` when an authoritative checkpoint supersedes everything currently visible before it:
+
+```csharp
+context.Shell.Transcript.ReplaceHistoryWith(checkpointEntry);
+```
+
+The replacement is atomic: it removes finalized and live entries regardless of their cell or event type, inserts the supplied entry as finalized, and advances the transcript history epoch. Use it for real history boundaries such as a compaction checkpoint, not as a general-purpose clear-and-add convenience.
+
 ## Interaction Handlers
 
 ```csharp
@@ -108,4 +129,3 @@ Interaction handlers handle request/response workflows such as permissions, cont
 ## Composition Boundary
 
 Provider pickers, model catalogs, coding harness UI, and product-specific diagnostics can all be layered through composition, but they are not core TUI guarantees. Treat them as app features built on the shell primitives.
-

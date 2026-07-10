@@ -53,6 +53,8 @@ threadId: main
 
 Passing the scope explicitly is clearer in docs and production code because it makes the session and thread visible at the call site.
 
+`AgentTuiRuntimeScope` requires non-empty `agentId`, `sessionId`, and `threadId` values. Invalid scope identifiers fail at construction rather than being converted into empty route or store keys.
+
 ## Session Store Behavior
 
 If the wrapped agent has a session store and the requested session does not exist, `InMemoryAgentTuiRuntime.EnsureScopeAsync(...)` creates the session through the agent before the TUI starts.
@@ -80,3 +82,5 @@ tui => tui
 ```
 
 The `TextMessageStreamHandler` shown here is application code, not a guaranteed built-in default.
+
+`HpdAgentTuiApp` orders hydrated events by `SequenceNumber` before applying them. During live operation it also tracks known active runtime runs and rejects a second prompt submission with a "Thread is busy" notice. `InMemoryAgentTuiRuntime` performs the authoritative active-run check as well, so callers outside the stock prompt loop cannot start overlapping work on the same runtime.

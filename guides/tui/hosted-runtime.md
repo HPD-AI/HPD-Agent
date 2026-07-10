@@ -123,3 +123,11 @@ threadId: main
 ```
 
 For most hosted apps, pass the scope explicitly so the TUI starts on the intended agent, session, and thread.
+
+`AgentTuiRuntimeScope` requires non-empty agent, session, and thread identifiers. The hosted runtime also rejects malformed endpoint payloads whose required identifier fields are missing or blank; it does not silently construct scopes with empty ids.
+
+## Active Runs And Hydration Errors
+
+`HpdAgentTuiApp` prevents a second prompt submission while it knows the current thread has an active run. The hosted backend remains authoritative: clients should still handle active-run conflicts because another client or process may have started work on the same thread.
+
+Hydrated thread events are applied in `SequenceNumber` order. If a hosted request fails because a persisted JSON payload is not a known agent event, `HostedAgentTuiRuntime` includes a hint that the backend may be older than the thread history it is reading. Restart or redeploy the backend so it loads the current event registrations before treating the thread data as corrupt.

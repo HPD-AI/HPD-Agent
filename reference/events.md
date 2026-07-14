@@ -88,7 +88,7 @@ Durable thread event JSON omits many of those fields. Use live envelopes for API
 | Interactive middleware | request events implementing `IRequestEvent` and response events implementing `IResponseEvent` | interactive | generally live only |
 | Retry and error policy | `FunctionRetryEvent`, `ModelCallRetryEvent`, middleware error events | diagnostic/default | generally live only |
 | Compaction observability | `CompactionEvent` | default/diagnostic | live middleware event; not the durable projection instruction |
-| Thread-history compaction | `ThreadHistoryCompactionCheckpointEvent` | thread history | durable checkpoint for soft and hard compaction |
+| Thread-history compaction | `ThreadHistoryCompactionCheckpointEvent` | thread history | durable checkpoint for soft and hard compaction; projection changes only for hard retention |
 | Content and references | upload/reference events | default/diagnostic | depends on event and content persistence policy |
 | Audio transcripts | `UserAudioTranscriptDeltaEvent`, `UserAudioTranscriptCompletedEvent`, `UserAudioTranscriptFailedEvent` | streaming/default | transcript text projection is policy-dependent; raw audio is not durable by default |
 | Assistant audio output | assistant audio output, stream, artifact, failure, and playback events | default/diagnostic | live/runtime-oriented unless explicitly projected by audio runtime policy |
@@ -235,5 +235,5 @@ Live-only or caveated families:
 - interactive request/response events are live bidirectional flows
 - workflow and subagent child-event persistence depends on the execution path and session/thread policy
 - observability and diagnostic events generally do not persist unless explicitly mapped
-- compaction observability is live, while thread-history compaction is durable only when hard retention is applied
+- compaction observability is live; thread-history checkpoints can be durable for soft and hard retention, but only hard retention removes messages from the projected thread
 - message-turn errors have special thread failure conversion behavior rather than the same simple persistence override as successful turn events

@@ -12,7 +12,7 @@ fork compaction rewrites the new target thread before it is committed
 
 There are three related surfaces:
 
-- model-visible compaction: middleware reduces the non-system messages used for the next model turn
+- model-visible compaction: middleware reduces the non-system messages used for the next model request
 - durable thread-history compaction: hard retention removes messages from the projected thread history and may insert replacement messages
 - fork compaction: a newly forked target thread is reduced before its initial thread history is saved
 
@@ -102,7 +102,7 @@ Triggers decide when compaction runs:
 | `ContextWindowCompactionTriggerOptions` | Runs when the last observed input token count crosses either a configured percentage of the context window or an explicit token count. |
 | `CompositeCompactionTriggerOptions` | Runs when any child trigger in `AnyOf` runs. |
 
-Context-window triggers use usage observed from prior turns. They are not preflight token counters for the current turn.
+Context-window triggers use observed usage, not a full preflight tokenizer for unsent messages. At a message-turn boundary they use prior turn usage. Inside an agentic turn they can use usage from the latest completed model iteration before the next provider request.
 
 `ContextWindowCompactionTriggerOptions.ContextWindowSize` can be omitted when the active run supplies model context metadata:
 
@@ -140,6 +140,8 @@ new ContextWindowCompactionTriggerOptions
 
 Hosted clients can preflight the same model-aware pressure with `POST /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/context-usage`. The endpoint returns `ThreadContextUsage` and does not start a run or mutate history.
 
+Automatic context-window compaction is evaluated before a user-message turn and again before provider-bound iterations inside an agentic turn. The per-iteration check is cheap when the trigger does not fire. If the trigger does fire, HPD runs the configured compaction strategy before the next model request so the next provider call uses the compacted model-visible history.
+
 ## Retention
 
 Retention decides what happens to durable thread history after model-visible compaction.
@@ -152,6 +154,25 @@ Retention decides what happens to durable thread history after model-visible com
 Preserve retention is soft compaction. It changes what the model sees but does not remove projected thread messages.
 
 Compact retention is hard compaction. It can change future `LoadThreadAsync(...)` projection and can make old message ids unavailable as fork points.
+
+## Soft Or Hard Retention
+
+Soft compaction is the safest default for chat products, audit-heavy systems, and early integrations. It keeps the durable thread projection intact, so UIs can still show the original conversation, old message ids remain available as fork points, and recovery is straightforward if a summary misses nuance. The tradeoff is that storage and thread projection stay large. Clients also need to understand that the model-visible history may be smaller than the transcript they render.
+
+Hard compaction is better when the durable thread itself must stay small or when every future reader should treat the compacted projection as canonical. It reduces loaded thread history, can speed up hydration, and avoids repeatedly carrying old raw messages through forked or resumed work. The tradeoff is that the projection is destructive: compacted-away message ids may no longer be valid fork points, exact old wording may only exist in an archival/event source, and clients must render replacement messages or gaps according to the checkpoint.
+
+Use this rule of thumb:
+
+| Need | Prefer |
+| --- | --- |
+| Keep full transcript/audit history visible | Soft retention |
+| Safest default for user-facing chat | Soft retention |
+| Reduce what the model sees without changing projection | Soft retention |
+| Make the loaded thread canonical and smaller | Hard retention |
+| Keep fork targets and resumed runs small by default | Hard retention |
+| Remove old messages from normal projection | Hard retention |
+
+For long-running agentic turns, both modes can reduce the next provider request after compaction. The difference is what becomes durable. Soft retention records compaction state and keeps the raw projection intact. Hard retention applies a durable checkpoint immediately when automatic compaction fires before a provider-bound iteration, so future loads and forks see the compacted projection for the durable messages that were removed.
 
 ## Boundary Policies
 

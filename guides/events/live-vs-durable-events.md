@@ -46,7 +46,7 @@ Do not assume an event is durable just because it appears in the live stream. Ev
 | Custom progress events | yes | no by default |
 | Retry and diagnostics | yes | generally no |
 | Compaction observability | yes | no by itself |
-| Thread-history compaction | may be observed indirectly | yes when hard retention is applied |
+| Thread-history compaction | may be observed indirectly | checkpoint can be durable; projection changes only for hard retention |
 | Workflow events | yes | validate per workflow path |
 | Audio runtime events | yes | policy-dependent |
 | Struct events | process-local only | no |
@@ -57,7 +57,7 @@ When in doubt, test the exact session and thread path your app uses.
 
 `CompactionEvent` is live middleware observability. It tells clients that compaction was skipped or performed and can include counts, reason text, and summary details.
 
-`ThreadHistoryCompactionCheckpointEvent` is different. It is a durable thread-history checkpoint written for soft and hard compaction. Hard checkpoints remove durable compacted message ids and insert replacement messages; soft checkpoints leave raw replay intact so clients can choose whether to collapse or show compacted ranges.
+`ThreadHistoryCompactionCheckpointEvent` is different. It is a durable thread-history checkpoint written for soft and hard compaction when a thread store is available. Hard checkpoints remove durable compacted message ids and insert replacement messages; soft checkpoints leave raw replay intact so clients can choose whether to collapse or show compacted ranges.
 
 Render `CompactionEvent` in diagnostics. Render projected thread messages as canonical durable history.
 

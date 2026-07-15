@@ -1,12 +1,12 @@
 # Events
 
-Events are the common vocabulary for HPD Agent runtime activity. Local subscriptions, hosted SSE, hosted WebSocket, TUI runtimes, bot adapters, middleware, and thread history all use related event types.
+Events are the common vocabulary for HPD Agent runtime activity. Local subscriptions, committed hosted SSE, TUI runtimes, bot adapters, middleware, and thread history all use related event types.
 
 This page is family-based. It is not an exhaustive generated schema reference.
 
 ## Live Event Envelope
 
-Hosted SSE and WebSocket use `AgentEventSerializer` envelopes:
+Hosted SSE uses `AgentEventSerializer` envelopes:
 
 ```json
 {
@@ -19,7 +19,7 @@ Hosted SSE and WebSocket use `AgentEventSerializer` envelopes:
 
 The envelope includes injected `version` and `type` fields. Built-in type names use `SCREAMING_SNAKE_CASE`. Payload properties are camelCase and null values are omitted.
 
-Unknown or missing `type` values cannot be deserialized as known events. HTTP input treats invalid event envelopes as bad requests. WebSocket closes invalid event frames with an invalid-payload close status.
+Unknown or missing `type` values cannot be deserialized as known events. HTTP input treats invalid event envelopes as bad requests.
 
 Custom event types must be registered with the event serializer, normally through source generation, and need JSON metadata for AOT-safe serialization. See [Custom Events](../guides/events/custom-events.md).
 
@@ -70,7 +70,7 @@ Live event envelopes and durable thread event JSON are different surfaces.
 
 Live envelopes always include `version` and `type`, and can include routing and correlation fields such as session id, thread id, channel, direction, event flow id, metadata, and trace/span fields when those values are present on the event.
 
-Durable thread event JSON omits many of those fields. Use live envelopes for API/SSE/WebSocket examples. Use thread event documents only when documenting storage or thread projection behavior.
+Durable thread event JSON omits many of those fields. Use hosted SSE envelopes for streaming examples. Use thread event documents only when documenting storage or thread projection behavior.
 
 ## Event Families
 
@@ -147,7 +147,7 @@ For registration examples, suppression reasons, and TypeScript shapes, see [Back
 
 ## Struct Events
 
-Struct events are a separate process-local surface for realtime samples. HPD Agent-owned samples implement `AgentStructEvent`, which is an agent-level marker over the lower HPD Events struct-event contract. They do not inherit from `AgentEvent`, do not use `AgentEventSerializer`, and do not appear in hosted SSE/WebSocket streams or thread history unless a component explicitly converts or summarizes them as an `AgentEvent`.
+Struct events are a separate process-local surface for realtime samples. HPD Agent-owned samples implement `AgentStructEvent`, which is an agent-level marker over the lower HPD Events struct-event contract. They do not inherit from `AgentEvent`, do not use `AgentEventSerializer`, and do not appear in hosted SSE or thread history unless a component explicitly converts or summarizes them as an `AgentEvent`.
 
 Selected struct events can be exported with `AgentStructEventSerializer`. That serializer uses a separate envelope from hosted `AgentEvent` streaming and is for diagnostics, local capture, replay tooling, or telemetry export. Serializing a struct event does not make it visible to the TypeScript client or durable thread history.
 
@@ -199,7 +199,7 @@ For reasoning output, use the same start/delta/end pattern but render it separat
 
 For tool calls, use start/args/result/end events to show activity, arguments, and results. Tool events may arrive interleaved with streaming text depending on the model and middleware.
 
-For interactive middleware, render request events and answer with the matching `IResponseEvent` through WebSocket, the hosted HTTP `/responses` route, or `agent.AnswerRequestAsync(...)` in a local app. Permission, continuation, clarification, and client-tool responses are coordination events, not ordinary output. See [Bidirectional Events](../guides/events/bidirectional-events.md).
+For interactive middleware, render request events and answer with the matching `IResponseEvent` through the hosted HTTP `/responses` route or `agent.AnswerRequestAsync(...)` in a local app. Permission, continuation, clarification, and client-tool responses are coordination events, not ordinary output. See [Bidirectional Events](../guides/events/bidirectional-events.md).
 
 Request-specific event families should define only the domain request and domain response events. Do not add family-specific terminal lifecycle events such as `FooApprovedEvent`, `FooDeniedEvent`, `FooResolvedEvent`, or `FooCancelledEvent`; use the generic request lifecycle events for request-session state.
 

@@ -33,7 +33,7 @@ Then use focused pages:
 
 - [Workflow Events](../multi-agent/workflow-events.md): render workflow progress, nodes, layers, and routes.
 - [Permissions Middleware](../middleware/permissions.md): answer bidirectional permission events.
-- [Hosted Streaming API](../hosting/hosted-streaming-api.md): receive events over SSE or WebSocket.
+- [Hosted Streaming API](../hosting/hosted-streaming-api.md): hydrate state and receive committed events over resumable SSE.
 - [Thread History And Forking](../sessions-and-streaming/thread-history-and-forking.md): read durable thread event history.
 - [Events Reference](../../reference/events.md): event families, envelopes, and persistence caveats.
 

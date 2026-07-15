@@ -81,7 +81,7 @@ Events are the framework vocabulary for input, streaming output, lifecycle, tool
 
 There are two related event surfaces:
 
-- live agent events, used by local subscriptions, hosted SSE, WebSocket, TUI runtimes, and bot adapters
+- live agent events, used by local subscriptions, committed hosted SSE, TUI runtimes, and bot adapters
 - durable thread events, used to reconstruct thread history and thread projections
 
 Live event envelopes can include routing and correlation fields such as `sessionId`, `threadId`, `channel`, `direction`, trace ids, and metadata when those values are present. Durable thread event JSON is intentionally different and omits many live-routing fields.
@@ -95,7 +95,7 @@ This distinction matters for nested agents and workflows. A parent live stream c
 The same model applies across runtime surfaces:
 
 - local agents use the same event vocabulary through typed subscriptions
-- hosted APIs expose sessions, threads, thread runs, inputs, SSE, WebSocket, and the bidirectional response route
+- hosted APIs expose sessions, threads, thread runs, authoritative runtime state, inputs, resumable SSE, interruption, and the bidirectional response route
 - TUI runtimes bind UI state to a runtime scope
 - bot adapters map platform conversation identity to a session and thread before invoking an agent
 - subagents use policy to decide whether child work stays on the parent thread, forks, or moves to another session

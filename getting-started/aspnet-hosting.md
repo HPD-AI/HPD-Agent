@@ -99,7 +99,7 @@ Before exposing hosted routes outside local development, decide how your app wil
 
 The hosting layer owns persistence and passes the configured stores to runtimes as requests arrive. Configure stores through hosting options rather than creating separate stores inside `ConfigureAgent`.
 
-When a hosted input request arrives, hosting resolves the route `agentId`, starts the thread runtime if needed, and queues the input into that runtime. That active runtime is what live events, middleware responses, client tools, permissions, interruptions, SSE, and WebSocket streams attach to. For the direct-run versus started-runtime model, see [Agent Runtime And Capabilities](../concepts/agent-runtime-and-capabilities.md).
+When a hosted input request arrives, hosting resolves the route `agentId`, starts the thread runtime if needed, and queues the input into that runtime. That active runtime owns committed events, middleware responses, client tools, permissions, and interruptions. Hosted observers hydrate `/state` and resume SSE after its committed cursor. For the direct-run versus started-runtime model, see [Agent Runtime And Capabilities](../concepts/agent-runtime-and-capabilities.md).
 
 ## Next
 

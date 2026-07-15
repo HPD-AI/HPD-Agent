@@ -69,7 +69,7 @@ if (!delivered)
     logger.LogDebug("Response arrived after the request was no longer waiting.");
 ```
 
-ASP.NET Core hosted clients do not call `agent.Subscribe(...)` or `agent.AnswerRequestAsync(...)` directly. They observe request events over SSE or WebSocket and send matching response event envelopes through WebSocket or the hosted `/responses` route.
+ASP.NET Core hosted clients do not call `agent.Subscribe(...)` or `agent.AnswerRequestAsync(...)` directly. Their response command is the hosted `/responses` route. However, the current committed SSE endpoint cannot deliver built-in request records that still use the default non-persistent event policy. Treat hosted bidirectional interaction as incomplete until request delivery is committed and replayable; direct in-process subscriptions continue to work.
 
 ## Ask From Middleware
 
@@ -119,7 +119,7 @@ public async Task<string> BookMeeting(
 
 In direct in-process code, the app handles the request in the same way: subscribe to `ClarificationRequestEvent`, ask the user, and send a `ClarificationResponseEvent` with the same request id. In ASP.NET Core hosted clients, observe the request from the hosted event stream and return the response through the hosted response path for the same `agentId + sessionId + threadId`.
 
-Responses sent through `agent.AnswerRequestAsync(...)`, `agent.TryAnswerRequestAsync(...)`, WebSocket, or the hosted `/responses` route must be events too. In practice, use response records that inherit from `AgentEvent` and implement `IAgentResponseEvent` / `IResponseEvent`, as the built-in response events do.
+Responses sent through `agent.AnswerRequestAsync(...)`, `agent.TryAnswerRequestAsync(...)`, or the hosted `/responses` route must be events too. In practice, use response records that inherit from `AgentEvent` and implement `IAgentResponseEvent` / `IResponseEvent`, as the built-in response events do.
 
 ## Built-In Families
 
@@ -194,6 +194,8 @@ Set an explicit timeout when waiting on user or host input. If a timeout expires
 Do not block inside a direct event handler while holding UI state that the response path also needs. The handler should gather the decision and call `agent.AnswerRequestAsync(...)`. Hosted clients should post or send the response promptly while the thread runtime is still active.
 
 ## Hosted Response Route
+
+The route below is the response half of the hosted protocol. The current committed-stream limitation described above means its existence does not by itself make built-in hosted interactive prompts end-to-end usable.
 
 Hosted runtimes expose one response route for all standardized response events:
 

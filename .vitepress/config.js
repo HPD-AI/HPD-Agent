@@ -149,6 +149,7 @@ const sidebar = [
     collapsed: true,
     items: [
       link('ASP.NET Core Hosting', '/guides/hosting/aspnet-core'),
+      link('Hosted Lifecycle And Recovery', '/guides/hosting/hosted-lifecycle-and-recovery'),
       link('Hosted Streaming API', '/guides/hosting/hosted-streaming-api'),
       link('Stored Agent Definitions', '/guides/hosting/stored-agent-definitions'),
       link('Hosted Endpoints Reference', '/reference/hosted-endpoints')

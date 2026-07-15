@@ -29,7 +29,7 @@ Message-turn hooks run around a user message turn. Iteration hooks run around an
 
 Wrapper hooks are different from `Before*` and `After*` hooks. They receive a handler and can decide whether to call it, call it more than once, transform inputs, transform outputs, or catch errors. Function wrappers always participate. Streaming model wrappers opt in by returning a non-null stream.
 
-Runtime start/stop hooks run when an agent is used as a started runtime, such as hosted SSE/WebSocket, bot, TUI, client-tool, or other long-lived input-loop scenarios. Direct one-shot `RunAsync(...)` calls still use the message-turn, iteration, function, thread, and error hooks. See [Agent Runtime And Capabilities](agent-runtime-and-capabilities.md) for the distinction.
+Runtime start/stop hooks run when an agent is used as a started runtime, such as hosted HTTP/SSE, bot, TUI, client-tool, or other long-lived input-loop scenarios. Direct one-shot `RunAsync(...)` calls still use the message-turn, iteration, function, thread, and error hooks. See [Agent Runtime And Capabilities](agent-runtime-and-capabilities.md) for the distinction.
 
 ## Hook Reference
 

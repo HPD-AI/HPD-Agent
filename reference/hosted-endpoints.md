@@ -16,7 +16,7 @@ Routes are intentionally mixed:
 
 - session routes do not include `agentId`
 - thread read, update, delete, content, and event-log routes are session/thread scoped
-- thread create, fork, thread runs, input, interrupt, SSE, WebSocket, and the bidirectional response route include `agentId`
+- thread create, fork, thread runs, runtime state, input, interrupt, SSE, and the bidirectional response route include `agentId`
 - stored agent definitions live under `/agents`
 
 ## Sessions
@@ -56,7 +56,6 @@ Routes are intentionally mixed:
 | Method | Route | Body | Success | Common failures |
 | --- | --- | --- | --- | --- |
 | `GET` | `/agents/{agentId}/sessions/{sid}/threads/{bid}/runs` | none | `200 List<ThreadRunDto>` | `404`, `400` |
-| `GET` | `/agents/{agentId}/sessions/{sid}/threads/{bid}/runs/active` | none | `200 ThreadRunDto?` | `404`, `400` |
 | `GET` | `/agents/{agentId}/sessions/{sid}/threads/{bid}/runs/{runtimeRunId}` | none | `200 ThreadRunDto` | `404`, `400` |
 
 Thread run status values are currently `active`, `completed`, `cancelled`, and `failed`.
@@ -90,14 +89,18 @@ Default hosted content storage is in-memory. Do not assume durability unless the
 
 | Method | Route | Body or protocol | Success | Common failures |
 | --- | --- | --- | --- | --- |
-| `POST` | `/agents/{agentId}/sessions/{sid}/threads/{bid}/inputs` | `StreamTextRequest` or input event envelope | `202` | `400`, `404`, `409`, `500` |
-| `GET` | `/agents/{agentId}/sessions/{sid}/threads/{bid}/events/live` | SSE | `text/event-stream` | `404` before headers |
-| `POST` | `/agents/{agentId}/sessions/{sid}/threads/{bid}/interrupt` | optional interruption envelope or reason body | `202` | `404`, `409`, `400`, `500` |
+| `POST` | `/agents/{agentId}/sessions/{sid}/threads/{bid}/inputs` | `StreamTextRequest` or input event envelope | `202 InputSubmissionDto` | `400`, `404`, `409`, `500` |
+| `GET` | `/agents/{agentId}/sessions/{sid}/threads/{bid}/state` | none | `200 ThreadRuntimeStateDto` | `404` |
+| `GET` | `/agents/{agentId}/sessions/{sid}/threads/{bid}/events/live?after={sequence}` | SSE | replaying `text/event-stream` | `404` before headers |
+| `POST` | `/agents/{agentId}/sessions/{sid}/threads/{bid}/interrupt` | interruption envelope or reason with optional `expectedRuntimeRunId` | `202 InterruptionSubmissionDto` | `404`, `400`, `500` |
 | `POST` | `/agents/{agentId}/sessions/{sid}/threads/{bid}/context-usage` | `ContextUsageRequest` | `200 ThreadContextUsage` | `404`, `400`, `500` |
-| `GET` | `/agents/{agentId}/sessions/{sid}/threads/{bid}/ws` | WebSocket text frames | WebSocket stream | pre-upgrade `400`, `404`, `409`; post-upgrade invalid-payload or policy-violation close statuses |
 | `POST` | `/agents/{agentId}/sessions/{sid}/threads/{bid}/responses` | serialized `AgentEvent` envelope implementing `IResponseEvent` | `200` | `404`, `409`, `400` |
 
-SSE sends one live event envelope per `data:` frame. WebSocket accepts text frames containing input envelopes or response event envelopes and sends live event envelopes back after a valid client frame initializes the subscription. HTTP clients post any serialized `AgentEvent` envelope implementing `IResponseEvent` to the single `/responses` route.
+`ThreadRuntimeStateDto` contains ordered committed `events`, `latestSequenceNumber`, and the backend-owned `activeRun`. `InputSubmissionDto` contains `runtimeRunId` and `startedAt`.
+
+SSE sends committed events after the requested cursor. Every event frame has `id: {SequenceNumber}` plus one serialized event envelope in `data:`; comment heartbeats keep quiet streams alive. HTTP clients post any serialized `AgentEvent` envelope implementing `IResponseEvent` to the single `/responses` route.
+
+Interruption returns status `accepted`, `already_terminal`, `no_active_run`, or `active_run_mismatch`. Supplying `expectedRuntimeRunId` prevents a stale client from interrupting a newer active run. See [Hosted Lifecycle And Recovery](../guides/hosting/hosted-lifecycle-and-recovery.md).
 
 `context-usage` estimates the scoped thread's current input-token pressure against the supplied `runConfig`, including model context-window metadata when the client has it. It does not start a thread run and does not compact history.
 

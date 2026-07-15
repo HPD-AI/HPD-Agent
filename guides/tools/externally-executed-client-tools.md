@@ -143,11 +143,9 @@ return completeClientToolWithText(request.requestId, 'Advanced UI tools are now 
 
 Augmentation can inject or remove harnesses, expand or collapse harnesses, hide or show tools, add or remove context, and update client-owned state.
 
-## Events And Transports
+## Events And Responses
 
-With SSE, the TypeScript client observes `CLIENT_TOOL_INVOKE_REQUEST` on the live event stream and posts the matching `CLIENT_TOOL_INVOKE_OUTCOME` to the hosted `/responses` route for the active agent, session, and thread.
-
-With WebSocket, the same response event is sent over the socket after the connection is attached to a runtime scope.
+The TypeScript client observes `CLIENT_TOOL_INVOKE_REQUEST` on committed SSE and posts the matching `CLIENT_TOOL_INVOKE_OUTCOME` to the hosted `/responses` route for the active agent, session, and thread.
 
 Applications usually do not need to handle these events manually. If a matching handler is registered, the TypeScript client answers the request automatically. Use explicit event projection only when the UI needs to render, audit, or approve the external tool request.
 

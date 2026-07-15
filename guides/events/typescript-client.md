@@ -9,15 +9,14 @@ The client is not another event system. It is the JavaScript/TypeScript consumpt
 The main entry point is `AgentClient`:
 
 ```typescript
-import { AgentClient, EventTypes } from '@hpd/hpd-agent-client';
+import { AgentClient, EventTypes } from '@hpd-research/hpd-agent-client';
 
 const client = new AgentClient({
   baseUrl: 'http://localhost:5135',
-  transport: 'sse',
 });
 ```
 
-Use `transport: 'sse'` for the default hosted streaming path. Use `transport: 'websocket'` when the host exposes the WebSocket runtime endpoint and you want input and output on the same socket.
+The client uses the committed, resumable SSE lifecycle. There is no transport selection or agent WebSocket fallback.
 
 ## Open A Chat Scope
 
@@ -35,26 +34,30 @@ const chat = await client.chat.open({
 });
 ```
 
-Then load history, install event handlers, subscribe to the live stream, and submit input:
+Then install event handlers, hydrate the authoritative snapshot, subscribe after its cursor, and submit input:
 
 ```typescript
-for (const event of await chat.getThreadEvents()) {
-  projectThreadEvent(event);
-}
-
 client.on(EventTypes.TEXT_DELTA, (event) => {
   transcript.append(event.messageId, event.text);
 });
 
 client.onAny((event) => {
-  projectLiveEvent(event);
+  projectEvent(event);
 });
 
-await chat.subscribeLive();
-await chat.submitText('Summarize this thread.');
+const state = await chat.subscribeLive();
+for (const event of state.events) {
+  projectEvent(event);
+}
+
+const submission = await chat.submitMessage({
+  contents: [{ $type: 'text', text: 'Summarize this thread.' }],
+});
+
+console.log(submission.runtimeRunId, submission.startedAt);
 ```
 
-Subscribe before submitting input when the UI needs to render the turn as it happens.
+`subscribeLive()` loads `/state` first, starts SSE with `afterSequenceNumber`, and returns the same snapshot for initial projection. Events committed between the state read and the SSE connection are replayed after the cursor. Subscribe before submitting input when the UI needs to render the turn as it happens.
 
 ## Message Policy And Transcript Visibility
 
@@ -160,7 +163,7 @@ Typed handlers run before `onAny` handlers for the same event. Handlers are awai
 
 ## Respond To Interactive Events
 
-Permission, continuation, and clarification requests are bidirectional events. The TypeScript app observes the request, asks the user or host policy, and sends the matching response:
+Permission, continuation, and clarification requests are bidirectional events. When a host delivers a request event, the TypeScript app asks the user or host policy and sends the matching response:
 
 ```typescript
 client.on(EventTypes.PERMISSION_REQUEST, async (request) => {
@@ -181,7 +184,9 @@ client.on(EventTypes.PERMISSION_REQUEST, async (request) => {
 });
 ```
 
-The same pattern applies to `CLARIFICATION_REQUEST` and `CONTINUATION_REQUEST`. With SSE, the client posts response event envelopes to the hosted `/responses` route for the current chat scope. With WebSocket, it sends the same response envelope over the socket. In both cases, preserve the request id from the request event so the hosted runtime can match the pending waiter.
+The same pattern applies to `CLARIFICATION_REQUEST` and `CONTINUATION_REQUEST`. The client posts response event envelopes to the hosted `/responses` route for the current chat scope. Preserve the request id from the request event so the hosted runtime can match the pending waiter.
+
+The current committed SSE endpoint only exposes events persisted to the thread document, while built-in interactive request records still default to non-persistent events. Therefore the TypeScript response APIs exist, but built-in hosted interactive prompts are not end-to-end available until request delivery is moved onto the committed stream.
 
 Client tools are the exception. If you register a tool handler, the client automatically answers `CLIENT_TOOL_INVOKE_REQUEST` with `CLIENT_TOOL_INVOKE_OUTCOME`:
 
@@ -217,44 +222,40 @@ client.onAny((event) => {
 
 Register custom event serialization on the .NET side so hosted streams can produce the event envelope. Add TypeScript types locally when the event belongs to your app; add them to the SDK only when the event becomes a shared protocol event.
 
-## Live Stream Vs Thread History
+## Snapshot, Live Stream, And Recovery
 
-`chat.subscribeLive()` reads hosted live envelopes from the runtime stream. `chat.getThreadEvents()` reads durable thread history records.
+`chat.subscribeLive()` reads the unified thread state, then observes committed events after that snapshot's cursor. `chat.getThreadEvents()` remains a lower-level durable-history API, but lifecycle-aware UIs should prefer `chat.getState()` or the snapshot returned by `subscribeLive()` because it includes history, cursor, and active run atomically.
 
-Project them into the same UI state, but do not assume they are the same JSON shape. Live events can include routing, correlation, and transient runtime fields. Thread history contains the stored thread view.
+The SSE transport awaits handlers in registration order and advances its cursor only after the consumer completes successfully. If the stream ends or fails, it reconnects after the last acknowledged sequence. Duplicate sequence numbers are ignored.
 
-For a typical chat UI:
+For a lifecycle-aware UI:
 
-1. Read thread history into transcript state.
-2. Subscribe to live events.
-3. Apply live deltas and tool events as they arrive.
-4. Refresh or reconcile thread history after a completed run if the app needs durable confirmation.
+1. Register event handlers.
+2. Call `subscribeLive()` and project its `events`.
+3. Use `state.activeRun` to restore running and cancellation controls.
+4. Submit input and retain its authoritative `runtimeRunId`.
+5. Apply committed events as they arrive.
+
+To cancel safely, use `chat.cancelActiveTurn()`. It reloads state and sends the current run as `expectedRuntimeRunId`. Inspect the returned `accepted`, `already_terminal`, `no_active_run`, or `active_run_mismatch` status instead of assuming cancellation occurred.
 
 ## What Does Not Reach TypeScript
 
-`AgentStructEvent` values do not flow through the TypeScript client. Struct events are process-local samples on the .NET `StructEventHub`; they are not `AgentEvent` values, not serialized by `AgentEventSerializer`, and not sent over hosted SSE or WebSocket.
+`AgentStructEvent` values do not flow through the TypeScript client. Struct events are process-local samples on the .NET `StructEventHub`; they are not `AgentEvent` values, not serialized by `AgentEventSerializer`, and not sent over hosted SSE.
 
 `AgentStructEventSerializer` can serialize selected struct events for explicit export or diagnostics, but that is not the hosted agent event stream.
 
 If a process-local sample needs to appear in a hosted UI, summarize or convert it into an intentional `AgentEvent`.
 
-## Transport Notes
+## Lifecycle Transport
 
-With SSE, the live observer connects to:
+The live observer connects to:
 
 ```text
-/agents/{agentId}/sessions/{sessionId}/threads/{threadId}/events/live
+/agents/{agentId}/sessions/{sessionId}/threads/{threadId}/events/live?after={lastAcknowledgedSequence}
 ```
 
 Inputs are posted separately. Response events are posted to the hosted `/responses` route for the current agent, session, and thread.
-
-With WebSocket, the client connects to:
-
-```text
-/agents/{agentId}/sessions/{sessionId}/threads/{threadId}/ws
-```
-
-Input events are sent over the open socket.
+The retired WebSocket transport did not provide atomic hydration, acknowledged replay, or authoritative submission results and has been removed.
 
 ## Related Pages
 
@@ -264,3 +265,4 @@ Input events are sent over the open socket.
 - [Live Vs Durable Events](live-vs-durable-events.md)
 - [Serialization And Registration](serialization-and-registration.md)
 - [Hosted Streaming API](../hosting/hosted-streaming-api.md)
+- [Hosted Lifecycle And Recovery](../hosting/hosted-lifecycle-and-recovery.md)

@@ -1,6 +1,6 @@
 # ASP.NET Core Hosting
 
-HPD Agent hosting exposes sessions, threads, stored agent definitions, input submission, live events, WebSocket streaming, content, and middleware response endpoints through ASP.NET Core minimal APIs.
+HPD Agent hosting exposes sessions, threads, stored agent definitions, authoritative runtime state, input submission, resumable committed events, content, and middleware response endpoints through ASP.NET Core minimal APIs.
 
 The core hosting model is:
 
@@ -111,4 +111,6 @@ Runtime routes include:
 /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/...
 ```
 
-That scope is used by HTTP input, interrupt, SSE, WebSocket, thread runs, and the bidirectional response route. TUI hosted runtimes and bot adapters should map their UI or platform identity into the same runtime scope before sending input or responses.
+That scope is used by HTTP input, state, interrupt, resumable SSE, thread runs, and the bidirectional response route. TUI hosted runtimes and bot adapters should map their UI or platform identity into the same runtime scope before sending input or responses.
+
+Hosted clients should load `/state`, render its committed events, and open `/events/live?after={latestSequenceNumber}`. See [Hosted Lifecycle And Recovery](hosted-lifecycle-and-recovery.md).

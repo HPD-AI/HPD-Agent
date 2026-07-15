@@ -97,7 +97,7 @@ Live event envelopes include `version` and `type` fields:
 }
 ```
 
-Durable thread event documents are storage records. They may omit live routing and correlation fields. Use live envelopes for SSE/WebSocket examples, and use thread event documents only when documenting storage behavior.
+Durable thread event documents are storage records. They may omit live routing and correlation fields. Use hosted SSE envelopes for streaming examples, and use thread event documents only when documenting storage behavior.
 
 ## Related Pages
 

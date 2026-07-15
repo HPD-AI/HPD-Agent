@@ -105,11 +105,11 @@ Examples:
 
 ## Hosted Streams
 
-Hosted SSE and WebSocket send the same live event envelope shape described in [Hosted Streaming API](../hosting/hosted-streaming-api.md). Treat the transport as a delivery choice. The projection rules are the same once the client has parsed each event.
+Hosted SSE sends committed event envelopes in sequence order as described in [Hosted Streaming API](../hosting/hosted-streaming-api.md). The projection rules are the same once the client has parsed each event.
 
-SSE is a good fit for observer-only rendering. WebSocket is needed when the client must also send input or respond to bidirectional events such as permissions.
+Use HTTP command routes to submit input or respond to bidirectional events such as permissions. Keep commands separate from observation so reconnecting the SSE stream cannot duplicate them.
 
-Do not mix the transport APIs: direct in-process code subscribes with `agent.Subscribe...` and calls `RunAsync(...)`; ASP.NET Core hosted clients read SSE/WebSocket frames and submit input to hosted routes.
+Do not mix the transport APIs: direct in-process code subscribes with `agent.Subscribe...` and calls `RunAsync(...)`; ASP.NET Core hosted clients hydrate `/state`, read SSE frames after its cursor, and submit input to hosted routes.
 
 ## Persistence Boundaries
 

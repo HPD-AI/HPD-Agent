@@ -2,7 +2,7 @@
 
 Use `AgentEventSerializer` when events cross a process, hosted API, log, replay file, or client boundary.
 
-Local subscriptions receive typed event objects. Hosted SSE and WebSocket send serialized event envelopes.
+Local subscriptions receive typed event objects. Hosted SSE sends serialized committed event envelopes.
 
 ## Live Envelope
 

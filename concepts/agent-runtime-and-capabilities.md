@@ -42,7 +42,7 @@ Most in-process code can call `RunAsync(...)` directly. In that shape, the call 
 
 After an agent is started, `RunAsync(input)` queues the input into that runtime loop and returns `AgentTurnResult.Empty`. The runtime loop processes queued inputs, publishes completion events for thread runs, keeps the runtime alive after interrupted turns, and gives hosted clients a live target for events, responses, client tools, permissions, and interruptions.
 
-Use direct `RunAsync(...)` when your app owns the call and only needs the result. Use a started runtime when the agent must be addressable while it is running: ASP.NET Core hosting, SSE/WebSocket clients, bot adapters, TUI runtimes, externally executed client tools, middleware response routing, or runtime-owned background work.
+Use direct `RunAsync(...)` when your app owns the call and only needs the result. Use a started runtime when the agent must be addressable while it is running: ASP.NET Core HTTP/SSE clients, bot adapters, TUI runtimes, externally executed client tools, middleware response routing, or runtime-owned background work.
 
 The start/stop middleware hooks belong to this started-runtime shape:
 
@@ -66,7 +66,7 @@ The start/stop middleware hooks belong to this started-runtime shape:
 | Content | Uploading bytes, preserving thread references, and resolving provider-facing content | [Content Upload And Resolution](../guides/content/content-upload-and-resolution.md) |
 | Subagents | Exposing specialist agents as tools with their own runtime policy | [Subagents](../guides/agents/subagents.md) |
 | Workflows | Explicit graph orchestration across agents and functions | [Multi-Agent Overview](../guides/multi-agent/overview.md) |
-| Hosting | HTTP/SSE/WebSocket/runtime endpoints for external clients | [ASP.NET Core Hosting](../guides/hosting/aspnet-core.md) |
+| Hosting | HTTP commands, authoritative state, and resumable SSE for external clients | [ASP.NET Core Hosting](../guides/hosting/aspnet-core.md) |
 | Observability | Logging, OpenTelemetry, and usage tracking at agent and client layers | [Logging And Telemetry](../guides/observability/logging-and-telemetry.md) |
 | Evaluations | Batch, live, judge, safety, red-team, and report workflows | [Evaluations Overview](../guides/evaluations/overview.md) |
 | Sandboxing | Local process isolation and execution boundaries for command-capable tools | [Sandboxing Overview](../guides/sandboxing/overview.md) |

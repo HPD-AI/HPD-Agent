@@ -88,7 +88,7 @@ Hosted thread deletion uses a thread operation lock. A lock conflict means anoth
 
 `GET /sessions/{sessionId}/threads/{threadId}/events` returns normalized polymorphic `AgentEvent` JSON for the thread log. This is useful for rebuilding thread views and debugging history.
 
-Do not assume the thread event JSON is identical to live SSE or WebSocket event envelopes. Live event envelopes can include routing and correlation fields when they are present on the event. Durable thread event JSON may omit live-routing fields and only contains events that were mapped or opted into thread persistence.
+Do not assume the thread event JSON is identical to hosted SSE event envelopes. Streamed event envelopes can include routing and correlation fields when they are present on the event. Durable thread event JSON may omit live-routing fields and only contains events that were mapped or opted into thread persistence.
 
 In direct in-process code, read thread history through the configured session store or higher-level runtime that wraps it. In ASP.NET Core hosted clients, use the thread events route.
 

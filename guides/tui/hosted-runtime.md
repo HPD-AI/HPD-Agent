@@ -98,13 +98,13 @@ The hosted runtime uses the hosted API for:
 - listing, loading, creating, updating, and deleting stored agent definitions
 - listing, searching, loading, creating, renaming, and deleting sessions
 - listing, creating, forking, renaming, and deleting threads
-- loading thread events
-- observing live thread events with SSE
+- loading one authoritative thread snapshot containing committed events, cursor, and active run
+- replaying and observing committed thread events with resumable SSE
 - submitting `AgentInputEvent` instances
-- checking the active thread run
+- interrupting the expected backend-owned run with structured outcomes
 - sending middleware responses for permissions, continuations, clarifications, and client tools
 
-Hosted TUI middleware responses go through hosted response endpoints. Bot adapters do not use this same hosted response route model for platform button callbacks.
+Hosted TUI middleware responses go through hosted response endpoints. The current committed SSE observer does not yet expose built-in interactive request records that retain their default non-persistent event policy, so hosted permission, clarification, continuation, and client-tool prompts remain incomplete until those requests become committed and replayable. Bot adapters do not use this same hosted response route model for platform button callbacks.
 
 ## Thread Projection And Compaction
 
@@ -126,8 +126,14 @@ For most hosted apps, pass the scope explicitly so the TUI starts on the intende
 
 `AgentTuiRuntimeScope` requires non-empty agent, session, and thread identifiers. The hosted runtime also rejects malformed endpoint payloads whose required identifier fields are missing or blank; it does not silently construct scopes with empty ids.
 
-## Active Runs And Hydration Errors
+## Recovery, Active Runs, And Hydration Errors
 
-`HpdAgentTuiApp` prevents a second prompt submission while it knows the current thread has an active run. The hosted backend remains authoritative: clients should still handle active-run conflicts because another client or process may have started work on the same thread.
+The hosted runtime opens a thread by reading `/state`, hydrating its committed events in sequence order, recording `latestSequenceNumber`, and observing `/events/live?after={cursor}`. If the stream ends after minutes or hours, it reconnects after the last event the TUI fully applied. Backend work continues independently of the observer connection.
 
-Hydrated thread events are applied in `SequenceNumber` order. If a hosted request fails because a persisted JSON payload is not a known agent event, `HostedAgentTuiRuntime` includes a hint that the backend may be older than the thread history it is reading. Restart or redeploy the backend so it loads the current event registrations before treating the thread data as corrupt.
+Submission returns the authoritative `runtimeRunId`. `HpdAgentTuiApp` prevents a second prompt submission while that run is active, while the hosted backend remains authoritative if another client starts work.
+
+Escape cancellation reads the active run and sends it as `expectedRuntimeRunId`. The backend can report `accepted`, `already_terminal`, `no_active_run`, or `active_run_mismatch`; a stale TUI therefore cannot accidentally cancel a newer run. Reopening the same scope uses the same state-and-cursor path to restore output and cancellation controls.
+
+If a hosted request fails because a persisted JSON payload is not a known agent event, `HostedAgentTuiRuntime` includes a hint that the backend may be older than the thread history it is reading. Restart or redeploy the backend so it loads the current event registrations before treating the thread data as corrupt.
+
+See [Hosted Lifecycle And Recovery](../hosting/hosted-lifecycle-and-recovery.md) for the underlying protocol.

@@ -43,7 +43,16 @@ You can also submit an event envelope:
 
 `messages` is optional on `USER_MESSAGES_INPUT`. Normal user submissions should include at least one message. Omitting it or sending an empty array asks the runtime to resume the scoped thread with the supplied run configuration; the thread must already have history.
 
-Accepted input returns `202 Accepted`. That means the input was submitted. Observe SSE or WebSocket events to render output, completion, errors, and interactive requests.
+Accepted input returns `202 Accepted` with the backend-owned run identity:
+
+```json
+{
+  "runtimeRunId": "run-123",
+  "startedAt": "2026-07-15T10:15:30Z"
+}
+```
+
+Observe committed SSE events to render output, completion, errors, and interactive requests. Keep the returned `runtimeRunId` for lifecycle state and safe interruption.
 
 Only one active hosted run is allowed per thread. A second input submitted to the same `sessionId + threadId` while a run is active returns a conflict with a thread-run-active error.
 
@@ -108,43 +117,35 @@ There is no separate hosted compact endpoint. Compaction is part of the normal i
 
 `mode: 1` is `CompactionRunMode.Force`. `behavior: 2` is `CompactionBehavior.StopAfterCompaction`, which compacts and stops before a model call. Enum values use the hosted API's default numeric JSON representation unless the host customizes JSON options.
 
-## Observe With SSE
+## Load State Then Observe With SSE
 
-SSE is observer-only:
+First load the authoritative snapshot:
 
 ```http
-GET /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/events/live
+GET /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/state
+```
+
+It returns ordered committed `events`, their `latestSequenceNumber`, and the backend-owned `activeRun`. Render that snapshot and connect SSE after its cursor:
+
+```http
+GET /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/events/live?after=42
 Accept: text/event-stream
 ```
 
-The server sends one serialized event envelope per `data:` frame:
+The server replays every committed event after the cursor, then continues observing. Each event includes its committed sequence as the SSE id:
 
 ```text
-data: {"version":"1.0","type":"TEXT_DELTA","text":"hello","messageId":"..."}
+id: 43
+data: {"version":"1.0","type":"TEXT_DELTA","sequenceNumber":43,"text":"hello","messageId":"..."}
 ```
 
-If an exception occurs after SSE headers have been sent, the stream writes a serialized error event instead of changing the HTTP status.
+Process events serially and advance the cursor only after the consumer applies an event successfully. On EOF or a connection error, reconnect with the last acknowledged cursor. Comment heartbeats can be ignored. If an exception occurs after SSE headers have been sent, the stream writes a serialized error event instead of changing the HTTP status.
 
-## Use WebSocket For Bidirectional Events
-
-WebSocket connects at:
-
-```text
-GET /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/ws
-```
-
-Client-to-server frames must be text frames containing either:
-
-- an input event envelope, such as `USER_MESSAGES_INPUT`, or an interruption request where supported by the route
-- a response event envelope implementing `IResponseEvent`, such as `PERMISSION_RESPONSE`, `CONTINUATION_RESPONSE`, `CLARIFICATION_RESPONSE`, or `CLIENT_TOOL_INVOKE_OUTCOME`
-
-Server-to-client frames are live event envelopes for the same runtime scope. WebSocket is bidirectional and can observe after a valid client frame initializes the subscription. Use SSE for observer-only clients.
-
-Invalid event envelopes close with an invalid-payload status. Input that conflicts with an active thread run closes with a policy-violation status.
+Input, interruption, and interactive responses use their HTTP routes. The hosted agent WebSocket lifecycle no longer exists. See [Hosted Lifecycle And Recovery](hosted-lifecycle-and-recovery.md) for the complete recovery contract.
 
 ## Render Nested Activity
 
-SSE and WebSocket deliver a linear stream. A hosted client can project that stream into a transcript, timeline, workflow tree, subagent view, or permission queue by grouping events with fields such as `messageId`, `callId`, `permissionId`, `traceId`, `spanId`, `parentSpanId`, `eventFlowId`, and agent `metadata`.
+SSE delivers a linear committed stream. A hosted client can project that stream into a transcript, timeline, workflow tree, subagent view, or permission queue by grouping events with fields such as `messageId`, `callId`, `permissionId`, `traceId`, `spanId`, `parentSpanId`, `eventFlowId`, and agent `metadata`.
 
 Workflow and subagent events may appear in the same live stream as parent agent events when child execution is routed through the parent event coordinator. Treat the transport as delivery only; use [Render An Event Stream](../sessions-and-streaming/render-an-event-stream.md) for UI projection guidance.
 
@@ -174,16 +175,28 @@ POST /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/interrupt
 Content-Type: application/json
 
 {
+  "expectedRuntimeRunId": "run-123",
   "reason": "User cancelled the request.",
   "eventFlowId": "optional-flow-id"
 }
 ```
 
-The body can also be an `INTERRUPTION_REQUEST` event envelope. Omitting a JSON object at the service layer can create a default user interruption reason; HTTP clients should send `{}` or a `reason` body unless an empty-body integration test is added.
+Read `/state` immediately before cancellation and send its active run id as `expectedRuntimeRunId`. The body can also include an `INTERRUPTION_REQUEST` event envelope. Omitting a JSON object creates a default user interruption reason.
 
-Interrupt requires an active thread run. If none exists, the route returns a conflict with a thread-run-not-active error.
+The `202` response has one of four statuses:
+
+- `accepted`: the expected active run received the interruption
+- `already_terminal`: the expected run has already completed, failed, or been cancelled
+- `no_active_run`: there is no current run and the expected run is not terminal history
+- `active_run_mismatch`: another run is active; the response includes that `activeRun`
+
+Do not automatically retry against a mismatched run. It may be newer work started by another client.
 
 ## Answer Interactive Middleware
+
+::: warning Current committed-stream limitation
+The response route is mapped, but the committed SSE observer can only deliver event types persisted to the thread document. Built-in interactive request records currently default to non-persistent events. Do not build a hosted permission, clarification, continuation, or client-tool prompt flow until those request payloads are committed and replayable.
+:::
 
 HTTP clients answer bidirectional requests through one response route:
 

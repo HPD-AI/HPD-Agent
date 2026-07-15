@@ -40,7 +40,7 @@ The `using var` declarations keep each subscription active until the end of the 
 
 `RunAsync(...)` still performs the turn. Event subscriptions observe what happens during the turn; they do not replace the run call.
 
-This page shows the direct `Agent` API. ASP.NET Core hosted clients observe the same live activity through SSE or WebSocket and submit input through hosted routes instead of calling `agent.Subscribe(...)` or `RunAsync(...)`.
+This page shows the direct `Agent` API. ASP.NET Core hosted clients observe committed activity through resumable SSE and submit input through hosted routes instead of calling `agent.Subscribe(...)` or `RunAsync(...)`.
 
 `result.Text` is still available after the run. In this sample, the text has already been written by the `TextDeltaEvent` handler, so the code does not print `result.Text` again.
 

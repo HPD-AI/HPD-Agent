@@ -199,7 +199,6 @@ SubAgentExecutionPolicies.ParentSessionForkedThread(
     new ThreadForkCompactionOptions
     {
         Mode = ThreadForkCompactionMode.Enabled,
-        PreferCache = true,
         Strategy = new MessageCountingCompactionOptions
         {
             PreserveRecentUserTurnCount = 3
@@ -212,12 +211,9 @@ Use:
 - `Mode = Inherit` or `null` to use the agent's normal `CompactionConfig.ForkCompaction` behavior
 - `Mode = Enabled` to compact the child thread before it is committed, even if normal fork compaction is off
 - `Mode = Disabled` to keep the child thread un-compacted, even if normal fork compaction is on
-- `PreferCache = true` to reuse a matching copied thread compaction cache when possible
 - `Strategy` to override the shared compaction strategy for this subagent fork
 
 The compaction runs against the fork target before the subagent starts. In practice, that means a `ParentSessionForkedThread()` subagent can inherit the parent's recent context without copying every parent message into the child thread.
-
-`PreferCache` is useful when many subagents fork from the same parent context. HPD only uses the cache when the cached original message ids match the fork target and the cached model-visible messages are present on that thread. If the cache is missing or stale, HPD falls back to the configured compaction strategy.
 
 This controls the fork operation. It does not define the compaction strategy. The configured compaction middleware still decides how history is reduced. See [Compaction](../sessions-and-streaming/compaction.md).
 

@@ -95,27 +95,23 @@ The response is `ThreadContextUsage`:
 }
 ```
 
-This endpoint does not start a run or mutate thread history. Use it for model-switch warnings, context meters, and deciding whether to submit a config-only compaction run.
+This endpoint does not start a run or mutate thread history. Use it for model-switch warnings, context meters, and deciding whether to submit an explicit compaction command.
 
-## Force Compaction
+## Explicit Compaction
 
-There is no separate hosted compact endpoint. Compaction is part of the normal input pipeline, so hosted clients force it by submitting a `USER_MESSAGES_INPUT` envelope with empty or omitted `messages` and a run config that sets compaction mode to force:
+Submit a dedicated compaction input through the normal hosted input route:
 
 ```json
 {
   "version": "1.0",
-  "type": "USER_MESSAGES_INPUT",
-  "messages": [],
-  "runConfig": {
-    "compaction": {
-      "mode": 1,
-      "behavior": 2
-    }
+  "type": "COMPACT_THREAD_INPUT",
+  "request": {
+    "continuation": 1
   }
 }
 ```
 
-`mode: 1` is `CompactionRunMode.Force`. `behavior: 2` is `CompactionBehavior.StopAfterCompaction`, which compacts and stops before a model call. Enum values use the hosted API's default numeric JSON representation unless the host customizes JSON options.
+`continuation: 1` is `CompactionContinuation.StopAfterCompaction`. The request may also override strategy, retention, and model-context metadata. Hosting gives it normal run ownership and interruption semantics without creating a user message or entering a model turn.
 
 ## Read State Then Observe With SSE
 

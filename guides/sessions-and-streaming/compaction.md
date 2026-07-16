@@ -16,22 +16,24 @@ There are three related surfaces:
 - durable thread-history compaction: hard retention removes messages from the projected thread history and may insert replacement messages
 - fork compaction: a newly forked target thread is reduced before its initial thread history is saved
 
-## Enable Compaction
+## Configure Automatic Compaction
 
-Compaction is opt-in. Set `Enabled = true` when configuring compaction:
+Configure an automatic policy when the agent should create checkpoints as context grows:
 
 ```csharp
 builder.WithCompaction(config =>
 {
-    config.Enabled = true;
     config.Strategy = new MessageCountingCompactionOptions
     {
         PreserveRecentUserTurnCount = 10
     };
-    config.Trigger = new CountCompactionTriggerOptions
+    config.Automatic = new CompactionAutomaticPolicy
     {
-        TargetCount = 20,
-        Threshold = 5
+        Trigger = new CountCompactionTriggerOptions
+        {
+            TargetCount = 20,
+            Threshold = 5
+        }
     };
     config.Retention = new PreserveThreadHistoryOptions();
 });
@@ -39,22 +41,23 @@ builder.WithCompaction(config =>
 
 This configuration performs soft compaction when the count trigger fires. The next model call sees reduced history, but durable thread history remains intact.
 
-Per-run controls can force, disable, or tune compaction through `AgentRunConfig.Compaction`:
+Set `Automatic = null` on `CompactionConfig` to disable automatic checkpoints while retaining explicit and fork compaction. A per-run `CompactionRunPolicy` replaces the configured automatic policy for that run.
+
+Explicit compaction is a dedicated input operation, not a model turn:
 
 ```csharp
-await agent.RunAsync(
-    "Continue from here.",
-    runConfig: new AgentRunConfig
+await agent.RunAsync(new CompactThreadInputEvent
+{
+    SessionId = sessionId,
+    ThreadId = threadId,
+    Request = new ThreadCompactionRequest
     {
-        Compaction = new CompactionRunConfig
-        {
-            Mode = CompactionRunMode.Force,
-            Behavior = CompactionBehavior.StopAfterCompaction
-        }
-    });
+        Continuation = CompactionContinuation.StopAfterCompaction
+    }
+});
 ```
 
-`CompactionRunMode.Disabled` wins over configured triggers for that run. `CompactionRunMode.Force` bypasses triggers and runs compaction before the model turn when a strategy is available. `CompactionBehavior.StopAfterCompaction` is useful for explicit compaction operations because it compacts the current thread and ends the run before a model call.
+The request can override strategy, retention, and model-context metadata. It runs under normal hosted run ownership and cancellation, but creates no user message.
 
 ## Strategies
 
@@ -89,8 +92,8 @@ Choose the smallest strategy that solves the pressure you are seeing:
 | The thread projection itself must stay small | A strategy plus `CompactThreadHistoryOptions`. |
 | Tool calls/results are involved | Add boundary options that keep tool-call groups intact. |
 | A new fork should start lighter than its source thread | Fork compaction through `ThreadForkOptions.Compaction`. |
-| One request needs full context for debugging or a critical decision | `AgentRunConfig.Compaction = new() { Mode = CompactionRunMode.Disabled }`. |
-| One request should compact before continuing | `AgentRunConfig.Compaction = new() { Mode = CompactionRunMode.Force }`. |
+| One request needs full context for debugging or a critical decision | `AgentRunConfig.Compaction = new() { Automatic = null }`. |
+| A client should compact the current thread now | Submit `CompactThreadInputEvent`. |
 
 ## Triggers
 
@@ -111,12 +114,15 @@ new AgentRunConfig
 {
     ProviderKey = "openai",
     ModelId = "gpt-4.1",
-    Compaction = new CompactionRunConfig
+    Compaction = new CompactionRunPolicy
     {
-        Trigger = new ContextWindowCompactionTriggerOptions
+        Automatic = new CompactionAutomaticPolicy
         {
-            ThresholdMode = ContextWindowCompactionThresholdMode.Percentage,
-            TriggerPercentage = 0.70
+            Trigger = new ContextWindowCompactionTriggerOptions
+            {
+                ThresholdMode = ContextWindowCompactionThresholdMode.Percentage,
+                TriggerPercentage = 0.70
+            }
         },
         ModelContext = new ModelContextWindowOptions
         {
@@ -195,7 +201,7 @@ Compaction uses three different records:
 | Record | Meaning |
 | --- | --- |
 | `CompactionEvent` | Middleware execution observability for skipped or performed compaction. |
-| `CompactionStateData` | Thread-scoped persistent middleware state with last compaction, trigger counts, and usage observations. |
+| `CompactionStateData` | Thread-scoped trigger counters and usage observations. |
 | `ThreadHistoryCompactionCheckpointEvent` | Durable thread checkpoint written for soft and hard compaction. |
 
 `CompactionEvent` is useful for diagnostics and runtime UI. `ThreadHistoryCompactionCheckpointEvent` controls thread projection.
@@ -225,7 +231,6 @@ await agent.ForkThreadAsync(
         Compaction = new ThreadForkCompactionOptions
         {
             Mode = ThreadForkCompactionMode.Enabled,
-            PreferCache = true,
             Strategy = new MessageCountingCompactionOptions
             {
                 PreserveRecentUserTurnCount = 3

@@ -109,13 +109,13 @@ Hosted SSE sends committed event envelopes in sequence order as described in [Ho
 
 Use HTTP command routes to submit input or respond to bidirectional events such as permissions. Keep commands separate from observation so reconnecting the SSE stream cannot duplicate them.
 
-Do not mix the transport APIs: direct in-process code subscribes with `agent.Subscribe...` and calls `RunAsync(...)`; ASP.NET Core hosted clients hydrate `/state`, read SSE frames after its cursor, and submit input to hosted routes.
+Do not mix the transport APIs: direct in-process code subscribes with `agent.Subscribe...` and calls `RunAsync(...)`; ASP.NET Core hosted clients restore controls from `/state`, observe SSE after their applied cursor, and submit input to hosted routes.
 
-## Persistence Boundaries
+## Canonical Boundaries
 
-Do not use live rendering rules as persistence rules. Thread history contains only events that are mapped or opt in to thread persistence. Interactive request/response events and diagnostics are often live-only. Subagent child history depends on the subagent session and thread policy.
+Thread-scoped projectable events commit before publication. Replay and live delivery use the same event types and handlers. Process-local diagnostics and struct events are separate surfaces rather than events that silently disappear during recovery.
 
-For durable thread replay, read the thread event log and rebuild a thread projection from the persisted events. For live UI, consume the live stream and keep enough local state to update messages, tools, prompts, and workflow nodes as events arrive.
+For full replay, consume bounded canonical batches from position zero and retain semantic projection state rather than raw event objects. For live UI, continue from the last successfully applied thread position.
 
 ## Compacted Thread Views
 

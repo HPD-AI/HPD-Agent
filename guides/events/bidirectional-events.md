@@ -69,7 +69,7 @@ if (!delivered)
     logger.LogDebug("Response arrived after the request was no longer waiting.");
 ```
 
-ASP.NET Core hosted clients do not call `agent.Subscribe(...)` or `agent.AnswerRequestAsync(...)` directly. Their response command is the hosted `/responses` route. However, the current committed SSE endpoint cannot deliver built-in request records that still use the default non-persistent event policy. Treat hosted bidirectional interaction as incomplete until request delivery is committed and replayable; direct in-process subscriptions continue to work.
+ASP.NET Core hosted clients do not call `agent.Subscribe(...)` or `agent.AnswerRequestAsync(...)` directly. Canonical request events arrive through the hosted `/events` stream and currently answerable requests are also included in `/state`. Their response command is the hosted `/responses` route.
 
 ## Ask From Middleware
 

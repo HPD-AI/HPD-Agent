@@ -58,7 +58,7 @@ const sidebar = [
       link('Bidirectional Events', '/guides/events/bidirectional-events'),
       link('Custom Events', '/guides/events/custom-events'),
       link('Lifecycle, Retry, And Error Events', '/guides/events/lifecycle-retry-and-error-events'),
-      link('Live Vs Durable Events', '/guides/events/live-vs-durable-events'),
+      link('Canonical And Process-Local Events', '/guides/events/canonical-and-process-local-events'),
       link('Serialization And Registration', '/guides/events/serialization-and-registration'),
       link('TypeScript Client Events', '/guides/events/typescript-client'),
       link('Testing Event-Driven Code', '/guides/events/testing-event-driven-code'),
@@ -121,6 +121,7 @@ const sidebar = [
     text: 'Sessions And Streaming',
     collapsed: true,
     items: [
+      link('Canonical Thread Journal', '/guides/sessions-and-streaming/canonical-thread-journal'),
       link('Render An Event Stream', '/guides/sessions-and-streaming/render-an-event-stream'),
       link('Thread History And Forking', '/guides/sessions-and-streaming/thread-history-and-forking'),
       link('Compaction', '/guides/sessions-and-streaming/compaction')

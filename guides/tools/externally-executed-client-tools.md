@@ -24,11 +24,10 @@ import {
   createCollapsedToolHarness,
   completeClientToolWithText,
   failClientTool,
-} from '@hpd/hpd-agent-client';
+} from '@hpd-research/hpd-agent-client';
 
 const client = new AgentClient({
   baseUrl: 'http://localhost:5135',
-  transport: 'sse',
 });
 
 const uiHarness = createCollapsedToolHarness(
@@ -81,7 +80,7 @@ The handler runs in the TypeScript client process. It can call application APIs,
 
 ## Expose The Harness For A Run
 
-Open the chat scope, subscribe to live events, then include the registered harnesses in the run config:
+Open the chat scope, observe canonical events, then include the registered harnesses in the run config:
 
 ```typescript
 const chat = await client.chat.open({
@@ -96,7 +95,9 @@ const chat = await client.chat.open({
 
 await chat.subscribeLive();
 
-await chat.submitText('Open the command menu.', {
+await chat.submitMessage({
+  contents: [{ $type: 'text', text: 'Open the command menu.' }],
+}, {
   runConfig: {
     clientToolInput: {
       clientToolHarnesses: client.tools.clientToolHarnesses,
@@ -112,7 +113,9 @@ await chat.submitText('Open the command menu.', {
 Client tool harnesses can start collapsed. A collapsed harness gives the model one container tool first; the underlying client tools become visible when the model expands the container.
 
 ```typescript
-await chat.submitText('Help me navigate this UI.', {
+await chat.submitMessage({
+  contents: [{ $type: 'text', text: 'Help me navigate this UI.' }],
+}, {
   runConfig: {
     clientToolInput: {
       clientToolHarnesses: [uiHarness],

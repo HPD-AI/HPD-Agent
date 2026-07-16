@@ -15,20 +15,20 @@ Use typed events for application behavior. Use traces and struct samples for loc
 
 Assistant audio event type names are listed in the [Events Reference](../../reference/events.md). Prefer typed handling over hand-written JSON field assumptions.
 
-## Live Events Vs Durable History
+## Publication And Storage
 
-Not every audio event should become thread history.
+Audio uses canonical events, process-local samples, content storage, and application storage according to the kind of data.
 
 | Data | Usual destination |
 | --- | --- |
 | Transcript text | Thread history when committed. |
 | Assistant text | Thread history as the primary assistant result. |
 | Assistant audio artifact | `IContentStore` when artifact capture is enabled. |
-| Playback progress | Live event stream or trace. |
+| Playback progress | Canonical event when it belongs in replay; otherwise a trace or process-local sample. |
 | Queue depth and underrun samples | Local struct-event observers or diagnostics. |
 | Raw input audio | Explicit app storage only. |
 
-This split keeps replay useful without quietly turning every run into a raw-media archive.
+This separation keeps the journal semantic while placing media bytes and high-frequency samples on storage surfaces designed for them.
 
 ## Mixed Input Correlation
 
@@ -53,7 +53,7 @@ Playback truth is intentionally conservative. A queued artifact is not proof tha
 
 Audio struct samples are process-local diagnostics. They are useful when code in the same process needs low-overhead observations such as playback queue depth or underruns.
 
-They are not the same thing as normal `AgentEvent` streaming. If you need a client, host, or persisted report to see something, emit or bridge a regular agent event or artifact.
+They are distinct from `AgentEvent` publication. Publish a canonical `AgentEvent` or content artifact when a hosted client or replay projection must observe the semantic result.
 
 ## Testing
 
@@ -70,4 +70,4 @@ For event-driven audio tests:
 - [Text To Speech Output](text-to-speech-output.md)
 - [Speech To Text Input](speech-to-text-input.md)
 - [Realtime Audio](realtime-audio.md)
-- [Live Vs Durable Events](../events/live-vs-durable-events.md)
+- [Canonical And Process-Local Events](../events/canonical-and-process-local-events.md)

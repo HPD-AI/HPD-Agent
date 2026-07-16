@@ -85,7 +85,7 @@ Each named bundle owns its own:
 - session store
 - hosting service facade
 
-If `SessionStorePath` is configured, hosting uses a JSON session store. Otherwise, the default session store is in-memory. The default agent store is also in-memory.
+If `SessionStorePath` is configured, hosting creates a segmented `FileSessionStore`. Otherwise, the default session store is `InMemorySessionStore`. The default agent store is also in-memory.
 
 Created-resource `Location` headers are currently prefixless even when the API is mapped under a route prefix. Content uploads use a hosting content store scoped to the thread. The default hosting service creates an in-memory content store, so do not treat uploaded content as durable unless a durable content store is configured.
 
@@ -113,4 +113,4 @@ Runtime routes include:
 
 That scope is used by HTTP input, state, interrupt, resumable SSE, thread runs, and the bidirectional response route. TUI hosted runtimes and bot adapters should map their UI or platform identity into the same runtime scope before sending input or responses.
 
-Hosted clients should load `/state`, render its committed events, and open `/events/live?after={latestSequenceNumber}`. See [Hosted Lifecycle And Recovery](hosted-lifecycle-and-recovery.md).
+Hosted clients should load `/state` to restore `activeRun` and `pendingRequests`, then open `/events?after={appliedCursor}`. A client without local projection starts at zero and rebuilds the complete conversation incrementally. See [Hosted Lifecycle And Recovery](hosted-lifecycle-and-recovery.md).

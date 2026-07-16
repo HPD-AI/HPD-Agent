@@ -34,9 +34,9 @@ public sealed record RetrievalProgressEvent(
 
 Keep discriminator names in `SCREAMING_SNAKE_CASE`.
 
-## Emit It
+## Publish It
 
-Middleware and hook contexts can emit custom events the same way they emit built-in events:
+Middleware and hook contexts publish custom events through the same surface as built-in events:
 
 ```csharp
 public async Task BeforeFunctionAsync(
@@ -45,21 +45,21 @@ public async Task BeforeFunctionAsync(
 {
     if (context.Function?.Name == "search_documents")
     {
-        context.Emit(new RetrievalProgressEvent(
+        await context.PublishAsync(new RetrievalProgressEvent(
             Query: "user query",
             DocumentsScanned: 0,
-            DocumentsMatched: 0));
+            DocumentsMatched: 0), cancellationToken);
     }
 
     await Task.CompletedTask;
 }
 ```
 
-Events emitted from middleware are published to the agent event stream immediately. Subscriber handlers may process from their mailboxes asynchronously. During a message turn, the runtime stamps trace information onto middleware-emitted events when the event does not already carry it.
+Events published from middleware enter the current runtime context. Thread-scoped publication commits before subscriber delivery; process-local publication routes through the runtime coordinator. Subscriber handlers may process from their mailboxes asynchronously.
 
-## Emit From A Tool
+## Publish From A Tool
 
-Tool functions can emit custom events too. Add `FunctionExecutionContext` as a runtime-only parameter on an `[AIFunction]` method:
+Tool functions can publish custom events too. Add `FunctionExecutionContext` as a runtime-only parameter on an `[AIFunction]` method:
 
 ```csharp
 using HPD.Agent;
@@ -73,7 +73,9 @@ public sealed class RetrievalTools
         FunctionExecutionContext context,
         CancellationToken cancellationToken)
     {
-        context.Emit(new RetrievalProgressEvent(query, 0, 0));
+        await context.PublishAsync(
+            new RetrievalProgressEvent(query, 0, 0),
+            cancellationToken);
 
         var scanned = 0;
         var matched = 0;
@@ -85,7 +87,9 @@ public sealed class RetrievalTools
             if (document.IsMatch)
                 matched++;
 
-            context.Emit(new RetrievalProgressEvent(query, scanned, matched));
+            await context.PublishAsync(
+                new RetrievalProgressEvent(query, scanned, matched),
+                cancellationToken);
         }
 
         return $"Matched {matched} documents.";
@@ -95,7 +99,7 @@ public sealed class RetrievalTools
 
 `FunctionExecutionContext` is not shown to the model as a tool argument. The source generator treats it as a runtime parameter, excludes it from the generated tool schema and DTO, and supplies it when the agent invokes the function. Use it when the tool itself knows meaningful progress that middleware cannot infer from the outside.
 
-The context also carries the current function call id, function name, run config, result metadata, services, content store, background-task registry, and event coordinator. `Emit(...)` stamps the current trace id when the event does not already have one.
+The context also carries the current function call id, function name, run config, result metadata, services, content store, background-task registry, and event coordinator. `PublishAsync(...)` stamps invocation scope and trace information, commits thread-scoped events, and returns the event value that was published.
 
 ## Subscribe To It
 
@@ -131,7 +135,7 @@ using var progress = workflow.Subscribe<RetrievalProgressEvent>(evt =>
 
 ## Serialization
 
-Custom events use the same live event envelope as built-in events:
+Custom events use the same event envelope as built-in events:
 
 ```json
 {
@@ -196,15 +200,18 @@ internal static class AppEventRegistration
 }
 ```
 
-## Persistence
+## Canonical Publication
 
-Custom events are live runtime events by default. They are useful for UI progress, traces, and hosted clients even when they are not written to thread history.
+Publishing from a session-and-thread-scoped runtime context commits the custom event to the canonical thread journal before subscribers receive it. Replay, reconnect catch-up, simultaneous observers, and live subscribers therefore receive the same registered event type, payload, `EventId`, and `ThreadSequenceNumber`.
 
-If a custom event must become durable thread history, treat that as a separate persistence design. Overriding `ShouldPersistToThread()` is event type policy, but your thread projection and replay path still need to know how to store, load, and render that event correctly.
+Publishing without thread scope produces process-local output with `ThreadSequenceNumber == 0`. Use that mode for activity that does not belong in thread reconstruction.
+
+Consumers should use one projection handler for both historical and live delivery. The delivery mode may change batching or animation cadence, but it does not change the event payload.
 
 ## Related Pages
 
 - [Events Overview](overview.md)
+- [Canonical And Process-Local Events](canonical-and-process-local-events.md)
 - [Event Streams And Hierarchies](../../concepts/event-streams-and-hierarchies.md)
 - [Render An Event Stream](../sessions-and-streaming/render-an-event-stream.md)
 - [Middleware Overview](../middleware/overview.md)

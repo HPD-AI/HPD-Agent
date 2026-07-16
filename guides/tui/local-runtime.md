@@ -83,4 +83,4 @@ tui => tui
 
 The `TextMessageStreamHandler` shown here is application code, not a guaranteed built-in default.
 
-`HpdAgentTuiApp` orders hydrated events by `SequenceNumber` before applying them. During live operation it also tracks known active runtime runs and rejects a second prompt submission with a "Thread is busy" notice. `InMemoryAgentTuiRuntime` performs the authoritative active-run check as well, so callers outside the stock prompt loop cannot start overlapping work on the same runtime.
+`HpdAgentTuiApp` receives bounded event batches in `ThreadSequenceNumber` order. Historical, catch-up, and live batches use the same handlers; the applied cursor advances only after the entire batch projects successfully. During live operation the app tracks authoritative active runtime runs and rejects a second prompt submission with a "Thread is busy" notice. `InMemoryAgentTuiRuntime` performs the same ownership check for callers outside the stock prompt loop.

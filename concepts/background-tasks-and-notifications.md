@@ -264,5 +264,5 @@ Treat the rule as descriptive runtime metadata. Do not infer product behavior fr
 
 - [Events Reference](../reference/events.md)
 - [TypeScript Client Events](../guides/events/typescript-client.md)
-- [Live Vs Durable Events](../guides/events/live-vs-durable-events.md)
+- [Canonical And Process-Local Events](../guides/events/canonical-and-process-local-events.md)
 - [Middleware Lifecycle](middleware-lifecycle.md)

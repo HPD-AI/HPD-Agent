@@ -49,9 +49,9 @@ You should see files under `.hpd-data/sessions`, and possibly `.hpd-data/agents`
 
 ## What Happens
 
-`WithSessionStore(path)` creates a `JsonSessionStore`.
+`WithSessionStore(path)` creates a segmented `FileSessionStore`.
 
-The session store saves sessions, threads, messages, thread metadata, and session-scoped middleware state. By default, explicitly configuring a session store enables persistence after each turn.
+The session store saves session metadata and canonical thread journals. Messages, thread metadata, run lifecycle, and thread-scoped middleware state are projected from committed events. Explicitly configuring a session store enables canonical commit before hosted or replayable publication.
 
 `WithAgentStore(path)` creates a `JsonAgentStore`.
 
@@ -63,17 +63,19 @@ The agent store saves reusable agent definitions. This matters for hosted agents
 
 ## Local Store Or Hosted Store
 
-Use the JSON session and agent stores for local development, samples, tests, and small tools.
+Use the file session store and JSON agent store for local development, samples, tests, and filesystem-oriented deployments.
 
 For production hosting, place the same store responsibilities behind the storage layer you want to operate:
 
 - session and thread metadata
-- thread message projection and thread event data
+- canonical thread journals, descriptors, indexes, and semantic projections
 - session-scoped and thread-scoped middleware state
 - agent definitions, if users can create or select agents at runtime
 - content bytes, hosted-file references, and metadata needed to resolve attachments
 
 Treat local file stores as a development default unless your deployment model is designed around that filesystem. Production apps should make explicit choices for retention, backup, tenant boundaries, authorization, encryption, and content lifecycle.
+
+`FileSessionStore` uses segmented journals, sparse indexes, lightweight descriptors, and rebuildable projections. See [Canonical Thread Journal](../guides/sessions-and-streaming/canonical-thread-journal.md) for the store contract and physical layout.
 
 ## Next
 

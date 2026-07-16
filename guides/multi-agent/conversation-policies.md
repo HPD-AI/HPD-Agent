@@ -31,7 +31,7 @@ Use one thread when the workflow should read like a single collaborative transcr
 ```csharp
 var workflow = await AgentWorkflow.Create()
     .WithName("DraftAndReview")
-    .WithSessionStore(new JsonSessionStore("App_Data/sessions"))
+    .WithSessionStore(new FileSessionStore("App_Data/sessions"))
     .WithConversation(MultiAgentConversationPolicies.SharedWorkflowThread())
     .AddAgent("draft", draftConfig)
     .AddAgent("review", reviewConfig)
@@ -48,7 +48,7 @@ When multiple nodes target the same thread at the same time, the workflow serial
 Use one thread per node when each agent needs its own durable workspace:
 
 ```csharp
-.WithSessionStore(new JsonSessionStore("App_Data/sessions"))
+.WithSessionStore(new FileSessionStore("App_Data/sessions"))
 .WithConversation(MultiAgentConversationPolicies.ThreadPerAgent())
 ```
 
@@ -59,7 +59,7 @@ The workflow creates one session for the execution and a stable thread for each 
 Use forked threads when each agent should see the same starting request but write separately:
 
 ```csharp
-.WithSessionStore(new JsonSessionStore("App_Data/sessions"))
+.WithSessionStore(new FileSessionStore("App_Data/sessions"))
 .WithConversation(MultiAgentConversationPolicies.ForkThreadPerAgent())
 ```
 

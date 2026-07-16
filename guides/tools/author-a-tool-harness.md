@@ -71,11 +71,15 @@ public sealed class SearchTools
         FunctionExecutionContext context,
         CancellationToken cancellationToken)
     {
-        context.Emit(new SearchProgressEvent(query, "started"));
+        await context.PublishAsync(
+            new SearchProgressEvent(query, "started"),
+            cancellationToken);
 
         var result = await SearchAsync(query, cancellationToken);
 
-        context.Emit(new SearchProgressEvent(query, "completed"));
+        await context.PublishAsync(
+            new SearchProgressEvent(query, "completed"),
+            cancellationToken);
         return result;
     }
 }

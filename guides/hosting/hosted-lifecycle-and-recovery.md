@@ -1,8 +1,8 @@
 # Hosted Lifecycle And Recovery
 
-Hosted clients use one server-authoritative lifecycle for opening a thread, observing committed events, submitting work, reconnecting, and interrupting a run. The protocol uses HTTP for commands and state, plus resumable Server-Sent Events (SSE) for observation.
+Hosted clients use one server-authoritative lifecycle for control state, committed history, live observation, input, responses, and interruption.
 
-The runtime scope is always:
+The runtime scope is:
 
 ```text
 agentId + sessionId + threadId
@@ -10,44 +10,39 @@ agentId + sessionId + threadId
 
 ## The Lifecycle
 
-For every initial open or recovery:
+Opening or recovering a thread uses two independent reads:
 
 ```text
 GET /state
-  -> render events
-  -> remember latestSequenceNumber
-  -> inspect activeRun
+  -> restore activeRun and pendingRequests immediately
+  -> capture observedHead = N
 
-GET /events/live?after={latestSequenceNumber}
-  -> apply each committed event
-  -> acknowledge it locally
-  -> advance the cursor only after application succeeds
+GET /events?after={appliedCursor}
+  -> catch up canonical events after the client's cursor
+  -> remain attached for future commits
+  -> advance appliedCursor only after projection succeeds
 ```
 
-Submitting input is a separate command:
+Submitting work remains a separate command:
 
 ```text
 POST /inputs
   -> 202 { runtimeRunId, startedAt }
 ```
 
-The response identifies the backend-owned run. Output and terminal state arrive as committed events on SSE. The submission request is not an output stream.
+The backend owns execution. Disconnecting an observer does not cancel the run.
 
-This design gives opening, reconnecting, process recovery, and returning to an old session the same code path. A client does not need a separate recovery mode.
-
-## Load Authoritative State
-
-Read the thread snapshot before opening SSE:
+## Read Control State
 
 ```http
 GET /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/state
 ```
 
-The response contains:
+Example:
 
 ```json
 {
-  "latestSequenceNumber": 42,
+  "observedHead": 42,
   "activeRun": {
     "runtimeRunId": "run-123",
     "agentId": "assistant",
@@ -55,51 +50,54 @@ The response contains:
     "threadId": "main",
     "status": "active"
   },
-  "events": []
+  "pendingRequests": []
 }
 ```
 
-`events` is the committed thread history in sequence order. `latestSequenceNumber` is the cursor at the same snapshot boundary. `activeRun` is null when that agent does not own active work for the thread.
+`/state` is deliberately metadata-only. It does not return event history.
 
-Use this endpoint instead of assembling lifecycle state from separate history and active-run requests. It prevents a run from changing between two reads.
+- `observedHead` is the coherent journal boundary observed with the control state.
+- `activeRun` restores running and cancellation controls before history finishes loading.
+- `pendingRequests` restores permission, clarification, continuation, and client-tool interactions.
 
-## Resume Committed Events
+`observedHead` is not an applied cursor. A client must not skip to it without projecting the intervening events.
 
-Connect after the snapshot cursor:
+## Catch Up And Remain Live
 
 ```http
-GET /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/events/live?after=42
+GET /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/events?after=17
 Accept: text/event-stream
 ```
 
-Each committed event includes its sequence number as the SSE id:
+The stream sends committed catch-up events and then waits for new commits on the same connection.
 
 ```text
-id: 43
-data: {"version":"1.0","type":"TEXT_DELTA","sequenceNumber":43,"text":"hello"}
+id: 18
+event: agent-event
+data: {"version":"1.0","type":"TEXT_DELTA","threadSequenceNumber":18,"text":"hello"}
 
 ```
 
-The server sends only events whose sequence number is greater than `after`, in ascending order. It also sends comment heartbeats during quiet periods:
+The server also accepts `Last-Event-ID` when the `after` query parameter is absent. It sends comment heartbeats while idle:
 
 ```text
 : heartbeat
 
 ```
 
-Clients should:
+Clients must maintain separate notions of received and applied progress. Reconnect only after the greatest contiguous `threadSequenceNumber` whose handlers completed successfully.
 
-1. Process events serially.
-2. Verify that the SSE id and event sequence agree.
-3. Advance the local cursor only after the event has been applied successfully.
-4. Ignore an event at or below the acknowledged cursor.
-5. Reconnect with `after` set to the last acknowledged cursor after EOF or a transport failure.
+1. Decode events in order.
+2. Verify that the SSE id equals `threadSequenceNumber`.
+3. Apply the event through the same handler used for live delivery.
+4. Advance the applied cursor only after successful application.
+5. On EOF or transport failure, reconnect from the applied cursor.
 
-Do not advance the cursor when a projection handler fails. Reconnecting from the previous cursor lets the client retry that event instead of silently losing it.
+If projection fails, stop applying later events. Reconnection redelivers the failing canonical fact.
 
 ## Submit And Track A Run
 
-Submit text or an input event through `/inputs`. A successful response is authoritative:
+Accepted input returns:
 
 ```json
 {
@@ -108,17 +106,11 @@ Submit text or an input event through `/inputs`. A successful response is author
 }
 ```
 
-Only one hosted run may be active for a thread. A conflicting submission returns `409` with `ThreadRunActive`.
-
-Track the returned `runtimeRunId` until a matching terminal event is committed. If the client loses its local state, reload `/state`; do not invent a run id or assume that disconnecting stopped backend work.
+Only one run can own a thread at a time. Hosting reserves ownership, commits `THREAD_RUN_STARTED`, exposes the active run, executes the input, commits `THREAD_RUN_COMPLETED`, and only then clears active ownership. A conflicting submission returns `409`.
 
 ## Interrupt Safely
 
-Cancellation uses compare-and-interrupt:
-
-1. Read `/state`.
-2. If `activeRun` is null, there is nothing to interrupt.
-3. Send that run's id as `expectedRuntimeRunId`.
+Read `/state`, then submit the active run id:
 
 ```http
 POST /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/interrupt
@@ -130,52 +122,38 @@ Content-Type: application/json
 }
 ```
 
-The route returns `202` with a structured result:
-
-| Status | Meaning |
-| --- | --- |
-| `accepted` | The expected active run received the interruption. |
-| `already_terminal` | The expected run is already represented as terminal history. |
-| `no_active_run` | No run is currently active and the expected id was not found as terminal. |
-| `active_run_mismatch` | Another run is active; `activeRun` describes it. |
-
-Treat `active_run_mismatch` as fresh state, not as permission to interrupt the newer run automatically. This comparison prevents a delayed Escape key, stale tab, or recovering client from cancelling work it did not intend to target.
-
-## Recover After A Long Disconnect
-
-The backend run is independent of the SSE connection. If a laptop sleeps, a proxy closes an idle stream, or the UI stays open for hours:
-
-1. Keep the last fully applied sequence number.
-2. Reconnect SSE with that number in `after`.
-3. If local state is uncertain, reload `/state`, replace the projection with its committed events, and subscribe after its cursor.
-4. Use `activeRun` from the snapshot to restore running/cancellation controls.
-
-Closing the UI does not imply cancellation. Reopening the same scope hydrates committed output and discovers any still-active run through `/state`.
+Possible statuses are `accepted`, `already_terminal`, `no_active_run`, and `active_run_mismatch`. Never automatically retry against the mismatched run; it may be newer work started by another client.
 
 ## Interactive Responses
 
-Send a matching `IResponseEvent` envelope through:
+Pending request events are canonical journal facts and are also included in `/state` while answerable. Send the matching response envelope through:
 
 ```http
 POST /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/responses
 ```
 
-Preserve the request id. Responses are commands and do not use the SSE connection in the reverse direction.
+The request must already be answerable before its committed notification can reach observers. Reopening a client can therefore restore pending interaction UI without replaying the whole thread first.
 
-::: warning Current committed-stream limitation
-The hosted SSE endpoint reads the committed thread document. An event type reaches hosted clients only when it opts into thread persistence and has a thread projection. Built-in permission, clarification, continuation, and client-tool request records currently default to non-persistent events, so a hosted client cannot rely on receiving those request payloads through this committed stream yet. The `/responses` route exists, but the request-delivery side must be moved onto the committed lifecycle before hosted bidirectional interaction is complete.
-:::
+## Long Disconnects
 
-## Why There Is No Agent WebSocket
+For a laptop sleep, proxy timeout, or UI closed for hours:
 
-The hosted agent lifecycle intentionally has one transport model. The former agent WebSocket route and transport selection were removed because they did not share the snapshot, committed cursor, acknowledged replay, or authoritative submission contract.
+1. Preserve the last successfully applied cursor when possible.
+2. Read `/state` to restore control state and capture the current boundary.
+3. Open `/events?after={appliedCursor}`.
+4. Apply catch-up events through the same projector.
+5. Continue on the same stream as commits become live.
 
-Other HPD features may still use WebSockets for their own protocols, including bot adapters, realtime provider APIs, and the separate client-tool-provider connection. Those sockets are not the hosted agent event lifecycle.
+A client with no local projection starts at `after=0` and reconstructs the complete conversation incrementally. It retains semantic UI state, not the raw event graph.
+
+## Transport Responsibilities
+
+HTTP owns commands and control state. SSE owns ordered committed observation. Each transport therefore has one lifecycle responsibility.
 
 ## Related Pages
 
+- [Canonical Thread Journal](../sessions-and-streaming/canonical-thread-journal.md)
 - [Hosted Streaming API](hosted-streaming-api.md)
 - [Hosted Endpoints](../../reference/hosted-endpoints.md)
 - [TypeScript Client Events](../events/typescript-client.md)
 - [Hosted TUI Runtime](../tui/hosted-runtime.md)
-- [Render An Event Stream](../sessions-and-streaming/render-an-event-stream.md)

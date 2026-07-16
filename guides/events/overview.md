@@ -23,8 +23,8 @@ Start here:
 - [Bidirectional Events](bidirectional-events.md): request/response event flows for permissions, clarification, and host decisions.
 - [TypeScript Client Events](typescript-client.md): consume live streams, thread history, custom events, and interactive requests from TypeScript apps.
 - [Custom Events](custom-events.md): define app-specific events, emit them from middleware, and stream them through the serializer.
-- [Serialization And Registration](serialization-and-registration.md): live envelopes, custom discriminators, and AOT metadata.
-- [Live Vs Durable Events](live-vs-durable-events.md): what streams live and what becomes thread history.
+- [Serialization And Registration](serialization-and-registration.md): event envelopes, custom discriminators, and AOT metadata.
+- [Canonical And Process-Local Events](canonical-and-process-local-events.md): choose between replayable thread facts and process-local activity.
 - [Lifecycle, Retry, And Error Events](lifecycle-retry-and-error-events.md): turn lifecycle, retries, and failure rendering.
 - [Testing Event-Driven Code](testing-event-driven-code.md): capture and assert event-driven behavior.
 - [Logging And Telemetry](../observability/logging-and-telemetry.md): export agent events and usage into logs and metrics.
@@ -33,16 +33,16 @@ Then use focused pages:
 
 - [Workflow Events](../multi-agent/workflow-events.md): render workflow progress, nodes, layers, and routes.
 - [Permissions Middleware](../middleware/permissions.md): answer bidirectional permission events.
-- [Hosted Streaming API](../hosting/hosted-streaming-api.md): hydrate state and receive committed events over resumable SSE.
+- [Hosted Streaming API](../hosting/hosted-streaming-api.md): read control state and receive committed events over resumable SSE.
 - [Thread History And Forking](../sessions-and-streaming/thread-history-and-forking.md): read durable thread event history.
-- [Events Reference](../../reference/events.md): event families, envelopes, and persistence caveats.
+- [Events Reference](../../reference/events.md): event families, envelopes, and publication semantics.
 
 ## Core Rule
 
 HPD sends events linearly. Your app projects them into the shape it needs.
 
 ```text
-live event stream
+ordered event stream
   -> transcript
   -> tool timeline
   -> permission queue
@@ -53,4 +53,4 @@ live event stream
 
 For hierarchy, use the most specific correlation fields available: `MessageId` for message content, `CallId` for tools, request ids such as `PermissionId` for bidirectional flows, workflow node ids for workflows, agent metadata for child-agent labels, and trace/span fields for trace views.
 
-Do not treat live rendering as persistence. Durable thread history only includes events that are mapped or opt in to thread persistence.
+Thread-scoped projectable events commit to the canonical journal before publication. Process-local diagnostics, metrics, and high-volume samples use their dedicated runtime surfaces. Choose the publication surface according to whether the event must participate in replay and thread reconstruction.

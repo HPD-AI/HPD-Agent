@@ -1,6 +1,6 @@
 # Hosted Streaming API
 
-The hosted streaming API is for UI and integration clients that submit input, observe live events, interrupt active runs, and answer interactive middleware requests.
+The hosted streaming API is for UI and integration clients that submit input, observe canonical thread events, interrupt active runs, and answer interactive middleware requests.
 
 All runtime routes use:
 
@@ -117,37 +117,38 @@ There is no separate hosted compact endpoint. Compaction is part of the normal i
 
 `mode: 1` is `CompactionRunMode.Force`. `behavior: 2` is `CompactionBehavior.StopAfterCompaction`, which compacts and stops before a model call. Enum values use the hosted API's default numeric JSON representation unless the host customizes JSON options.
 
-## Load State Then Observe With SSE
+## Read State Then Observe With SSE
 
-First load the authoritative snapshot:
+First load authoritative runtime control state:
 
 ```http
 GET /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/state
 ```
 
-It returns ordered committed `events`, their `latestSequenceNumber`, and the backend-owned `activeRun`. Render that snapshot and connect SSE after its cursor:
+It returns `observedHead`, the backend-owned `activeRun`, and currently answerable `pendingRequests`. It does not return event history. Restore controls immediately, then connect SSE from the greatest contiguous position your client has successfully projected. Use zero when no local projection exists:
 
 ```http
-GET /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/events/live?after=42
+GET /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/events?after=0
 Accept: text/event-stream
 ```
 
-The server replays every committed event after the cursor, then continues observing. Each event includes its committed sequence as the SSE id:
+The same stream catches up every committed event after the cursor and then remains attached for future commits. Each event includes its committed thread position as the SSE id:
 
 ```text
 id: 43
-data: {"version":"1.0","type":"TEXT_DELTA","sequenceNumber":43,"text":"hello","messageId":"..."}
+event: agent-event
+data: {"version":"1.0","type":"TEXT_DELTA","threadSequenceNumber":43,"text":"hello","messageId":"..."}
 ```
 
-Process events serially and advance the cursor only after the consumer applies an event successfully. On EOF or a connection error, reconnect with the last acknowledged cursor. Comment heartbeats can be ignored. If an exception occurs after SSE headers have been sent, the stream writes a serialized error event instead of changing the HTTP status.
+Process events serially and advance the applied cursor only after the consumer applies an event successfully. `observedHead` classifies the initial catch-up boundary; it must never overwrite the applied cursor. On EOF or a connection error, reconnect with the last applied cursor. The server also accepts `Last-Event-ID` when `after` is absent. Comment heartbeats can be ignored. If observation fails after SSE headers are committed, the server closes the stream; it never fabricates an uncommitted error `AgentEvent`.
 
-Input, interruption, and interactive responses use their HTTP routes. The hosted agent WebSocket lifecycle no longer exists. See [Hosted Lifecycle And Recovery](hosted-lifecycle-and-recovery.md) for the complete recovery contract.
+Input, interruption, and interactive responses use their HTTP routes. Committed thread observation uses SSE. See [Hosted Lifecycle And Recovery](hosted-lifecycle-and-recovery.md) for the complete recovery contract.
 
 ## Render Nested Activity
 
 SSE delivers a linear committed stream. A hosted client can project that stream into a transcript, timeline, workflow tree, subagent view, or permission queue by grouping events with fields such as `messageId`, `callId`, `permissionId`, `traceId`, `spanId`, `parentSpanId`, `eventFlowId`, and agent `metadata`.
 
-Workflow and subagent events may appear in the same live stream as parent agent events when child execution is routed through the parent event coordinator. Treat the transport as delivery only; use [Render An Event Stream](../sessions-and-streaming/render-an-event-stream.md) for UI projection guidance.
+Workflow and subagent events may appear in the same observation stream as parent agent events when child execution is routed through the parent event coordinator. Treat the transport as delivery only; use [Render An Event Stream](../sessions-and-streaming/render-an-event-stream.md) for UI projection guidance.
 
 ## Fork Threads
 
@@ -194,10 +195,6 @@ Do not automatically retry against a mismatched run. It may be newer work starte
 
 ## Answer Interactive Middleware
 
-::: warning Current committed-stream limitation
-The response route is mapped, but the committed SSE observer can only deliver event types persisted to the thread document. Built-in interactive request records currently default to non-persistent events. Do not build a hosted permission, clarification, continuation, or client-tool prompt flow until those request payloads are committed and replayable.
-:::
-
 HTTP clients answer bidirectional requests through one response route:
 
 ```http
@@ -216,10 +213,10 @@ Content-Type: application/json
 
 The body must be a serialized `AgentEvent` envelope whose event implements `IResponseEvent`, such as `PermissionResponseEvent`, `ContinuationResponseEvent`, `ClarificationResponseEvent`, `ClientToolInvokeOutcomeEvent`, or an app-owned custom response event.
 
-Middleware responses are not thread runs. The route requires an existing session/thread scope, an active thread runtime, and a waiter that accepts the response. If the scope does not exist, it returns `404`. If no runtime is active, the route returns a thread-runtime-not-active conflict. If the runtime exists but no waiter accepts the response, it returns `409` with the `RespondResult` status.
+Middleware responses are not thread runs. Canonical request events are committed only after the request is externally answerable. `/state` also exposes currently pending requests, allowing a recovering client to restore interaction UI before historical replay completes. The response route requires an existing session/thread scope, an active thread runtime, and a waiter that accepts the response. If the scope does not exist, it returns `404`. If no runtime is active, the route returns a thread-runtime-not-active conflict. If the runtime exists but no waiter accepts the response, it returns `409` with the `RespondResult` status.
 
 ## Event Bodies
 
 Hosted streaming uses `AgentEventSerializer` envelopes: `version`, `type`, and camelCase payload properties, with null values omitted.
 
-This page intentionally shows contract-level examples only. For event families and persistence caveats, see [Events](../../reference/events.md).
+This page intentionally shows contract-level examples only. For event families and publication semantics, see [Events](../../reference/events.md).

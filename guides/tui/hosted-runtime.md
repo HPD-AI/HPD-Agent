@@ -98,17 +98,17 @@ The hosted runtime uses the hosted API for:
 - listing, loading, creating, updating, and deleting stored agent definitions
 - listing, searching, loading, creating, renaming, and deleting sessions
 - listing, creating, forking, renaming, and deleting threads
-- loading one authoritative thread snapshot containing committed events, cursor, and active run
-- replaying and observing committed thread events with resumable SSE
+- loading authoritative runtime control state with the journal boundary, active run, and pending interactions
+- catching up and observing committed thread events through one resumable SSE stream
 - submitting `AgentInputEvent` instances
 - interrupting the expected backend-owned run with structured outcomes
 - sending middleware responses for permissions, continuations, clarifications, and client tools
 
-Hosted TUI middleware responses go through hosted response endpoints. The current committed SSE observer does not yet expose built-in interactive request records that retain their default non-persistent event policy, so hosted permission, clarification, continuation, and client-tool prompts remain incomplete until those requests become committed and replayable. Bot adapters do not use this same hosted response route model for platform button callbacks.
+Hosted TUI middleware responses go through hosted response endpoints. Interactive requests are canonical journal events and also appear in runtime control state while they remain answerable, so a reconnecting TUI can restore its prompt controls before transcript catch-up completes. Bot adapters use their platform-specific callback protocols.
 
 ## Thread Projection And Compaction
 
-The hosted TUI observes the server's session, thread, and compaction behavior. It can fork threads through the hosted API, but the current hosted fork request does not expose a per-fork compaction intent. Fork compaction is controlled by the server-side agent and middleware configuration unless the hosted app adds its own route.
+The hosted TUI observes the server's session, thread, and compaction behavior. It can fork threads through the hosted API. Fork compaction follows the server-side agent and middleware configuration.
 
 After hard durable thread-history compaction, the projected thread history is canonical. Render the thread as loaded from the hosted API or thread event projection, and treat compaction events as audit/debug metadata.
 
@@ -128,12 +128,14 @@ For most hosted apps, pass the scope explicitly so the TUI starts on the intende
 
 ## Recovery, Active Runs, And Hydration Errors
 
-The hosted runtime opens a thread by reading `/state`, hydrating its committed events in sequence order, recording `latestSequenceNumber`, and observing `/events/live?after={cursor}`. If the stream ends after minutes or hours, it reconnects after the last event the TUI fully applied. Backend work continues independently of the observer connection.
+The hosted runtime opens a thread by reading `/state`, restoring `activeRun` and `pendingRequests`, and capturing `observedHead`. It then opens `/events?after={appliedCursor}`, applies catch-up events in bounded batches, and stays on that stream for future commits. If the stream ends after minutes or hours, it reconnects after the last event the TUI fully applied. Backend work continues independently of the observer connection.
+
+`observedHead` describes the coherent server boundary captured with control state. The TUI advances its applied cursor only after the corresponding event handlers complete successfully. Historical, catch-up, and live batches use the same handlers; batching changes redraw cadence, not projection semantics.
 
 Submission returns the authoritative `runtimeRunId`. `HpdAgentTuiApp` prevents a second prompt submission while that run is active, while the hosted backend remains authoritative if another client starts work.
 
 Escape cancellation reads the active run and sends it as `expectedRuntimeRunId`. The backend can report `accepted`, `already_terminal`, `no_active_run`, or `active_run_mismatch`; a stale TUI therefore cannot accidentally cancel a newer run. Reopening the same scope uses the same state-and-cursor path to restore output and cancellation controls.
 
-If a hosted request fails because a persisted JSON payload is not a known agent event, `HostedAgentTuiRuntime` includes a hint that the backend may be older than the thread history it is reading. Restart or redeploy the backend so it loads the current event registrations before treating the thread data as corrupt.
+If an event schema cannot be decoded or projected, hydration stops at the last successfully applied thread position. Register every application-owned event codec in the host and client projection before opening journals that contain that event type.
 
 See [Hosted Lifecycle And Recovery](../hosting/hosted-lifecycle-and-recovery.md) for the underlying protocol.

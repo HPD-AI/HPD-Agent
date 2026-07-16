@@ -57,12 +57,16 @@ public sealed class RetrievalTools
         FunctionExecutionContext context,
         CancellationToken cancellationToken)
     {
-        context.Emit(new RetrievalProgressEvent(query, 0, 0));
+        await context.PublishAsync(
+            new RetrievalProgressEvent(query, 0, 0),
+            cancellationToken);
 
         var scanned = 12;
         var matched = 3;
 
-        context.Emit(new RetrievalProgressEvent(query, scanned, matched));
+        await context.PublishAsync(
+            new RetrievalProgressEvent(query, scanned, matched),
+            cancellationToken);
         return $"Matched {matched} documents.";
     }
 }
@@ -97,9 +101,9 @@ Use middleware for cross-cutting behavior around functions:
 - audit events
 - shared logging
 
-Middleware can emit with `context.Emit(...)` before or after function execution. Tool code can emit with `FunctionExecutionContext.Emit(...)` during function execution.
+Middleware and tool code publish with `context.PublishAsync(...)`. Thread-scoped publication commits the event before subscribers receive it; publication without thread scope is process-local.
 
-`Emit(...)` publishes to the event stream and subscriber mailboxes. Subscriber handlers may process the event asynchronously, so do not use `Emit(...)` as proof that every handler has already finished.
+`PublishAsync(...)` returns after canonical commit and publication, not after every subscriber mailbox has finished processing the event.
 
 ## Runtime Context
 
@@ -109,7 +113,7 @@ Middleware can emit with `context.Emit(...)` before or after function execution.
 - `TraceId`, `SessionId`, and `ThreadId` when present
 - `RunConfig` and per-call `ResultMetadata`
 - `Services`, `ContentStore`, and runtime capabilities
-- `Emit(...)`, `TryEmit(...)`, and `RequestAsync(...)`
+- `PublishAsync(...)`, `TryPublishAsync(...)`, and `RequestAsync(...)`
 - `StructEvents` for process-local realtime sample lanes
 - background task registration when the active runtime supports it
 - background handle registration when the active runtime supports controllable handles

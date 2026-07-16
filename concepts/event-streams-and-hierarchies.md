@@ -10,7 +10,7 @@ event projection: the view your app builds from those events
 hierarchy: one useful projection, built from correlation fields
 ```
 
-Do not assume every event is born as a perfect tree node. Some events carry full span data, some carry message or tool ids, some carry agent metadata, and some are live-only coordination events. Use the fields that match the view you are building.
+Do not assume every event is born as a perfect tree node. Some events carry full span data, some carry message or tool ids, and some carry agent metadata. Use the fields that match the view you are building.
 
 ## Flat Stream, Structured View
 
@@ -98,13 +98,11 @@ Workflows add dedicated workflow events such as:
 
 Generated workflow and subagent wrappers forward parent context for event coordination. Keep exact model-mediated permission and child-event assertions in your own integration tests until your app validates the full flow it depends on.
 
-## Live Events And Durable History
+## Canonical Scope
 
-Live events and durable thread events are related, but they are not the same surface.
+Thread-scoped projectable events are canonical facts. They commit before publication and retain the same event identity, payload, and `ThreadSequenceNumber` during catch-up and live delivery. Process-local activity uses diagnostics, struct events, or stateless publication according to its purpose.
 
-Live streams are for rendering current activity and handling interactive requests. Durable thread events are for replaying thread history and reconstructing thread projections. A live event may be important to a UI without being written to thread history.
-
-Subagent durable history also depends on the subagent execution policy. A child may use the parent session, a fresh thread, a forked thread, an existing thread, or a new session. Document product behavior in terms of the policy you chose rather than assuming all child events persist on the parent thread.
+Subagent journal ownership follows its conversation policy. A child may use the parent session, a fresh thread, a forked thread, an existing thread, or a new session. Project each journal according to the policy selected by the application.
 
 ## Rendering Rule
 

@@ -204,4 +204,4 @@ Default production posture:
 - [Middleware Overview](../middleware/overview.md)
 - [Tool And Function Events](../events/tool-and-function-events.md)
 - [Lifecycle, Retry, And Error Events](../events/lifecycle-retry-and-error-events.md)
-- [Live Vs Durable Events](../events/live-vs-durable-events.md)
+- [Canonical And Process-Local Events](../events/canonical-and-process-local-events.md)

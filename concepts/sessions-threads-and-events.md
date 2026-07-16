@@ -7,7 +7,7 @@ The short model is:
 ```text
 session: the workspace container for metadata and shared middleware state
 thread: a replayable transcript path with thread state, tree metadata, and event history
-event: the live and durable vocabulary for rendering, replay, tools, middleware, and nested work
+event: the canonical vocabulary for rendering, replay, tools, middleware, and nested work
 ```
 
 In direct in-process code, the built `Agent` owns the runtime and methods such as `CreateSessionAsync(...)`, `RunAsync(...)`, and `ForkThreadAsync(...)` operate against the configured session store.
@@ -79,16 +79,11 @@ Fork compaction is especially important for nested work. A subagent or multi-age
 
 Events are the framework vocabulary for input, streaming output, lifecycle, tool calls, interactive middleware, retry, background work, and thread-run tracking.
 
-There are two related event surfaces:
+Thread-scoped projectable events have one canonical surface. The framework commits the event first, assigns its authoritative `ThreadSequenceNumber`, and publishes that exact value to subscribers and replay readers. Canonical scope and publication define durability for built-in and application-defined events.
 
-- live agent events, used by local subscriptions, committed hosted SSE, TUI runtimes, and bot adapters
-- durable thread events, used to reconstruct thread history and thread projections
+Process-local events still exist for stateless output, diagnostics, struct-event samples, and runtime integrations that are intentionally outside thread history. A stateless `AgentEvent` has no replay guarantee and keeps `ThreadSequenceNumber == 0`.
 
-Live event envelopes can include routing and correlation fields such as `sessionId`, `threadId`, `channel`, `direction`, trace ids, and metadata when those values are present. Durable thread event JSON is intentionally different and omits many live-routing fields.
-
-Not every live event is written to thread history. Persistence is controlled by each event type's persistence policy and thread-event conversion, not by the event's channel.
-
-This distinction matters for nested agents and workflows. A parent live stream can show subagent or workflow activity as it happens, while the durable transcript may live on a child thread or workflow node thread. Use event metadata for live hierarchy, and use session/thread metadata for durable lookup.
+Nested agents and workflows choose which thread owns their durable facts. Parent observation can still expose routed child activity, while child journals remain independently replayable according to conversation policy. Use event correlation fields for hierarchy and session/thread descriptors for durable lookup.
 
 ## Runtime Scope Across Hosts
 
@@ -118,6 +113,7 @@ Shared thread policies need additional coordination. If two agents write to the 
 ## Related Pages
 
 - [Thread History And Forking](../guides/sessions-and-streaming/thread-history-and-forking.md)
+- [Canonical Thread Journal](../guides/sessions-and-streaming/canonical-thread-journal.md)
 - [Compaction](../guides/sessions-and-streaming/compaction.md)
 - [Subagents](../guides/agents/subagents.md)
 - [Multi-Agent Conversation Policies](../guides/multi-agent/conversation-policies.md)

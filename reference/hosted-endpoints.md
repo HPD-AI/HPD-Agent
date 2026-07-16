@@ -15,7 +15,7 @@ agentId + sessionId + threadId
 Routes are intentionally mixed:
 
 - session routes do not include `agentId`
-- thread read, update, delete, content, and event-log routes are session/thread scoped
+- thread read, update, delete, and content routes are session/thread scoped
 - thread create, fork, thread runs, runtime state, input, interrupt, SSE, and the bidirectional response route include `agentId`
 - stored agent definitions live under `/agents`
 
@@ -44,7 +44,6 @@ Routes are intentionally mixed:
 | `POST` | `/agents/{agentId}/sessions/{sid}/threads/{bid}/fork` | `ForkThreadRequest` | `201 ThreadDto` | `404`, `400` |
 | `PATCH` | `/sessions/{sid}/threads/{bid}` | `UpdateThreadRequest` | `200 ThreadDto` | `404`, `400` |
 | `DELETE` | `/sessions/{sid}/threads/{bid}?recursive=false` | none | `204` | `404`, `409`, `400` |
-| `GET` | `/sessions/{sid}/threads/{bid}/events` | none | `200 List<AgentEvent>` | `404`, `400` |
 | `GET` | `/sessions/{sid}/threads/{bid}/siblings` | none | `200 List<ThreadDto>` | `404`, `400` |
 
 `ForkThreadRequest` has `newThreadId`, `fromMessageId`, optional display metadata, tags, and metadata. It does not have a per-request fork-compaction field. Hosted fork compaction is controlled by the configured server-side agent and middleware pipeline.
@@ -91,14 +90,14 @@ Default hosted content storage is in-memory. Do not assume durability unless the
 | --- | --- | --- | --- | --- |
 | `POST` | `/agents/{agentId}/sessions/{sid}/threads/{bid}/inputs` | `StreamTextRequest` or input event envelope | `202 InputSubmissionDto` | `400`, `404`, `409`, `500` |
 | `GET` | `/agents/{agentId}/sessions/{sid}/threads/{bid}/state` | none | `200 ThreadRuntimeStateDto` | `404` |
-| `GET` | `/agents/{agentId}/sessions/{sid}/threads/{bid}/events/live?after={sequence}` | SSE | replaying `text/event-stream` | `404` before headers |
+| `GET` | `/agents/{agentId}/sessions/{sid}/threads/{bid}/events?after={appliedCursor}` | SSE | catch-up then live `text/event-stream` | `404` before headers, cursor conflict after headers |
 | `POST` | `/agents/{agentId}/sessions/{sid}/threads/{bid}/interrupt` | interruption envelope or reason with optional `expectedRuntimeRunId` | `202 InterruptionSubmissionDto` | `404`, `400`, `500` |
 | `POST` | `/agents/{agentId}/sessions/{sid}/threads/{bid}/context-usage` | `ContextUsageRequest` | `200 ThreadContextUsage` | `404`, `400`, `500` |
 | `POST` | `/agents/{agentId}/sessions/{sid}/threads/{bid}/responses` | serialized `AgentEvent` envelope implementing `IResponseEvent` | `200` | `404`, `409`, `400` |
 
-`ThreadRuntimeStateDto` contains ordered committed `events`, `latestSequenceNumber`, and the backend-owned `activeRun`. `InputSubmissionDto` contains `runtimeRunId` and `startedAt`.
+`ThreadRuntimeStateDto` contains `observedHead`, the backend-owned `activeRun`, and answerable `pendingRequests`. It does not contain event history. `InputSubmissionDto` contains `runtimeRunId` and `startedAt`.
 
-SSE sends committed events after the requested cursor. Every event frame has `id: {SequenceNumber}` plus one serialized event envelope in `data:`; comment heartbeats keep quiet streams alive. HTTP clients post any serialized `AgentEvent` envelope implementing `IResponseEvent` to the single `/responses` route.
+SSE sends committed events after the requested applied cursor, catches up to the current head, and remains open for future commits. Every frame has `id: {ThreadSequenceNumber}`, `event: agent-event`, and the exact serialized canonical event in `data:`. The server accepts `Last-Event-ID` when `after` is absent; comment heartbeats keep quiet streams alive. HTTP clients post any serialized `AgentEvent` envelope implementing `IResponseEvent` to the single `/responses` route.
 
 Interruption returns status `accepted`, `already_terminal`, `no_active_run`, or `active_run_mismatch`. Supplying `expectedRuntimeRunId` prevents a stale client from interrupting a newer active run. See [Hosted Lifecycle And Recovery](../guides/hosting/hosted-lifecycle-and-recovery.md).
 

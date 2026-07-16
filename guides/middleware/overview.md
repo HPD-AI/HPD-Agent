@@ -178,17 +178,20 @@ Permission middleware is just middleware with a policy role. Built-in `Permissio
 
 Middleware can emit events when the app needs to observe or respond to what is happening inside the agent loop.
 
-For one-way observability, emit an event from a hook context:
+For one-way observability, publish an event from a hook context:
 
 ```csharp
-public Task BeforeFunctionAsync(
+public async Task BeforeFunctionAsync(
     BeforeFunctionContext context,
     CancellationToken cancellationToken)
 {
-    context.Emit(new FunctionAuditEvent(context.Function?.Name));
-    return Task.CompletedTask;
+    await context.PublishAsync(
+        new FunctionAuditEvent(context.Function?.Name),
+        cancellationToken);
 }
 ```
+
+When the context has session and thread scope, `PublishAsync(...)` commits the event to the canonical journal before subscribers receive it. Without thread scope, publication is process-local.
 
 For a request/response interaction, emit a bidirectional event and wait for a response. Permissions use this pattern: middleware asks the host whether a sensitive action is allowed, and the host responds through the agent event coordinator.
 
@@ -198,7 +201,7 @@ var response = await context.RequestAsync<PermissionRequestEvent, PermissionResp
     timeout: TimeSpan.FromSeconds(30));
 ```
 
-In direct in-process code, answer with `agent.AnswerRequestAsync(...)` or `agent.TryAnswerRequestAsync(...)` for the matching response event. In ASP.NET Core hosted clients, read the request from committed SSE and send the matching `IResponseEvent` envelope through the hosted `/responses` route for the active `agentId + sessionId + threadId`.
+In direct in-process code, answer with `agent.AnswerRequestAsync(...)` or `agent.TryAnswerRequestAsync(...)` for the matching response event. In ASP.NET Core hosted clients, read the request from canonical SSE or restore it from `/state`, then send the matching `IResponseEvent` envelope through the hosted `/responses` route for the active `agentId + sessionId + threadId`.
 
 Use this pattern when the user, UI, policy engine, bot adapter, or hosted runtime needs to make a decision during the run.
 

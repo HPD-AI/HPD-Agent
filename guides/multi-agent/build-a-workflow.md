@@ -64,7 +64,7 @@ Workflow outputs are separate from durable conversation history. Add a conversat
 ```csharp
 var workflow = await AgentWorkflow.Create()
     .WithName("ResearchAndWrite")
-    .WithSessionStore(new JsonSessionStore("App_Data/sessions"))
+    .WithSessionStore(new FileSessionStore("App_Data/sessions"))
     .WithConversation(MultiAgentConversationPolicies.ForkThreadPerAgent())
     .AddAgent("research", researchConfig, node => node.WithOutputKey("research"))
     .AddAgent("write", writeConfig, node => node.WithInputKey("research"))

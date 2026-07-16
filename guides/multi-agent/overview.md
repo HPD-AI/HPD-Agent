@@ -58,7 +58,7 @@ By default, workflow data flows through node outputs and live events. Add a conv
 ```csharp
 var workflow = await AgentWorkflow.Create()
     .WithName("DraftAndReview")
-    .WithSessionStore(new JsonSessionStore("App_Data/sessions"))
+    .WithSessionStore(new FileSessionStore("App_Data/sessions"))
     .WithConversation(MultiAgentConversationPolicies.ForkThreadPerAgent())
     .AddAgent("draft", draftConfig)
     .AddAgent("review", reviewConfig)

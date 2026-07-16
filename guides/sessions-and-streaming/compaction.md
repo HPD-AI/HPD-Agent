@@ -194,11 +194,11 @@ Compaction uses three different records:
 
 | Record | Meaning |
 | --- | --- |
-| `CompactionEvent` | Live middleware observability for skipped or performed compaction. |
+| `CompactionEvent` | Middleware execution observability for skipped or performed compaction. |
 | `CompactionStateData` | Thread-scoped persistent middleware state with last compaction, trigger counts, and usage observations. |
 | `ThreadHistoryCompactionCheckpointEvent` | Durable thread checkpoint written for soft and hard compaction. |
 
-`CompactionEvent` is useful for diagnostics and live UI. It is not the durable projection instruction.
+`CompactionEvent` is useful for diagnostics and runtime UI. `ThreadHistoryCompactionCheckpointEvent` controls thread projection.
 
 `ThreadHistoryCompactionCheckpointEvent` is appended for every successful compaction on a thread with a store. Hard checkpoints remove `DurableCompactedMessageIds` and insert any `ReplacementMessages`. Soft checkpoints leave durable messages intact and let clients choose how to display compacted ranges.
 
@@ -206,7 +206,7 @@ Compaction uses three different records:
 
 A normal fork copies source messages through the fork point, copies thread-scoped middleware state, shares session-scoped state, and prepares target thread metadata in memory.
 
-Fork compaction runs in the pre-commit fork middleware hook. If enabled, `CompactionMiddleware` reduces the target thread messages before the target thread's initial event document is saved.
+Fork compaction runs in the pre-commit fork middleware hook. If enabled, `CompactionMiddleware` reduces the target thread messages before the target thread's initial journal batch is committed.
 
 The source thread is unchanged.
 
@@ -289,7 +289,7 @@ After delete retention without replacement:
 - [Sessions, Threads, And Events](../../concepts/sessions-threads-and-events.md)
 - [Thread History And Forking](thread-history-and-forking.md)
 - [Render An Event Stream](render-an-event-stream.md)
-- [Live Vs Durable Events](../events/live-vs-durable-events.md)
+- [Canonical And Process-Local Events](../events/canonical-and-process-local-events.md)
 - [Middleware State Persistence](../middleware/state-persistence.md)
 - [Hosted Streaming API](../hosting/hosted-streaming-api.md)
 - [Hosted Endpoints](../../reference/hosted-endpoints.md)

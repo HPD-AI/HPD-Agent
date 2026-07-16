@@ -40,7 +40,7 @@ Thread read, update, delete, content, and event-log routes are scoped by `sessio
 | Fork thread | `POST /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/fork` |
 | Update thread | `PATCH /sessions/{sessionId}/threads/{threadId}` |
 | Delete thread | `DELETE /sessions/{sessionId}/threads/{threadId}?recursive=false` |
-| Get thread events | `GET /sessions/{sessionId}/threads/{threadId}/events` |
+| Observe thread events | `GET /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/events?after={appliedCursor}` |
 | Get siblings | `GET /sessions/{sessionId}/threads/{threadId}/siblings` |
 
 ## Hosted Create A Thread
@@ -86,13 +86,13 @@ Hosted thread deletion uses a thread operation lock. A lock conflict means anoth
 
 ## Read Thread Events
 
-`GET /sessions/{sessionId}/threads/{threadId}/events` returns normalized polymorphic `AgentEvent` JSON for the thread log. This is useful for rebuilding thread views and debugging history.
+Hosted clients open the thread observation route with their last successfully applied position. The SSE stream first yields canonical catch-up events and then remains attached for future commits. Starting at `after=0` reconstructs the complete thread incrementally.
 
-Do not assume the thread event JSON is identical to hosted SSE event envelopes. Streamed event envelopes can include routing and correlation fields when they are present on the event. Durable thread event JSON may omit live-routing fields and only contains events that were mapped or opted into thread persistence.
+In-process consumers use `ISessionStore.ReadThreadEventsAsync(...)` for finite, bounded sequence reads or `ObserveThreadEventsAsync(...)` for catch-up plus future commits. Both surfaces decode the same canonical `AgentEvent` values in ascending `ThreadSequenceNumber` order.
 
-In direct in-process code, read thread history through the configured session store or higher-level runtime that wraps it. In ASP.NET Core hosted clients, use the thread events route.
+Thread descriptors, lists, and existence checks use storage-native metadata and do not project the complete journal. Full semantic reconstruction is an explicit projection operation.
 
-For UI projection guidance, see [Render An Event Stream](render-an-event-stream.md). For the live-vs-durable model, see [Event Streams And Hierarchies](../../concepts/event-streams-and-hierarchies.md).
+For UI projection guidance, see [Render An Event Stream](render-an-event-stream.md). For storage and observation guarantees, see [Canonical Thread Journal](canonical-thread-journal.md).
 
 ## Thread History Compaction
 

@@ -2,7 +2,7 @@
 
 Use the TypeScript client when a browser, Node app, editor extension, or custom UI needs to render HPD Agent runs.
 
-The client is not another event system. It is the JavaScript/TypeScript consumption surface for hosted agent events: open a session and thread, load durable thread history, subscribe to the live stream, send inputs, and answer interactive requests.
+The client is not another event system. It is the JavaScript/TypeScript consumption surface for canonical hosted events: open a session and thread, catch up from an applied cursor, remain attached for future commits, send inputs, and answer interactive requests.
 
 ## Install The Client Surface
 
@@ -16,7 +16,7 @@ const client = new AgentClient({
 });
 ```
 
-The client uses the committed, resumable SSE lifecycle. There is no transport selection or agent WebSocket fallback.
+The client uses HTTP for commands and control state, plus resumable SSE for canonical thread observation.
 
 ## Open A Chat Scope
 
@@ -34,7 +34,7 @@ const chat = await client.chat.open({
 });
 ```
 
-Then install event handlers, hydrate the authoritative snapshot, subscribe after its cursor, and submit input:
+Then install event handlers, read runtime state, observe from the application's applied cursor, and submit input:
 
 ```typescript
 client.on(EventTypes.TEXT_DELTA, (event) => {
@@ -45,10 +45,8 @@ client.onAny((event) => {
   projectEvent(event);
 });
 
-const state = await chat.subscribeLive();
-for (const event of state.events) {
-  projectEvent(event);
-}
+const state = await chat.subscribeLive({ afterSequenceNumber: 0 });
+restoreControls(state.activeRun);
 
 const submission = await chat.submitMessage({
   contents: [{ $type: 'text', text: 'Summarize this thread.' }],
@@ -57,7 +55,9 @@ const submission = await chat.submitMessage({
 console.log(submission.runtimeRunId, submission.startedAt);
 ```
 
-`subscribeLive()` loads `/state` first, starts SSE with `afterSequenceNumber`, and returns the same snapshot for initial projection. Events committed between the state read and the SSE connection are replayed after the cursor. Subscribe before submitting input when the UI needs to render the turn as it happens.
+`subscribeLive()` loads metadata-only `/state`, opens the unified SSE stream with `afterSequenceNumber`, and returns the control-state snapshot. Events committed before or during connection are delivered through the same stream. Pass zero when the application has no local projection. Subscribe before submitting input when the UI needs to render the turn as it happens.
+
+`state.observedHead` identifies the committed boundary captured with the control state. It is not permission to skip history and must not replace the consumer's applied cursor.
 
 ## Message Policy And Transcript Visibility
 
@@ -186,7 +186,7 @@ client.on(EventTypes.PERMISSION_REQUEST, async (request) => {
 
 The same pattern applies to `CLARIFICATION_REQUEST` and `CONTINUATION_REQUEST`. The client posts response event envelopes to the hosted `/responses` route for the current chat scope. Preserve the request id from the request event so the hosted runtime can match the pending waiter.
 
-The current committed SSE endpoint only exposes events persisted to the thread document, while built-in interactive request records still default to non-persistent events. Therefore the TypeScript response APIs exist, but built-in hosted interactive prompts are not end-to-end available until request delivery is moved onto the committed stream.
+Thread-scoped interactive request records are canonical and replayable. The backend also exposes answerable pending requests in runtime state so reconnecting UIs can restore interaction controls before historical catch-up completes.
 
 Client tools are the exception. If you register a tool handler, the client automatically answers `CLIENT_TOOL_INVOKE_REQUEST` with `CLIENT_TOOL_INVOKE_OUTCOME`:
 
@@ -222,19 +222,20 @@ client.onAny((event) => {
 
 Register custom event serialization on the .NET side so hosted streams can produce the event envelope. Add TypeScript types locally when the event belongs to your app; add them to the SDK only when the event becomes a shared protocol event.
 
-## Snapshot, Live Stream, And Recovery
+## Control State, Observation, And Recovery
 
-`chat.subscribeLive()` reads the unified thread state, then observes committed events after that snapshot's cursor. `chat.getThreadEvents()` remains a lower-level durable-history API, but lifecycle-aware UIs should prefer `chat.getState()` or the snapshot returned by `subscribeLive()` because it includes history, cursor, and active run atomically.
+`chat.subscribeLive()` reads control state, then observes canonical events after the caller's applied cursor. Full reconstruction uses the incremental observation stream starting at zero.
 
 The SSE transport awaits handlers in registration order and advances its cursor only after the consumer completes successfully. If the stream ends or fails, it reconnects after the last acknowledged sequence. Duplicate sequence numbers are ignored.
 
 For a lifecycle-aware UI:
 
 1. Register event handlers.
-2. Call `subscribeLive()` and project its `events`.
-3. Use `state.activeRun` to restore running and cancellation controls.
-4. Submit input and retain its authoritative `runtimeRunId`.
-5. Apply committed events as they arrive.
+2. Load the application's last applied thread position, or use zero.
+3. Call `subscribeLive({ afterSequenceNumber: appliedCursor })`.
+4. Use `state.activeRun` to restore running and cancellation controls.
+5. Submit input and retain its authoritative `runtimeRunId`.
+6. Apply committed events serially and persist the cursor only after successful projection.
 
 To cancel safely, use `chat.cancelActiveTurn()`. It reloads state and sends the current run as `expectedRuntimeRunId`. Inspect the returned `accepted`, `already_terminal`, `no_active_run`, or `active_run_mismatch` status instead of assuming cancellation occurred.
 
@@ -251,18 +252,17 @@ If a process-local sample needs to appear in a hosted UI, summarize or convert i
 The live observer connects to:
 
 ```text
-/agents/{agentId}/sessions/{sessionId}/threads/{threadId}/events/live?after={lastAcknowledgedSequence}
+/agents/{agentId}/sessions/{sessionId}/threads/{threadId}/events?after={lastAppliedThreadSequenceNumber}
 ```
 
 Inputs are posted separately. Response events are posted to the hosted `/responses` route for the current agent, session, and thread.
-The retired WebSocket transport did not provide atomic hydration, acknowledged replay, or authoritative submission results and has been removed.
 
 ## Related Pages
 
 - [Render An Event Stream](../sessions-and-streaming/render-an-event-stream.md)
 - [Bidirectional Events](bidirectional-events.md)
 - [Externally Executed Client Tools](../tools/externally-executed-client-tools.md)
-- [Live Vs Durable Events](live-vs-durable-events.md)
+- [Canonical And Process-Local Events](canonical-and-process-local-events.md)
 - [Serialization And Registration](serialization-and-registration.md)
 - [Hosted Streaming API](../hosting/hosted-streaming-api.md)
 - [Hosted Lifecycle And Recovery](../hosting/hosted-lifecycle-and-recovery.md)

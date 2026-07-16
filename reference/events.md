@@ -4,7 +4,7 @@ Events are the common vocabulary for HPD Agent runtime activity. Local subscript
 
 This page is family-based. It is not an exhaustive generated schema reference.
 
-## Live Event Envelope
+## Event Envelope
 
 Hosted SSE uses `AgentEventSerializer` envelopes:
 
@@ -12,6 +12,7 @@ Hosted SSE uses `AgentEventSerializer` envelopes:
 {
   "version": "1.0",
   "type": "TEXT_DELTA",
+  "threadSequenceNumber": 43,
   "text": "hello",
   "messageId": "message-id"
 }
@@ -25,9 +26,9 @@ Custom event types must be registered with the event serializer, normally throug
 
 For the practical serialization path, see [Serialization And Registration](../guides/events/serialization-and-registration.md).
 
-## Channels, Direction, And Persistence
+## Channels, Direction, And Canonical Publication
 
-Event channel and direction help route and render events. They are not persistence guarantees.
+Event channel and direction help route and render events. Canonical thread scope and publication determine durability.
 
 Common channel meanings:
 
@@ -40,7 +41,7 @@ Common channel meanings:
 
 Response events for permission, continuation, and clarification use upstream direction.
 
-Thread persistence is separate. Events are written to thread history only when thread conversion maps them or the event type opts in to thread persistence. A live event may be important to a UI without being durable thread history.
+A thread-scoped projectable event published through `IThreadEventPublisher` is committed before publication and is replayable by definition. Process-local diagnostics, struct events, and stateless output use separate paths.
 
 ## Correlation And Projection Fields
 
@@ -51,8 +52,9 @@ Common fields:
 | Field | Meaning |
 | --- | --- |
 | `sessionId`, `threadId` | Durable runtime scope when present |
+| `threadSequenceNumber` | Authoritative positive journal position; zero means uncommitted/stateless |
 | `eventFlowId` | Flow grouping used by thread history and replay; often a message-turn flow for persisted events |
-| `traceId` | Live execution trace id for a message turn |
+| `traceId` | Execution trace id for a message turn |
 | `spanId`, `parentSpanId` | Span-style hierarchy when present |
 | `metadata` | Agent attribution, including agent name, id, parent id, chain, and depth |
 | `messageId` | Text, reasoning, and tool activity under a message |
@@ -64,36 +66,32 @@ Common fields:
 
 Do not require every event to have every field. For example, some tool events carry `traceId` and `callId` without explicit span fields. Use the most specific available id for the projection you are building. See [Event Streams And Hierarchies](../concepts/event-streams-and-hierarchies.md) and [Render An Event Stream](../guides/sessions-and-streaming/render-an-event-stream.md).
 
-## Thread Event JSON Caveat
+## Canonical Event Parity
 
-Live event envelopes and durable thread event JSON are different surfaces.
-
-Live envelopes always include `version` and `type`, and can include routing and correlation fields such as session id, thread id, channel, direction, event flow id, metadata, and trace/span fields when those values are present on the event.
-
-Durable thread event JSON omits many of those fields. Use hosted SSE envelopes for streaming examples. Use thread event documents only when documenting storage or thread projection behavior.
+Hosted live delivery and durable replay decode to the same registered event value. SSE adds `id`, `event`, and heartbeat framing; it does not define a second event schema. Stable agent attribution required for projection must be canonical data. Volatile delivery information belongs outside the event payload.
 
 ## Event Families
 
 | Family | Examples | Primary channel | Thread persistence |
 | --- | --- | --- | --- |
-| Input | `UserMessagesInputEvent`; hosted routes may also accept convenience text bodies and interruption requests | upstream/control | input handling surface; do not assume all are durable |
-| Hosted thread run | `ThreadRunStartedEvent`, `ThreadRunCompletedEvent` | control | durable |
-| Message turn lifecycle | `MessageTurnStartedEvent`, `MessageTurnFinishedEvent`, `MessageTurnErrorEvent` | default/control | start and finish are durable; failures may be represented through thread failure conversion |
-| Agent turn lifecycle | `AgentTurnStartedEvent`, `AgentTurnFinishedEvent` | default | live/runtime-oriented |
-| Text streaming | `TextMessageStartEvent`, `TextDeltaEvent`, `TextMessageEndEvent` | streaming | durable |
-| Reasoning streaming | `ReasoningMessageStartEvent`, `ReasoningDeltaEvent`, `ReasoningMessageEndEvent` | streaming | durable |
-| Tool calls | `ToolCallStartEvent`, `ToolCallArgsEvent`, `ToolCallResultEvent`, `ToolCallEndEvent` | default/streaming | durable |
-| Workflow execution | `WorkflowStartedEvent`, `WorkflowAgentStartedEvent`, `WorkflowEdgeTraversedEvent`, `WorkflowCompletedEvent` | default/diagnostic | validate persistence for the workflow path |
-| Background work | `BackgroundTaskStartedEvent`, `BackgroundTaskCompletedEvent`, `BackgroundHandleRegisteredEvent`, `BackgroundHandleStatusChangedEvent` | control/default | task and handle events are durable |
-| Interactive middleware | request events implementing `IRequestEvent` and response events implementing `IResponseEvent` | interactive | generally live only |
-| Retry and error policy | `FunctionRetryEvent`, `ModelCallRetryEvent`, middleware error events | diagnostic/default | generally live only |
-| Compaction observability | `CompactionEvent` | default/diagnostic | live middleware event; not the durable projection instruction |
-| Thread-history compaction | `ThreadHistoryCompactionCheckpointEvent` | thread history | durable checkpoint for soft and hard compaction; projection changes only for hard retention |
-| Content and references | upload/reference events | default/diagnostic | depends on event and content persistence policy |
-| Audio transcripts | `UserAudioTranscriptDeltaEvent`, `UserAudioTranscriptCompletedEvent`, `UserAudioTranscriptFailedEvent` | streaming/default | transcript text projection is policy-dependent; raw audio is not durable by default |
-| Assistant audio output | assistant audio output, stream, artifact, failure, and playback events | default/diagnostic | live/runtime-oriented unless explicitly projected by audio runtime policy |
-| Struct events | `AgentStructEvent` samples on `StructEventHub` routes | process-local/export | not hosted or durable by default |
-| Planning, schema, structured output | framework diagnostics and state changes | default/diagnostic | event-specific |
+| Input | `UserMessagesInputEvent`; hosted routes also accept command bodies and interruption requests | upstream/control | command plane |
+| Hosted thread run | `ThreadRunStartedEvent`, `ThreadRunCompletedEvent` | control | canonical in thread scope |
+| Message turn lifecycle | `MessageTurnStartedEvent`, `MessageTurnFinishedEvent`, `MessageTurnErrorEvent` | default/control | canonical in thread scope |
+| Agent turn lifecycle | `AgentTurnStartedEvent`, `AgentTurnFinishedEvent` | default | canonical or process-local according to publication scope |
+| Text streaming | `TextMessageStartEvent`, `TextDeltaEvent`, `TextMessageEndEvent` | streaming | canonical in thread scope |
+| Reasoning streaming | `ReasoningMessageStartEvent`, `ReasoningDeltaEvent`, `ReasoningMessageEndEvent` | streaming | canonical in thread scope |
+| Tool calls | `ToolCallStartEvent`, `ToolCallArgsEvent`, `ToolCallResultEvent`, `ToolCallEndEvent` | default/streaming | canonical in thread scope |
+| Workflow execution | `WorkflowStartedEvent`, `WorkflowAgentStartedEvent`, `WorkflowEdgeTraversedEvent`, `WorkflowCompletedEvent` | default/diagnostic | follows the workflow publication scope |
+| Background work | `BackgroundTaskStartedEvent`, `BackgroundTaskCompletedEvent`, `BackgroundHandleRegisteredEvent`, `BackgroundHandleStatusChangedEvent` | control/default | canonical in thread scope |
+| Interactive middleware | request events implementing `IRequestEvent` and response events implementing `IResponseEvent` | interactive | canonical in thread scope; answerable requests also appear in runtime state |
+| Retry and error policy | `FunctionRetryEvent`, `ModelCallRetryEvent`, middleware error events | diagnostic/default | follows publication scope |
+| Compaction observability | `CompactionEvent` | default/diagnostic | follows publication scope |
+| Thread-history compaction | `ThreadHistoryCompactionCheckpointEvent` | thread history | canonical checkpoint; projection changes according to retention mode |
+| Content and references | upload/reference events | default/diagnostic | event publication and content storage are separate policies |
+| Audio transcripts | `UserAudioTranscriptDeltaEvent`, `UserAudioTranscriptCompletedEvent`, `UserAudioTranscriptFailedEvent` | streaming/default | follows publication scope; raw audio uses content/audio storage policy |
+| Assistant audio output | assistant audio output, stream, artifact, failure, and playback events | default/diagnostic | follows publication scope |
+| Struct events | `AgentStructEvent` samples on `StructEventHub` routes | process-local/export | process-local sample rail |
+| Planning, schema, structured output | framework diagnostics and state changes | default/diagnostic | follows publication scope |
 
 `CompactionEvent` can report `CompactionStatus.CacheHit` when middleware reuses a valid cached compaction result. There is no separate compaction-cache event.
 
@@ -155,7 +153,7 @@ Use `agent.ObserveStruct<TEvent>(...)` or `agent.StructEvents.Route<TEvent>()` f
 
 ## Assistant Audio Output Events
 
-Assistant audio output events use the same live envelope as other `AgentEvent` values. The event payload includes `sessionId` when the event has a session scope, plus audio-specific identifiers such as `outputFlowId`, `responseId`, `segmentId`, and provider or playback fields.
+Assistant audio output events use the same envelope as other `AgentEvent` values. The event payload includes `sessionId` when the event has a session scope, plus audio-specific identifiers such as `outputFlowId`, `responseId`, `segmentId`, and provider or playback fields.
 
 Source-registered assistant audio output type names include:
 
@@ -203,7 +201,7 @@ For interactive middleware, render request events and answer with the matching `
 
 Request-specific event families should define only the domain request and domain response events. Do not add family-specific terminal lifecycle events such as `FooApprovedEvent`, `FooDeniedEvent`, `FooResolvedEvent`, or `FooCancelledEvent`; use the generic request lifecycle events for request-session state.
 
-For JavaScript and TypeScript apps, use `AgentClient` to load thread history, subscribe to live events, handle unknown custom events through `onAny(...)`, and send response events back to the hosted runtime. See [TypeScript Client Events](../guides/events/typescript-client.md).
+For JavaScript and TypeScript apps, use `AgentClient` to observe canonical thread events from an applied cursor, handle unknown custom events through `onAny(...)`, and send response events back to the hosted runtime. See [TypeScript Client Events](../guides/events/typescript-client.md).
 
 For retry events, be careful with already-rendered partial output. A `ModelCallRetryEvent` can arrive after partial model content, so UIs may need to clear or mark stale partial text before rendering retry output.
 
@@ -211,29 +209,20 @@ For lifecycle, retry, and failure rendering, see [Lifecycle, Retry, And Error Ev
 
 For thread runs, use thread-run started/completed events to track active hosted work. Do not use thread operation lock conflicts as thread-run state.
 
-For compaction, distinguish live observability from durable checkpoints. `CompactionEvent` can explain why middleware skipped or performed compaction. `ThreadHistoryCompactionCheckpointEvent` records the compaction point. Hard checkpoints remove durable compacted messages and insert replacements when present; soft checkpoints leave raw replay intact for clients to display by policy.
+For compaction, distinguish execution observability from projection checkpoints. `CompactionEvent` explains why middleware skipped or performed compaction. `ThreadHistoryCompactionCheckpointEvent` records the compaction point. Hard checkpoints remove compacted messages and insert replacements when present; soft checkpoints leave raw replay intact for clients to display by policy.
 
 For workflows, render workflow lifecycle, layer, node, edge, and diagnostic events as a timeline or graph projection. Child agent, tool, and permission events may also appear in the same live stream when the workflow or subagent execution bubbles events through a parent coordinator.
 
 For tool progress emitted from inside a function body, see [Tool And Function Events](../guides/events/tool-and-function-events.md).
 
-## Persistence Summary
+## Publication Summary
 
-Persisting families verified for first docs:
+Thread-scoped projectable `AgentEvent` values pass through the canonical publisher:
 
-- thread-run started and completed
-- message-turn started and finished
-- text streaming start, delta, and end
-- reasoning start, delta, and end
-- tool start, args, result, and end
-- tool background task events
-- model background operation started, plus terminal or meaningful status events
+```text
+identify -> commit -> assign ThreadSequenceNumber -> publish -> replay
+```
 
-Live-only or caveated families:
+The registered codec preserves the concrete event type and canonical payload across in-process subscribers, hosted observation, and replay. Process-local publication keeps `ThreadSequenceNumber == 0` and provides no replay guarantee. High-volume `AgentStructEvent` values use the separate struct-event rail.
 
-- audio transcript streaming is not durable by default
-- interactive request/response events are live bidirectional flows
-- workflow and subagent child-event persistence depends on the execution path and session/thread policy
-- observability and diagnostic events generally do not persist unless explicitly mapped
-- compaction observability is live; thread-history checkpoints can be durable for soft and hard retention, but only hard retention removes messages from the projected thread
-- message-turn errors have special thread failure conversion behavior rather than the same simple persistence override as successful turn events
+See [Canonical And Process-Local Events](../guides/events/canonical-and-process-local-events.md) and [Canonical Thread Journal](../guides/sessions-and-streaming/canonical-thread-journal.md).

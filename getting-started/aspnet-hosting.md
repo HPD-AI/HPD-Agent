@@ -89,7 +89,7 @@ Before exposing hosted routes outside local development, decide how your app wil
 
 `AddHPDAgent(...)` registers a named hosted runtime.
 
-`SessionStorePath` creates a `JsonSessionStore` for hosted sessions and threads.
+`SessionStorePath` creates a segmented `FileSessionStore` for hosted sessions and canonical thread journals.
 
 `AgentStore` stores reusable hosted agent definitions. This sample uses `JsonAgentStore`.
 
@@ -99,7 +99,7 @@ Before exposing hosted routes outside local development, decide how your app wil
 
 The hosting layer owns persistence and passes the configured stores to runtimes as requests arrive. Configure stores through hosting options rather than creating separate stores inside `ConfigureAgent`.
 
-When a hosted input request arrives, hosting resolves the route `agentId`, starts the thread runtime if needed, and queues the input into that runtime. That active runtime owns committed events, middleware responses, client tools, permissions, and interruptions. Hosted observers hydrate `/state` and resume SSE after its committed cursor. For the direct-run versus started-runtime model, see [Agent Runtime And Capabilities](../concepts/agent-runtime-and-capabilities.md).
+When a hosted input request arrives, hosting resolves the route `agentId`, reserves thread-run ownership, commits the start fact, and queues the input into that runtime. The backend owns committed events, middleware responses, client tools, permissions, and interruptions. Hosted clients read control state from `/state` and use one `/events?after={appliedCursor}` SSE stream for catch-up and future commits. For the direct-run versus started-runtime model, see [Agent Runtime And Capabilities](../concepts/agent-runtime-and-capabilities.md).
 
 ## Next
 

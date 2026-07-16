@@ -32,7 +32,7 @@ user input
   -> events, thread projection, persistence, eval/telemetry hooks
 ```
 
-`RunAsync(...)` performs the turn and returns an `AgentTurnResult`. During the same turn, the agent can emit live events for text, tool calls, permissions, retries, errors, middleware, nested agents, workflows, audio, evaluation, and diagnostics.
+`RunAsync(...)` performs the turn and returns an `AgentTurnResult`. During the same turn, the agent publishes events for text, tool calls, permissions, retries, errors, middleware, nested agents, workflows, audio, evaluation, and diagnostics.
 
 ## Direct Runs And Started Runtimes
 
@@ -161,7 +161,7 @@ Do not assume:
 - `AgentTurnResult.Text` includes everything important that happened
 - permissions sandbox a tool body or authorize external services
 - local file stores are production storage
-- live events and durable thread events are the same JSON shape
+- canonical delivery and replay preserve the same registered event value
 - middleware `OnErrorAsync` catches every provider or turn failure
 - a hosted client can respond to an old permission request after the run has moved on
 

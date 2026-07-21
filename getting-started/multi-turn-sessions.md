@@ -60,7 +60,7 @@ The thread stores the projected transcript for one conversation path. That is th
 
 The session stores metadata shared across threads, plus session-scoped middleware state such as remembered permission choices or user/session preferences.
 
-The thread also stores thread-scoped middleware state. Use thread scope for state that should fork with the conversation path, such as compaction metadata, plan progress, or memory pointers derived from that thread.
+The thread also stores thread-scoped middleware state. Use thread scope for state that should fork with the conversation path, such as plan progress or memory pointers derived from that thread. Compaction derives from current model input and canonical checkpoints rather than persistent middleware state.
 
 Without a configured session store, sessions are process-local. Add persistence before relying on session ids across restarts.
 

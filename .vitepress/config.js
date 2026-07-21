@@ -121,6 +121,7 @@ const sidebar = [
     text: 'Sessions And Streaming',
     collapsed: true,
     items: [
+      link('Thread Execution Lifecycle', '/guides/sessions-and-streaming/thread-execution-lifecycle'),
       link('Canonical Thread Journal', '/guides/sessions-and-streaming/canonical-thread-journal'),
       link('Render An Event Stream', '/guides/sessions-and-streaming/render-an-event-stream'),
       link('Thread History And Forking', '/guides/sessions-and-streaming/thread-history-and-forking'),

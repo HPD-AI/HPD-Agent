@@ -169,7 +169,7 @@ The response route is:
 POST /agents/{agentId}/sessions/{sid}/threads/{bid}/responses
 ```
 
-Hosted responses are routed to the active runtime for the exact `agentId + sessionId + threadId`. If that thread runtime is not active, the service returns a `ThreadRuntimeNotActive` conflict. If no matching request is waiting, the response is rejected as a conflict. Clients should post responses while the request is live and preserve the request id from the event.
+Hosted responses are posted to the active coordinator route from which the request was surfaced. For a normal request, that is the same `agentId + sessionId + threadId`. Parent runtime state can also surface a descendant subagent request; in that case post through the active parent route while preserving the child `sessionId` and `threadId` carried by the response event. The coordinator resolves the matching descendant waiter. If the routed runtime is not active, the service returns `ThreadRuntimeNotActive`; if no matching request is waiting, it returns a conflict.
 
 Do not treat permissions as a separate hidden channel. They are part of the same event vocabulary as other agent runtime interactions.
 

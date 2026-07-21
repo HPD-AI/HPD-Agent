@@ -1,6 +1,6 @@
 # Hosted Streaming API
 
-The hosted streaming API is for UI and integration clients that submit input, observe canonical thread events, interrupt active runs, and answer interactive middleware requests.
+The hosted streaming API is for UI and integration clients that submit queued work and active controls, observe canonical thread events, and answer interactive middleware requests.
 
 All runtime routes use:
 
@@ -47,12 +47,13 @@ Accepted input returns `202 Accepted` with the backend-owned run identity:
 
 ```json
 {
-  "runtimeRunId": "run-123",
+  "disposition": "queued",
+  "threadExecutionId": "execution-123",
   "startedAt": "2026-07-15T10:15:30Z"
 }
 ```
 
-Observe committed SSE events to render output, completion, errors, and interactive requests. Keep the returned `runtimeRunId` for lifecycle state and safe interruption.
+Observe committed SSE events to render output, completion, errors, and interactive requests. Keep the returned `threadExecutionId` for lifecycle correlation, steering, and interruption.
 
 Only one active hosted run is allowed per thread. A second input submitted to the same `sessionId + threadId` while a run is active returns a conflict with a thread-run-active error.
 
@@ -68,13 +69,7 @@ Content-Type: application/json
   "runConfig": {
     "providerKey": "openai",
     "modelId": "gpt-4.1",
-    "compaction": {
-      "modelContext": {
-        "providerKey": "openai",
-        "modelId": "gpt-4.1",
-        "contextWindow": 128000
-      }
-    }
+    "compaction": null
   }
 }
 ```
@@ -106,12 +101,18 @@ Submit a dedicated compaction input through the normal hosted input route:
   "version": "1.0",
   "type": "COMPACT_THREAD_INPUT",
   "request": {
+    "compaction": {
+      "point": { "$type": "currentHead" },
+      "preservation": { "$type": "previousTurns", "count": 5 },
+      "strategy": { "$type": "summarizing" },
+      "commitMode": 0
+    },
     "continuation": 1
   }
 }
 ```
 
-`continuation: 1` is `CompactionContinuation.StopAfterCompaction`. The request may also override strategy, retention, and model-context metadata. Hosting gives it normal run ownership and interruption semantics without creating a user message or entering a model turn.
+`continuation: 1` is `CompactionContinuation.StopAfterCompaction`; `commitMode: 0` is soft and `1` is hard. Hosting gives explicit compaction normal run ownership and interruption semantics without creating a user message or entering a model turn.
 
 ## Read State Then Observe With SSE
 
@@ -121,24 +122,26 @@ First load authoritative runtime control state:
 GET /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/state
 ```
 
-It returns `observedHead`, the backend-owned `activeRun`, and currently answerable `pendingRequests`. It does not return event history. Restore controls immediately, then connect SSE from the greatest contiguous position your client has successfully projected. Use zero when no local projection exists:
+It returns `observedCursor`, the backend-owned `activeExecution`, and currently answerable `pendingRequests`. It does not return event history. Restore controls immediately, then connect SSE from the greatest contiguous cursor your client has successfully projected. Use sequence zero in the observed generation when no local projection exists:
 
 ```http
-GET /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/events?after=0
+GET /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/events?after=3:0
 Accept: text/event-stream
 ```
 
 The same stream catches up every committed event after the cursor and then remains attached for future commits. Each event includes its committed thread position as the SSE id:
 
 ```text
-id: 43
+id: 3:43
 event: agent-event
 data: {"version":"1.0","type":"TEXT_DELTA","threadSequenceNumber":43,"text":"hello","messageId":"..."}
 ```
 
-Process events serially and advance the applied cursor only after the consumer applies an event successfully. `observedHead` classifies the initial catch-up boundary; it must never overwrite the applied cursor. On EOF or a connection error, reconnect with the last applied cursor. The server also accepts `Last-Event-ID` when `after` is absent. Comment heartbeats can be ignored. If observation fails after SSE headers are committed, the server closes the stream; it never fabricates an uncommitted error `AgentEvent`.
+Process events serially and advance the applied cursor only after the consumer applies an event successfully. `observedCursor` classifies the initial catch-up boundary; it must never overwrite the applied cursor. On EOF or a connection error, reconnect with the last applied `generation:sequence` cursor. The server also accepts `Last-Event-ID` when `after` is absent. Comment heartbeats can be ignored. If observation fails after SSE headers are committed, the server closes the stream; it never fabricates an uncommitted error `AgentEvent`.
 
-Input, interruption, and interactive responses use their HTTP routes. Committed thread observation uses SSE. See [Hosted Lifecycle And Recovery](hosted-lifecycle-and-recovery.md) for the complete recovery contract.
+Hard compaction sends `event: thread-journal-rebased` with the previous and current generations, then ends observation. Clear the old projection, reload state, and reconnect at sequence zero of the current generation.
+
+Semantic inputs use `/inputs`, interactive responses use `/responses`, and committed thread observation uses SSE. See [Hosted Lifecycle And Recovery](hosted-lifecycle-and-recovery.md) for the complete recovery contract.
 
 ## Render Nested Activity
 
@@ -157,37 +160,49 @@ Content-Type: application/json
 {
   "newThreadId": "try-short-answer",
   "fromMessageId": "message-id-to-fork-from",
-  "name": "Short answer"
+  "name": "Short answer",
+  "compaction": {
+    "$type": "enabled",
+    "compaction": {
+      "point": { "$type": "currentHead" },
+      "preservation": { "$type": "previousTurns", "count": 3 },
+      "strategy": { "$type": "summarizing" },
+      "commitMode": 1
+    }
+  }
 }
 ```
 
-`ForkThreadRequest` does not include a per-request compaction intent. If fork compaction is enabled for the hosted agent, it is controlled by the server-side agent and middleware configuration. Clients should read the created thread, thread projection, or thread events after the fork instead of assuming the target thread retained every raw copied message.
+Use `$type: "inherit"` to apply configured fork compaction, `$type: "disabled"` to skip it, or `$type: "enabled"` with an explicit specification. Omitting `compaction` inherits the server-side configuration.
 
-## Interrupt A Run
+## Control An Active Execution
 
-Interrupt the active thread run:
+Interrupt the active thread execution by submitting its semantic input:
 
 ```http
-POST /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/interrupt
+POST /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/inputs
 Content-Type: application/json
 
 {
-  "expectedRuntimeRunId": "run-123",
+  "version": "1.0",
+  "type": "INTERRUPTION_REQUEST",
+  "threadExecutionId": "execution-123",
   "reason": "User cancelled the request.",
-  "eventFlowId": "optional-flow-id"
+  "source": "User"
 }
 ```
 
-Read `/state` immediately before cancellation and send its active run id as `expectedRuntimeRunId`. The body can also include an `INTERRUPTION_REQUEST` event envelope. Omitting a JSON object creates a default user interruption reason.
+Read `/state` immediately before cancellation and send its active execution id as `threadExecutionId`. Steering uses a `STEERING_INPUT` envelope with that same target and a `messages` array.
 
-The `202` response has one of four statuses:
+The `202` response has a `disposition`:
 
-- `accepted`: the expected active run received the interruption
-- `already_terminal`: the expected run has already completed, failed, or been cancelled
-- `no_active_run`: there is no current run and the expected run is not terminal history
-- `active_run_mismatch`: another run is active; the response includes that `activeRun`
+- `accepted`: the matching active execution owns the control
+- `no_active_execution`: there is no current execution
+- `active_execution_mismatch`: another execution is active; the response includes that `activeExecution`
+- `active_input_not_steerable`: steering targeted active work that is not a message execution
+- `execution_finishing`: steering acceptance has already closed
 
-Do not automatically retry against a mismatched run. It may be newer work started by another client.
+Do not automatically retry against a mismatched execution. It may be newer work started by another client.
 
 ## Answer Interactive Middleware
 
@@ -209,7 +224,7 @@ Content-Type: application/json
 
 The body must be a serialized `AgentEvent` envelope whose event implements `IResponseEvent`, such as `PermissionResponseEvent`, `ContinuationResponseEvent`, `ClarificationResponseEvent`, `ClientToolInvokeOutcomeEvent`, or an app-owned custom response event.
 
-Middleware responses are not thread runs. Canonical request events are committed only after the request is externally answerable. `/state` also exposes currently pending requests, allowing a recovering client to restore interaction UI before historical replay completes. The response route requires an existing session/thread scope, an active thread runtime, and a waiter that accepts the response. If the scope does not exist, it returns `404`. If no runtime is active, the route returns a thread-runtime-not-active conflict. If the runtime exists but no waiter accepts the response, it returns `409` with the `RespondResult` status.
+Middleware responses are not thread executions. Canonical request events are committed only after the request is externally answerable. `/state` also exposes currently pending requests, allowing a recovering client to restore interaction UI before historical replay completes. The response route requires an existing session/thread scope, an active thread runtime, and a waiter that accepts the response. If the scope does not exist, it returns `404`. If no runtime is active, the route returns a thread-runtime-not-active conflict. If the runtime exists but no waiter accepts the response, it returns `409` with the `RespondResult` status.
 
 ## Event Bodies
 

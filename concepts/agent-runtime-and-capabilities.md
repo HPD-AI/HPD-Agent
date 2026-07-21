@@ -40,7 +40,7 @@ Most in-process code can call `RunAsync(...)` directly. In that shape, the call 
 
 `StartAsync(...)` is for the long-lived runtime shape. It does not run a prompt by itself. It creates the runtime input loop, runtime event coordinator, runtime struct-event hub, input queue, cancellation lifetime, runtime capabilities, and background-task registry. It then runs the start middleware hooks and begins a single-reader loop that accepts `AgentInputEvent` values.
 
-After an agent is started, `RunAsync(input)` queues the input into that runtime loop and returns `AgentTurnResult.Empty`. The runtime loop processes queued inputs, publishes completion events for thread runs, keeps the runtime alive after interrupted turns, and gives hosted clients a live target for events, responses, client tools, permissions, and interruptions.
+After an agent is started, `RunAsync(input)` queues the input into that runtime loop and returns `AgentTurnResult.Empty`. The runtime loop processes queued inputs, publishes thread-execution lifecycle events, keeps the runtime alive after interrupted turns, and gives hosted clients a live target for events, responses, client tools, permissions, and interruptions.
 
 Use direct `RunAsync(...)` when your app owns the call and only needs the result. Use a started runtime when the agent must be addressable while it is running: ASP.NET Core HTTP/SSE clients, bot adapters, TUI runtimes, externally executed client tools, middleware response routing, or runtime-owned background work.
 

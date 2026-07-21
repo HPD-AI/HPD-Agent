@@ -46,6 +46,7 @@ public sealed class SpecialistTools
     [SubAgent]
     public SubAgent Researcher() =>
         SubAgent.FromConfig(
+            "specialist.researcher",
             "researcher",
             "Researches a question and returns cited notes.",
             researcherConfig);

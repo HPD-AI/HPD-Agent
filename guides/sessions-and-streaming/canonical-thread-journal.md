@@ -6,7 +6,7 @@ Every projectable thread-scoped `AgentEvent` has one canonical lifecycle:
 propose event
   -> validate scope, identity, codec, and size
   -> atomically append to the configured ISessionStore
-  -> receive its authoritative ThreadSequenceNumber
+  -> receive its authoritative Generation + ThreadSequenceNumber
   -> publish that exact committed value
   -> replay that exact value later
 ```
@@ -20,12 +20,14 @@ A committed event preserves:
 - concrete registered event type;
 - payload and stable `EventId`;
 - session and thread scope;
-- authoritative positive `ThreadSequenceNumber`;
+- authoritative journal generation and positive `ThreadSequenceNumber`;
 - relative journal order.
 
 Historical, catch-up, and live delivery preserve the event value. Delivery context may control batching or animation independently of the payload.
 
-The session store assigns `ThreadSequenceNumber` at commit. Generic event routing keeps its infrastructure order separate from the domain event.
+The session store assigns `ThreadSequenceNumber` at commit. A normal append remains in the current generation. An atomic journal replacement increments the generation and assigns fresh contiguous sequence numbers. Generic event routing keeps its infrastructure order separate from the domain event.
+
+Consumers resume with `ThreadJournalCursor(Generation, SequenceNumber)`. A sequence number alone is ambiguous after a hard compaction replaces the journal.
 
 ## `ISessionStore`
 
@@ -38,6 +40,12 @@ ValueTask<ThreadEventAppendResult> AppendThreadEventsAsync(
     ThreadAppendCondition condition = default,
     CancellationToken cancellationToken = default);
 
+ValueTask<ThreadJournalReplaceResult> ReplaceThreadJournalAsync(
+    ThreadKey thread,
+    IReadOnlyList<AgentEvent> replacement,
+    ThreadJournalCursor expectedCursor,
+    CancellationToken cancellationToken = default);
+
 ValueTask<ThreadDescriptor?> GetThreadAsync(...);
 IAsyncEnumerable<ThreadDescriptor> ListThreadsAsync(...);
 ValueTask<ThreadEventHead?> GetThreadEventHeadAsync(...);
@@ -45,7 +53,9 @@ IAsyncEnumerable<ThreadEventBatch> ReadThreadEventsAsync(...);
 IAsyncEnumerable<ThreadEventBatch> ObserveThreadEventsAsync(...);
 ```
 
-`ReadThreadEventsAsync` uses an exclusive `After`, optional inclusive `Through`, and a server-enforced batch count. `ObserveThreadEventsAsync` catches up from `after`, registers without a missed-wakeup gap, and then waits for future commits.
+`ReadThreadEventsAsync` uses an exclusive cursor, optional inclusive sequence boundary within that generation, and a server-enforced batch count. `ObserveThreadEventsAsync` catches up from the cursor, registers without a missed-wakeup gap, and then waits for future commits.
+
+`ReplaceThreadJournalAsync` is an optimistic, atomic generation change. It validates the expected cursor, replaces the complete active journal, increments the generation, and wakes observers only after the replacement is readable. Observers attached to the prior generation receive `ThreadJournalReplacedException` and must rehydrate the new generation from sequence zero.
 
 The commit notification is only a wakeup. Readers always reread the committed journal as the authoritative payload source.
 
@@ -97,8 +107,9 @@ Truly ephemeral diagnostics use tracing, metrics, struct events, or an explicitl
 ## Failure Rules
 
 - Append failure publishes no canonical event.
-- Expected-head conflicts are typed `ThreadAppendConflictException` failures.
+- Expected-cursor conflicts are typed `ThreadAppendConflictException` failures.
 - A cursor ahead of the journal head is a `ThreadCursorConflictException`.
+- A replaced generation terminates old observation with `ThreadJournalReplacedException`.
 - Deletion terminates observation with `ThreadDeletedException`.
 - Unknown or corrupt canonical events fail at their position; consumers do not silently skip them.
 - A consumer advances its cursor only after successful projection.

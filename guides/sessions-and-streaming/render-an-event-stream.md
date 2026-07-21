@@ -121,7 +121,7 @@ For full replay, consume bounded canonical batches from position zero and retain
 
 Render durable thread projection, not raw event count.
 
-When thread history contains `THREAD_HISTORY_COMPACTION_CHECKPOINT`, apply the checkpoint according to its mode. Hard checkpoints remove durable compacted messages and insert replacement messages if present. Soft checkpoints leave raw replay intact, though a transcript UI may collapse compacted ids and show the checkpoint summary. An event-log or audit view can also show the compaction event, compacted ids, summary text, and timestamp.
+When thread history contains `THREAD_HISTORY_COMPACTION_CHECKPOINT`, apply its semantic result. Soft checkpoints coexist with source events, so a transcript may retain, collapse, or hide the compacted range. A hard checkpoint arrives only in a replacement journal generation: discard projection state from the previous generation and rebuild from the replacement stream. An event-log or audit view can show the checkpoint, compacted ids, summary text, and timestamp.
 
 Live `CompactionEvent` belongs in a diagnostic lane. It is not the durable thread-history projection instruction.
 

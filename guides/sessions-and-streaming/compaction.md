@@ -1,49 +1,174 @@
 # Compaction
 
-Compaction reduces conversation history before a model call and can optionally compact the durable thread projection.
-
-Use this mental model:
+Compaction creates a smaller semantic thread from an existing conversation. One specification states:
 
 ```text
-strategy changes what the next model sees
-retention changes what future thread projection keeps
-fork compaction rewrites the new target thread before it is committed
+point         where compaction stops
+preservation  what history immediately before that point remains verbatim
+strategy      whether selected history is removed or summarized
+commit mode   whether the checkpoint is appended or the journal is replaced
 ```
 
-There are three related surfaces:
+Automatic, explicit, and fork compaction use the same `IThreadCompactionEngine`. `CompactionMiddleware` adapts that engine to iteration and fork lifecycle hooks; `Agent` does not contain compaction-specific execution logic.
 
-- model-visible compaction: middleware reduces the non-system messages used for the next model request
-- durable thread-history compaction: hard retention removes messages from the projected thread history and may insert replacement messages
-- fork compaction: a newly forked target thread is reduced before its initial thread history is saved
+## Configure Compaction
 
-## Configure Automatic Compaction
-
-Configure an automatic policy when the agent should create checkpoints as context grows:
+Configure the default automatic and fork policies when building the agent:
 
 ```csharp
 builder.WithCompaction(config =>
 {
-    config.Strategy = new MessageCountingCompactionOptions
+    config.Automatic = new AutomaticCompactionPolicy
     {
-        PreserveRecentUserTurnCount = 10
-    };
-    config.Automatic = new CompactionAutomaticPolicy
-    {
-        Trigger = new CountCompactionTriggerOptions
+        Trigger = new ContextPercentageCompactionTrigger(
+            TotalInputTokens: 120_000,
+            Percentage: 0.70),
+        Compaction = new CompactionSpecification
         {
-            TargetCount = 20,
-            Threshold = 5
+            Point = new CompactAtCurrentHead(),
+            Preservation = new PreservePreviousTurns(5),
+            Strategy = new SummarizingCompaction(),
+            CommitMode = CompactionCommitMode.Soft
         }
     };
-    config.Retention = new PreserveThreadHistoryOptions();
+
+    config.ForkCompaction = new CompactionSpecification
+    {
+        Point = new CompactAtCurrentHead(),
+        Preservation = new PreservePreviousTurns(3),
+        Strategy = new SummarizingCompaction(),
+        CommitMode = CompactionCommitMode.Hard
+    };
 });
 ```
 
-This configuration performs soft compaction when the count trigger fires. The next model call sees reduced history, but durable thread history remains intact.
+`CompactionConfig.Automatic = null` disables automatic compaction while retaining explicit and fork compaction. A non-null `AgentRunConfig.Compaction.Automatic` replaces the configured automatic policy for one run; otherwise the configured policy is used.
 
-Set `Automatic = null` on `CompactionConfig` to disable automatic checkpoints while retaining explicit and fork compaction. A per-run `CompactionRunPolicy` replaces the configured automatic policy for that run.
+All compaction configuration records are explicitly polymorphic through `$type` discriminators and are registered with the framework JSON contexts for source-generated, Native AOT-friendly serialization.
 
-Explicit compaction is a dedicated input operation, not a model turn:
+## Automatic Triggers
+
+Automatic triggers are evaluated in `BeforeIterationAsync` against the messages that are about to reach the provider:
+
+| Trigger | Fires when |
+| --- | --- |
+| `TurnCountCompactionTrigger(Turns)` | The current model input contains at least that many distinct turns. |
+| `InputTokenCompactionTrigger(InputTokens)` | Estimated input tokens reach the absolute threshold. |
+| `ContextPercentageCompactionTrigger(TotalInputTokens, Percentage)` | Estimated input tokens reach the stated fraction of the explicit total input-token capacity. |
+
+A percentage always includes its denominator. For example, 70 percent of a model with a 120,000-token input limit is:
+
+```csharp
+new ContextPercentageCompactionTrigger(120_000, 0.70)
+```
+
+Do not substitute a generic context-window number when the provider exposes a smaller input-token limit.
+
+## Compaction Point
+
+The point is the exclusive end of the history being considered for compaction:
+
+| Point | Meaning |
+| --- | --- |
+| `CompactAtCurrentHead` | Compact history before the current thread head. |
+| `CompactAtMessage(MessageId, ExpectedJournalGeneration)` | Compact history before the selected message. |
+| `CompactAtTurn(TurnId, ExpectedJournalGeneration)` | Compact history before the selected turn. |
+
+Message and turn points may carry the journal generation from which the user selected them. The engine rejects the request if hard compaction has since replaced that generation. This prevents a stale UI selection from targeting a different message with a coincidentally reused sequence.
+
+The engine expands a message point to the start of its turn when turn metadata is available, so compaction does not split that turn accidentally.
+
+## Preservation
+
+Preservation applies only to history before the compaction point:
+
+| Preservation | Result |
+| --- | --- |
+| `PreserveNoPreviousHistory` | Select all history before the point. |
+| `PreservePreviousTurns(Count)` | Keep the most recent complete turns before the point verbatim. |
+| `PreservePreviousUserMessages(Limit)` | Carry selected prior user messages forward without retaining all intervening assistant activity. |
+
+`PreservePreviousUserMessages` accepts either:
+
+```csharp
+new PreviousItemCountLimit(3)
+new PreviousTokenBudgetLimit(2_000)
+```
+
+The carried user messages receive new message identities while recording their source identities in the checkpoint. This supports a summary-plus-user-prompts shape without pretending that tool calls or assistant messages were preserved.
+
+Preserving turns keeps the complete semantic turn. Registered event and projection relationships—not a hard-coded list of tool event types—determine the associated history.
+
+## Strategies
+
+The strategy determines what replaces selected history:
+
+### Remove selected history
+
+```csharp
+Strategy = new RemovalCompaction()
+```
+
+The selected history contributes no replacement message.
+
+### Summarize selected history
+
+```csharp
+Strategy = new SummarizingCompaction
+{
+    Provider = new ClientProviderConfig
+    {
+        ProviderKey = "openai",
+        ModelName = "gpt-4.1-mini"
+    },
+    Instructions = "Preserve decisions, file paths, failures, and exact next actions."
+}
+```
+
+When `Provider` is absent, the configured summarizer client is used, falling back to the active chat client. The built-in instructions produce a continuation handoff rather than a conversational answer.
+
+## Soft And Hard Commit Modes
+
+Both modes produce a `ThreadHistoryCompactionCheckpointEvent`. They differ in what happens to the canonical journal.
+
+### Soft
+
+Soft compaction appends the checkpoint to the current generation:
+
+```text
+generation N:
+  original events
+  checkpoint
+  future events
+```
+
+The canonical source events remain readable. Model projection applies the checkpoint and uses the compacted semantic result. Transcript products may retain, collapse, or hide the compacted range according to their display policy.
+
+Use soft mode when full source history must remain available.
+
+### Hard
+
+Hard compaction atomically replaces the complete canonical journal:
+
+```text
+generation N                         generation N + 1
+  complete original journal    ->     thread seed
+                                      checkpoint
+                                      authoritative runtime seeds
+                                      resulting semantic messages
+```
+
+Every event in the previous generation is removed from the active journal. The replacement journal contains only the semantic result required by the specification, plus canonical facts needed to keep the thread operable.
+
+Hosting reseeds an active run and answerable pending interactions during replacement. Escape, interruption, and interactive responses therefore continue to target authoritative runtime state after hard compaction.
+
+Hard compaction resets sequence numbering inside a new generation. Consumers must track `ThreadJournalCursor`, not a sequence number alone.
+
+Use hard mode when the old journal must be permanently replaced and the compacted semantic result should become the complete canonical history.
+
+## Explicit Compaction
+
+Explicit compaction is a dedicated input operation. It creates no user message and does not enter a model turn:
 
 ```csharp
 await agent.RunAsync(new CompactThreadInputEvent
@@ -52,173 +177,37 @@ await agent.RunAsync(new CompactThreadInputEvent
     ThreadId = threadId,
     Request = new ThreadCompactionRequest
     {
+        Compaction = new CompactionSpecification
+        {
+            Point = new CompactAtMessage(
+                selectedMessageId,
+                ExpectedJournalGeneration: selectedGeneration),
+            Preservation = new PreservePreviousTurns(2),
+            Strategy = new SummarizingCompaction(),
+            CommitMode = CompactionCommitMode.Hard
+        },
         Continuation = CompactionContinuation.StopAfterCompaction
     }
 });
 ```
 
-The request can override strategy, retention, and model-context metadata. It runs under normal hosted run ownership and cancellation, but creates no user message.
+`Continue` allows execution to proceed after compaction. `StopAfterCompaction` completes the compaction operation without making a provider request.
 
-## Strategies
+Hosted clients submit the same `COMPACT_THREAD_INPUT` envelope through the normal input endpoint.
 
-The strategy decides what remains visible to the next model turn.
+## Fork Compaction
 
-`MessageCountingCompactionOptions` keeps recent user turns. Its default preserve target is 10 user turns. The framework translates that into the raw message suffix needed to keep each preserved user request with the assistant, tool-call, and tool-result messages that follow it.
+Fork compaction shapes only the new target thread. The source thread remains unchanged.
 
-`SummarizingCompactionOptions` summarizes older history and keeps recent user turns. The default shape preserves 5 recent user turns, resummarizes after 5 new messages, uses a single summary, and uses handoff-style summaries. A summarizing strategy can use a separate summarizer provider through `ClientProviderConfig? SummarizerProvider`; otherwise it can use the main chat client.
-
-Set `PreserveRecentUserTurnCount = 0` when the result should retain no existing raw user-turn suffix. Zero is valid for both built-in strategies. For summarization, HPD still gives the reducer an internal sentinel so it can produce a summary when no real message is preserved; that sentinel is removed from the result and is never persisted or sent to the main chat model.
-
-Both strategies also inherit explicit preservation boundaries from `CompactionStrategyOptions`:
+The fork option is an explicit union:
 
 ```csharp
-new SummarizingCompactionOptions
-{
-    PreserveRecentUserTurnCount = 0,
-    PreserveFromMessageId = "message-42"
-};
+new InheritThreadForkCompaction()
+new DisableThreadForkCompaction()
+new ApplyThreadForkCompaction(specification)
 ```
 
-`PreserveFromMessageId` or `PreserveFromMessageTurnId` keeps the raw suffix beginning at that exact message or message turn. An explicit boundary takes precedence over `PreserveRecentUserTurnCount`. This is useful for user-directed "compact everything before here" operations.
-
-System messages are separated before reduction and added back before the model call.
-
-Choose the smallest strategy that solves the pressure you are seeing:
-
-| Pressure | Use |
-| --- | --- |
-| The chat is simply getting long | `MessageCountingCompactionOptions` with preserve retention. |
-| Older turns matter, but exact wording does not | `SummarizingCompactionOptions` with preserve retention. |
-| The thread projection itself must stay small | A strategy plus `CompactThreadHistoryOptions`. |
-| Tool calls/results are involved | Add boundary options that keep tool-call groups intact. |
-| A new fork should start lighter than its source thread | Fork compaction through `ThreadForkOptions.Compaction`. |
-| One request needs full context for debugging or a critical decision | `AgentRunConfig.Compaction = new() { Automatic = null }`. |
-| A client should compact the current thread now | Submit `CompactThreadInputEvent`. |
-
-## Triggers
-
-Triggers decide when compaction runs:
-
-| Trigger | Behavior |
-| --- | --- |
-| `CountCompactionTriggerOptions` | Runs after message or message-turn count exceeds `TargetCount + Threshold`. |
-| `ContextWindowCompactionTriggerOptions` | Runs when the last observed input token count crosses either a configured percentage of the context window or an explicit token count. |
-| `CompositeCompactionTriggerOptions` | Runs when any child trigger in `AnyOf` runs. |
-
-Context-window triggers use observed usage, not a full preflight tokenizer for unsent messages. At a message-turn boundary they use prior turn usage. Inside an agentic turn they can use usage from the latest completed model iteration before the next provider request.
-
-`ContextWindowCompactionTriggerOptions.ContextWindowSize` can be omitted when the active run supplies model context metadata:
-
-```csharp
-new AgentRunConfig
-{
-    ProviderKey = "openai",
-    ModelId = "gpt-4.1",
-    Compaction = new CompactionRunPolicy
-    {
-        Automatic = new CompactionAutomaticPolicy
-        {
-            Trigger = new ContextWindowCompactionTriggerOptions
-            {
-                ThresholdMode = ContextWindowCompactionThresholdMode.Percentage,
-                TriggerPercentage = 0.70
-            }
-        },
-        ModelContext = new ModelContextWindowOptions
-        {
-            ProviderKey = "openai",
-            ModelId = "gpt-4.1",
-            ContextWindow = 128000
-        }
-    }
-};
-```
-
-For a fixed token threshold, use token-count mode:
-
-```csharp
-new ContextWindowCompactionTriggerOptions
-{
-    ThresholdMode = ContextWindowCompactionThresholdMode.TokenCount,
-    TriggerTokenCount = 64_000
-};
-```
-
-Hosted clients can preflight the same model-aware pressure with `POST /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/context-usage`. The endpoint returns `ThreadContextUsage` and does not start a run or mutate history.
-
-Automatic context-window compaction is evaluated before a user-message turn and again before provider-bound iterations inside an agentic turn. The per-iteration check is cheap when the trigger does not fire. If the trigger does fire, HPD runs the configured compaction strategy before the next model request so the next provider call uses the compacted model-visible history.
-
-## Retention
-
-Retention decides what happens to durable thread history after model-visible compaction.
-
-| Retention | Durable thread projection |
-| --- | --- |
-| `PreserveThreadHistoryOptions` | Preserves thread history. This is the default and safest mode. |
-| `CompactThreadHistoryOptions` | Removes durable compacted messages and inserts replacement messages where the removed range began. |
-
-Preserve retention is soft compaction. It changes what the model sees but does not remove projected thread messages.
-
-Compact retention is hard compaction. It can change future `LoadThreadAsync(...)` projection and can make old message ids unavailable as fork points.
-
-## Soft Or Hard Retention
-
-Soft compaction is the safest default for chat products, audit-heavy systems, and early integrations. It keeps the durable thread projection intact, so UIs can still show the original conversation, old message ids remain available as fork points, and recovery is straightforward if a summary misses nuance. The tradeoff is that storage and thread projection stay large. Clients also need to understand that the model-visible history may be smaller than the transcript they render.
-
-Hard compaction is better when the durable thread itself must stay small or when every future reader should treat the compacted projection as canonical. It reduces loaded thread history, can speed up hydration, and avoids repeatedly carrying old raw messages through forked or resumed work. The tradeoff is that the projection is destructive: compacted-away message ids may no longer be valid fork points, exact old wording may only exist in an archival/event source, and clients must render replacement messages or gaps according to the checkpoint.
-
-Use this rule of thumb:
-
-| Need | Prefer |
-| --- | --- |
-| Keep full transcript/audit history visible | Soft retention |
-| Safest default for user-facing chat | Soft retention |
-| Reduce what the model sees without changing projection | Soft retention |
-| Make the loaded thread canonical and smaller | Hard retention |
-| Keep fork targets and resumed runs small by default | Hard retention |
-| Remove old messages from normal projection | Hard retention |
-
-For long-running agentic turns, both modes can reduce the next provider request after compaction. The difference is what becomes durable. Soft retention records compaction state and keeps the raw projection intact. Hard retention applies a durable checkpoint immediately when automatic compaction fires before a provider-bound iteration, so future loads and forks see the compacted projection for the durable messages that were removed.
-
-## Boundary Policies
-
-Boundary policies control which durable messages are removed under hard retention:
-
-| Boundary | Durable removal scope |
-| --- | --- |
-| `ExactCompactedMessagesBoundaryOptions` | Removes exactly the durable compacted message ids selected by compaction, excluding retained and system messages. |
-| `IncludePreviousMessagesBoundaryOptions` | Includes previous non-system messages before the compacted range. |
-| `IncludeMessageTurnBoundaryOptions` | Expands to messages in the same message turn. |
-| `IncludeToolCallGroupBoundaryOptions` | Expands to matching tool-call and tool-result messages. |
-| `CompositeCompactionBoundaryOptions` | Applies multiple boundary policies. |
-
-Message-turn boundaries depend on projected message metadata such as `hpd.messageTurnId`.
-
-## Events And State
-
-Compaction uses three different records:
-
-| Record | Meaning |
-| --- | --- |
-| `CompactionEvent` | Middleware execution observability for skipped or performed compaction. |
-| `CompactionStateData` | Thread-scoped trigger counters and usage observations. |
-| `ThreadHistoryCompactionCheckpointEvent` | Durable thread checkpoint written for soft and hard compaction. |
-
-`CompactionEvent` is useful for diagnostics and runtime UI. `ThreadHistoryCompactionCheckpointEvent` controls thread projection.
-
-`ThreadHistoryCompactionCheckpointEvent` is appended for every successful compaction on a thread with a store. Hard checkpoints remove `DurableCompactedMessageIds` and insert any `ReplacementMessages`. Soft checkpoints leave durable messages intact and let clients choose how to display compacted ranges.
-
-## Fork And Compact
-
-A normal fork copies source messages through the fork point, copies thread-scoped middleware state, shares session-scoped state, and prepares target thread metadata in memory.
-
-Fork compaction runs in the pre-commit fork middleware hook. If enabled, `CompactionMiddleware` reduces the target thread messages before the target thread's initial journal batch is committed.
-
-The source thread is unchanged.
-
-Fork compaction appends the same checkpoint event to the target thread. The source thread is unchanged; the target thread is born with a hard checkpoint that records which copied messages were compacted before commit.
-
-Direct in-process callers can override the fork compaction choice with `ThreadForkOptions`:
+Example:
 
 ```csharp
 await agent.ForkThreadAsync(
@@ -228,75 +217,63 @@ await agent.ForkThreadAsync(
     fromMessageId,
     new ThreadForkOptions
     {
-        Compaction = new ThreadForkCompactionOptions
-        {
-            Mode = ThreadForkCompactionMode.Enabled,
-            Strategy = new MessageCountingCompactionOptions
+        Compaction = new ApplyThreadForkCompaction(
+            new CompactionSpecification
             {
-                PreserveRecentUserTurnCount = 3
-            }
-        },
-        Metadata = new Dictionary<string, object>
-        {
-            ["name"] = "Compacted exploration"
-        }
+                Point = new CompactAtCurrentHead(),
+                Preservation = new PreservePreviousTurns(3),
+                Strategy = new SummarizingCompaction(),
+                CommitMode = CompactionCommitMode.Hard
+            })
     },
     cancellationToken);
 ```
 
-ASP.NET Core hosted fork requests use the same shape:
+`Inherit` uses `CompactionConfig.ForkCompaction`. `Disabled` skips it. `Enabled` supplies the exact specification. Subagents that fork from a parent thread use this same contract; there is no separate subagent compaction system.
 
-```json
-{
-  "newThreadId": "compacted-exploration",
-  "fromMessageId": "msg-42",
-  "compaction": {
-    "mode": 1,
-    "preferCache": true,
-    "strategy": {
-      "$type": "messageCounting",
-      "preserveRecentUserTurnCount": 3
-    }
-  }
-}
-```
+## Events
 
-Fork compaction uses shared strategy options, but it is not a normal run compaction policy. It has no trigger, behavior, or soft retention setting. A fork compaction shapes the new fork target and leaves the source thread unchanged.
+Compaction publishes two event categories:
 
-## UI Guidance
+| Event | Purpose |
+| --- | --- |
+| `CompactionEvent` | Canonical lifecycle facts: `Started`, `Skipped`, `Failed`, and `Completed`, including origin and continuation. |
+| `ThreadHistoryCompactionCheckpointEvent` | The authoritative successful semantic change. |
 
-For transcript views, render the projected thread messages as canonical.
+The checkpoint records:
 
-After hard thread-history compaction:
+- compaction point and expected generation;
+- preservation policy;
+- compacted and preserved message identities;
+- carried user-message source identities;
+- messages after the point;
+- replacement messages;
+- strategy descriptor;
+- soft or hard commit mode;
+- compaction timestamp.
 
-- replacement messages appear where the compacted range used to be
-- delete retention closes the gap without replacement messages
-- the compaction event can be shown in an audit or debug lane
-- compacted-away message ids may no longer be valid fork points
+There is no persistent compaction middleware state. Trigger decisions derive from the actual model input, and successful projection derives from canonical checkpoints.
 
-Do not render deleted compacted messages as ordinary transcript rows unless your application has a separate archival source.
+## Client Recovery After Hard Compaction
 
-Example projection:
+A hard replacement invalidates every cursor from the previous generation. Hosted observation reports a typed journal-rebase condition containing the old and current generations.
 
-```text
-Before hard thread-history compaction:
-  user-1, assistant-1, user-2, assistant-2
+Clients then:
 
-After compact retention with a replacement message:
-  summary-1, user-2, assistant-2
+1. Stop observation of the old generation.
+2. Reload runtime control state.
+3. Clear the projection built from the old journal.
+4. Observe the new generation from sequence zero.
+5. Continue from the new applied cursor.
 
-After delete retention without replacement:
-  user-2, assistant-2
-```
+The HPD TypeScript headless controller and hosted .NET TUI perform this rehydration automatically.
 
 ## Related Pages
 
-- [Sessions, Threads, And Events](../../concepts/sessions-threads-and-events.md)
+- [Canonical Thread Journal](canonical-thread-journal.md)
 - [Thread History And Forking](thread-history-and-forking.md)
-- [Render An Event Stream](render-an-event-stream.md)
-- [Canonical And Process-Local Events](../events/canonical-and-process-local-events.md)
-- [Middleware State Persistence](../middleware/state-persistence.md)
+- [Hosted Lifecycle And Recovery](../hosting/hosted-lifecycle-and-recovery.md)
 - [Hosted Streaming API](../hosting/hosted-streaming-api.md)
-- [Hosted Endpoints](../../reference/hosted-endpoints.md)
-- [Hosted TUI Runtime](../tui/hosted-runtime.md)
+- [Render An Event Stream](render-an-event-stream.md)
+- [TypeScript Client Events](../events/typescript-client.md)
 - [Subagents](../agents/subagents.md)

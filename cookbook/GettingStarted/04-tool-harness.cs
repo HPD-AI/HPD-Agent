@@ -65,7 +65,7 @@ public class SupportToolHarness
             Name = "Support Escalation",
             SystemInstructions = "You are a specialist support agent. Resolve complex order and return cases clearly."
         },
-        SubAgentExecutionPolicies.NewSession());
+        SubAgentContextPolicy.Isolated);
 
     // MultiAgent lets the harness expose a whole workflow as one capability.
     [MultiAgent("Runs a two-agent support workflow.", Name = "support_workflow", StreamEvents = false)]

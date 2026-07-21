@@ -34,6 +34,7 @@ await using var app = HpdAgentTuiApp.Create(
     scope,
     tui => tui
         .AddAgentTuiDefaults()
+        .AddSubAgentTui()
         .AddEventHandler("myapp.text", new TextMessageStreamHandler()));
 
 await app.RunAsync();
@@ -61,9 +62,11 @@ If the wrapped agent has a session store and the requested session does not exis
 
 The runtime also exposes session, thread, and agent-store operations when the wrapped agent has the corresponding stores configured. Without those stores, list/search/create operations may be unavailable or return empty results.
 
+`AddSubAgentTui()` adds `/subagents` when the runtime supports session/thread graph operations. Selecting a child uses its default agent together with its session and thread.
+
 ## Thread Projection And Compaction
 
-The local runtime uses the same thread event and projection model as other HPD runtime surfaces. After hard durable thread-history compaction, render the projected thread history as canonical.
+The local runtime uses the same generation-aware thread journal and projection model as other HPD runtime surfaces. After hard compaction, clear state derived from the old generation and hydrate the replacement generation as canonical.
 
 Current local TUI thread-fork APIs mirror metadata-only fork requests. Do not document a TUI-level fork-compaction toggle unless the runtime API adds one; configure compaction through the wrapped agent and middleware pipeline.
 
@@ -83,4 +86,4 @@ tui => tui
 
 The `TextMessageStreamHandler` shown here is application code, not a guaranteed built-in default.
 
-`HpdAgentTuiApp` receives bounded event batches in `ThreadSequenceNumber` order. Historical, catch-up, and live batches use the same handlers; the applied cursor advances only after the entire batch projects successfully. During live operation the app tracks authoritative active runtime runs and rejects a second prompt submission with a "Thread is busy" notice. `InMemoryAgentTuiRuntime` performs the same ownership check for callers outside the stock prompt loop.
+`HpdAgentTuiApp` receives bounded event batches in `ThreadSequenceNumber` order. Historical, catch-up, and live batches use the same handlers; the applied cursor advances only after the entire batch projects successfully. During live operation the app tracks the authoritative active execution. Enter submits user work while idle; while running it retains a local follow-up that Escape can promote to steering or execution completion can submit normally. This pending intent belongs only to the TUI and is not HPD Agent queued work. `InMemoryAgentTuiRuntime` applies the framework's queued-work and active-control delivery rules once the TUI actually submits an event.

@@ -201,7 +201,7 @@ var response = await context.RequestAsync<PermissionRequestEvent, PermissionResp
     timeout: TimeSpan.FromSeconds(30));
 ```
 
-In direct in-process code, answer with `agent.AnswerRequestAsync(...)` or `agent.TryAnswerRequestAsync(...)` for the matching response event. In ASP.NET Core hosted clients, read the request from canonical SSE or restore it from `/state`, then send the matching `IResponseEvent` envelope through the hosted `/responses` route for the active `agentId + sessionId + threadId`.
+In direct in-process code, answer with `agent.AnswerRequestAsync(...)` or `agent.TryAnswerRequestAsync(...)` for the matching response event. In ASP.NET Core hosted clients, read the request from canonical SSE or restore it from `/state`, then send the matching `IResponseEvent` envelope through the active coordinator's `/responses` route. Preserve descendant child scope fields when the parent state surfaced a subagent request.
 
 Use this pattern when the user, UI, policy engine, bot adapter, or hosted runtime needs to make a decision during the run.
 

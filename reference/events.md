@@ -62,6 +62,7 @@ Common fields:
 | `visibility` | HPD transcript visibility for message/text events: `Transcript`, `Hidden`, or `Diagnostic` |
 | `persistence` | HPD message persistence policy when present on durable message-start events |
 | `callId` | Tool-call lifecycle grouping |
+| `invocationId` | One durable parent-to-subagent delegation; not the child agent or thread identity |
 | `permissionId`, `continuationId`, `requestId` | Request/response grouping through `IRequestCorrelatedEvent.RequestId` |
 
 Do not require every event to have every field. For example, some tool events carry `traceId` and `callId` without explicit span fields. Use the most specific available id for the projection you are building. See [Event Streams And Hierarchies](../concepts/event-streams-and-hierarchies.md) and [Render An Event Stream](../guides/sessions-and-streaming/render-an-event-stream.md).
@@ -75,7 +76,8 @@ Hosted live delivery and durable replay decode to the same registered event valu
 | Family | Examples | Primary channel | Thread persistence |
 | --- | --- | --- | --- |
 | Input | `UserMessagesInputEvent`; hosted routes also accept command bodies and interruption requests | upstream/control | command plane |
-| Hosted thread run | `ThreadRunStartedEvent`, `ThreadRunCompletedEvent` | control | canonical in thread scope |
+| Thread execution | `ThreadExecutionStartedEvent`, `ThreadExecutionFinishedEvent` | control | canonical in thread scope |
+| Subagent delegation | `SubAgentInvocationStartedEvent`, `SubAgentInvocationCompletedEvent`, `SubAgentInvocationFailedEvent`, `SubAgentInvocationCancelledEvent` | control | canonical in the parent thread; identifies the durable child scope |
 | Message turn lifecycle | `MessageTurnStartedEvent`, `MessageTurnFinishedEvent`, `MessageTurnErrorEvent` | default/control | canonical in thread scope |
 | Agent turn lifecycle | `AgentTurnStartedEvent`, `AgentTurnFinishedEvent` | default | canonical or process-local according to publication scope |
 | Text streaming | `TextMessageStartEvent`, `TextDeltaEvent`, `TextMessageEndEvent` | streaming | canonical in thread scope |
@@ -86,14 +88,14 @@ Hosted live delivery and durable replay decode to the same registered event valu
 | Interactive middleware | request events implementing `IRequestEvent` and response events implementing `IResponseEvent` | interactive | canonical in thread scope; answerable requests also appear in runtime state |
 | Retry and error policy | `FunctionRetryEvent`, `ModelCallRetryEvent`, middleware error events | diagnostic/default | follows publication scope |
 | Compaction observability | `CompactionEvent` | default/diagnostic | follows publication scope |
-| Thread-history compaction | `ThreadHistoryCompactionCheckpointEvent` | thread history | canonical checkpoint; projection changes according to retention mode |
+| Thread-history compaction | `ThreadHistoryCompactionCheckpointEvent` | thread history | canonical checkpoint; soft appends and hard replaces the journal generation |
 | Content and references | upload/reference events | default/diagnostic | event publication and content storage are separate policies |
 | Audio transcripts | `UserAudioTranscriptDeltaEvent`, `UserAudioTranscriptCompletedEvent`, `UserAudioTranscriptFailedEvent` | streaming/default | follows publication scope; raw audio uses content/audio storage policy |
 | Assistant audio output | assistant audio output, stream, artifact, failure, and playback events | default/diagnostic | follows publication scope |
 | Struct events | `AgentStructEvent` samples on `StructEventHub` routes | process-local/export | process-local sample rail |
 | Planning, schema, structured output | framework diagnostics and state changes | default/diagnostic | follows publication scope |
 
-`CompactionEvent` can report `CompactionStatus.CacheHit` when middleware reuses a valid cached compaction result. There is no separate compaction-cache event.
+`CompactionEvent` reports `Started`, `Skipped`, `Failed`, or `Completed`, plus its automatic, explicit, or fork origin. The successful semantic change is carried by the checkpoint event.
 
 ## Background Work Notifications
 
@@ -207,9 +209,11 @@ For retry events, be careful with already-rendered partial output. A `ModelCallR
 
 For lifecycle, retry, and failure rendering, see [Lifecycle, Retry, And Error Events](../guides/events/lifecycle-retry-and-error-events.md).
 
-For thread runs, use thread-run started/completed events to track active hosted work. Do not use thread operation lock conflicts as thread-run state.
+Use thread-execution start/finish events to project historical hosted work. Use authoritative `activeExecution` runtime state—not replayed lifecycle events or thread-operation-lock conflicts—to decide whether a thread is currently busy or cancellable.
 
-For compaction, distinguish execution observability from projection checkpoints. `CompactionEvent` explains why middleware skipped or performed compaction. `ThreadHistoryCompactionCheckpointEvent` records the compaction point. Hard checkpoints remove compacted messages and insert replacements when present; soft checkpoints leave raw replay intact for clients to display by policy.
+For subagents, project `SUBAGENT_INVOCATION_STARTED` and its completed, failed, or cancelled terminal event by `invocationId`. The started event provides `childAgentId`, `childSessionId`, and `childThreadId`, which are the continuation route. The invocation id correlates one delegation and is not a replacement for the child `AgentId` or thread id.
+
+For compaction, distinguish lifecycle facts from the projection checkpoint. `CompactionEvent` records start and terminal status. `ThreadHistoryCompactionCheckpointEvent` records the compaction point and semantic result. Soft mode appends it while preserving source events. Hard mode replaces the complete journal with a new generation containing the checkpoint and configured result.
 
 For workflows, render workflow lifecycle, layer, node, edge, and diagnostic events as a timeline or graph projection. Child agent, tool, and permission events may also appear in the same live stream when the workflow or subagent execution bubbles events through a parent coordinator.
 

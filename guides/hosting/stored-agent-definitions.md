@@ -67,9 +67,9 @@ Keep provider setup aligned with the provider docs. Chat model configuration liv
 
 ## Cache Eviction
 
-Updating or deleting a stored definition evicts cached unscoped and thread-owned runtime agents for that `agentId`. The next request rebuilds from the current definition or fallback path.
+Updating or deleting a stored definition evicts cached unscoped and agent/thread-scoped runtime instances for that `agentId`. The next request rebuilds from the current definition or fallback path.
 
-This is important for hosted UIs: a successful update does not mutate an already active thread run in place, but it does affect subsequent runtime builds.
+This is important for hosted UIs: a successful update does not mutate an already active thread execution in place, but it does affect subsequent runtime builds.
 
 ## Factory Override
 

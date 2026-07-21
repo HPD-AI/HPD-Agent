@@ -45,14 +45,14 @@ One handler should be able to project the same event during:
 
 `CompactionEvent` describes middleware execution. When it is published in a canonical thread context, it follows the same journal rule as other projectable events.
 
-`ThreadHistoryCompactionCheckpointEvent` is the canonical projection checkpoint. Hard checkpoints remove specified durable message ids and insert replacements; soft checkpoints preserve raw history while allowing clients to mark or collapse the compacted range.
+`ThreadHistoryCompactionCheckpointEvent` is the canonical projection checkpoint. Soft compaction appends it while preserving the source journal. Hard compaction replaces the complete journal generation with the checkpoint and configured semantic result.
 
 ## JSON And Codecs
 
 Canonical storage and hosted SSE use the registered `AgentEvent` codec. SSE adds transport framing, but it does not translate the event into a different durable presentation type:
 
 ```text
-id: 43
+id: 3:43
 event: agent-event
 data: {"version":"1.0","type":"TEXT_DELTA","threadSequenceNumber":43,"text":"hello"}
 ```

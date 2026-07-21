@@ -6,7 +6,7 @@ The short model is:
 
 ```text
 session: the workspace container for metadata and shared middleware state
-thread: a replayable transcript path with thread state, tree metadata, and event history
+thread: a replayable transcript path with a default agent, thread state, tree metadata, and event history
 event: the canonical vocabulary for rendering, replay, tools, middleware, and nested work
 ```
 
@@ -40,6 +40,7 @@ A session can also represent a product workspace. Bots may map a platform thread
 A thread is the replayable path inside a session. A thread has:
 
 - an id
+- a `defaultAgentId` used when continuation does not select another agent
 - optional name, description, tags, and metadata
 - fork metadata such as parent thread, fork point, ancestors, sibling position, and total forks
 - thread-scoped middleware state
@@ -49,7 +50,7 @@ Threads are the unit for forking, replay, thread-specific state, and hosted runt
 
 Forking creates a new thread from a message id on an existing thread. Thread-scoped persistent middleware state is copied at fork time and then diverges between threads.
 
-Threads are also how HPD keeps nested agent work understandable. A subagent can use the parent thread, create a fresh thread, or fork from the parent thread. The default subagent policy forks from the parent session into a hidden child thread, so the child gets the parent's current context without interleaving its transcript with the parent. The child thread metadata points back to the parent session, parent thread, tool call, and subagent run.
+Threads are also how HPD keeps nested agent work understandable. A subagent can create a fresh thread, fork from the parent thread, or run against an existing thread. The default policy forks from the parent session into a hidden child thread, so the child gets the parent's current context without interleaving its transcript with the parent. The child descriptor records the agent selected by default for continuation, plus its parent session/thread/tool call and delegation invocation. Callers may deliberately select a different agent for a later run against the same thread.
 
 Multi-agent workflows use the same thread model, but the application chooses the policy. A workflow can write every node into one shared thread, give each node its own thread, or fork one thread per node from a root workflow thread. Thread metadata marks the workflow name, execution id, node id, agent id, and conversation mode, which gives UI and replay code something stable to group around.
 
@@ -61,17 +62,17 @@ Media-heavy features make this thread scope visible. For example, audio transcri
 |---------|-------------|------------|
 | Normal chat | User, case, project, or platform thread container | Active transcript and thread-scoped middleware state |
 | Forking | Keeps alternatives grouped together | Creates a new path from a message id |
-| Subagents | Parent, new, or shared session depending on policy | Parent, existing, fresh, or forked child thread |
+| Subagents | Parent, new, or shared session depending on policy | Agent-owned existing, fresh, or forked child thread |
 | Multi-agent workflows | Workflow/workspace container with run metadata | Shared, per-agent, or forked node transcripts |
-| Compaction | Shared policy and session-scoped state can remain stable | Model-visible history, durable history, or fork target can be reduced |
+| Compaction | Shared policy can remain stable | Model-visible history or a fork target can be reduced; hard compaction replaces the journal generation |
 | Content and audio | Groups durable references by workspace/session | Attaches uploads, artifacts, transcript projection, and replay to one path |
-| Hosted runtimes | `agentId + sessionId` selects the runtime scope | `threadId` selects the active path and thread run |
+| Hosted runtimes | `agentId + sessionId` selects the runtime scope | `threadId` selects the active path and thread execution |
 
 ## Thread History Projection
 
 Threads load as projections from durable thread events. The thread event log is the ordered record; the projected thread is the current messages, thread state, and metadata rebuilt from that record.
 
-Thread-history compaction is one projection event family. Default soft compaction preserves durable thread history while reducing what the next model sees. Hard thread-history compaction can remove durable messages from the projected thread and can insert replacement messages such as summaries.
+Thread-history compaction is one canonical lifecycle. Soft compaction appends a checkpoint while preserving the source journal. Hard compaction atomically replaces the complete journal with a new generation containing the checkpoint, configured semantic result, and authoritative runtime seeds. Replacement messages may contain a summary, or removal compaction may contribute no replacement.
 
 Fork compaction is especially important for nested work. A subagent or multi-agent node can fork from a rich parent/root thread while starting from a smaller model-visible history. That lets a child or node inherit the useful context without copying every durable message into its prompt.
 
@@ -90,30 +91,31 @@ Nested agents and workflows choose which thread owns their durable facts. Parent
 The same model applies across runtime surfaces:
 
 - local agents use the same event vocabulary through typed subscriptions
-- hosted APIs expose sessions, threads, thread runs, authoritative runtime state, inputs, resumable SSE, interruption, and the bidirectional response route
+- hosted APIs expose sessions, threads, thread executions, authoritative runtime state, inputs, resumable SSE, interruption, and the bidirectional response route
 - TUI runtimes bind UI state to a runtime scope
 - bot adapters map platform conversation identity to a session and thread before invoking an agent
-- subagents use policy to decide whether child work stays on the parent thread, forks, or moves to another session
+- subagents use policy to choose an agent-owned child thread in the parent, new, or shared session
 - multi-agent workflows use conversation policy to decide where node-agent transcripts are written
 
 This means UI and integration code should treat events as the common rendering and coordination language, while treating hosting routes and local subscriptions as transport choices.
 
 ## Concurrency Model
 
-Thread runs and thread operation locks are separate controls.
+Thread executions and thread operation locks are separate controls.
 
-A hosted thread run is the active model/tool execution for a thread. Only one active hosted run is allowed for a given `sessionId + threadId`, regardless of route `agentId`. A second simultaneous input submission to the same thread returns a conflict, while submissions to different threads can run at the same time.
+A hosted thread execution is one accepted input owning the thread's exclusive execution slot. Only one active execution is allowed for a given `sessionId + threadId`; the route `agentId` selects the agent for that execution and need not equal the thread's `defaultAgentId`. A second simultaneous input submission to the same thread returns a conflict, while submissions to different threads can execute at the same time.
 
 A thread operation lock protects exclusive thread mutations. Current hosting code uses the explicit thread operation lock for thread deletion. Some other thread operations use broader session-level coordination. Treat operation-lock conflicts as thread mutation conflicts, not as active agent runs.
 
-Middleware responses are also separate from thread runs. A permission, continuation, clarification, or client-tool response is accepted only when the target thread runtime is active and a waiter can accept that response.
+Middleware responses are also separate from thread executions. A permission, continuation, clarification, or client-tool response is accepted only when the target thread runtime is active and a waiter can accept that response.
 
-Shared thread policies need additional coordination. If two agents write to the same durable thread at once, their thread snapshots and thread middleware state can race. HPD serializes same-thread multi-agent node runs at the conversation route. Separate threads can still run in parallel.
+Shared thread policies need additional coordination. If two agents write to the same durable thread at once, their thread snapshots and thread middleware state can race. HPD serializes same-thread multi-agent node executions at the conversation route. Separate threads can still execute in parallel.
 
 ## Related Pages
 
 - [Thread History And Forking](../guides/sessions-and-streaming/thread-history-and-forking.md)
 - [Canonical Thread Journal](../guides/sessions-and-streaming/canonical-thread-journal.md)
+- [Thread Execution Lifecycle](../guides/sessions-and-streaming/thread-execution-lifecycle.md)
 - [Compaction](../guides/sessions-and-streaming/compaction.md)
 - [Subagents](../guides/agents/subagents.md)
 - [Multi-Agent Conversation Policies](../guides/multi-agent/conversation-policies.md)

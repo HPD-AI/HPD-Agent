@@ -117,7 +117,7 @@ public async Task<string> BookMeeting(
 }
 ```
 
-In direct in-process code, the app handles the request in the same way: subscribe to `ClarificationRequestEvent`, ask the user, and send a `ClarificationResponseEvent` with the same request id. In ASP.NET Core hosted clients, observe the request from the hosted event stream and return the response through the hosted response path for the same `agentId + sessionId + threadId`.
+In direct in-process code, the app handles the request in the same way: subscribe to `ClarificationRequestEvent`, ask the user, and send a `ClarificationResponseEvent` with the same request id. In ASP.NET Core hosted clients, observe or restore the request and return the response through the active coordinator's hosted response path. A parent coordinator can surface descendant subagent requests, so preserve the request's child session/thread origin on the response.
 
 Responses sent through `agent.AnswerRequestAsync(...)`, `agent.TryAnswerRequestAsync(...)`, or the hosted `/responses` route must be events too. In practice, use response records that inherit from `AgentEvent` and implement `IAgentResponseEvent` / `IResponseEvent`, as the built-in response events do.
 

@@ -34,6 +34,8 @@ const chat = await client.chat.open({
 });
 ```
 
+Session creation accepts an optional `agentId`. Every returned `Thread` has a required `defaultAgentId`, used when continuation does not deliberately select another agent.
+
 Then install event handlers, read runtime state, observe from the application's applied cursor, and submit input:
 
 ```typescript
@@ -45,19 +47,27 @@ client.onAny((event) => {
   projectEvent(event);
 });
 
-const state = await chat.subscribeLive({ afterSequenceNumber: 0 });
-restoreControls(state.activeRun);
+const state = await chat.getState();
+if (!state) throw new Error('Thread not found');
+
+await chat.subscribeLive({
+  after: {
+    generation: state.observedCursor.generation,
+    sequenceNumber: 0,
+  },
+});
+restoreControls(state.activeExecution);
 
 const submission = await chat.submitMessage({
   contents: [{ $type: 'text', text: 'Summarize this thread.' }],
 });
 
-console.log(submission.runtimeRunId, submission.startedAt);
+console.log(submission.threadExecutionId, submission.startedAt);
 ```
 
-`subscribeLive()` loads metadata-only `/state`, opens the unified SSE stream with `afterSequenceNumber`, and returns the control-state snapshot. Events committed before or during connection are delivered through the same stream. Pass zero when the application has no local projection. Subscribe before submitting input when the UI needs to render the turn as it happens.
+`subscribeLive()` loads metadata-only `/state`, opens the unified SSE stream with the supplied `ThreadJournalCursor`, and returns the control-state snapshot. Events committed before or during connection are delivered through the same stream. When the application has no local projection, use sequence zero in the generation returned by state. Subscribe before submitting input when the UI needs to render the turn as it happens.
 
-`state.observedHead` identifies the committed boundary captured with the control state. It is not permission to skip history and must not replace the consumer's applied cursor.
+`state.observedCursor` identifies the committed boundary captured with the control state. It is not permission to skip history and must not replace the consumer's applied cursor.
 
 ## Message Policy And Transcript Visibility
 
@@ -118,16 +128,16 @@ type BackgroundTaskNotificationRule =
 
 Use the rule as descriptive metadata for UI/debugging. Do not infer shell, process, or test-runner behavior from it. When a rule queues model input, the runtime emits `BackgroundTaskNotificationQueuedEvent`; when it suppresses input, it emits `BackgroundTaskNotificationSuppressedEvent`.
 
-Thread-run API projections expose a smaller shape:
+Thread-execution API projections expose a smaller shape:
 
 ```typescript
-interface ThreadRunBackgroundTaskNotification {
+interface ThreadExecutionBackgroundTaskNotification {
   kind: string;
   strategyName?: string | null;
 }
 ```
 
-That projection is for run lists and status panes. Use live background task events when an app needs the full rule payload.
+That projection is for execution lists and status panes. Use live background task events when an app needs the full rule payload.
 
 ## Typed Handlers And Projection
 
@@ -161,6 +171,24 @@ client.onAny((event) => {
 
 Typed handlers run before `onAny` handlers for the same event. Handlers are awaited in order, so keep UI projection work fast and move expensive side effects out of the hot path.
 
+### Project and open subagent conversations
+
+The client models durable delegation with `SUBAGENT_INVOCATION_STARTED`, `SUBAGENT_INVOCATION_COMPLETED`, `SUBAGENT_INVOCATION_FAILED`, and `SUBAGENT_INVOCATION_CANCELLED`. Correlate those parent-thread events by `invocationId`.
+
+The started event contains the continuation route:
+
+```typescript
+client.on(EventTypes.SUBAGENT_INVOCATION_STARTED, (event) => {
+  rememberChildScope({
+    agentId: event.childAgentId,
+    sessionId: event.childSessionId,
+    threadId: event.childThreadId,
+  });
+});
+```
+
+The session thread graph also returns runtime children with `defaultAgentId`, `sessionId`, and `threadId`. The headless UI navigator exposes `getRuntimeChildScope(threadId)` to produce the default scope for opening that child. Applications may replace its `agentId` when intentionally running another agent against the same conversation. `invocationId` identifies one delegation; it is not a routing identity.
+
 ## Respond To Interactive Events
 
 Permission, continuation, and clarification requests are bidirectional events. When a host delivers a request event, the TypeScript app asks the user or host policy and sends the matching response:
@@ -187,6 +215,8 @@ client.on(EventTypes.PERMISSION_REQUEST, async (request) => {
 The same pattern applies to `CLARIFICATION_REQUEST` and `CONTINUATION_REQUEST`. The client posts response event envelopes to the hosted `/responses` route for the current chat scope. Preserve the request id from the request event so the hosted runtime can match the pending waiter.
 
 Thread-scoped interactive request records are canonical and replayable. The backend also exposes answerable pending requests in runtime state so reconnecting UIs can restore interaction controls before historical catch-up completes.
+
+For a parent thread, that state can include requests originating in descendant subagent threads. Post through the active parent coordinator route while preserving the request id and the child `sessionId` and `threadId` on the response event. The coordinator uses that origin to resolve the child waiter.
 
 Client tools are the exception. If you register a tool handler, the client automatically answers `CLIENT_TOOL_INVOKE_REQUEST` with `CLIENT_TOOL_INVOKE_OUTCOME`:
 
@@ -226,18 +256,33 @@ Register custom event serialization on the .NET side so hosted streams can produ
 
 `chat.subscribeLive()` reads control state, then observes canonical events after the caller's applied cursor. Full reconstruction uses the incremental observation stream starting at zero.
 
-The SSE transport awaits handlers in registration order and advances its cursor only after the consumer completes successfully. If the stream ends or fails, it reconnects after the last acknowledged sequence. Duplicate sequence numbers are ignored.
+The SSE transport awaits handlers in registration order and advances its cursor only after the consumer completes successfully. If the stream ends or fails, it reconnects after the last acknowledged generation and sequence. Duplicate positions in the current generation are ignored.
 
 For a lifecycle-aware UI:
 
 1. Register event handlers.
-2. Load the application's last applied thread position, or use zero.
-3. Call `subscribeLive({ afterSequenceNumber: appliedCursor })`.
-4. Use `state.activeRun` to restore running and cancellation controls.
-5. Submit input and retain its authoritative `runtimeRunId`.
+2. Load the application's last applied `ThreadJournalCursor`, or use sequence zero in the current observed generation.
+3. Call `subscribeLive({ after: appliedCursor })`.
+4. Use `state.activeExecution` to restore running and cancellation controls.
+5. Submit input and retain its authoritative `threadExecutionId`.
 6. Apply committed events serially and persist the cursor only after successful projection.
 
-To cancel safely, use `chat.cancelActiveTurn()`. It reloads state and sends the current run as `expectedRuntimeRunId`. Inspect the returned `accepted`, `already_terminal`, `no_active_run`, or `active_run_mismatch` status instead of assuming cancellation occurred.
+To cancel safely, use `chat.cancelActiveTurn()`. It reloads state, constructs `INTERRUPTION_REQUEST` with the current `threadExecutionId`, and submits it through `/inputs`. Use `chat.steer(text)` to submit `STEERING_INPUT` against that same authoritative execution. Inspect the returned `disposition` instead of assuming the control was accepted.
+
+### Recover from hard compaction
+
+Hard compaction replaces the journal and invalidates every cursor from its previous generation. The transport raises `ThreadJournalRebasedError(previousGeneration, currentGeneration)` when it receives the server control frame or observes a generation change.
+
+A low-level client should catch that error, clear semantic state derived from the previous generation, reload `/state`, and reconnect with:
+
+```typescript
+{
+  generation: error.currentGeneration,
+  sequenceNumber: 0,
+}
+```
+
+The `hpd-agent-headless-ui` thread controller performs this reset and rehydration automatically.
 
 ## What Does Not Reach TypeScript
 
@@ -252,7 +297,7 @@ If a process-local sample needs to appear in a hosted UI, summarize or convert i
 The live observer connects to:
 
 ```text
-/agents/{agentId}/sessions/{sessionId}/threads/{threadId}/events?after={lastAppliedThreadSequenceNumber}
+/agents/{agentId}/sessions/{sessionId}/threads/{threadId}/events?after={generation}:{sequenceNumber}
 ```
 
 Inputs are posted separately. Response events are posted to the hosted `/responses` route for the current agent, session, and thread.

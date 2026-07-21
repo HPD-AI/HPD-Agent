@@ -54,7 +54,9 @@ await using var runtime = new HostedAgentTuiRuntime(new HostedAgentTuiRuntimeOpt
 await using var tui = HpdAgentTuiApp.Create(
     runtime,
     scope,
-    builder => builder.AddAgentTuiDefaults());
+    builder => builder
+        .AddAgentTuiDefaults()
+        .AddSubAgentTui());
 
 await tui.RunAsync();
 ```
@@ -106,11 +108,13 @@ The hosted runtime uses the hosted API for:
 
 Hosted TUI middleware responses go through hosted response endpoints. Interactive requests are canonical journal events and also appear in runtime control state while they remain answerable, so a reconnecting TUI can restore its prompt controls before transcript catch-up completes. Bot adapters use their platform-specific callback protocols.
 
+`AddSubAgentTui()` registers `/subagents`. It reads the session thread graph and switches to the selected child's `defaultAgentId`, `sessionId`, and `threadId`, allowing the user to continue with the normal child agent after the original delegation finishes.
+
 ## Thread Projection And Compaction
 
-The hosted TUI observes the server's session, thread, and compaction behavior. It can fork threads through the hosted API. Fork compaction follows the server-side agent and middleware configuration.
+The hosted TUI observes the server's session, thread, and compaction behavior. It can fork threads through the hosted API and may inherit, disable, or explicitly configure compaction for the new fork target.
 
-After hard durable thread-history compaction, the projected thread history is canonical. Render the thread as loaded from the hosted API or thread event projection, and treat compaction events as audit/debug metadata.
+After hard compaction, hosted observation reports the journal rebase. The runtime clears transcript state derived from the old generation, hydrates the replacement generation, and resumes from its new cursor. `CompactionEvent` remains lifecycle information; the checkpoint defines the semantic change.
 
 ## Scope Defaults
 
@@ -126,15 +130,15 @@ For most hosted apps, pass the scope explicitly so the TUI starts on the intende
 
 `AgentTuiRuntimeScope` requires non-empty agent, session, and thread identifiers. The hosted runtime also rejects malformed endpoint payloads whose required identifier fields are missing or blank; it does not silently construct scopes with empty ids.
 
-## Recovery, Active Runs, And Hydration Errors
+## Recovery, Active Executions, And Hydration Errors
 
-The hosted runtime opens a thread by reading `/state`, restoring `activeRun` and `pendingRequests`, and capturing `observedHead`. It then opens `/events?after={appliedCursor}`, applies catch-up events in bounded batches, and stays on that stream for future commits. If the stream ends after minutes or hours, it reconnects after the last event the TUI fully applied. Backend work continues independently of the observer connection.
+The hosted runtime opens a thread by reading `/state`, restoring `activeExecution` and `pendingRequests`, and capturing `observedCursor`. It then opens `/events?after={generation}:{sequence}`, applies catch-up events in bounded batches, and stays on that stream for future commits. If the stream ends after minutes or hours, it reconnects after the last event the TUI fully applied. Backend work continues independently of the observer connection.
 
-`observedHead` describes the coherent server boundary captured with control state. The TUI advances its applied cursor only after the corresponding event handlers complete successfully. Historical, catch-up, and live batches use the same handlers; batching changes redraw cadence, not projection semantics.
+`observedCursor` describes the coherent server boundary captured with control state. The TUI advances its applied cursor only after the corresponding event handlers complete successfully. Historical, catch-up, and live batches use the same handlers; batching changes redraw cadence, not projection semantics. A hard journal rebase clears the obsolete transcript projection and hydrates the new generation from sequence zero.
 
-Submission returns the authoritative `runtimeRunId`. `HpdAgentTuiApp` prevents a second prompt submission while that run is active, while the hosted backend remains authoritative if another client starts work.
+Submission returns the authoritative `threadExecutionId`. The hosted backend remains authoritative if another client starts work.
 
-Escape cancellation reads the active run and sends it as `expectedRuntimeRunId`. The backend can report `accepted`, `already_terminal`, `no_active_run`, or `active_run_mismatch`; a stale TUI therefore cannot accidentally cancel a newer run. Reopening the same scope uses the same state-and-cursor path to restore output and cancellation controls.
+While idle, Enter submits `USER_MESSAGES_INPUT`. While an execution is active, Enter retains a TUI-local follow-up and submits nothing yet. Escape promotes that follow-up to `STEERING_INPUT` with the observed `threadExecutionId`; if the execution finishes first, the TUI submits it normally as the next input. Without a pending follow-up, double Escape submits `INTERRUPTION_REQUEST` through `/inputs`. Pending follow-ups are application state rather than framework queued work, and a stale TUI never retargets a newer execution automatically.
 
 If an event schema cannot be decoded or projected, hydration stops at the last successfully applied thread position. Register every application-owned event codec in the host and client projection before opening journals that contain that event type.
 

@@ -111,6 +111,6 @@ Runtime routes include:
 /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/...
 ```
 
-That scope is used by HTTP input, state, interrupt, resumable SSE, thread runs, and the bidirectional response route. TUI hosted runtimes and bot adapters should map their UI or platform identity into the same runtime scope before sending input or responses.
+That scope is used by HTTP input, state, interrupt, resumable SSE, thread executions, and the bidirectional response route. TUI hosted runtimes and bot adapters should map their UI or platform identity into the same runtime scope before sending input or responses.
 
-Hosted clients should load `/state` to restore `activeRun` and `pendingRequests`, then open `/events?after={appliedCursor}`. A client without local projection starts at zero and rebuilds the complete conversation incrementally. See [Hosted Lifecycle And Recovery](hosted-lifecycle-and-recovery.md).
+Hosted clients should load `/state` to restore `activeExecution` and `pendingRequests`, then open `/events?after={appliedCursor}`. A client without local projection starts at zero and rebuilds the complete conversation incrementally. See [Hosted Lifecycle And Recovery](hosted-lifecycle-and-recovery.md).

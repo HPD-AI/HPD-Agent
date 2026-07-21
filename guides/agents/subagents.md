@@ -16,6 +16,7 @@ public sealed class SpecialistTools
     [SubAgent]
     public SubAgent Summarizer() =>
         SubAgent.FromConfig(
+            "specialist.summarizer",
             "summarizer",
             "Summarizes a request before the parent answers.",
             new AgentConfig
@@ -35,7 +36,7 @@ var agent = await new AgentBuilder()
     .BuildAsync();
 ```
 
-`SubAgent.FromConfig(...)` defaults to `ParentSessionForkedThread()`. That means each subagent call uses the parent session, forks from the current parent thread, and writes the child conversation to a hidden child thread.
+The first argument is the durable child `AgentId`; the second is the model-facing tool name. `SubAgent.FromConfig(...)` defaults to `SubAgentContextPolicy.Fork`. Each call uses the parent session, forks from the current parent thread, and writes the child conversation to an agent-owned hidden child thread.
 
 `AgentBuilder` provides an in-memory session store by default. Use `WithSessionStore(...)` when subagent threads should survive process restarts or be visible to another host.
 
@@ -51,7 +52,77 @@ By default, the generated tool takes one model-facing argument:
 
 The subagent name becomes the tool name. The description becomes the tool description, so write it as guidance for the parent model. Subagent tools require permission by default.
 
-For synchronous calls, the tool result is the child agent's text response. HPD also records subagent metadata on the tool result, including `subAgentStatus`, `subAgentSessionId`, `subAgentThreadId`, `subAgentName`, and `subAgentRunId`.
+## Control Nested Availability
+
+Each subagent capability controls the agent depths from which that particular tool may be invoked. The default is root-only, so registering the same harness on a child does not accidentally make a subagent recursively call itself:
+
+```text
+root (depth 0) sees researcher
+└─ researcher (depth 1) does not see researcher
+```
+
+No configuration is required for this safe default. Permit intentional nesting with `WithAvailability(...)`:
+
+```csharp
+return SubAgent.FromConfig(
+    "research/coordinator",
+    "coordinator",
+    "Coordinates specialized research agents.",
+    coordinatorConfig)
+    .WithAvailability(SubAgentAvailability.ThroughDepth(2));
+```
+
+`ThroughDepth(2)` lets agents at depths zero and one invoke the capability, creating children at depths one and two. The tool is hidden at depth two. Use `SubAgentAvailability.AnyAllowedDepth` when the capability should remain available until the agent-wide `AgentConfig.MaxSubAgentDepth` ceiling is reached.
+
+Availability is enforced both in the model-facing tool projection and again during invocation. A stale or manually constructed call therefore cannot bypass the policy. The per-capability policy may be stricter than `MaxSubAgentDepth`, but never less restrictive.
+
+## Inherit the parent run configuration
+
+By default, a subagent inherits the parent run's execution environment. HPD copies the selected values into an independent child `AgentRunConfig`; the parent and child never share the same mutable root object. The default selection carries model, chat, permission, execution, compaction, and runtime-context settings. It deliberately leaves the child agent's instructions, tools, delegated input, output contract, and evaluation behavior intact.
+
+No additional configuration is required for the default:
+
+```csharp
+return SubAgent.FromConfig(
+    "research/reviewer",
+    "reviewer",
+    "Reviews the current change.",
+    reviewerConfig);
+```
+
+Choose additional groups, remove a default group, or apply child-only overrides with `WithRunConfig(...)`:
+
+```csharp
+return SubAgent.FromConfig(
+    "research/reviewer",
+    "reviewer",
+    "Reviews the current change.",
+    reviewerConfig)
+    .WithRunConfig(
+        SubAgentRunConfig.Inherit()
+            .Include(SubAgentRunConfigFields.Instructions)
+            .Exclude(SubAgentRunConfigFields.Compaction)
+            .Override(config =>
+            {
+                config.Chat ??= new ChatRunConfig();
+                config.Chat.Temperature = 0.1;
+            }));
+```
+
+`Override(...)` runs after inheritance, so explicit child values win. Calls can be chained and are applied in order. Use `InheritOnly(...)` when the child should receive an exact set of groups, or `Isolated()` when it should receive none of the parent's run configuration:
+
+```csharp
+return SubAgent.FromConfig(
+    "research/reviewer",
+    "reviewer",
+    "Reviews the current change.",
+    reviewerConfig)
+    .WithRunConfig(SubAgentRunConfig.Isolated());
+```
+
+The child still owns its complete `AgentConfig`. Run-configuration inheritance only controls the per-invocation values layered over that child configuration.
+
+For synchronous calls, the tool result is the child agent's text response. HPD also records subagent metadata on the tool result, including `subAgentStatus`, `subAgentSessionId`, `subAgentThreadId`, `subAgentName`, and `invocationId`.
 
 ## Invocation Mode
 
@@ -63,10 +134,11 @@ For long-running delegation, set an invocation mode policy on the `SubAgent` def
 [SubAgent]
 public SubAgent Reviewer() =>
     SubAgent.FromConfig(
+        "specialist.reviewer",
         "reviewer",
         "Reviews a draft and reports actionable issues.",
         reviewerConfig,
-        executionPolicy: null,
+        contextPolicy: SubAgentContextPolicy.Fork,
         metadata: null,
         invocationModePolicy: AgentInvocationModePolicy.ModelChoice,
         backgroundNotification: null);
@@ -95,23 +167,25 @@ See [Background Tasks And Notifications](../../concepts/background-tasks-and-not
 
 ## Choose The Source
 
-A subagent has two source modes:
+A subagent has three configuration sources. Every source still requires a stable `AgentId`:
 
 | Source | Use When | What Happens |
 | --- | --- | --- |
 | `SubAgent.FromConfig(...)` | The specialist is defined next to the parent harness. | HPD builds a child agent from the inline `AgentConfig`. If the child config does not specify its own chat provider, it can inherit the parent chat client. |
-| `SubAgent.FromAgentId(...)` | The specialist is stored, managed, or reused outside this harness. | HPD loads the stored agent definition through the parent agent store, then runs it with the selected execution policy. |
+| `SubAgent.FromParent(...)` | The specialist should use the effective parent configuration. | HPD stores an immutable serializable snapshot of the parent configuration as the child definition. Child harnesses can still extend it. |
+| `SubAgent.FromAgentId(...)` | The specialist is stored, managed, or reused outside this harness. | HPD loads the stored agent definition through the parent agent store, then runs it with the selected context, availability, and run-configuration policies. |
 
-Inline config is best for local specialists that belong to one product surface. Stored agents are better when specialists are user-created, versioned, administered, or shared across parent agents.
+Registering the parent tool harness materializes its supplied and parent-derived child definitions into `IAgentStore`. The definition records its owning harness/member and configuration fingerprint. Reusing one `AgentId` with a different owner or definition fails instead of silently replacing the agent. Inline config is best for local specialists that belong to one product surface. Stored agents are better when specialists are user-created, versioned, administered, or shared across parent agents.
 
 ## Add Child Tools
 
-Pass tool harness types after the execution policy:
+Pass tool harness types after the context policy:
 
 ```csharp
 [SubAgent]
 public SubAgent Researcher() =>
     SubAgent.FromConfig(
+        "specialist.researcher",
         "researcher",
         "Researches a question using the approved search tools.",
         new AgentConfig
@@ -119,42 +193,48 @@ public SubAgent Researcher() =>
             Name = "Researcher",
             SystemInstructions = "Research the request and return cited notes.",
         },
-        SubAgentExecutionPolicies.ParentSessionForkedThread(),
-        typeof(SearchTools),
-        typeof(CitationTools));
+        contextPolicy: SubAgentContextPolicy.Fork,
+        toolharnessTypes: [typeof(SearchTools), typeof(CitationTools)]);
 ```
 
 Those harnesses are registered on the child agent, not exposed directly to the parent. The parent sees only the `researcher` tool.
 
-## Choose The Execution Policy
+## Choose The Context Policy
 
-The execution policy decides where the child conversation lives. This is the main subagent DX choice.
+The context policy directly decides how the child conversation begins.
 
-| Policy | Session | Thread | Use When |
+| Policy | Session | History | Use When |
 | --- | --- | --- | --- |
-| `ParentSessionForkedThread()` | Parent session | New thread forked from current parent thread | Default. The child needs the parent's current context but should write its own durable history separately. |
-| `ParentSessionFreshThread()` | Parent session | New empty thread | The child should be related to the same user/session but should not inherit parent thread messages. |
-| `ParentThread()` | Parent session | Current parent thread | The child should write into the same thread as the parent. Use deliberately because histories interleave. |
-| `NewSession()` | New session | New empty thread | The child should be isolated from the parent session. |
-| `SharedSessionFreshThread("session-id")` | Named shared session | New empty thread | A specialist should accumulate or organize work under a stable shared session. |
-| `SharedSessionExistingThread("session-id", "thread-id")` | Named shared session | Existing thread | A specialist should keep using a known thread. |
-| `ExistingThread("thread-id")` | Parent session | Existing thread | The parent session already has a thread that the child should use. |
+| `SubAgentContextPolicy.Fork` | Parent session | Inherits the parent thread | Default. The child needs the current conversation. |
+| `SubAgentContextPolicy.Fresh` | Parent session | Starts empty | The delegated input is self-contained. |
+| `SubAgentContextPolicy.Isolated` | New session | Starts empty | The child should be isolated from the parent session. |
+| `SubAgentContextPolicy.ModelChoice` | Parent session | Model chooses `fork` or `fresh` | Different calls need different amounts of context. |
 
-Most apps should start with the default. It gives the child enough context to be useful, keeps parent and child histories separate, and still lets the UI render them as one hierarchy.
+When `ModelChoice` is enabled, the tool schema exposes `context: "fork" | "fresh"`. Omitting it defaults to `fresh`. Fixed policies do not expose the argument.
+
+## Continue A Child Conversation
+
+Completing a delegation does not destroy the child conversation. Persist these three values from the returned thread or thread graph:
+
+```text
+defaultAgentId + sessionId + threadId
+```
+
+Use that scope to reopen the child with its default agent or submit another message through the thread APIs. Subagent tool invocations always create a new child thread; `invocationId` identifies one parent-to-child delegation and is not a reusable routing identity.
 
 ## Thread Metadata
 
 Subagent-created threads are hidden by default and include metadata that links them back to the parent:
 
 - `kind = subagent`
+- `defaultAgentId`
 - `subAgentName`
 - `subAgentSourceKind`
 - `parentSessionId`
 - `parentThreadId`
 - `parentToolCallId`
-- `subAgentRunId`
-- `sessionPolicy`
-- `threadPolicy`
+- `invocationId`
+- `contextPolicy`
 - `visibility = hidden`
 - `createdBy = subagent`
 
@@ -162,10 +242,11 @@ You can add custom thread metadata when creating the subagent:
 
 ```csharp
 SubAgent.FromConfig(
+    "specialist.reviewer",
     "reviewer",
     "Reviews the draft.",
     reviewerConfig,
-    SubAgentExecutionPolicies.ParentSessionForkedThread(),
+    contextPolicy: SubAgentContextPolicy.Fork,
     metadata: new Dictionary<string, object>
     {
         ["team"] = "writing",
@@ -173,11 +254,11 @@ SubAgent.FromConfig(
     });
 ```
 
-Use metadata for UI grouping, retention policy, audit labels, or application-specific routing. Do not depend on thread names for identity; use the route metadata and result metadata.
+Use metadata for UI grouping, retention policy, audit labels, or application-specific routing. Do not depend on thread names or invocation ids for identity. Use `sessionId + threadId` for the conversation and choose an `agentId` for each run; `defaultAgentId` supplies the normal continuation choice.
 
 ## Events And Hierarchy
 
-Subagent runs are event-native. The parent run emits normal tool call events for the subagent tool, and the child agent emits its own agent events with child `AgentMetadata`.
+Subagent runs are event-native. The parent journal records `SubAgentInvocationStartedEvent` followed by `SubAgentInvocationCompletedEvent`, `SubAgentInvocationFailedEvent`, or `SubAgentInvocationCancelledEvent`. These events correlate through `invocationId` and identify the child agent, session, and thread. The parent also emits normal tool-call events, while the child owns its normal run and message lifecycle in the child journal.
 
 That lets a host render:
 
@@ -186,7 +267,7 @@ That lets a host render:
 - child text, tool calls, permissions, custom events, and turn events
 - the parent model continuing after the child result
 
-When a hosted event route is scoped to a parent session and thread, HPD can include child subagent thread events when the child thread metadata points back to the routed parent thread.
+The parent runtime state includes answerable requests originating from descendant child threads. Post the response through the active parent coordinator route while preserving the request id and child `sessionId` and `threadId` on the response event. The thread graph exposes runtime children with their `defaultAgentId`, so a client can reconstruct the normal child runtime without preventing another explicitly selected agent from using the thread.
 
 For rendering patterns, see [Event Streams And Hierarchies](../../concepts/event-streams-and-hierarchies.md), [Workflow Events](../multi-agent/workflow-events.md), and [Render An Event Stream](../sessions-and-streaming/render-an-event-stream.md).
 
@@ -195,27 +276,31 @@ For rendering patterns, see [Event Streams And Hierarchies](../../concepts/event
 Only forked-thread subagents can set thread compaction at fork time. This lets the subagent control how much parent thread history is copied into the child thread when the child thread is created:
 
 ```csharp
-SubAgentExecutionPolicies.ParentSessionForkedThread(
-    new ThreadForkCompactionOptions
-    {
-        Mode = ThreadForkCompactionMode.Enabled,
-        Strategy = new MessageCountingCompactionOptions
+SubAgent.FromConfig(
+    "specialist.reviewer",
+    "reviewer",
+    "Reviews the current work.",
+    reviewerConfig,
+    contextPolicy: SubAgentContextPolicy.Fork,
+    forkCompaction: new ApplyThreadForkCompaction(
+        new CompactionSpecification
         {
-            PreserveRecentUserTurnCount = 3
-        }
-    })
+            Point = new CompactAtCurrentHead(),
+            Preservation = new PreservePreviousTurns(3),
+            Strategy = new SummarizingCompaction(),
+            CommitMode = CompactionCommitMode.Hard
+        }))
 ```
 
 Use:
 
-- `Mode = Inherit` or `null` to use the agent's normal `CompactionConfig.ForkCompaction` behavior
-- `Mode = Enabled` to compact the child thread before it is committed, even if normal fork compaction is off
-- `Mode = Disabled` to keep the child thread un-compacted, even if normal fork compaction is on
-- `Strategy` to override the shared compaction strategy for this subagent fork
+- `InheritThreadForkCompaction` to use `CompactionConfig.ForkCompaction`
+- `ApplyThreadForkCompaction` to supply the exact child-thread compaction specification
+- `DisableThreadForkCompaction` to keep the child thread uncompacted
 
 The compaction runs against the fork target before the subagent starts. In practice, that means a `ParentSessionForkedThread()` subagent can inherit the parent's recent context without copying every parent message into the child thread.
 
-This controls the fork operation. It does not define the compaction strategy. The configured compaction middleware still decides how history is reduced. See [Compaction](../sessions-and-streaming/compaction.md).
+The supplied `CompactionSpecification` defines the point, preservation, strategy, and commit mode. The shared compaction engine applies it through the fork middleware hook. See [Compaction](../sessions-and-streaming/compaction.md).
 
 ## Permissions
 
@@ -247,4 +332,4 @@ See [Multi-Agent Overview](../multi-agent/overview.md) and [Multi-Agent Capabili
 
 `[SubAgent]` is the normal authoring path. The source generator is the production path and reflection fallback exists for development and troubleshooting.
 
-Generated and reflection-created subagent wrappers both use the parent function execution context for chat-client inheritance, session-store access, event coordination, and hierarchical metadata. Treat low-level runtime helpers as implementation details unless you are extending HPD Agent itself.
+Generated and reflection-created subagent wrappers freeze the same declaration and materialize the same durable definition. Both use the configured runtime resolver, session store, agent store, event coordination, and hierarchical metadata. Treat low-level runtime helpers as implementation details unless you are extending HPD Agent itself.

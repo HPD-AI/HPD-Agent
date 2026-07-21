@@ -11,7 +11,7 @@ await using var app = HpdAgentTuiApp.Create(
     tui => tui.AddAgentTuiDefaults());
 ```
 
-`AddAgentTuiDefaults()` installs the default header, footer, prompt, shell layout, slash-command autocomplete, help page, `/help`, and `/clear`.
+`AddAgentTuiDefaults()` installs the default header, prompt status, footer, prompt, shell layout, slash-command autocomplete, help page, `/help`, and `/clear`.
 
 Defaults are shell mechanics. Add your own event handlers for the transcript, tools, cards, product events, or custom state your users need to see.
 
@@ -31,7 +31,7 @@ tui.ReplaceSlashCommand(command);
 
 `TryAdd*` keeps the existing contribution when the key is already present.
 
-`Replace*` overwrites an existing contribution or supplies a new one.
+`Replace*` overwrites an existing contribution and throws when that contribution is missing.
 
 This lets libraries safely install defaults with `TryAdd*`, while applications can intentionally replace them.
 
@@ -57,16 +57,43 @@ tui
 
 Pages render alternate terminal surfaces. Slash commands let users invoke shell behavior without sending text to the agent.
 
-## Widgets And Status Items
+## Prompt Status, Widgets, And Footer Items
 
-Widgets attach UI to shell slots. Status items expose compact runtime state such as model selection, connection state, or the active thread.
+The shell separates agent runtime state from application-owned status:
+
+- `PromptStatusText` and the prompt-status component describe the current agent interaction: submitting, running, steering, awaiting permission, cancelling, failure, and context usage.
+- Footer components and footer items describe the application or domain: background commands, changed files, diagnostics, external connections, or custom harness state.
+- Widgets attach interactive or contextual UI to the explicit `AboveEditor` and `BelowEditor` slots.
+
+The default shell order is:
+
+```text
+header
+transcript
+activity
+above-editor widgets
+prompt status
+prompt
+below-editor widgets
+footer
+```
+
+Customize the prompt-status renderer without taking ownership of the footer:
+
+```csharp
+tui.ReplacePromptStatus(context => new Text(context.Shell.PromptStatusText));
+```
+
+Register application-owned footer output independently:
 
 ```csharp
 tui.AddWidget(TuiSlot.BelowEditor, "myapp.context", new ContextWidget());
-tui.AddStatusItem("myapp.model", new ModelStatusItem());
+tui.AddFooterItem("myapp.connection", new ConnectionFooterItem());
 ```
 
-Keep widgets app-owned. The TUI framework provides placement and lifecycle; your component decides what the information means.
+`IAgentTuiFooterItem.Create(AgentTuiFooterContext)` receives the current scope, shell model, and shared TUI state. `AddFooterItem`, `TryAddFooterItem`, and `ReplaceFooterItem` use stable keys, just like the other keyed composition surfaces.
+
+Keep widgets and footer items app-owned. The TUI framework provides placement and lifecycle; your component decides what the information means. Do not put agent execution state in `FooterText`; write it to `PromptStatusText` or replace the prompt-status component.
 
 ## Shortcuts And Autocomplete
 

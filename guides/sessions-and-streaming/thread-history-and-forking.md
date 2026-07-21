@@ -88,7 +88,7 @@ Hosted thread deletion uses a thread operation lock. A lock conflict means anoth
 
 Hosted clients open the thread observation route with their last successfully applied position. The SSE stream first yields canonical catch-up events and then remains attached for future commits. Starting at `after=0` reconstructs the complete thread incrementally.
 
-In-process consumers use `ISessionStore.ReadThreadEventsAsync(...)` for finite, bounded sequence reads or `ObserveThreadEventsAsync(...)` for catch-up plus future commits. Both surfaces decode the same canonical `AgentEvent` values in ascending `ThreadSequenceNumber` order.
+In-process consumers use `ISessionStore.ReadThreadEventsAsync(...)` for finite, bounded cursor reads or `ObserveThreadEventsAsync(...)` for catch-up plus future commits. Both surfaces decode the same canonical `AgentEvent` values in ascending order within one journal generation.
 
 Thread descriptors, lists, and existence checks use storage-native metadata and do not project the complete journal. Full semantic reconstruction is an explicit projection operation.
 
@@ -96,25 +96,25 @@ For UI projection guidance, see [Render An Event Stream](render-an-event-stream.
 
 ## Thread History Compaction
 
-Hard thread-history compaction changes the projected thread. A `THREAD_HISTORY_COMPACTION_CHECKPOINT` durable thread event removes compacted durable message ids from projection and inserts replacement messages when the retention mode produced them.
+Hard thread-history compaction atomically replaces the complete journal. Its new generation contains `THREAD_HISTORY_COMPACTION_CHECKPOINT`, the configured semantic result, and any authoritative runtime facts that must survive the replacement.
 
-Soft compaction does not change the durable thread projection, but it still writes a checkpoint so clients can collapse or mark compacted ranges during hydration.
+Soft compaction appends the same checkpoint without deleting source events, so clients can retain, collapse, or mark compacted ranges during hydration.
 
 For the full model, see [Compaction](compaction.md).
 
 ## Forking After Compaction
 
-Forking uses a message id on the projected source thread. If hard compaction removed an older message from the projection, that original message id may no longer be a valid fork point. The framework can surface replacement candidates when a compacted-away id is detected, but clients should not assume automatic recovery.
+Forking uses a message id in the current journal generation. A hard replacement permanently removes older message ids. A stale message or turn selection should include its expected generation and fails with a cursor conflict instead of targeting a coincidentally similar replacement.
 
 Use projected thread messages as the source of forkable message ids.
 
 ## Fork And Compact
 
-Fork compaction is a separate pre-commit behavior. When configured, the target thread is compacted after it is copied from the source thread and before the target thread is saved.
+Fork compaction uses the shared compaction engine during the pre-commit fork hook. The target is compacted after source projection and before its initial journal is saved.
 
-The source thread is unchanged. The target thread starts with the already-compacted initial history and writes a `THREAD_HISTORY_COMPACTION_CHECKPOINT` event describing the fork-target compaction.
+The source thread is unchanged. The target thread starts with the compacted semantic history and a `THREAD_HISTORY_COMPACTION_CHECKPOINT` describing the fork result.
 
-Hosted `ForkThreadRequest` does not expose a per-request compaction intent today. Hosted fork compaction is controlled by server-side agent and middleware configuration.
+Hosted `ForkThreadRequest.Compaction` accepts the same inherit, disabled, or enabled union as `ThreadForkOptions.Compaction`. Omitting it inherits the server-side configuration.
 
 The middleware hook for this phase is `BeforeThreadForkCommitAsync`. It receives the source thread, the in-memory target thread, the fork point, and `ThreadForkOptions`. This is the place for middleware that needs to change the target thread before it becomes durable. After the fork is committed, durable thread events such as `THREAD_CREATED` with fork metadata and later `THREAD_UPDATED` changes describe the committed thread state; they are not mutation hooks.
 

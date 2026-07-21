@@ -85,11 +85,11 @@ public sealed record PermissionMemoryState
 Built-in examples follow the same split:
 
 - `PermissionPersistentStateData` is persistent and session-scoped, so remembered permission choices apply across threads in the same session.
-- `CompactionStateData` is persistent and thread-scoped, so compaction metadata follows the conversation path.
+- Compaction does not use persistent middleware state; its trigger reads the actual model input and its successful semantic change is a canonical checkpoint.
 - `PlanModePersistentStateData` is persistent and thread-scoped because `Scope` is omitted and thread is the default.
 - `BatchPermissionStateData`, continuation permission state, error tracking state, total error threshold state, and circuit breaker state are transient unless their attribute says otherwise.
 
-`CompactionStateData` records thread-scoped compaction metadata and trigger observations. It is not the same as `ThreadHistoryCompactionCheckpointEvent`, which records durable compaction checkpoints for soft and hard compaction. See [Compaction](../sessions-and-streaming/compaction.md).
+`ThreadHistoryCompactionCheckpointEvent` records successful soft and hard compaction. There is no parallel compaction state record to reconcile with the journal. See [Compaction](../sessions-and-streaming/compaction.md).
 
 ## Session Or Thread
 

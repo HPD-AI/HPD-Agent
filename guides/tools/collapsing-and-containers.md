@@ -36,17 +36,56 @@ After the model calls `MathTools`, the container is hidden and `Add` and `Multip
 
 ## Disable Collapsing For An Agent
 
-Use `WithoutToolCollapsing()` when the model should see member functions directly:
+Use `WithoutHarnessCollapsing()` when the model should see member functions directly:
 
 ```csharp
 var agent = await new AgentBuilder()
     .WithOpenAI(model: "gpt-5-mini")
     .WithToolHarness<MathTools>()
-    .WithoutToolCollapsing()
+    .WithoutHarnessCollapsing()
     .BuildAsync();
 ```
 
 When collapsing is disabled, container functions are removed during build and member functions are exposed directly.
+
+## Customize Collapsing
+
+Collapsing is already enabled, so customization does not require an enable call. Use
+`ConfigureHarnessCollapsing(...)` to change its options:
+
+```csharp
+var agent = await new AgentBuilder()
+    .WithOpenAI(model: "gpt-5-mini")
+    .WithToolHarness<MathTools>()
+    .ConfigureHarnessCollapsing(options =>
+    {
+        options.NeverCollapse.Add(nameof(MathTools));
+    })
+    .BuildAsync();
+```
+
+## Serialized Agent Configuration
+
+Collapsing belongs to the durable `AgentConfig`. Omitting `collapsing` uses the enabled
+default, including when the config is loaded from JSON or used to build a subagent. To
+opt out in a stored definition, set `enabled` explicitly:
+
+```json
+{
+  "collapsing": {
+    "enabled": false
+  }
+}
+```
+
+Do not set `collapsing` to `null`; omit it to use the default. Each subagent uses the
+collapsing settings in its own `AgentConfig`, so a child can independently keep the
+default, customize it, or opt out.
+
+`AgentRunConfig` does not configure collapsing. It controls one invocation, while
+collapsing defines the agent's tool topology and middleware. Runtime tools inherited or
+added for a run still pass through the agent's configured visibility and collapsing
+rules.
 
 ## Runtime Model
 

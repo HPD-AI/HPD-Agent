@@ -12,7 +12,6 @@ using HPD.MultiAgent;
 var agent = await new AgentBuilder()
                     .WithInstructions("You are a support assistant. Use direct order tools for simple order and return questions.")
                     .WithOpenAI("gpt-5-mini")
-                    .WithHarnessCollapsing()
                     .WithToolHarness<SupportToolHarness>()
                     .BuildAsync();
 
@@ -20,7 +19,8 @@ var result = await agent.RunAsync("Look up order HPD-1050 and tell me the return
 
 Console.WriteLine(result.Text);
 
-// Collapse hides the harness methods behind one container tool until the model needs them.
+// Collapsing is enabled automatically. [Collapse] hides these methods behind one
+// container tool until the model needs them.
 [Collapse(
     "Support tools for looking up orders and return policies.",
     FunctionResult = "Support tools are available. Use the narrowest tool that answers the user.",

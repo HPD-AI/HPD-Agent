@@ -14,7 +14,14 @@ var agent = await new AgentBuilder()
     .BuildAsync();
 ```
 
-`WithLocalSandbox()` publishes local environment services such as `IEnvironmentRuntime` and `IProcessProvider` into agent runtime capabilities. Built-in tools such as coding command execution use those services.
+`WithLocalSandbox()` publishes one `RuntimeProcessExecutionBinding` into agent runtime capabilities.
+The binding atomically contains the local environment identity/revision, `IProcessProvider`, optional
+`IEnvironmentRuntime`, and authorized `TargetHandle<ExecutionUnit>`. Built-in process-backed tools
+consume that binding as one authority; they do not resolve the provider separately or invent an
+execution target.
+
+A runtime that cannot provide a complete binding does not advertise process execution to tools.
+Capability absence fails closed rather than falling back to host-local execution.
 
 Local process execution and OS-level isolation are related but separate. A local process provider can execute trusted commands with isolation disabled. Isolation-capable execution requires the sandbox planner and platform applicator path for the current operating system.
 

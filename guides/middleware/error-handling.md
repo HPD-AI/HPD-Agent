@@ -103,6 +103,8 @@ Retry uses `CustomRetryStrategy` first when configured. Otherwise it asks the pr
 
 `FunctionTimeoutMiddleware` wraps function execution and enforces the configured single-function timeout. It is a function wrapper, so ordering matters.
 
+Function timeouts are opt-in. `ErrorHandlingConfig.SingleFunctionTimeout` defaults to `null`, so ordinary functions—including synchronous subagent tools—run until they complete or the caller cancels them. Set `SingleFunctionTimeout` or call `.WithFunctionTimeout(...)` when an application needs a deadline. The parameterless `.WithFunctionTimeout()` helper uses the configured value when present and otherwise applies its explicit 30-second convenience default.
+
 Place timeout inside retry if you want each retry attempt to receive its own timeout.
 
 Timeout only wraps function execution. It does not impose a whole conversation timeout and it does not cancel model streaming.

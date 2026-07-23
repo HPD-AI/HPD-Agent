@@ -1,6 +1,6 @@
 # Subagents
 
-A subagent is a real HPD agent exposed to a parent agent as a tool. The parent model sees one generated function with an `input` argument. By default, when the model calls it, HPD builds or loads the child agent, routes the child run into the selected session and thread, streams child events through the parent event path, and returns the child answer as the tool result.
+A subagent is a real HPD agent exposed to a parent agent as a tool. The parent model sees one generated function with an `input` argument. By default, when the model calls it, HPD builds or loads the child agent, creates an agent-owned child thread using the configured context policy, streams child events through the parent event path, and returns the child answer as the tool result.
 
 Use subagents when the parent should delegate to a specialist during normal tool calling. Use multi-agent workflows when the whole task should follow an explicit graph of roles and routes.
 
@@ -258,7 +258,9 @@ Use metadata for UI grouping, retention policy, audit labels, or application-spe
 
 ## Events And Hierarchy
 
-Subagent runs are event-native. The parent journal records `SubAgentInvocationStartedEvent` followed by `SubAgentInvocationCompletedEvent`, `SubAgentInvocationFailedEvent`, or `SubAgentInvocationCancelledEvent`. These events correlate through `invocationId` and identify the child agent, session, and thread. The parent also emits normal tool-call events, while the child owns its normal run and message lifecycle in the child journal.
+Subagent runs are event-native. The parent journal records `SubAgentInvocationStartedEvent` followed by `SubAgentInvocationCompletedEvent`, `SubAgentInvocationFailedEvent`, or `SubAgentInvocationCancelledEvent`. These events correlate through `invocationId` and identify the child agent, session, thread, resolved context policy, and invocation mode. The parent also emits normal tool-call events, while the child owns its normal run and message lifecycle in the child journal.
+
+`AddCodingHarnessTui()` projects coding subagent tools such as `explore`, `worker`, and `reviewer` into one semantic parent-transcript entry. The entry moves from preparing to running and then to completed, failed, or cancelled as the durable lifecycle events arrive. Prompt, result, and error text is bounded in the parent transcript; use `/subagents` to open the complete child conversation. Replaying the same parent events reconstructs the same presentation after hydration.
 
 That lets a host render:
 
@@ -298,7 +300,7 @@ Use:
 - `ApplyThreadForkCompaction` to supply the exact child-thread compaction specification
 - `DisableThreadForkCompaction` to keep the child thread uncompacted
 
-The compaction runs against the fork target before the subagent starts. In practice, that means a `ParentSessionForkedThread()` subagent can inherit the parent's recent context without copying every parent message into the child thread.
+The compaction runs against the fork target before the subagent starts. In practice, that means a `SubAgentContextPolicy.Fork` subagent can inherit the parent's recent context without copying every parent message into the child thread.
 
 The supplied `CompactionSpecification` defines the point, preservation, strategy, and commit mode. The shared compaction engine applies it through the fork middleware hook. See [Compaction](../sessions-and-streaming/compaction.md).
 

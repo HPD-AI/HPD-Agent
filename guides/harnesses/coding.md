@@ -17,7 +17,7 @@ var agent = await new AgentBuilder()
     .BuildAsync();
 ```
 
-`WithPermissions()` gives mutation and command tools an approval path. `WithLocalSandbox()` publishes the process/runtime capabilities used by command execution.
+`WithPermissions()` gives mutation and command tools an approval path. `WithLocalSandbox()` publishes the atomic process-execution binding used by command execution.
 
 ## Provide A Workspace
 
@@ -51,7 +51,17 @@ var result = await agent.RunAsync(
 
 ## Command Execution
 
-Command execution depends on an `IProcessProvider`. `WithLocalSandbox()` provides one for local runs. Without a process provider, command execution should be treated as a setup error.
+Command execution depends on `RuntimeProcessExecutionBinding`. The binding pairs all process authority
+that must come from the same selected runtime:
+
+- environment identity and revision;
+- `IProcessProvider`;
+- optional `IEnvironmentRuntime`;
+- the authorized `TargetHandle<ExecutionUnit>`.
+
+`WithLocalSandbox()` publishes a complete local binding. The Coding harness does not look up an
+`IProcessProvider` separately and does not manufacture an execution target. If the selected runtime
+does not publish the complete binding, command execution fails closed as a setup error.
 
 Sandbox enforcement is platform-dependent. Use permissions and narrow workspace roots even when sandboxing is enabled.
 
@@ -59,7 +69,27 @@ Command approval and process isolation are independent. `ExecuteCommandPermissio
 
 ### Background Commands
 
-Use `invocationMode: "background"` for long-running commands such as dev servers, file watchers, or test watchers. The tool returns after the process launches instead of waiting for the command to finish.
+`ExecuteCommand` uses one closed request union with four actions:
+
+- `run` starts a command.
+- `listBackground` lists commands owned by the current session.
+- `readOutput` reads recent output from one background command.
+- `stop` stops one background command.
+
+Use `executionMode: "Background"` on the `run` branch for long-running commands such as dev servers, file watchers, or test watchers:
+
+```json
+{
+  "request": {
+    "action": "run",
+    "command": "dotnet watch",
+    "workingDirectory": "src/App",
+    "executionMode": "Background"
+  }
+}
+```
+
+`executionMode` controls the spawned process. It is separate from the framework-level `invocationMode` control used by functions configured with `AgentInvocationModePolicy.ModelChoice`.
 
 Background command results include:
 
@@ -74,20 +104,36 @@ The handle id identifies the live command process. Use it for follow-up control 
 
 ```json
 {
-  "action": "ReadOutput",
-  "backgroundHandleId": "cmd_...",
-  "delayMilliseconds": 1000
+  "request": {
+    "action": "readOutput",
+    "backgroundHandleId": "cmd_...",
+    "delayMilliseconds": 1000
+  }
 }
 ```
 
 ```json
 {
-  "action": "Stop",
-  "backgroundHandleId": "cmd_..."
+  "request": {
+    "action": "stop",
+    "backgroundHandleId": "cmd_..."
+  }
 }
 ```
 
-`ListBackground` returns active or recently completed background commands for the current session. Background command launch only means the process started; verify server readiness with `ReadOutput` or another explicit check before reporting that a service is healthy.
+To recover handles, call:
+
+```json
+{
+  "request": {
+    "action": "listBackground"
+  }
+}
+```
+
+`listBackground` returns active or recently completed background commands for the current session. Background command launch only means the process started; verify server readiness with `readOutput` or another explicit check before reporting that a service is healthy.
+
+The generated binder rejects unknown fields and fields from the wrong action branch before command execution. See [AI Function Parameter Contracts](../tools/ai-function-parameter-contracts.md) for closed-union authoring and validation rules.
 
 Internally, background commands register both a background task and a background handle:
 

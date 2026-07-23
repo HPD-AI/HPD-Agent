@@ -1,0 +1,6 @@
+{
+  "resources": {
+    "references/validation-guide.md": "Reads the dataset validation requirements."
+  },
+  "scripts": {}
+}

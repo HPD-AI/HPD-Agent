@@ -50,7 +50,7 @@ Threads are the unit for forking, replay, thread-specific state, and hosted runt
 
 Forking creates a new thread from a message id on an existing thread. Thread-scoped persistent middleware state is copied at fork time and then diverges between threads.
 
-Threads are also how HPD keeps nested agent work understandable. A subagent can create a fresh thread, fork from the parent thread, or run against an existing thread. The default policy forks from the parent session into a hidden child thread, so the child gets the parent's current context without interleaving its transcript with the parent. The child descriptor records the agent selected by default for continuation, plus its parent session/thread/tool call and delegation invocation. Callers may deliberately select a different agent for a later run against the same thread.
+Threads are also how HPD keeps nested agent work understandable. Every subagent tool invocation creates a new agent-owned child thread. A fresh child starts with no parent history, a forked child inherits the parent thread, and an isolated child starts empty in a new session. The default policy forks into a hidden child thread in the parent session, so the child gets the current context without interleaving its transcript with the parent. The child descriptor records the agent selected by default for continuation, plus its parent session/thread/tool call and delegation invocation. Callers may deliberately select a different agent for a later run against the completed child thread through the normal thread APIs; the subagent tool itself does not target an existing thread.
 
 Multi-agent workflows use the same thread model, but the application chooses the policy. A workflow can write every node into one shared thread, give each node its own thread, or fork one thread per node from a root workflow thread. Thread metadata marks the workflow name, execution id, node id, agent id, and conversation mode, which gives UI and replay code something stable to group around.
 
@@ -62,7 +62,7 @@ Media-heavy features make this thread scope visible. For example, audio transcri
 |---------|-------------|------------|
 | Normal chat | User, case, project, or platform thread container | Active transcript and thread-scoped middleware state |
 | Forking | Keeps alternatives grouped together | Creates a new path from a message id |
-| Subagents | Parent, new, or shared session depending on policy | Agent-owned existing, fresh, or forked child thread |
+| Subagents | Parent session for fresh/fork; new session for isolated | A newly created agent-owned fresh, forked, or isolated child thread |
 | Multi-agent workflows | Workflow/workspace container with run metadata | Shared, per-agent, or forked node transcripts |
 | Compaction | Shared policy can remain stable | Model-visible history or a fork target can be reduced; hard compaction replaces the journal generation |
 | Content and audio | Groups durable references by workspace/session | Attaches uploads, artifacts, transcript projection, and replay to one path |
@@ -94,7 +94,7 @@ The same model applies across runtime surfaces:
 - hosted APIs expose sessions, threads, thread executions, authoritative runtime state, inputs, resumable SSE, interruption, and the bidirectional response route
 - TUI runtimes bind UI state to a runtime scope
 - bot adapters map platform conversation identity to a session and thread before invoking an agent
-- subagents use policy to choose an agent-owned child thread in the parent, new, or shared session
+- subagents create a new agent-owned child thread using fresh, fork, or isolated context policy
 - multi-agent workflows use conversation policy to decide where node-agent transcripts are written
 
 This means UI and integration code should treat events as the common rendering and coordination language, while treating hosting routes and local subscriptions as transport choices.

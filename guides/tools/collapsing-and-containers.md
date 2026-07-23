@@ -93,7 +93,7 @@ Collapsing is runtime visibility behavior, not a one-time source-generation rewr
 
 `ContainerMiddleware` filters `ChatOptions.Tools` before each model iteration. It starts from the full initial tool list, then asks `ToolVisibilityManager` which tools should be visible for the current expanded-container state.
 
-When a container is called, `ContainerMiddleware` records the expanded container, captures its active instructions, and creates any scoped middleware pipeline for that harness. On the next model iteration, `ToolVisibilityManager` exposes the member functions owned by that expanded container.
+When a container is called, `ContainerMiddleware` records the expanded container, captures its active instructions, and creates any scoped middleware pipeline for that harness. On the next model iteration, `ToolVisibilityManager` exposes the permitted member functions owned by that expanded container. Visibility is projected from the complete function registry, so an availability filter does not permanently discard functions while the harness is collapsed. The exposed members are the original `AIFunction` instances, not bare replacements; they retain their metadata, execution delegates, and normal global middleware path.
 
 ## Recovery Behavior
 
@@ -116,7 +116,7 @@ public sealed class DatabaseTools
 
 The source generator can create factories for middleware with public parameterless constructors or a single public `*Config` or `*Options` constructor. Middleware that needs DI should be supplied through `WithToolHarness<T>(options => options.AddScopedMiddleware(...))`.
 
-Scoped pipelines route function, iteration, batch, and error hooks for functions owned by that harness after the container has expanded.
+Scoped pipelines are instantiated when the container expands and route iteration, tool-execution, function, parallel-batch, wrapping, turn-completion, and error hooks. Global agent middleware remains active; the scoped pipeline is an additional harness-local layer closest to functions owned by that harness. A subagent may receive only an allowlisted subset of the expanded harness, but those visible functions still use the same scoped middleware pipeline.
 
 If scoped middleware uses a config constructor and that config is supplied from JSON, register JSON metadata for the config type:
 

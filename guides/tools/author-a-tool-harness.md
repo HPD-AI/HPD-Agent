@@ -20,6 +20,8 @@ public sealed class WeatherTools
 
 `[AIFunction]` makes `GetWeather` callable. The generated function name is `GetWeather` unless you set `Name`.
 
+The method signature is also the source of truth for a generated closed JSON Schema and strict argument binder. HPD generates required fields, defaults, nullability, enums, nested objects, collections, dictionaries, and discriminated unions together with the invocation adapter. See [AI Function Parameter Contracts](ai-function-parameter-contracts.md) for the complete authoring model.
+
 Use explicit names when you want stable snake_case tool names:
 
 ```csharp
@@ -86,6 +88,8 @@ public sealed class SearchTools
 ```
 
 `FunctionExecutionContext` and `CancellationToken` are runtime parameters. They can appear in the C# method signature, but they are supplied by HPD Agent and excluded from the generated tool schema and argument DTO. The model does not see them and cannot provide values for them; it only sees the real tool arguments.
+
+The generated binder validates model arguments before the function body runs. Property names and enum values are ordinal and case-sensitive, object contracts are closed, and invalid nested paths are reported precisely. Do not add manual aliases or loose dictionary compatibility layers around a generated contract.
 
 Use the context for sanctioned runtime access such as emitting events, reading call metadata, accessing services, using the content store, emitting process-local struct samples, registering background tasks, or asking bidirectional questions through `RequestAsync(...)`. For tool progress, bidirectional requests, struct event caveats, and background task events, see [Tool And Function Events](../events/tool-and-function-events.md).
 
@@ -175,6 +179,9 @@ Generated output includes:
 - One factory entry per supported harness.
 - The generated function-name array used by `WithTool<T>()`.
 - Direct delegates for creating functions.
+- One closed JSON Schema per generated AI function.
+- One strict JSON argument binder and typed argument carrier per generated AI function.
+- Direct invocation adapters that combine bound model arguments with runtime-only parameters.
 - Metadata and config deserializers when the harness uses those features.
 - Collapse metadata for container visibility.
 
@@ -182,8 +189,10 @@ Only publicly accessible, instantiable harnesses are included in `ToolHarnessReg
 
 ## Reflection Fallback
 
-For type-based registration, HPD Agent can reflect over simple public harnesses when a generated registry entry is missing. The fallback supports public methods with `[AIFunction]`, `[Skill]`, `[SubAgent]`, and `[MultiAgent]`.
+For type-based registration, HPD Agent can reflect over selected simple public capabilities when a generated registry entry is missing. Code-first `[Skill]` declarations require their generated registration and do not use this fallback.
 
 The non-generic `WithToolHarness(Type)` path can use reflection fallback for simple public harnesses in JIT development. Generic overloads still have their normal constructor constraints, and instance registration still relies on generated factory metadata.
 
 Do not rely on reflection fallback for Native AOT, trimmed apps, generated dependency registration, external MCP/OpenAPI harness sources, collapse-scoped middleware factories, or generated config/metadata deserialization. The generated path uses registry entries and JSON metadata; reflection fallback is annotated with trimming and dynamic-code warnings and does not provide the full generated dependency picture.
+
+For progressive instruction-and-capability workflows inside a harness, see [Skills Overview](../skills/overview.md).

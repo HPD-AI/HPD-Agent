@@ -40,6 +40,7 @@ const sidebar = [
     collapsed: true,
     items: [
       link('Author A Tool Harness', '/guides/tools/author-a-tool-harness'),
+      link('AI Function Parameter Contracts', '/guides/tools/ai-function-parameter-contracts'),
       link('Selective Registration And Config', '/guides/tools/selective-registration-and-config'),
       link('Source Generation, AOT, And Trimming', '/guides/tools/source-generation-aot-and-trimming'),
       link('Collapsing And Containers', '/guides/tools/collapsing-and-containers'),
@@ -47,6 +48,17 @@ const sidebar = [
       link('MCP Tools', '/guides/tools/mcp-tools'),
       link('OpenAPI Tools', '/guides/tools/openapi-tools'),
       link('Multi-Agent Capabilities', '/guides/tools/multi-agent-capabilities')
+    ]
+  },
+  {
+    text: 'Skills',
+    collapsed: true,
+    items: [
+      link('Skills Overview', '/guides/skills/overview'),
+      link('Create Skills In C#', '/guides/skills/code-first'),
+      link('Load SKILL.md Directories', '/guides/skills/directories'),
+      link('Resources And Scripts', '/guides/skills/resources-and-scripts'),
+      link('Install And Reload Skills', '/guides/skills/managed-skills')
     ]
   },
   {
@@ -245,6 +257,7 @@ export default defineConfig({
         text: 'Guides',
         items: [
           link('Tools', '/guides/tools/author-a-tool-harness'),
+          link('Skills', '/guides/skills/overview'),
           link('Events', '/guides/events/overview'),
           link('Middleware', '/guides/middleware/overview'),
           link('Providers', '/guides/providers/overview'),

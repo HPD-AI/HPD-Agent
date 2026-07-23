@@ -12,9 +12,20 @@ var registry = new EnvironmentProviderRegistry()
 var runtime = new InMemoryEnvironmentRuntime(registry);
 ```
 
-Tools call the runtime through an `IProcessProvider` or `IEnvironmentRuntime`. `WithLocalSandbox()` wires those services into an agent run.
+Low-level environment hosts may call `IProcessProvider` or `IEnvironmentRuntime` directly when they
+already own a valid execution target. Agent-facing tools use `RuntimeProcessExecutionBinding`
+instead. It atomically pairs the selected environment identity/revision, process provider, optional
+runtime facade, and authorized `TargetHandle<ExecutionUnit>`.
 
-Registering a local process provider is enough for local process execution. It does not, by itself, prove OS-level isolation. Isolation-capable execution depends on the sandbox planner/applicator path for the host platform.
+`WithLocalSandbox()` publishes that complete binding into the agent runtime. Consumers must not look
+up a provider separately, combine it with another target, or synthesize a local target. Missing
+bindings make process-backed tools unavailable; there is no provider-only compatibility fallback.
+
+Registering a local process provider is enough for low-level local process execution when the caller
+also owns the target. It is not enough to enable agent-facing process tools, and it does not by itself
+prove OS-level isolation. Agent integration requires a complete `RuntimeProcessExecutionBinding`;
+isolation-capable execution additionally depends on the sandbox planner/applicator path for the host
+platform.
 
 ## Disabled Isolation Sample
 

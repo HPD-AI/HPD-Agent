@@ -50,8 +50,10 @@ Follow-up operations still call a function, but the handle id tells that functio
 
 ```json
 {
-  "action": "ReadOutput",
-  "backgroundHandleId": "cmd_abc123"
+  "request": {
+    "action": "readOutput",
+    "backgroundHandleId": "cmd_abc123"
+  }
 }
 ```
 

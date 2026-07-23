@@ -4,7 +4,11 @@ HPD Agent exposes work to a model as functions. A function is a callable `AIFunc
 
 A tool is the model-facing callable capability. In native .NET code, a tool is usually a public method marked with `[AIFunction]`. The method becomes an `AIFunction` during agent build.
 
+For a generated native tool, the method is a compiled protocol rather than a method plus runtime inference. HPD emits its closed JSON Schema, strict binder, typed argument carrier, defaults, and invocation adapter from the same signature. See [AI Function Parameter Contracts](../guides/tools/ai-function-parameter-contracts.md).
+
 A tool harness is a class that groups related capabilities. A harness can contain native `[AIFunction]` methods and other capability methods such as skills or subagents. Register a harness with `WithToolHarness<T>()`, or register one generated function from the harness with `WithTool<T>("FunctionName")`.
+
+A skill is a progressive harness capability: the model initially sees its name and description, then receives its instructions and child capabilities only after activation. See [Skills Overview](../guides/skills/overview.md).
 
 An external tool source is a loader that contributes functions from outside the native harness method list, such as MCP servers or OpenAPI operations. Those sources still become `AIFunction`s before the model sees them. See [MCP Servers](../guides/tools/mcp-servers.md) and [OpenAPI Tools](../guides/tools/openapi-tools.md).
 
@@ -84,15 +88,28 @@ Most functions should use the default `SynchronousOnly`. Use background invocati
 
 `[Collapse]` belongs on the harness class. It is not required for discovery; it only controls container visibility.
 
-## Generated First
+## Generated Contract First
 
 The source generator is the normal path. It discovers public, instantiable harnesses and emits a registry under `HPD.Agent.Generated.ToolHarnessRegistry.All`. Generated entries include direct creation delegates, function-name lists, metadata/config deserializers, and collapse metadata.
+
+For every generated `[AIFunction]`, it also emits:
+
+- a closed model-facing JSON Schema;
+- a strict JSON binder;
+- a typed argument carrier;
+- default and nullability handling;
+- nested collection, dictionary, enum, and union binding;
+- an invocation adapter that injects runtime-only parameters separately.
+
+Unknown properties, incorrect property casing, invalid enum names, and fields from the wrong union branch fail before the function body executes. The schema and binder come from one generated contract, so they do not drift independently.
 
 At runtime, `WithToolHarness<T>()` forces the harness assembly module initializer, loads generated registries, and resolves the harness by class name. If the registry entry is missing for a simple public harness, HPD Agent can use reflection fallback in normal JIT development. Treat that as troubleshooting support, not as the intended production path for Native AOT or trimmed apps.
 
 ## Related Guides
 
 - [Author A Tool Harness](../guides/tools/author-a-tool-harness.md)
+- [AI Function Parameter Contracts](../guides/tools/ai-function-parameter-contracts.md)
+- [Source Generation, AOT, And Trimming](../guides/tools/source-generation-aot-and-trimming.md)
 - [MCP Servers](../guides/tools/mcp-servers.md)
 - [OpenAPI Tools](../guides/tools/openapi-tools.md)
 - [Externally Executed Client Tools](../guides/tools/externally-executed-client-tools.md)

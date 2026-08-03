@@ -201,7 +201,7 @@ client.on(EventTypes.PERMISSION_REQUEST, async (request) => {
     arguments: request.arguments,
   });
 
-  await client.run({
+  const result = await client.respond({
     type: EventTypes.PERMISSION_RESPONSE,
     permissionId: request.permissionId,
     sourceName: request.sourceName,
@@ -209,6 +209,11 @@ client.on(EventTypes.PERMISSION_REQUEST, async (request) => {
     reason: approved ? undefined : 'Denied by user.',
     choice: 'ask',
   });
+
+  if (!result.accepted) {
+    // Another responder, cancellation, or execution completion made it stale.
+    console.info('Permission response was not accepted', result.status);
+  }
 });
 ```
 
@@ -216,7 +221,9 @@ The same pattern applies to `CLARIFICATION_REQUEST` and `CONTINUATION_REQUEST`. 
 
 Thread-scoped interactive request records are canonical and replayable. The backend also exposes answerable pending requests in runtime state so reconnecting UIs can restore interaction controls before historical catch-up completes.
 
-For a parent thread, that state can include requests originating in descendant subagent threads. Post through the active parent coordinator route while preserving the request id and the child `sessionId` and `threadId` on the response event. The coordinator uses that origin to resolve the child waiter.
+Runtime state contains requests owned by that exact thread execution. Query a
+child thread using its child agent/session/thread identity and respond through
+that same scope.
 
 Client tools are the exception. If you register a tool handler, the client automatically answers `CLIENT_TOOL_INVOKE_REQUEST` with `CLIENT_TOOL_INVOKE_OUTCOME`:
 

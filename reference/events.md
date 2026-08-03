@@ -85,7 +85,7 @@ Hosted live delivery and durable replay decode to the same registered event valu
 | Tool calls | `ToolCallStartEvent`, `ToolCallArgsEvent`, `ToolCallResultEvent`, `ToolCallEndEvent` | default/streaming | canonical in thread scope |
 | Workflow execution | `WorkflowStartedEvent`, `WorkflowAgentStartedEvent`, `WorkflowEdgeTraversedEvent`, `WorkflowCompletedEvent` | default/diagnostic | follows the workflow publication scope |
 | Background work | `BackgroundTaskStartedEvent`, `BackgroundTaskCompletedEvent`, `BackgroundHandleRegisteredEvent`, `BackgroundHandleStatusChangedEvent` | control/default | canonical in thread scope |
-| Interactive middleware | request events implementing `IRequestEvent` and response events implementing `IResponseEvent` | interactive | canonical in thread scope; answerable requests also appear in runtime state |
+| Interactive middleware | request events implementing `IAgentRequestEvent<TResponse>` and response events implementing `IAgentResponseEvent` | interactive | canonical in thread scope; answerable requests also appear in runtime state |
 | Retry and error policy | `FunctionRetryEvent`, `ModelCallRetryEvent`, middleware error events | diagnostic/default | follows publication scope |
 | Compaction observability | `CompactionEvent` | default/diagnostic | follows publication scope |
 | Thread-history compaction | `ThreadHistoryCompactionCheckpointEvent` | thread history | canonical checkpoint; soft appends and hard replaces the journal generation |
@@ -199,7 +199,7 @@ For reasoning output, use the same start/delta/end pattern but render it separat
 
 For tool calls, use start/args/result/end events to show activity, arguments, and results. Tool events may arrive interleaved with streaming text depending on the model and middleware.
 
-For interactive middleware, render request events and answer with the matching `IResponseEvent` through the hosted HTTP `/responses` route or `agent.AnswerRequestAsync(...)` in a local app. Permission, continuation, clarification, and client-tool responses are coordination events, not ordinary output. See [Bidirectional Events](../guides/events/bidirectional-events.md).
+For interactive middleware, render request events and answer with the matching `IAgentResponseEvent` through the hosted HTTP `/responses` route or `agent.AnswerRequestAsync(...)` in a local app. Permission, continuation, clarification, and client-tool responses are coordination events, not ordinary output. See [Bidirectional Events](../guides/events/bidirectional-events.md).
 
 Request-specific event families should define only the domain request and domain response events. Do not add family-specific terminal lifecycle events such as `FooApprovedEvent`, `FooDeniedEvent`, `FooResolvedEvent`, or `FooCancelledEvent`; use the generic request lifecycle events for request-session state.
 

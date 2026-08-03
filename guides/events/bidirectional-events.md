@@ -8,8 +8,8 @@ Use them when the agent runtime needs a decision during execution, not just afte
 
 A bidirectional flow uses the standardized request/response event contracts:
 
-- request events inherit from `AgentEvent` and implement `IAgentRequestEvent` / `IRequestEvent`
-- response events inherit from `AgentEvent` and implement `IAgentResponseEvent` / `IResponseEvent`
+- request events inherit from `AgentEvent` and implement `IAgentRequestEvent<TResponse>`
+- response events inherit from `AgentEvent` and implement `IAgentResponseEvent`
 - both sides share the same `RequestId` through `IRequestCorrelatedEvent`
 
 The runtime flow has three parts:
@@ -28,15 +28,13 @@ The request and response are matched by `RequestId`. Built-in permission events 
 
 The waiter is registered before the request event is emitted. Duplicate request ids, timeouts, and mismatched response types are treated as errors by the coordinator.
 
-Response routing can also use the standard `IResponseEvent` metadata: `ResponderId`, `ResponderGroup`, and `Capabilities`. Request events may expose response policy, target, and visibility hints for transports and UIs that need to route requests to a specific responder.
+Response routing can also use responder identity, group, and capability metadata inherited through the Agent contracts. Request events may expose response policy, target, and visibility hints for transports and UIs that need to route requests to a specific responder.
 
-The request-specific events carry domain payload. Generic request lifecycle events carry coordinator state:
-
-- `AgentRequestStartedEvent` means the coordinator opened a request session
-- `AgentRequestResolvedEvent` means a matching response was accepted
-- `AgentRequestExpiredEvent` means the request timed out
-- `AgentRequestCancelledEvent` means the request was cancelled
-- `AgentResponseRejectedEvent` means a response was late, mismatched, unauthorized, or otherwise not accepted
+The request-specific events carry domain payload. Accepted responses are durable
+domain facts. An unanswered durable request is closed by
+`AgentRequestTerminatedEvent`, whose terminal kind is `Expired`, `Cancelled`, or
+`Abandoned`. Lower-level coordinator lifecycle notifications remain process-local
+implementation details.
 
 Do not create request-family terminal events such as `FooApprovedEvent`, `FooDeniedEvent`, `FooResolvedEvent`, `FooExpiredEvent`, or `FooCancelledEvent`. Put the domain decision on the response payload, then let the generic lifecycle events describe the request session outcome.
 
@@ -63,10 +61,10 @@ await agent.RunAsync("Clean up temporary files.");
 Use `TryAnswerRequestAsync(...)` when a response may arrive late or the waiter may already be gone:
 
 ```csharp
-var delivered = await agent.TryAnswerRequestAsync(response);
+var result = await agent.TryAnswerRequestAsync(response);
 
-if (!delivered)
-    logger.LogDebug("Response arrived after the request was no longer waiting.");
+if (!result.Accepted)
+    logger.LogDebug("Response was not accepted: {Status}", result.Status);
 ```
 
 ASP.NET Core hosted clients do not call `agent.Subscribe(...)` or `agent.AnswerRequestAsync(...)` directly. Canonical request events arrive through the hosted `/events` stream and currently answerable requests are also included in `/state`. Their response command is the hosted `/responses` route.
@@ -92,7 +90,10 @@ if (!response.Approved)
 
 `RequestAsync(...)` is available from hook contexts, agent context, and `FunctionExecutionContext`.
 
-The default timeout is five minutes when no timeout is supplied. `FunctionExecutionContext.RequestAsync(...)` exposes timeout, but not a separate cancellation token parameter.
+When no timeout is supplied, the request waits indefinitely while its owning
+execution remains valid. Supply an explicit timeout only when expiration is part
+of the interaction's actual policy. Execution cancellation still cancels the
+request.
 
 ## Ask From A Tool
 
@@ -117,9 +118,9 @@ public async Task<string> BookMeeting(
 }
 ```
 
-In direct in-process code, the app handles the request in the same way: subscribe to `ClarificationRequestEvent`, ask the user, and send a `ClarificationResponseEvent` with the same request id. In ASP.NET Core hosted clients, observe or restore the request and return the response through the active coordinator's hosted response path. A parent coordinator can surface descendant subagent requests, so preserve the request's child session/thread origin on the response.
+In direct in-process code, the app handles the request in the same way: subscribe to `ClarificationRequestEvent`, ask the user, and send a `ClarificationResponseEvent` with the same request id. In ASP.NET Core hosted clients, observe or restore the request and return the response through the request's agent/session/thread route.
 
-Responses sent through `agent.AnswerRequestAsync(...)`, `agent.TryAnswerRequestAsync(...)`, or the hosted `/responses` route must be events too. In practice, use response records that inherit from `AgentEvent` and implement `IAgentResponseEvent` / `IResponseEvent`, as the built-in response events do.
+Responses sent through `agent.AnswerRequestAsync(...)`, `agent.TryAnswerRequestAsync(...)`, or the hosted `/responses` route must be events too. Use response records that inherit from `AgentEvent` and implement `IAgentResponseEvent`, as the built-in response events do.
 
 ## Built-In Families
 
@@ -141,20 +142,22 @@ Custom bidirectional flows should keep the same two-layer shape:
 ```text
 domain request event  -> what is being asked
 domain response event -> what answer was given
-generic lifecycle     -> whether the request session started, resolved, expired, cancelled, or rejected a response
+terminal fact         -> why an unanswered durable request stopped being actionable
 ```
 
-Define a request event that inherits from `AgentEvent` and implements `IAgentRequestEvent`. Define a response event that inherits from `AgentEvent` and implements `IAgentResponseEvent`. Both events must expose the same request id through `IRequestCorrelatedEvent.RequestId`.
+Define a request event that inherits from `AgentEvent` and implements
+`IAgentRequestEvent<TResponse>`. Define its response event by inheriting from
+`AgentEvent` and implementing `IAgentResponseEvent`. The positional `RequestId`
+and `SourceName` properties satisfy the inherited protocol directly.
 
 ```csharp
 public sealed record WorkspaceTrustRequestEvent(
     string RequestId,
     string SourceName,
     string WorkspacePath,
-    string Reason) : AgentEvent, IAgentRequestEvent
+    string Reason) : AgentEvent, IAgentRequestEvent<WorkspaceTrustResponseEvent>
 {
     public override EventChannel Channel { get; init; } = EventChannel.Interactive;
-    string IRequestCorrelatedEvent.RequestId => RequestId;
 }
 
 public sealed record WorkspaceTrustResponseEvent(
@@ -165,7 +168,6 @@ public sealed record WorkspaceTrustResponseEvent(
 {
     public override EventChannel Channel { get; init; } = EventChannel.Interactive;
     public override EventDirection Direction { get; init; } = EventDirection.Upstream;
-    string IRequestCorrelatedEvent.RequestId => RequestId;
 }
 ```
 
@@ -185,11 +187,16 @@ if (!response.Trusted)
     throw new InvalidOperationException(response.Reason ?? "Workspace was not trusted.");
 ```
 
-Use response payload fields such as `Trusted`, `Approved`, `ChoiceId`, `Reason`, or `Result` for the domain decision. Use `AgentRequestResolvedEvent`, `AgentRequestExpiredEvent`, `AgentRequestCancelledEvent`, and `AgentResponseRejectedEvent` for lifecycle. This keeps every UI, hosted transport, bot adapter, and TUI on one request-session model.
+Use response payload fields such as `Trusted`, `Approved`, `ChoiceId`, `Reason`,
+or `Result` for the domain decision. `AgentRequestTerminatedEvent` closes an
+unanswered request when it expires, is cancelled, or is abandoned. This keeps
+every UI, hosted transport, bot adapter, and TUI on one request-session model.
 
 ## Timeouts
 
-Set an explicit timeout when waiting on user or host input. If a timeout expires, handle it like any other runtime failure: deny by policy, return a fallback, or surface a clear error.
+The default is no elapsed-time deadline. Set an explicit timeout only when the
+product policy requires expiration. If it expires, deny by policy, return a
+fallback, or surface a clear error.
 
 Do not block inside a direct event handler while holding UI state that the response path also needs. The handler should gather the decision and call `agent.AnswerRequestAsync(...)`. Hosted clients should post or send the response promptly while the thread runtime is still active.
 
@@ -212,7 +219,11 @@ Content-Type: application/json
 }
 ```
 
-The body must be a serialized `AgentEvent` envelope whose event implements `IResponseEvent`. The route returns `404` when the session/thread scope does not exist, `409` when no active runtime or pending waiter accepts the response, and `200` with a `RespondResult` when the response is accepted.
+The body must be a serialized `AgentEvent` envelope whose event implements
+`IAgentResponseEvent`. A well-formed attempt returns `200` with an
+`AgentRespondResult`, including nonaccepted outcomes such as `AlreadyResolved`,
+`TimedOut`, `Cancelled`, `ExecutionEnded`, or `RuntimeUnavailable`. Invalid event
+envelopes return `400`, and a missing route scope returns `404`.
 
 ## Related Pages
 

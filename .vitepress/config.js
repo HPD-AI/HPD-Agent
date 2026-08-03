@@ -93,6 +93,7 @@ const sidebar = [
     collapsed: true,
     items: [
       link('Providers Overview', '/guides/providers/overview'),
+      link('Runtime Selection And Authentication', '/guides/providers/runtime-selection-and-authentication'),
       link('OpenAI And Azure OpenAI', '/guides/providers/openai-and-azure-openai'),
       link('Azure AI', '/guides/providers/azure-ai'),
       link('Anthropic', '/guides/providers/anthropic'),

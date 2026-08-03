@@ -79,11 +79,11 @@ JSON or configuration setup is useful when agent definitions are stored outside 
 }
 ```
 
-Provider-specific construction and transport options live on the same family config through `ProviderOptions`. For example, audio providers use provider options for voice, output format, speech speed, transcript options, and realtime provider ids. Chat providers use provider options only for controls that are native to that provider or SDK.
+Provider-specific construction and transport options live on the same family config through `ConstructionOptions`. For example, audio providers use construction options for voice, output format, speech speed, transcript options, and realtime provider ids. Chat providers use construction options only for controls that are native to that provider or SDK.
 
-Runtime chat behavior uses `ChatRunConfig`: model selection, temperature, top-p, max output tokens, stop sequences, response format, tools, tool mode, seed, and generic reasoning options. Agent-level defaults belong in `ClientProviderConfig.ChatDefaults`; per-run or per-session overrides belong in `AgentRunConfig.Chat`.
+Provider and model selection uses `AgentRunConfig.ProviderKey` and `ModelId`. Runtime chat behavior uses `ChatRunConfig`: temperature, top-p, max output tokens, stop sequences, response format, tools, tool mode, seed, and generic reasoning options. Agent-level defaults belong in `ClientProviderConfig.ChatDefaults`; per-run or per-session overrides belong in `AgentRunConfig.Chat`.
 
-In C# code, use the provider's typed config with `SetProviderConfig(...)` when available. In stored JSON, use the `ProviderOptions` object.
+In C# code, use the provider's typed config with `SetProviderConfig(...)` when available. In stored JSON, use the `ConstructionOptions` object.
 
 ## Fluent Helpers And Family Config
 
@@ -103,7 +103,7 @@ Those helpers do not create a different system. They populate the same `Clients.
 | Setup style | Best for | Tradeoff |
 | --- | --- | --- |
 | Fluent builder extension | Normal C# apps, samples, tests, local setup. | Requires referencing the provider package in code. |
-| `Clients.*` JSON/config | Stored agent definitions, FFI, generated configs, control planes. | More verbose; provider options are stored in `ProviderOptions`. |
+| `Clients.*` JSON/config | Stored agent definitions, FFI, generated configs, control planes. | More verbose; construction options are stored in `ConstructionOptions`. |
 | Manual `ClientProviderConfig` + `SetProviderConfig(...)` | Advanced C# composition or dynamic family wiring. | More ceremony, but exact control over the family slot. |
 
 For audio, provider setup and runtime behavior are separate. `.WithOpenAITextToSpeech(...)` chooses a TTS provider; `WithAudioRuntimeAttachment(...)` or `WithAudio()` decides when assistant text is synthesized, where artifacts go, and whether playback/projection is enabled.
@@ -163,14 +163,17 @@ This is different from frameworks where each provider produces a different agent
 
 ## Setup Caveats
 
-Providers validate required fields such as model, API key, endpoint, region, and option ranges. Secret resolution can use environment variables or configuration during build/client creation.
+Agent construction validates provider-independent structure. Provider-specific configuration is validated and credentials are resolved when a run acquires its provider client. Secret resolution can use explicit runtime secrets, environment variables, custom resolvers, or configuration.
 
 | Setup path | Behavior |
 | --- | --- |
-| OpenAI, Azure OpenAI, Anthropic, Cohere, DashScope, Cerebras, DeepSeek, DeepInfra, Fireworks AI, SambaNova, Hyperbolic, OVHcloud AI Endpoints, Nscale, Venice.ai, Perplexity, Nebius Token Factory, NVIDIA NIM, SiliconFlow, Scaleway Generative APIs, Z.AI, MiniMax, Together AI, xAI, Groq, Moonshot, Google AI, Hugging Face, Mistral | Env-backed fluent setup works when the documented environment variable is present. OpenAI and Anthropic also support env-backed `Clients.Chat` JSON setup. Missing credentials fail at `BuildAsync()` before live provider calls. |
+| OpenAI, Azure OpenAI, Anthropic, Cohere, DashScope, Cerebras, DeepSeek, DeepInfra, Fireworks AI, SambaNova, Hyperbolic, OVHcloud AI Endpoints, Nscale, Venice.ai, Perplexity, Nebius Token Factory, NVIDIA NIM, SiliconFlow, Scaleway Generative APIs, Z.AI, MiniMax, Together AI, xAI, Groq, Moonshot, Google AI, Hugging Face, Mistral | Env-backed fluent and `Clients.Chat` setup can use the documented aliases. Missing credentials fail when a run first acquires that provider client, not during `BuildAsync()`. |
 | LM Studio | Local fluent setup works without credentials when the LM Studio local server is running. Endpoint and optional API-key aliases are available for proxied or secured local setups. |
 | Bedrock | Region env is accepted; credentials normally flow through the AWS SDK default credential chain. |
 | Ollama | Endpoint env aliases apply to fluent `.WithOllama(...)`; JSON/config setup should include `Endpoint` when not using localhost. |
 | ONNX Runtime | Local model paths are required for live inference. Compatible ONNX Runtime GenAI instruct models can opt into [structured tool calling](onnx-structured-tool-calling.md). |
 
 See [Providers, Clients, And Secrets](../../concepts/providers-clients-and-secrets.md), [Provider Families](../../reference/provider-families.md), and [Provider Keys And Environment Variables](../../reference/provider-keys-and-env-vars.md).
+
+For per-run provider/model switching, named static credentials, serialization rules,
+and client-cache behavior, see [Runtime Provider Selection And Authentication](runtime-selection-and-authentication.md).

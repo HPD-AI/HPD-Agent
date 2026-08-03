@@ -47,7 +47,7 @@ Use `ChatRunConfig` for shared model-call behavior such as temperature, top-p, m
 
 This package currently registers only the chat family. xAI image generation, image editing, embeddings, audio, realtime voice, files, batches, and deferred completions are deferred until those families have dedicated HPD provider support.
 
-Validation checks API key, model, and endpoint configuration. Runtime chat options are applied through `ChatDefaults` and `AgentRunConfig.Chat`. Missing credentials fail at `BuildAsync()` before a live provider call.
+Runtime validation checks model and endpoint configuration. Runtime chat options are applied through `ChatDefaults` and `AgentRunConfig.Chat`. Credentials are resolved lazily when a run first acquires this provider client; a missing credential fails that run, not `BuildAsync()`.
 
 ## Related Reading
 

@@ -49,7 +49,7 @@ Groq chat is available only when the `HPD-Agent.Providers.Groq` package is refer
 
 Groq chat supports token streaming, function tools, reasoning-capable models, and JSON object responses through the shared OpenAI-compatible chat completions client. Embeddings, rerank, batch, files, and audio families are not registered by this provider.
 
-Validation checks API key, model, and endpoint configuration. Runtime chat options are applied through `ChatDefaults` and `AgentRunConfig.Chat`. Missing credentials fail at `BuildAsync()` before a live provider call.
+Runtime validation checks model and endpoint configuration. Runtime chat options are applied through `ChatDefaults` and `AgentRunConfig.Chat`. Credentials are resolved lazily when a run first acquires this provider client; a missing credential fails that run, not `BuildAsync()`.
 
 ## Related Reading
 

@@ -78,4 +78,4 @@ Use precise Azure wording:
 
 ## Setup Caveat
 
-Some providers validate `ApiKey`, `Endpoint`, or `Region` before deferred secret resolution. Keep provider setup examples explicit when you need self-contained configuration, and use environment aliases when deployment configuration owns the secret values.
+Chat credentials are resolved lazily when a run acquires its provider client. Endpoint, region, model, and construction-option validation also occurs at that runtime boundary. Use explicit runtime secrets for self-contained in-process setup and environment aliases when deployment configuration owns the values.

@@ -77,7 +77,7 @@ The equivalent `Clients.Chat` shape is:
           "use_mlock": true
         }
       },
-      "ProviderOptions": {
+      "ConstructionOptions": {
         "TimeoutMs": 120000
       }
     }

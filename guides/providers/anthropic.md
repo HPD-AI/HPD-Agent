@@ -58,7 +58,7 @@ var agent = await new AgentBuilder()
     .BuildAsync();
 ```
 
-Use runtime chat options for model selection, temperature, top-p, max output tokens, stop sequences, response format, tools, tool mode, seed, and generic reasoning options.
+Use `AgentRunConfig.ProviderKey` and `ModelId` for selection. Use runtime chat options for temperature, top-p, max output tokens, stop sequences, response format, tools, tool mode, seed, and generic reasoning options.
 
 ## Anthropic Chat Request Options
 
@@ -122,7 +122,7 @@ runConfig.Chat.UseAnthropicChatRequestOptions(new AnthropicChatRequestOptions
 });
 ```
 
-In stored config, put Anthropic request options in chat defaults or per-run chat additional properties, not in `ProviderOptions`:
+In stored config, put Anthropic request options in chat defaults or per-run chat additional properties, not in `ConstructionOptions`:
 
 ```json
 {
@@ -148,4 +148,4 @@ In stored config, put Anthropic request options in chat defaults or per-run chat
 
 ## Caveats
 
-Validation checks API key, model, and endpoint. Missing credentials fail at `BuildAsync()` before a live model call. Anthropic chat uses the Anthropic SDK's MEAI chat client.
+Runtime validation checks model and endpoint. Credentials are resolved lazily when a run first acquires this provider client; a missing credential fails that run, not `BuildAsync()`. Anthropic chat uses the Anthropic SDK's MEAI chat client.

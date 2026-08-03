@@ -167,7 +167,7 @@ Use `CohereChatRequestOptions` for Cohere-only request properties:
 | `Text` | Plain document text for simple string documents. |
 | `Data` | Structured document data and metadata. |
 
-## Provider Options
+## Construction Options
 
 `CohereProviderConfig` exposes Cohere-specific embedding defaults for the embeddings family:
 
@@ -183,7 +183,7 @@ Cohere chat and embeddings are available only when the `HPD-Agent.Providers.Cohe
 
 The current TryAGI Cohere MEAI streaming adapter returns a single final update rather than token-by-token streaming.
 
-Validation checks API key, model, endpoint, and embedding model options. Runtime chat options are applied through `ChatDefaults` and `AgentRunConfig.Chat`. Generic reasoning is mapped to Cohere `thinking`; set `ThinkingEnabled` or `ThinkingTokenBudget` only when you need Cohere-specific control. Missing credentials fail at `BuildAsync()` before a live provider call.
+Runtime validation checks model, endpoint, and embedding model options. Runtime chat options are applied through `ChatDefaults` and `AgentRunConfig.Chat`. Generic reasoning is mapped to Cohere `thinking`; set `ThinkingEnabled` or `ThinkingTokenBudget` only when you need Cohere-specific control. Credentials are resolved lazily when a run first acquires this provider client; a missing credential fails that run, not `BuildAsync()`.
 
 ## Related Reading
 

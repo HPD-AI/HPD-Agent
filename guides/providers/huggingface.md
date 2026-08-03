@@ -43,7 +43,7 @@ The default endpoint is `https://router.huggingface.co/`. Pass `endpoint` to `Wi
 
 ## Runtime Chat Options
 
-Use `ChatRunConfig` for shared model-call behavior such as model selection, temperature, top-p, max output tokens, stop sequences, seed, frequency penalty, presence penalty, response format, and tools. Put agent-level defaults in `ClientProviderConfig.ChatDefaults` or `.WithChatDefaults(...)`; use `AgentRunConfig.Chat` for per-run or per-session overrides.
+Use `AgentRunConfig.ProviderKey` and `ModelId` for selection. Use `ChatRunConfig` for shared model-call behavior such as temperature, top-p, max output tokens, stop sequences, seed, frequency penalty, presence penalty, response format, and tools. Put agent-level defaults in `ClientProviderConfig.ChatDefaults` or `.WithChatDefaults(...)`; use `AgentRunConfig.Chat` for per-run or per-session overrides.
 
 Use `HuggingFaceChatRequestOptions` only for Hugging Face-specific request fields:
 
@@ -101,4 +101,4 @@ Available Hugging Face request options:
 
 Hugging Face chat is available only when the `HPD-Agent.Providers.HuggingFace` package is referenced by a `net10.0` application.
 
-Validation checks API key, repository id, and endpoint. Missing credentials fail at `BuildAsync()` before a live model call. Provider metadata reports no vision support. Tool support depends on the selected Hugging Face model and endpoint behavior.
+Runtime validation checks repository id and endpoint. Credentials are resolved lazily when a run first acquires this provider client; a missing credential fails that run, not `BuildAsync()`. Provider metadata reports no vision support. Tool support depends on the selected Hugging Face model and endpoint behavior.

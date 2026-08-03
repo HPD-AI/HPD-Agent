@@ -23,6 +23,7 @@ Most agent demos start clean and become hard to operate once you need real appli
 - sessions and threads for durable conversation state
 - event streams for live UI, tracing, tool activity, permissions, audio, and workflows
 - middleware for retrieval, policy, state, usage tracking, and custom turn behavior
+- runtime provider/model switching, lazy client reuse, and serializable named static-authentication selections
 - provider packages for OpenAI, Azure OpenAI, Anthropic, Google AI, Bedrock, Mistral, Hugging Face, Ollama, ONNX Runtime, and audio providers
 - hosting APIs for web, desktop, TUI, bot, and TypeScript clients
 - multi-agent workflows and subagents when one agent is no longer enough

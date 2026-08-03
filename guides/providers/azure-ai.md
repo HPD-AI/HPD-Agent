@@ -41,7 +41,7 @@ The equivalent `Clients.Chat` shape is:
       "ProviderKey": "azure-ai",
       "Endpoint": "https://YOUR-ACCOUNT.services.ai.azure.com/api/projects/YOUR-PROJECT",
       "ModelName": "YOUR-DEPLOYMENT-NAME",
-      "ProviderOptions": {
+      "ConstructionOptions": {
         "authMode": "DefaultAzureCredential"
       }
     }
@@ -65,7 +65,7 @@ Azure AI Projects / Foundry endpoints use `services.ai.azure.com` with `/api/pro
 
 Use HPD `ChatRunConfig` for normal model-call behavior. Agent-level defaults belong in `ClientProviderConfig.ChatDefaults`; per-run or per-session overrides belong in `AgentRunConfig.Chat`.
 
-Use runtime chat options for model selection, temperature, top-p, max output tokens, stop sequences, response format, tools, tool mode, seed, and generic reasoning options.
+Use `AgentRunConfig.ProviderKey` and `ModelId` for selection. Use runtime chat options for temperature, top-p, max output tokens, stop sequences, response format, tools, tool mode, seed, and generic reasoning options.
 
 Azure AI uses the Azure OpenAI chat-completions client through Microsoft.Extensions.AI. `Reasoning.Effort` is the portable reasoning option on this path. Reasoning summary output is a Responses-client feature and is not exposed by this provider path.
 
@@ -90,7 +90,7 @@ var agent = await new AgentBuilder()
     .BuildAsync();
 ```
 
-## Provider Options
+## Construction Options
 
 `AzureAIProviderConfig` is for Azure SDK client construction:
 
@@ -134,7 +134,7 @@ Stored config uses the same option names:
       "ProviderKey": "azure-ai",
       "Endpoint": "https://YOUR-ACCOUNT.services.ai.azure.com/api/projects/YOUR-PROJECT",
       "ModelName": "YOUR-DEPLOYMENT-NAME",
-      "ProviderOptions": {
+      "ConstructionOptions": {
         "authMode": "DefaultAzureCredential",
         "projectServiceVersion": "V1",
         "openAIServiceVersion": "V2025_04_01_Preview",

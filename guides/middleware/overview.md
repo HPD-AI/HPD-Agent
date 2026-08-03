@@ -211,7 +211,7 @@ HPD exposes several context surfaces. Choose the narrowest one that matches the 
 
 | Surface | Use It For |
 | --- | --- |
-| `AgentRunConfig` | Per-run model/provider options, runtime middleware, tool context instances, attachments, compaction controls, and temporary behavior. |
+| `AgentRunConfig` | Per-run provider/model selection and construction options, runtime middleware, tool context instances, attachments, compaction controls, and temporary behavior. |
 | Middleware hook context | Turn, iteration, tool, function, thread, event, service, session, and thread data that belongs to the agent scheduler. |
 | `[MiddlewareState]` | Private middleware-owned state that should persist by session or thread. |
 | `FunctionExecutionContext` | Narrow tool/function access to event emission, bidirectional requests, services, content store, background tasks, struct events, and run metadata. |

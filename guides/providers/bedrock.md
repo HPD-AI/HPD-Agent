@@ -77,7 +77,7 @@ The equivalent `Clients.Chat` shape is:
     "Chat": {
       "ProviderKey": "bedrock",
       "ModelName": "anthropic.claude-3-5-sonnet-20240620-v1:0",
-      "ProviderOptions": {
+      "ConstructionOptions": {
         "region": "us-east-1",
         "profileName": "hpd-dev",
         "serviceUrl": "https://vpce-xxx.bedrock-runtime.us-east-1.vpce.amazonaws.com",
@@ -96,7 +96,7 @@ The equivalent `Clients.Chat` shape is:
 }
 ```
 
-## Provider Options
+## Construction Options
 
 `BedrockProviderConfig` is for AWS SDK client construction. Production applications should normally lean on the AWS SDK credential chain or host identity, and only set explicit credentials when the host environment cannot provide them.
 

@@ -85,7 +85,7 @@ The equivalent `Clients.Chat` shape is:
           }
         }
       },
-      "ProviderOptions": {
+      "ConstructionOptions": {
         "workspaceId": "your-workspace-id",
         "timeoutSeconds": 120
       }
@@ -162,7 +162,7 @@ Use `DashScopeChatRequestOptions` for DashScope-only request properties:
 
 `DashScopeCacheControlRequestOptions` supports `Type`; DashScope defaults to `DashScopeCacheControlType.Ephemeral`.
 
-## DashScope Provider Options
+## DashScope Construction Options
 
 `DashScopeProviderConfig` exposes DashScope connection, multimodal, and embedding settings:
 
@@ -178,7 +178,7 @@ var agent = await new AgentBuilder()
     .BuildAsync();
 ```
 
-Set `Endpoint` on `ClientProviderConfig` or `baseAddress` in provider options for a custom HTTP base URL. `websocketBaseAddress`, `workspaceId`, `socketPoolSize`, and `timeoutSeconds` are available when the underlying DashScope SDK needs them.
+Set `Endpoint` on `ClientProviderConfig` or `baseAddress` in construction options for a custom HTTP base URL. `websocketBaseAddress`, `workspaceId`, `socketPoolSize`, and `timeoutSeconds` are available when the underlying DashScope SDK needs them.
 
 For multimodal models, the adapter auto-detects common `qwen-vl`, `qwen3-vl`, `qwen3-omni`, and `gui-plus` model ids. Set `DefaultUseVl = true` when you need to force the multimodal endpoint by default; set `DashScopeChatRequestOptions.UseVl` for a single request.
 
@@ -201,7 +201,7 @@ The provider uses the Cnblogs adapter rather than a custom protocol implementati
 
 Generic HPD reasoning maps to DashScope `enable_thinking` on the currently referenced `Cnblogs.DashScope.AI` package. More granular DashScope reasoning fields such as reasoning effort are not exposed by that package version.
 
-Validation checks API key, model, endpoint/base URL, websocket URL, workspace-related numeric options, multimodal options, and embedding options. Runtime chat options are applied through `ChatDefaults` and `AgentRunConfig.Chat`. Missing credentials fail at `BuildAsync()` before a live provider call.
+Runtime validation checks model, endpoint/base URL, websocket URL, workspace-related numeric options, multimodal options, and embedding options. Runtime chat options are applied through `ChatDefaults` and `AgentRunConfig.Chat`. Credentials are resolved lazily when a run first acquires this provider client; a missing credential fails that run, not `BuildAsync()`.
 
 ## Related Reading
 

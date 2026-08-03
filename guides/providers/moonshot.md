@@ -83,7 +83,7 @@ Use `MoonshotChatRequestOptions` for Moonshot/Kimi-only request properties:
 | --- | --- | --- |
 | `ThinkingKeep` | `thinking_keep` | Preserves reasoning content from historical assistant messages. Supported value: `all`. |
 
-## Moonshot Provider Options
+## Moonshot Construction Options
 
 Moonshot currently has no provider-specific construction options. Use `ClientProviderConfig.Endpoint`, the fluent `endpoint` argument, or endpoint environment variables for custom base URLs.
 
@@ -95,7 +95,7 @@ This package currently registers only the chat family. Moonshot files, embedding
 
 Moonshot chat uses HPD's shared OpenAI-compatible chat-completions client, not the generated Moonshot SDK. The generated SDK is useful as a reference for Kimi request fields such as `thinking`, but HPD sends chat through the OpenAI-compatible endpoint. It supports token streaming, function tools, response format and tool mode, seed, max output tokens, top-p, temperature, and stop sequences where the selected Moonshot/Kimi model supports them. `ChatRunConfig.Reasoning` and `MoonshotChatRequestOptions.ThinkingKeep` add a Kimi `thinking` object to the request for models that support those fields.
 
-Validation checks API key and endpoint shape. Runtime chat options are applied through `ChatDefaults` and `AgentRunConfig.Chat`. Missing credentials fail at `BuildAsync()` before a live provider call.
+Runtime validation checks endpoint shape. Runtime chat options are applied through `ChatDefaults` and `AgentRunConfig.Chat`. Credentials are resolved lazily when a run first acquires this provider client; a missing credential fails that run, not `BuildAsync()`.
 
 ## Related Reading
 

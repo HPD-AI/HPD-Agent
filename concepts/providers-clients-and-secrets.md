@@ -5,9 +5,9 @@ Providers connect an HPD agent to model clients. A provider package registers a 
 The same resolution model applies across providers:
 
 1. A fluent `AgentBuilder` helper writes a `ClientProviderConfig` into `AgentConfig.Clients.Chat`.
-2. `BuildAsync()` validates the provider configuration, creates the secret resolver chain, and asks the provider to create the client.
-3. The provider resolves required values such as API keys and endpoints through `ISecretResolver`.
-4. The built `Agent` uses the resolved chat client when you call `RunAsync(...)`.
+2. `BuildAsync()` records that configuration as the default and creates the secret-resolver chain. It does not create the chat client or resolve its credential.
+3. Each `RunAsync(...)` resolves an effective provider, model, endpoint, construction options, request options, and authentication selection.
+4. The runtime lazily acquires and leases the matching chat client. Equivalent runs reuse a cached client; different construction identities acquire different clients.
 
 For most applications, prefer fluent setup:
 
@@ -59,9 +59,11 @@ The family slot matters as much as the provider key. `openai` can mean chat, tex
 
 Provider selection does not replace the HPD runtime. The same `Agent` runtime still owns `RunAsync(...)`, tools, middleware, sessions, threads, events, permissions, compaction, hosting, and stored definitions.
 
-## Provider Options And Runtime Chat Options
+## Selection, Construction, And Request Options
 
-Provider configuration is for constructing a client and setting provider-native behavior. Use it for credentials, endpoints, deployment names, SDK connection settings, audio voices/formats, and options that only exist in one provider's API.
+Provider selection identifies the provider, model, endpoint, and optional named authentication registration. Builder configuration supplies defaults; `AgentRunConfig` can replace them for one invocation.
+
+Construction configuration is for values bound when a client is created, such as deployments, regions, API versions, SDK connection settings, and other provider-native constructor inputs. It is stored under `ConstructionOptions`. Credentials are not construction configuration and are never serialized there.
 
 Runtime chat behavior belongs in `ChatRunConfig`. Agent-level defaults live on `ClientProviderConfig.ChatDefaults`; per-run and per-session overrides flow through `AgentRunConfig.Chat`.
 
@@ -74,24 +76,44 @@ Use `ChatRunConfig` for serializable chat controls:
 
 Use the normal HPD tool registration APIs for model-callable tools. Advanced in-process integrations can still use MEAI `ChatOptions` where HPD exposes runtime-only hooks for non-serializable objects.
 
-Use provider options for:
+Use construction options for:
 
 - provider-native service tiers, regions, deployments, hosted resource ids, or SDK connection settings
 - provider-native content handling such as prompt-cache markers
 - audio-specific voice, format, speed, transcript, or realtime settings
 - advanced API controls that do not have a generic MEAI/HPD chat option
 
-In C#, store typed provider options with `SetProviderConfig(...)`. In JSON or stored agent definitions, put the provider-specific object under `ProviderOptions`.
+In C#, store typed construction options with `SetProviderConfig(...)`. In JSON or stored agent definitions, put the provider-specific object under `ConstructionOptions`.
+
+## Runtime Provider And Model Selection
+
+One built agent can use different chat providers and models on consecutive or concurrent runs:
+
+```csharp
+await agent.RunAsync("Use OpenAI", new AgentRunConfig
+{
+    ProviderKey = "openai",
+    ModelId = "gpt-5-mini"
+});
+
+await agent.RunAsync("Use Anthropic", new AgentRunConfig
+{
+    ProviderKey = "anthropic",
+    ModelId = "claude-sonnet-4-5"
+});
+```
+
+`OverrideChatClient` has highest priority. Otherwise a run-level family selection or the top-level Chat convenience properties override the agent default. When the provider changes, HPD discards inherited model, endpoint, authentication, headers, and construction options from the previous provider before applying defaults for the new provider.
 
 ## Secret Resolution
 
-`BuildAsync()` creates the default secret resolver chain before provider clients are created:
+`BuildAsync()` creates and retains the default secret resolver chain:
 
-1. environment variables
-2. resolvers added with `AddSecretResolver(...)`
+1. explicit values registered by fluent provider helpers or `AddExplicitSecret(...)`
+2. a resolver supplied with `WithSecretResolver(...)`, or the normal environment and additional resolver sources
 3. configuration, when an `IConfiguration` is available
 
-`WithSecretResolver(...)` replaces that chain. Explicit values passed in fluent setup or placed directly in `ClientProviderConfig` win before resolver lookup.
+Explicit values passed to fluent setup remain runtime-only. `ApiKey` on a run is also runtime-only and excluded from JSON/YAML serialization. Do not put credentials in `ConstructionOptions` or `CustomHeaders`.
 
 Environment variables are the usual deployment path. Configuration lookup also supports provider-scoped keys such as:
 
@@ -102,17 +124,47 @@ Providers:openai:ApiKey
 
 Configuration capitalization is mechanical. Prefer the exact provider key in docs and examples unless a provider page lists a specific alias.
 
+Secret resolution happens when a run first needs a provider client, not while the agent is built. This means an application can build an agent without a provider or credential, and a configured default that is never selected never contacts its provider.
+
+## Multiple Credentials For One Provider
+
+Use `IProviderAuthenticationRegistry` when a host has independently selectable credentials such as personal, work, or tenant-specific API keys. A registration contains safe metadata and a secret-resolver key, never the secret value:
+
+```csharp
+var authentication = new InMemoryProviderAuthenticationRegistry();
+authentication.Register(new ProviderAuthenticationRegistration
+{
+    Key = "openai-work",
+    ProviderKey = "openai",
+    SecretKey = "openai:work:ApiKey",
+    IsDefault = true
+});
+```
+
+Register the registry and `ISecretResolver` in the service provider passed to `WithServiceProvider(...)`. A run selects it by opaque name:
+
+```csharp
+await agent.RunAsync("Use the work credential", new AgentRunConfig
+{
+    ProviderKey = "openai",
+    ModelId = "gpt-5-mini",
+    AuthenticationKey = "openai-work"
+});
+```
+
+Only `AuthenticationKey` is serialized. If several compatible registrations exist without an explicit selection or one unique host default, the run fails with `AuthenticationSelectionRequired`; HPD never chooses arbitrarily.
+
 ## Setup Caveats
 
 Provider creation can resolve secrets from environment variables or configuration. These are the practical setup boundaries:
 
 | Setup path | Behavior |
 | --- | --- |
-| OpenAI, Azure OpenAI, Anthropic, Google AI, Hugging Face, Mistral | Env-backed fluent setup works when the documented environment variable is present. OpenAI and Anthropic also support env-backed `Clients.Chat` JSON setup. Missing credentials fail at `BuildAsync()` before live provider calls. |
+| OpenAI, Azure OpenAI, Anthropic, Google AI, Hugging Face, Mistral | Env-backed fluent setup works when the documented environment variable is present. OpenAI and Anthropic also support env-backed `Clients.Chat` JSON setup. Missing credentials fail when a run first acquires that provider client, not during `BuildAsync()`. |
 | Bedrock | Region env such as `AWS_REGION` / `AWS_DEFAULT_REGION` is accepted; credentials normally flow through the AWS SDK default credential chain. |
 | Ollama | `OLLAMA_ENDPOINT` / `OLLAMA_HOST` apply to fluent `.WithOllama(...)`; JSON/config setup should include `Endpoint` when not using localhost. |
 
-Keep a credential preflight in application code when you need a friendlier error message before `BuildAsync()`.
+Keep an explicit credential diagnostic in application code when you need a friendlier error before the first run.
 
 ## Related Guides
 

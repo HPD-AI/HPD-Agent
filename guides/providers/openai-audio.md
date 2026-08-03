@@ -70,7 +70,7 @@ Source defaults include:
 
 The provider metadata also lists newer TTS model ids such as `tts-1-hd` and `gpt-4o-mini-tts`.
 
-Provider-specific TTS options use `OpenAITtsConfig` through `ProviderOptions`:
+Provider-specific TTS options use `OpenAITtsConfig` through `ConstructionOptions`:
 
 ```json
 {
@@ -78,7 +78,7 @@ Provider-specific TTS options use `OpenAITtsConfig` through `ProviderOptions`:
     "TextToSpeech": {
       "ProviderKey": "openai",
       "ModelName": "tts-1",
-      "ProviderOptions": {
+      "ConstructionOptions": {
         "defaultVoiceId": "nova",
         "outputFormat": "mp3",
         "speed": 1.0
@@ -88,7 +88,7 @@ Provider-specific TTS options use `OpenAITtsConfig` through `ProviderOptions`:
 }
 ```
 
-Source-confirmed TTS provider options:
+Source-confirmed TTS construction options:
 
 | Option | Use it for |
 | --- | --- |
@@ -131,7 +131,7 @@ The provider metadata also lists `gpt-4o-transcribe` and `gpt-4o-mini-transcribe
 
 Finite audio input uses HPD audio runtime wiring; see [Speech To Text Input](../audio/speech-to-text-input.md).
 
-Provider-specific STT options use `OpenAISttConfig` through `ProviderOptions`:
+Provider-specific STT options use `OpenAISttConfig` through `ConstructionOptions`:
 
 ```json
 {
@@ -139,7 +139,7 @@ Provider-specific STT options use `OpenAISttConfig` through `ProviderOptions`:
     "SpeechToText": {
       "ProviderKey": "openai",
       "ModelName": "whisper-1",
-      "ProviderOptions": {
+      "ConstructionOptions": {
         "prompt": "Technical support call",
         "responseFormat": "json"
       }
@@ -148,7 +148,7 @@ Provider-specific STT options use `OpenAISttConfig` through `ProviderOptions`:
 }
 ```
 
-Source-confirmed STT provider options:
+Source-confirmed STT construction options:
 
 | Option | Use it for |
 | --- | --- |
@@ -184,7 +184,7 @@ var agent = await new AgentBuilder()
 
 Use realtime with `AgentModelTransportMode.Realtime`. The ordinary chat path and finite speech-to-text path are separate from native realtime transport.
 
-Provider-specific realtime options use `OpenAIRealtimeConfig` through `ProviderOptions`:
+Provider-specific realtime options use `OpenAIRealtimeConfig` through `ConstructionOptions`:
 
 ```json
 {
@@ -192,7 +192,7 @@ Provider-specific realtime options use `OpenAIRealtimeConfig` through `ProviderO
     "Realtime": {
       "ProviderKey": "openai",
       "ModelName": "gpt-realtime",
-      "ProviderOptions": {
+      "ConstructionOptions": {
         "organizationId": "org_...",
         "projectId": "proj_..."
       }
@@ -201,7 +201,7 @@ Provider-specific realtime options use `OpenAIRealtimeConfig` through `ProviderO
 }
 ```
 
-Source-confirmed realtime provider options:
+Source-confirmed realtime construction options:
 
 | Option | Use it for |
 | --- | --- |
@@ -211,7 +211,7 @@ Source-confirmed realtime provider options:
 | `organizationId` | OpenAI organization id. |
 | `projectId` | OpenAI project id. |
 
-## C# Provider Options
+## C# Construction Options
 
 The fluent helpers are the shortest path. Manual typed config is still useful when you are dynamically composing family configs or loading part of the setup outside normal builder code:
 

@@ -49,7 +49,7 @@ Supported `ResponseFormat` values are `text` and `json_object`. Supported `ToolC
 
 This package registers chat only. Fireworks audio/STT, embeddings, image generation, and hosted-file families are not registered by this provider.
 
-Validation checks API key, model, and endpoint configuration. Runtime chat options are applied through `ChatDefaults` and `AgentRunConfig.Chat`. Missing credentials fail at `BuildAsync()` before a live provider call.
+Runtime validation checks model and endpoint configuration. Runtime chat options are applied through `ChatDefaults` and `AgentRunConfig.Chat`. Credentials are resolved lazily when a run first acquires this provider client; a missing credential fails that run, not `BuildAsync()`.
 
 ## Related Reading
 

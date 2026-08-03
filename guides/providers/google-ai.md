@@ -70,7 +70,7 @@ var agent = await new AgentBuilder()
 
 Use `ExpressMode = true` for Vertex AI Express mode. Express mode uses API-key authentication, so configure an API key the same way as the Gemini Developer API path.
 
-## Provider Options
+## Construction Options
 
 `GoogleAIProviderConfig` is for Google-native client construction and authentication setup:
 
@@ -97,7 +97,7 @@ The equivalent `Clients.Chat` shape is:
 }
 ```
 
-With provider options:
+With construction options:
 
 ```json
 {
@@ -105,7 +105,7 @@ With provider options:
     "Chat": {
       "ProviderKey": "google-ai",
       "ModelName": "gemini-2.0-flash",
-      "ProviderOptions": {
+      "ConstructionOptions": {
         "platform": "VertexAI",
         "projectId": "my-project",
         "region": "us-central1",

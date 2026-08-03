@@ -145,7 +145,7 @@ Together chat and embeddings are available only when the `HPD-Agent.Providers.To
 
 Together chat supports token streaming, function tools, reasoning content, and JSON object responses through the Microsoft.Extensions.AI adapter. Vision, image generation, rerank, and audio families are not registered by this provider.
 
-Validation checks API key, model, endpoint, and embedding model options. Runtime chat options are applied through `ChatDefaults` and `AgentRunConfig.Chat`. Missing credentials fail at `BuildAsync()` before a live provider call.
+Runtime validation checks model, endpoint, and embedding model options. Runtime chat options are applied through `ChatDefaults` and `AgentRunConfig.Chat`. Credentials are resolved lazily when a run first acquires this provider client; a missing credential fails that run, not `BuildAsync()`.
 
 ## Related Reading
 

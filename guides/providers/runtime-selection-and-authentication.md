@@ -4,6 +4,174 @@ An HPD agent is reusable behavior plus optional defaults. It is not permanently
 bound to the provider configured by its builder. Every Chat run can select its own
 provider, model, endpoint, construction settings, and static authentication.
 
+## Understand The Configuration Planes First
+
+Provider configuration is intentionally split by when a value is consumed. This
+prevents a request-only setting such as temperature from being mistaken for a reason
+to construct another SDK client, and prevents OpenAI construction state from leaking
+into an Anthropic run.
+
+| Plane | Public surfaces | Typical values | When applied |
+| --- | --- | --- | --- |
+| Family selection | `AgentClientConfig`, `ClientProviderConfig`, and the Chat aliases on `AgentRunConfig` | provider, model, endpoint, authentication name, non-secret headers | while resolving the run |
+| General construction | `ClientProviderConfig` | endpoint and provider attribution fields | while acquiring a client |
+| Provider-specific construction | typed provider config stored through `SetProviderConfig(...)`, serialized as `ConstructionOptions` | OpenAI API choice/project, Azure API version, Bedrock region, Google platform/project | while constructing a client |
+| General request | `ChatRunConfig` | temperature, top-p, top-k, token limit, penalties, seed, stop sequences, reasoning, response format | for each model request |
+| Provider-specific request | typed helpers such as `UseAnthropicChatRequestOptions(...)`, carried in `ChatRunConfig.AdditionalProperties` | service tier, prompt caching, exact thinking controls | for each model request |
+| Runtime behavior | the rest of `AgentRunConfig` | instructions, context, middleware, attachments, transport, compaction, security, structured output | for that agent invocation |
+
+The important division is not "general versus provider-specific" by itself. Both
+general and provider-specific settings can be either construction-time or
+request-time settings.
+
+### Shared Provider Defaults And Family Defaults
+
+`AgentClientConfig.Providers` stores reusable defaults by provider key.
+`AgentClientConfig.Chat`, `Realtime`, `Embeddings`, and the other family properties
+select a provider for one client family and can override those shared defaults:
+
+```json
+{
+  "Clients": {
+    "Providers": {
+      "openai": {
+        "ProviderKey": "openai",
+        "Endpoint": "https://api.openai.com/v1",
+        "AuthenticationKey": "openai-work",
+        "CustomHeaders": {
+          "X-Tenant": "tenant-42"
+        },
+        "ConstructionOptions": {
+          "projectId": "project-default",
+          "networkTimeoutMs": 60000
+        }
+      }
+    },
+    "Chat": {
+      "ProviderKey": "openai",
+      "ModelName": "gpt-5-mini",
+      "ChatDefaults": {
+        "temperature": 0.2,
+        "maxOutputTokens": 4096
+      },
+      "ConstructionOptions": {
+        "projectId": "project-chat"
+      }
+    }
+  }
+}
+```
+
+For this Chat family, `project-chat` overrides `project-default`, while
+`networkTimeoutMs` is inherited. The endpoint, authentication name, and safe custom
+header are inherited from the shared `openai` entry.
+
+The same shape is available at run time through `AgentRunConfig.Clients`. This is
+useful when a run needs full family-shaped configuration instead of the top-level
+Chat convenience properties.
+
+### General Request Configuration
+
+`ChatRunConfig` is the provider-neutral request layer. Its serializable fields are:
+
+- `Temperature`, `TopP`, `TopK`, and `MaxOutputTokens`
+- `FrequencyPenalty`, `PresencePenalty`, and `Seed`
+- `StopSequences`
+- `Reasoning`
+- `AdditionalProperties`
+
+`ResponseFormat` is also available for in-process calls but is runtime-only because
+the MEAI response-format object is not generally serializable. Prefer HPD structured
+output APIs when the response schema must cross a serialization boundary.
+
+`ChatRunConfig.ModelId` still exists as a low-level MEAI request override, but
+provider selection should use `AgentRunConfig.ModelId` or
+`AgentRunConfig.Clients.Chat.ModelName`. Those selection properties are the
+authoritative and unambiguous path when runs can switch providers.
+
+Agent defaults belong in `ClientProviderConfig.ChatDefaults` or
+`.WithChatDefaults(...)`. Non-null fields in `AgentRunConfig.Chat` override those
+defaults for that run. Additional-property dictionaries merge by key, with the run
+value winning.
+
+### Provider-Specific Construction Configuration
+
+Provider packages expose typed construction classes. Prefer those classes in C# so
+invalid names and value types are caught before serialization:
+
+```csharp
+var chat = new ClientProviderConfig
+{
+    ProviderKey = "openai",
+    ModelName = "gpt-5-mini"
+};
+
+chat.SetProviderConfig(new OpenAIProviderConfig
+{
+    ChatApi = OpenAIChatApi.Responses,
+    ProjectId = "project-42",
+    NetworkTimeoutMs = 60000
+});
+```
+
+`SetProviderConfig(...)` writes the provider's source-generated representation into
+the outer `ConstructionOptions` object. JSON and YAML users write that object
+directly. Construction options are shallow-merged by property name: provider-shared
+values apply first, then family values, then run-shared values, then run-family
+values. A higher-priority property replaces the whole value at that property; nested
+objects are not recursively merged.
+
+### Provider-Specific Request Configuration
+
+Provider-native request controls do not belong in `ConstructionOptions`. Use the
+provider's typed request helper, which safely writes the required keys into
+`ChatRunConfig.AdditionalProperties`:
+
+```csharp
+var run = new AgentRunConfig
+{
+    ProviderKey = "anthropic",
+    ModelId = "claude-sonnet-4-5",
+    Chat = new ChatRunConfig
+    {
+        Temperature = 0.2,
+        MaxOutputTokens = 4096
+    }
+};
+
+run.Chat.UseAnthropicChatRequestOptions(new AnthropicChatRequestOptions
+{
+    ServiceTier = AnthropicServiceTier.Auto,
+    ThinkingBudgetTokens = 4096,
+    CacheControl = new AnthropicCacheControlConfig
+    {
+        SystemMessages = AnthropicCacheTtl.OneHour
+    }
+});
+```
+
+The portable and Anthropic-specific values travel on the same request, but remain
+separate from the Anthropic client construction identity.
+
+### Resolution And Merge Order
+
+For a selected family, HPD resolves configuration from lowest to highest priority:
+
+1. agent-level shared defaults for the selected provider
+2. agent-level family configuration, only when it belongs to that same provider
+3. run-level shared defaults for the selected provider
+4. run-level family configuration
+
+Scalar values use the highest non-null/non-empty value. Custom headers merge by
+case-insensitive header name. Construction options shallow-merge by JSON property.
+`ChatDefaults` is selected as a complete default object at this stage; individual
+request fields are subsequently merged when `AgentRunConfig.Chat` is applied.
+
+If the run changes the provider, step 2 is deliberately skipped. The old provider's
+model, endpoint, authentication, headers, and construction options are stale for the
+new provider. HPD instead starts from the new provider's shared defaults and applies
+the new run selection.
+
 ## Configure An Optional Default
 
 Builder helpers remain the shortest way to define the default run selection:
@@ -76,8 +244,7 @@ run.ConstructionOptions = JsonDocument.Parse(
     """{"projectId":"project-42"}""").RootElement.Clone();
 ```
 
-Normal model-call behavior belongs to `ChatRunConfig` and does not create a new
-client identity:
+Normal model-call behavior belongs to `ChatRunConfig`:
 
 ```csharp
 run.Chat = new ChatRunConfig
@@ -87,8 +254,10 @@ run.Chat = new ChatRunConfig
 };
 ```
 
-Provider and model selection belongs to `ProviderKey` and `ModelId`, not
-`ChatRunConfig`.
+Provider and model selection should use `ProviderKey` and `ModelId`, rather than the
+low-level `ChatRunConfig.ModelId` request override. Most request options do not alter
+client identity. The current cache also includes effective max-output-token settings
+when they are client-bound by the resolved configuration.
 
 ## Canonical Static Credentials
 

@@ -18,10 +18,10 @@ var result = await agent.RunAsync(
     input,
     new AgentRunConfig
     {
-        ModelTransport = AgentModelTransportMode.Realtime,
-        Clients =
+        Clients = new AgentClientsConfig
         {
-            Realtime = new ClientProviderConfig
+            Transport = AgentModelTransportMode.Realtime,
+            Realtime = new RealtimeClientConfig
             {
                 ProviderKey = "openai",
                 ModelName = "gpt-realtime"
@@ -53,7 +53,10 @@ await agent.RunAsync(new UserMessagesInputEvent
     ],
     RunConfig = new AgentRunConfig
     {
-        ModelTransport = AgentModelTransportMode.Realtime
+        Clients = new AgentClientsConfig
+        {
+            Transport = AgentModelTransportMode.Realtime
+        }
     }
 });
 ```

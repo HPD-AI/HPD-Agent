@@ -26,7 +26,7 @@ var result = await agent.RunAsync("Write one sentence about DashScope setup.");
 Console.WriteLine(result.Text);
 ```
 
-Provider construction options stay focused on the DashScope connection and endpoint selection. Put model behavior on chat defaults or per-run chat config:
+Provider configuration stay focused on the DashScope connection and endpoint selection. Put model behavior on the agent's `Clients.Chat` default or a run's complete `Clients.Chat` replacement:
 
 ```csharp
 using HPD.Agent;
@@ -40,15 +40,7 @@ var agent = await new AgentBuilder()
             dashScope.WorkspaceId = "your-workspace-id";
             dashScope.TimeoutSeconds = 120;
         })
-    .WithChatDefaults(chat =>
-    {
-        chat.Temperature = 0.2;
-        chat.MaxOutputTokens = 4096;
-        chat.Reasoning = new ReasoningOptions
-        {
-            Effort = ReasoningEffort.High
-        };
-    })
+
     .WithDashScopeChatRequestOptions(dashScope =>
     {
         dashScope.EnableSearch = true;
@@ -62,37 +54,7 @@ var agent = await new AgentBuilder()
     .BuildAsync();
 ```
 
-The equivalent `Clients.Chat` shape is:
-
-```json
-{
-  "Clients": {
-    "Chat": {
-      "ProviderKey": "dashscope",
-      "ModelName": "qwen-plus",
-      "ChatDefaults": {
-        "Temperature": 0.2,
-        "MaxOutputTokens": 4096,
-        "Reasoning": {
-          "Effort": "High"
-        },
-        "AdditionalProperties": {
-          "enable_search": true,
-          "thinking_budget": 1024,
-          "search_options": {
-            "enableCitation": true,
-            "searchStrategy": "turbo"
-          }
-        }
-      },
-      "ConstructionOptions": {
-        "workspaceId": "your-workspace-id",
-        "timeoutSeconds": 120
-      }
-    }
-  }
-}
-```
+The provider helper writes the same portable fields, typed `providerConfig`, and typed `providerOptions` into `Clients.Chat`. Use the [runtime selection guide](runtime-selection-and-authentication.md) for the canonical JSON and YAML shape.
 
 ## Embeddings
 
@@ -122,7 +84,7 @@ The equivalent family config is:
 
 ## Runtime Chat Options
 
-Use `ChatRunConfig` for shared model-call behavior such as temperature, top-p, top-k, max output tokens, stop sequences, tools, tool mode, seed, and generic reasoning options. Put agent-level defaults in `ClientProviderConfig.ChatDefaults` or `.WithChatDefaults(...)`; use `AgentRunConfig.Chat` for per-run or per-session overrides.
+Use `ChatClientConfig` for shared model-call behavior such as temperature, top-p, top-k, max output tokens, stop sequences, tools, tool mode, seed, and generic reasoning options. Put agent-level defaults in `AgentConfig.Clients.Chat`; use `AgentRunConfig.Clients.Chat` for complete per-run replacements.
 
 Use `DashScopeChatRequestOptions` for DashScope-only request properties:
 
@@ -178,13 +140,13 @@ var agent = await new AgentBuilder()
     .BuildAsync();
 ```
 
-Set `Endpoint` on `ClientProviderConfig` or `baseAddress` in construction options for a custom HTTP base URL. `websocketBaseAddress`, `workspaceId`, `socketPoolSize`, and `timeoutSeconds` are available when the underlying DashScope SDK needs them.
+Set `Endpoint` on `ChatClientConfig` or `baseAddress` in provider configuration for a custom HTTP base URL. `websocketBaseAddress`, `workspaceId`, `socketPoolSize`, and `timeoutSeconds` are available when the underlying DashScope SDK needs them.
 
 For multimodal models, the adapter auto-detects common `qwen-vl`, `qwen3-vl`, `qwen3-omni`, and `gui-plus` model ids. Set `DefaultUseVl = true` when you need to force the multimodal endpoint by default; set `DashScopeChatRequestOptions.UseVl` for a single request.
 
 | Option | Purpose |
 | --- | --- |
-| `BaseAddress` | DashScope HTTP API base address. `Endpoint` on `ClientProviderConfig` can also set a custom HTTP base URL. |
+| `BaseAddress` | DashScope HTTP API base address. `Endpoint` on `ChatClientConfig` can also set a custom HTTP base URL. |
 | `WebsocketBaseAddress` | DashScope websocket API base address. |
 | `WorkspaceId` | Workspace id sent with DashScope requests that require workspace scoping. |
 | `SocketPoolSize` | Internal websocket pool size used by the DashScope SDK. |
@@ -201,7 +163,7 @@ The provider uses the Cnblogs adapter rather than a custom protocol implementati
 
 Generic HPD reasoning maps to DashScope `enable_thinking` on the currently referenced `Cnblogs.DashScope.AI` package. More granular DashScope reasoning fields such as reasoning effort are not exposed by that package version.
 
-Runtime validation checks model, endpoint/base URL, websocket URL, workspace-related numeric options, multimodal options, and embedding options. Runtime chat options are applied through `ChatDefaults` and `AgentRunConfig.Chat`. Credentials are resolved lazily when a run first acquires this provider client; a missing credential fails that run, not `BuildAsync()`.
+Runtime validation checks model, endpoint/base URL, websocket URL, workspace-related numeric options, multimodal options, and embedding options. Runtime chat options are applied through `Clients.Chat` and `AgentRunConfig.Clients.Chat`. Credentials are resolved lazily when a run first acquires this provider client; a missing credential fails that run, not `BuildAsync()`.
 
 ## Related Reading
 

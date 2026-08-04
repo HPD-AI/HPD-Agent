@@ -24,29 +24,38 @@ If your app needs command-level, path-level, network-level, tenant-level, risk-b
 
 Use the built-in middleware for ordinary function gating. Use custom permission middleware when the user is approving a more specific subject than "this function may run."
 
-## Per-Run Permission Mode
+## Per-Run Approval Policy
 
-`AgentRunConfig.PermissionMode` selects the permission enforcement profile for one run:
+`AgentRunConfig.Security.Approval` selects the approval policy for one run:
 
 | Mode | Behavior |
 | --- | --- |
-| `AgentPermissionMode.Ask` | Enforces registered permission middleware and requests approval when required. This is the default. |
-| `AgentPermissionMode.FullAccess` | Bypasses the built-in `PermissionMiddleware` prompts for that run. |
+| `AgentApprovalPolicy.ReviewProtectedActions` | Enforces registered permission middleware and requests approval when required. This is the default. |
+| `AgentApprovalPolicy.AutoApprove` | Automatically approves protected operations for that run. |
 
 ```csharp
 await agent.RunAsync(
     "Run the trusted maintenance task.",
     runConfig: new AgentRunConfig
     {
-        PermissionMode = AgentPermissionMode.FullAccess
+        Security = new AgentSecurityRunConfig
+        {
+            Approval = AgentApprovalPolicy.AutoApprove
+        }
     });
 ```
 
-`FullAccess` is run-scoped. It does not unregister middleware, delete remembered `AlwaysAllow` or `AlwaysDeny` choices, or change later runs. `PermissionOverrides` is also ignored by the built-in middleware while the run is in `FullAccess` mode.
+`AutoApprove` is run-scoped. It does not unregister middleware, delete remembered
+choices, or change later runs. Per-tool decisions belong in
+`AgentRunConfig.Security.PermissionOverrides`.
 
-Custom permission middleware is not bypassed automatically. A custom implementation must explicitly inspect `context.RunConfig.PermissionMode` if it wants to honor the shared profile. The coding harness's `ExecuteCommandPermissionMiddleware` does honor it, so `FullAccess` also suppresses its command-specific approval requests.
+Custom permission middleware must explicitly inspect
+`context.RunConfig.Security.Approval` if it wants to honor the shared policy. The
+coding harness's command permission middleware does honor it.
 
-Permission mode and sandbox mode are separate controls. `AgentPermissionMode.FullAccess` does not disable process isolation, expand filesystem access, grant network access, or bypass authorization performed inside a tool. A host that intentionally offers a combined "full access" product setting must configure those other policies separately.
+Approval and sandboxing are separate controls. `AutoApprove` does not disable
+process isolation, expand filesystem access, grant network access, or bypass
+authorization performed inside a tool. Configure `Security.Sandbox` separately.
 
 ## Function Permission Flow
 

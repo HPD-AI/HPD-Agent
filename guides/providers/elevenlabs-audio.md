@@ -70,7 +70,7 @@ The helper selects the speech-to-text client family. Audio runtime attachment st
 
 ElevenLabs also supports realtime speech-to-text through the same `ISpeechToTextClient` streaming method. This is not the `Clients.Realtime` model family and should not be configured as the agent realtime transport. Use it when the app wants live transcript updates from ElevenLabs, then passes committed text into the agent flow.
 
-ElevenLabs STT options use `ElevenLabsSttConfig` through `ConstructionOptions`:
+ElevenLabs STT options use `ElevenLabsSttConfig` through `ProviderConfig`:
 
 ```json
 {
@@ -78,7 +78,7 @@ ElevenLabs STT options use `ElevenLabsSttConfig` through `ConstructionOptions`:
     "SpeechToText": {
       "ProviderKey": "elevenlabs",
       "ModelName": "scribe_v2",
-      "ConstructionOptions": {
+      "ProviderConfig": {
         "languageCode": "en",
         "diarize": true,
         "timestampsGranularity": "word"
@@ -88,7 +88,7 @@ ElevenLabs STT options use `ElevenLabsSttConfig` through `ConstructionOptions`:
 }
 ```
 
-Source-confirmed STT construction options:
+Source-confirmed STT provider configuration:
 
 | Option | Use it for |
 | --- | --- |
@@ -116,7 +116,7 @@ Source-confirmed STT construction options:
 
 ## Text To Speech
 
-ElevenLabs TTS options use `ElevenLabsTtsConfig` through `ConstructionOptions`:
+ElevenLabs TTS options use `ElevenLabsTtsConfig` through `ProviderConfig`:
 
 In C# apps, the fluent helper configures the same `Clients.TextToSpeech` family slot:
 
@@ -150,7 +150,7 @@ var agent = await new AgentBuilder()
     "TextToSpeech": {
       "ProviderKey": "elevenlabs",
       "ModelName": "eleven_turbo_v2_5",
-      "ConstructionOptions": {
+      "ProviderConfig": {
         "defaultVoiceId": "21m00Tcm4TlvDq8ikWAM",
         "outputFormat": "mp3_44100_128",
         "stability": 0.5,
@@ -161,7 +161,7 @@ var agent = await new AgentBuilder()
 }
 ```
 
-Source-confirmed construction options:
+Source-confirmed provider configuration:
 
 | Option | Use it for |
 | --- | --- |
@@ -192,7 +192,7 @@ using HPD.Agent.Providers.Audio.ElevenLabs;
 ```
 
 ```csharp
-var tts = new ClientProviderConfig
+var tts = new TextToSpeechClientConfig
 {
     ProviderKey = "elevenlabs",
     ModelName = "eleven_turbo_v2_5"

@@ -29,6 +29,7 @@ using HPD.Agent.Hosting.Configuration;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddRouting();
+builder.Services.AddHpdGeneratedProviders();
 
 builder.Services.AddHPDAgent("getting-started-agent", config =>
 {
@@ -42,9 +43,9 @@ builder.Services.AddHPDAgent("getting-started-agent", config =>
     {
         Name = "Getting Started Agent",
         SystemInstructions = "You are a hosted HPD Agent. Be concise and helpful.",
-        Clients = new AgentClientConfig
+        Clients = new AgentClientsConfig
         {
-            Chat = new ClientProviderConfig
+            Chat = new ChatClientConfig
             {
                 ProviderKey = "openai",
                 ModelName = "gpt-5-mini"
@@ -87,7 +88,9 @@ Before exposing hosted routes outside local development, decide how your app wil
 
 ## What Happens
 
-`AddHPDAgent(...)` registers a named hosted runtime.
+`AddHpdGeneratedProviders()` installs the immutable provider composition generated
+from the provider packages referenced by this host. `AddHPDAgent(...)` then
+registers a named hosted runtime that consumes that composition.
 
 `SessionStorePath` creates a segmented `FileSessionStore` for hosted sessions and canonical thread journals.
 

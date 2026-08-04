@@ -70,7 +70,7 @@ Source defaults include:
 
 The provider metadata also lists newer TTS model ids such as `tts-1-hd` and `gpt-4o-mini-tts`.
 
-Provider-specific TTS options use `OpenAITtsConfig` through `ConstructionOptions`:
+Provider-specific TTS options use `OpenAITtsConfig` through `ProviderConfig`:
 
 ```json
 {
@@ -78,7 +78,7 @@ Provider-specific TTS options use `OpenAITtsConfig` through `ConstructionOptions
     "TextToSpeech": {
       "ProviderKey": "openai",
       "ModelName": "tts-1",
-      "ConstructionOptions": {
+      "ProviderConfig": {
         "defaultVoiceId": "nova",
         "outputFormat": "mp3",
         "speed": 1.0
@@ -88,7 +88,7 @@ Provider-specific TTS options use `OpenAITtsConfig` through `ConstructionOptions
 }
 ```
 
-Source-confirmed TTS construction options:
+Source-confirmed TTS provider configuration:
 
 | Option | Use it for |
 | --- | --- |
@@ -131,7 +131,7 @@ The provider metadata also lists `gpt-4o-transcribe` and `gpt-4o-mini-transcribe
 
 Finite audio input uses HPD audio runtime wiring; see [Speech To Text Input](../audio/speech-to-text-input.md).
 
-Provider-specific STT options use `OpenAISttConfig` through `ConstructionOptions`:
+Provider-specific STT options use `OpenAISttConfig` through `ProviderConfig`:
 
 ```json
 {
@@ -139,7 +139,7 @@ Provider-specific STT options use `OpenAISttConfig` through `ConstructionOptions
     "SpeechToText": {
       "ProviderKey": "openai",
       "ModelName": "whisper-1",
-      "ConstructionOptions": {
+      "ProviderConfig": {
         "prompt": "Technical support call",
         "responseFormat": "json"
       }
@@ -148,7 +148,7 @@ Provider-specific STT options use `OpenAISttConfig` through `ConstructionOptions
 }
 ```
 
-Source-confirmed STT construction options:
+Source-confirmed STT provider configuration:
 
 | Option | Use it for |
 | --- | --- |
@@ -184,7 +184,7 @@ var agent = await new AgentBuilder()
 
 Use realtime with `AgentModelTransportMode.Realtime`. The ordinary chat path and finite speech-to-text path are separate from native realtime transport.
 
-Provider-specific realtime options use `OpenAIRealtimeConfig` through `ConstructionOptions`:
+Provider-specific realtime options use `OpenAIRealtimeConfig` through `ProviderConfig`:
 
 ```json
 {
@@ -192,7 +192,7 @@ Provider-specific realtime options use `OpenAIRealtimeConfig` through `Construct
     "Realtime": {
       "ProviderKey": "openai",
       "ModelName": "gpt-realtime",
-      "ConstructionOptions": {
+      "ProviderConfig": {
         "organizationId": "org_...",
         "projectId": "proj_..."
       }
@@ -201,7 +201,7 @@ Provider-specific realtime options use `OpenAIRealtimeConfig` through `Construct
 }
 ```
 
-Source-confirmed realtime construction options:
+Source-confirmed realtime provider configuration:
 
 | Option | Use it for |
 | --- | --- |
@@ -222,7 +222,7 @@ using HPD.Agent.Providers.Audio.OpenAI;
 ```
 
 ```csharp
-var tts = new ClientProviderConfig
+var tts = new TextToSpeechClientConfig
 {
     ProviderKey = "openai",
     ModelName = "tts-1"

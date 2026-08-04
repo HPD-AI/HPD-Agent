@@ -4,7 +4,7 @@ The LM Studio provider uses provider key `lmstudio` and the `HPD-Agent.Providers
 
 Start the LM Studio local server. An API key is not required for the default local endpoint.
 
-The default endpoint is `http://localhost:1234/v1/`, which sends chat requests to `chat/completions`. Pass `endpoint` to `WithLMStudio(...)`, set `Endpoint` in `ClientProviderConfig`, or use `LMSTUDIO_ENDPOINT / LMSTUDIO_BASE_URL / LMSTUDIO_API_BASE / LM_STUDIO_ENDPOINT / LM_STUDIO_BASE_URL / LM_STUDIO_API_BASE` when you need a compatible proxy or custom base URL.
+The default endpoint is `http://localhost:1234/v1/`, which sends chat requests to `chat/completions`. Pass `endpoint` to `WithLMStudio(...)`, set `Endpoint` in `ChatClientConfig`, or use `LMSTUDIO_ENDPOINT / LMSTUDIO_BASE_URL / LMSTUDIO_API_BASE / LM_STUDIO_ENDPOINT / LM_STUDIO_BASE_URL / LM_STUDIO_API_BASE` when you need a compatible proxy or custom base URL.
 
 Use fluent chat setup first:
 
@@ -35,7 +35,7 @@ The equivalent `Clients.Chat` shape is:
 
 ## Runtime Chat Options
 
-Use `ChatRunConfig` for shared model-call behavior such as temperature, top-p, max output tokens, stop sequences, response format, tools, tool mode, seed, and generic reasoning options. Put agent-level defaults in `ClientProviderConfig.ChatDefaults` or `.WithChatDefaults(...)`; use `AgentRunConfig.Chat` for per-run or per-session overrides.
+Use `ChatClientConfig` for shared model-call behavior such as temperature, top-p, max output tokens, stop sequences, response format, tools, tool mode, seed, and generic reasoning options. Put agent-level defaults in `AgentConfig.Clients.Chat`; use `AgentRunConfig.Clients.Chat` for complete per-run replacements.
 
 ## Caveats
 
@@ -45,7 +45,7 @@ This provider currently registers the chat family only. Other endpoint families,
 
 Chat uses HPD's shared OpenAI-compatible chat-completions client. It supports token streaming, function tools, response format and tool mode, seed, max output tokens, top-p, temperature, and stop sequences where the selected model supports them.
 
-Validation checks model and endpoint configuration. Runtime chat options are applied through `ChatDefaults` and `AgentRunConfig.Chat`. Missing credentials are allowed for the default local endpoint.
+Validation checks model and endpoint configuration. Runtime chat options are applied through `Clients.Chat` and `AgentRunConfig.Clients.Chat`. Missing credentials are allowed for the default local endpoint.
 
 ## Related Reading
 

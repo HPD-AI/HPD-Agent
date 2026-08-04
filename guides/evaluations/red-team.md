@@ -164,17 +164,19 @@ var report = await RedTeamRunner.ExecuteAsync(
         ],
         RunOptions = new RunEvalsOptions<string>
         {
-            JudgeConfig = new EvalJudgeConfig
+            JudgeConfig = new EvaluationJudgeRunConfig
             {
-                OverrideAgent = judgeAgent,
-                TimeoutSeconds = 120,
+                Inheritance = ClientFamilyInheritanceMode.UseOwn,
+                Chat = dedicatedJudgeChat,
+                Timeout = TimeSpan.FromSeconds(120),
             },
         },
         ExperimentName = "redteam-judge-smoke",
     });
 ```
 
-This is a runnable candidate: it assumes you already have `agent`, `judgeAgent`, and the HPD evaluation packages wired in your app.
+This is a runnable candidate: it assumes you already have `agent`,
+`dedicatedJudgeChat`, and the HPD evaluation packages wired in your app.
 
 ## Persist Findings
 

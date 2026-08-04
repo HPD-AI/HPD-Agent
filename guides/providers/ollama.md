@@ -22,7 +22,7 @@ var result = await agent.RunAsync("Write one sentence about local model setup.")
 Console.WriteLine(result.Text);
 ```
 
-Provider construction options stay small. Configure the Ollama server connection on the provider, and put model behavior on chat defaults or per-run chat config:
+Provider configuration stay small. Configure the Ollama server connection on the provider, and put model behavior on the agent's `Clients.Chat` default or a run's complete `Clients.Chat` replacement:
 
 ```csharp
 using HPD.Agent;
@@ -36,15 +36,7 @@ var agent = await new AgentBuilder()
         {
             ollama.TimeoutMs = 120_000;
         })
-    .WithChatDefaults(chat =>
-    {
-        chat.Temperature = 0.2;
-        chat.MaxOutputTokens = 1024;
-        chat.Reasoning = new ReasoningOptions
-        {
-            Effort = ReasoningEffort.Medium
-        };
-    })
+
     .WithOllamaChatRequestOptions(ollama =>
     {
         ollama.KeepAlive = "10m";
@@ -55,35 +47,7 @@ var agent = await new AgentBuilder()
     .BuildAsync();
 ```
 
-The equivalent `Clients.Chat` shape is:
-
-```json
-{
-  "Clients": {
-    "Chat": {
-      "ProviderKey": "ollama",
-      "ModelName": "llama3.2",
-      "Endpoint": "http://localhost:11434",
-      "ChatDefaults": {
-        "Temperature": 0.2,
-        "MaxOutputTokens": 1024,
-        "Reasoning": {
-          "Effort": "Medium"
-        },
-        "AdditionalProperties": {
-          "keep_alive": "10m",
-          "num_ctx": 8192,
-          "num_gpu": 99,
-          "use_mlock": true
-        }
-      },
-      "ConstructionOptions": {
-        "TimeoutMs": 120000
-      }
-    }
-  }
-}
-```
+The provider helper writes the same portable fields, typed `providerConfig`, and typed `providerOptions` into `Clients.Chat`. Use the [runtime selection guide](runtime-selection-and-authentication.md) for the canonical JSON and YAML shape.
 
 Endpoint resolution in fluent setup checks:
 
@@ -94,7 +58,7 @@ Endpoint resolution in fluent setup checks:
 
 ## Runtime Options
 
-Use `ChatDefaults` or `AgentRunConfig.Chat` for generic model behavior:
+Use `Clients.Chat` or `AgentRunConfig.Clients.Chat` for generic model behavior:
 
 - `ModelId`
 - `Temperature`
@@ -138,7 +102,7 @@ Use `OllamaChatRequestOptions` for Ollama-only request properties:
 | `VocabOnly` | `vocab_only` | Loads only the vocabulary, not model weights. |
 | `Numa` | `numa` | Enables NUMA support. |
 
-Sampling values that already exist on `ChatRunConfig`, such as `Temperature`, `TopP`, `TopK`, `MaxOutputTokens`, `Seed`, `FrequencyPenalty`, `PresencePenalty`, and `StopSequences`, stay on `ChatDefaults` or `AgentRunConfig.Chat`.
+Sampling values that already exist on `ChatClientConfig`, such as `Temperature`, `TopP`, `TopK`, `MaxOutputTokens`, `Seed`, `FrequencyPenalty`, `PresencePenalty`, and `StopSequences`, stay on `Clients.Chat` or `AgentRunConfig.Clients.Chat`.
 
 ## Caveats
 

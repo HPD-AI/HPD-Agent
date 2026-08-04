@@ -63,7 +63,7 @@ The provider-config path can also resolve `ONNX_MODEL_PATH` when `ModelPath` is 
 | --- | --- |
 | `ModelPath` | ONNX Runtime GenAI model directory. |
 | `Providers` | Ordered ONNX Runtime execution providers, such as `cuda`, `cpu`, `dml`, `qnn`, `openvino`, `trt`, or `webgpu`. |
-| `ProviderOptions` | ONNX Runtime's provider-specific execution options passed to `Config.SetProviderOption`. This typed SDK property is nested inside HPD's outer `ConstructionOptions` configuration plane. |
+| `ProviderOptions` | ONNX Runtime's provider-specific execution options passed to `Config.SetProviderOption`. This typed SDK property is nested inside HPD's outer `ProviderConfig` configuration plane. |
 | `HardwareDeviceType` | Decoder hardware device type applied to configured providers. |
 | `HardwareDeviceId` | Decoder hardware device id applied to configured providers. |
 | `HardwareVendorId` | Decoder hardware vendor id applied to configured providers. |
@@ -72,20 +72,12 @@ The provider-config path can also resolve `ONNX_MODEL_PATH` when `ModelPath` is 
 
 ## Runtime Chat Options
 
-Use HPD `ChatRunConfig` for shared runtime behavior. The ONNX Runtime GenAI MEAI chat client maps common chat options to generator search options:
+Use HPD `ChatClientConfig` for shared runtime behavior. The ONNX Runtime GenAI MEAI chat client maps common chat options to generator search options:
 
 ```csharp
 var agent = await new AgentBuilder()
     .WithOnnxRuntime("/absolute/path/to/onnx-genai-model")
-    .WithChatDefaults(new ChatRunConfig
-    {
-        Temperature = 0.7,
-        TopP = 0.9,
-        TopK = 40,
-        MaxOutputTokens = 512,
-        Seed = 123,
-        ResponseFormat = ChatResponseFormat.Json
-    })
+
     .BuildAsync();
 ```
 
@@ -119,7 +111,7 @@ var agent = await new AgentBuilder()
 | `PastPresentShareBuffer` | `past_present_share_buffer` |
 | `ChunkSize` | `chunk_size` |
 
-The stock ONNX Runtime GenAI chat client supports JSON-schema guidance through generic `ChatRunConfig.ResponseFormat`; custom grammar or regex guidance is not exposed by HPD's provider wrapper.
+The stock ONNX Runtime GenAI chat client supports JSON-schema guidance through generic `ChatClientConfig.ResponseFormat`; custom grammar or regex guidance is not exposed by HPD's provider wrapper.
 
 ## Structured Tool Calling
 
@@ -133,11 +125,7 @@ var agent = await new AgentBuilder()
         {
             options.EnableStructuredToolCalling = true;
         })
-    .WithChatDefaults(new ChatRunConfig
-    {
-        Temperature = 0,
-        MaxOutputTokens = 128
-    })
+
     .BuildAsync();
 ```
 

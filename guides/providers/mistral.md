@@ -37,20 +37,14 @@ The equivalent `Clients.Chat` shape is:
 
 ## Runtime Chat Options
 
-Use `ChatRunConfig` for shared model-call behavior such as temperature, top-p, max output tokens, stop sequences, seed, response format, tools, tool mode, and generic reasoning options. Put agent-level defaults in `ClientProviderConfig.ChatDefaults` or `.WithChatDefaults(...)`; use `AgentRunConfig.Chat` for per-run or per-session overrides.
+Use `ChatClientConfig` for shared model-call behavior such as temperature, top-p, max output tokens, stop sequences, seed, response format, tools, tool mode, and generic reasoning options. Put agent-level defaults in `AgentConfig.Clients.Chat`; use `AgentRunConfig.Clients.Chat` for complete per-run replacements.
 
 Mistral reasoning models use the generic reasoning setting:
 
 ```csharp
 var agent = await new AgentBuilder()
     .WithMistral(model: "mistral-large-latest")
-    .WithChatDefaults(chat =>
-    {
-        chat.Reasoning = new()
-        {
-            Effort = ReasoningEffort.High
-        };
-    })
+
     .BuildAsync();
 ```
 
@@ -81,14 +75,21 @@ Per-run configuration uses the same type:
 ```csharp
 var run = new AgentRunConfig
 {
-    Chat = new ChatRunConfig()
-        .UseMistralChatRequestOptions(mistral =>
+    Clients = new AgentClientsConfig
+    {
+        Chat = new ChatClientConfig
         {
-            mistral.PredictionContent = "expected replacement text";
-        })
+            ProviderKey = "mistral",
+            ModelName = "mistral-large-latest",
+            ProviderOptions = new MistralChatRequestOptions
+            {
+                PredictionContent = "expected replacement text"
+            }
+        }
+    }
 };
 ```
 
 ## Caveats
 
-Validation checks model configuration. API key resolution happens during provider construction through `MISTRAL_API_KEY`, explicit `apiKey`, or configured secrets. Runtime chat options are applied through `ChatDefaults` and `AgentRunConfig.Chat`. Provider metadata reports streaming, function calling, vision input, and audio input support.
+Validation checks model configuration. API key resolution happens during provider construction through `MISTRAL_API_KEY`, explicit `apiKey`, or configured secrets. Runtime chat options are applied through `Clients.Chat` and `AgentRunConfig.Clients.Chat`. Provider metadata reports streaming, function calling, vision input, and audio input support.

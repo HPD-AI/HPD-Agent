@@ -10,7 +10,7 @@ Set an API key:
 export REPLICATE_API_KEY="..."
 ```
 
-`REPLICATE_API_TOKEN` is also registered as an alias. The default endpoint is `https://api.replicate.com/v1/`. Pass `endpoint` to `WithReplicateImageGeneration(...)`, or set `Endpoint` in `ClientProviderConfig`, when you need a compatible proxy.
+`REPLICATE_API_TOKEN` is also registered as an alias. The default endpoint is `https://api.replicate.com/v1/`. Pass `endpoint` to `WithReplicateImageGeneration(...)`, or set `Endpoint` in `ChatClientConfig`, when you need a compatible proxy.
 
 Use fluent image setup:
 

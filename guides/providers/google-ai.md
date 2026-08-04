@@ -24,17 +24,12 @@ var result = await agent.RunAsync("Write one sentence about Google AI setup.");
 Console.WriteLine(result.Text);
 ```
 
-Runtime chat behavior such as temperature, top-p, top-k, max output tokens, stop sequences, JSON output, tools, and reasoning belongs in `ChatDefaults` or per-run `AgentRunConfig.Chat`:
+Runtime chat behavior such as temperature, top-p, top-k, max output tokens, stop sequences, JSON output, tools, and reasoning belongs in `Clients.Chat` or per-run `AgentRunConfig.Clients.Chat`:
 
 ```csharp
 var agent = await new AgentBuilder()
     .WithGoogleAI(model: "gemini-2.0-flash")
-    .WithChatDefaults(chat =>
-    {
-        chat.Temperature = 0.2;
-        chat.TopP = 0.95;
-        chat.MaxOutputTokens = 4096;
-    })
+
     .BuildAsync();
 ```
 
@@ -97,7 +92,7 @@ The equivalent `Clients.Chat` shape is:
 }
 ```
 
-With construction options:
+With provider configuration:
 
 ```json
 {
@@ -105,7 +100,7 @@ With construction options:
     "Chat": {
       "ProviderKey": "google-ai",
       "ModelName": "gemini-2.0-flash",
-      "ConstructionOptions": {
+      "ProviderConfig": {
         "platform": "VertexAI",
         "projectId": "my-project",
         "region": "us-central1",

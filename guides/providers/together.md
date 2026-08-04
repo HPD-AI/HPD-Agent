@@ -10,7 +10,7 @@ Set an API key:
 export TOGETHER_API_KEY="..."
 ```
 
-The default endpoint is `https://api.together.ai/v1`. Pass `endpoint` to `WithTogether(...)` / `WithTogetherEmbeddings(...)`, or set `Endpoint` in `ClientProviderConfig`, when you need a compatible proxy or custom Together base URL.
+The default endpoint is `https://api.together.ai/v1`. Pass `endpoint` to `WithTogether(...)` / `WithTogetherEmbeddings(...)`, or set `Endpoint` in `ChatClientConfig`, when you need a compatible proxy or custom Together base URL.
 
 Use fluent chat setup first:
 
@@ -67,7 +67,7 @@ The equivalent family config is:
 
 ## Runtime Chat Options
 
-Use `ChatRunConfig` for shared model-call behavior such as temperature, top-p, top-k, max output tokens, stop sequences, response format, tools, tool mode, seed, and generic reasoning options. Put agent-level defaults in `ClientProviderConfig.ChatDefaults` or `.WithChatDefaults(...)`; use `AgentRunConfig.Chat` for per-run or per-session overrides.
+Use `ChatClientConfig` for shared model-call behavior such as temperature, top-p, top-k, max output tokens, stop sequences, response format, tools, tool mode, seed, and generic reasoning options. Put agent-level defaults in `AgentConfig.Clients.Chat`; use `AgentRunConfig.Clients.Chat` for complete per-run replacements.
 
 The Together SDK adapter maps the common Microsoft.Extensions.AI chat options to the Together request. HPD.Agent also maps generic frequency penalty, presence penalty, and `Reasoning` into Together's raw request fields so HPDOS/model metadata can keep using provider-neutral chat config.
 
@@ -79,14 +79,7 @@ using HPD.Agent.Providers.Together;
 
 var agent = await new AgentBuilder()
     .WithTogether(model: "deepseek-ai/DeepSeek-R1")
-    .WithChatDefaults(chat =>
-    {
-        chat.Temperature = 0.2;
-        chat.Reasoning = new ReasoningOptions
-        {
-            Effort = ReasoningEffort.High
-        };
-    })
+
     .WithTogetherChatRequestOptions(options =>
     {
         options.ContextLengthExceededBehavior = TogetherContextLengthExceededBehavior.Truncate;
@@ -103,16 +96,21 @@ The typed Together request options are serializable and can also be applied to a
 ```csharp
 var runConfig = new AgentRunConfig
 {
-    Chat = new ChatRunConfig
+    Clients = new AgentClientsConfig
     {
-        Reasoning = new ReasoningOptions
+        Chat = new ChatClientConfig
         {
-            Effort = ReasoningEffort.Medium
+            ProviderKey = "together",
+            ModelName = "deepseek-ai/DeepSeek-R1",
+            Reasoning = new ReasoningOptions
+            {
+                Effort = ReasoningEffort.Medium
+            }
         }
     }
 };
 
-runConfig.Chat.UseTogetherChatRequestOptions(new TogetherChatRequestOptions
+runConfig.Clients.Chat!.UseTogetherChatRequestOptions(new TogetherChatRequestOptions
 {
     ContextLengthExceededBehavior = TogetherContextLengthExceededBehavior.Error,
     ReasoningEnabled = true
@@ -145,7 +143,7 @@ Together chat and embeddings are available only when the `HPD-Agent.Providers.To
 
 Together chat supports token streaming, function tools, reasoning content, and JSON object responses through the Microsoft.Extensions.AI adapter. Vision, image generation, rerank, and audio families are not registered by this provider.
 
-Runtime validation checks model, endpoint, and embedding model options. Runtime chat options are applied through `ChatDefaults` and `AgentRunConfig.Chat`. Credentials are resolved lazily when a run first acquires this provider client; a missing credential fails that run, not `BuildAsync()`.
+Runtime validation checks model, endpoint, and embedding model options. Runtime chat options are applied through `Clients.Chat` and `AgentRunConfig.Clients.Chat`. Credentials are resolved lazily when a run first acquires this provider client; a missing credential fails that run, not `BuildAsync()`.
 
 ## Related Reading
 

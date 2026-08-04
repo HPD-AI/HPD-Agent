@@ -35,30 +35,22 @@ The equivalent `Clients.Chat` shape is:
 }
 ```
 
-The default endpoint is Anthropic's API. Set `Endpoint` explicitly in `ClientProviderConfig` when you need a custom Anthropic base URL; `ANTHROPIC_ENDPOINT` is not a source-registered alias.
+The default endpoint is Anthropic's API. Set `Endpoint` explicitly in `ChatClientConfig` when you need a custom Anthropic base URL; `ANTHROPIC_ENDPOINT` is not a source-registered alias.
 
 ## Runtime Chat Options
 
-Use HPD `ChatRunConfig` for normal model-call behavior. Agent-level defaults belong in `ClientProviderConfig.ChatDefaults`; per-run or per-session overrides belong in `AgentRunConfig.Chat`.
+Use HPD `ChatClientConfig` for normal model-call behavior. Agent-level defaults belong in `AgentConfig.Clients.Chat`; complete per-run replacements belong in `AgentRunConfig.Clients.Chat`.
 
 ```csharp
 using HPD.Agent;
 using HPD.Agent.Providers.Anthropic;
 var agent = await new AgentBuilder()
     .WithAnthropic(model: "claude-3-5-sonnet-latest")
-    .WithChatDefaults(new ChatRunConfig
-    {
-        Temperature = 0.2,
-        MaxOutputTokens = 4096,
-        Reasoning = new ReasoningOptions
-        {
-            Effort = ReasoningEffort.High
-        }
-    })
+
     .BuildAsync();
 ```
 
-Use `AgentRunConfig.ProviderKey` and `ModelId` for selection. Use runtime chat options for temperature, top-p, max output tokens, stop sequences, response format, tools, tool mode, seed, and generic reasoning options.
+Use `AgentRunConfig.Clients.Chat.ProviderKey` and `ModelName` for selection. Use runtime chat options for temperature, top-p, max output tokens, stop sequences, response format, tools, tool mode, seed, and generic reasoning options.
 
 ## Anthropic Chat Request Options
 
@@ -67,7 +59,7 @@ Use `AnthropicChatRequestOptions` for Anthropic-only request properties:
 | Option | Purpose |
 | --- | --- |
 | `ServiceTier` | Sets Anthropic request service tier, such as `auto` or `standard_only`. |
-| `ThinkingBudgetTokens` | Sets an exact Anthropic extended-thinking token budget. Use generic `ChatRunConfig.Reasoning` for normal reasoning control. |
+| `ThinkingBudgetTokens` | Sets an exact Anthropic extended-thinking token budget. Use generic `ChatClientConfig.Reasoning` for normal reasoning control. |
 | `ThinkingDisplay` | Controls Anthropic thinking display, such as `summarized` or `omitted`, when using `ThinkingBudgetTokens`. |
 | `CacheControl` | Adds Anthropic prompt-cache markers to supported text content blocks. |
 
@@ -105,16 +97,21 @@ Per run:
 ```csharp
 var runConfig = new AgentRunConfig
 {
-    Chat = new ChatRunConfig
+    Clients = new AgentClientsConfig
     {
-        Reasoning = new ReasoningOptions
+        Chat = new ChatClientConfig
         {
-            Effort = ReasoningEffort.High
+            ProviderKey = "anthropic",
+            ModelName = "claude-3-5-sonnet-latest",
+            Reasoning = new ReasoningOptions
+            {
+                Effort = ReasoningEffort.High
+            }
         }
     }
 };
 
-runConfig.Chat.UseAnthropicChatRequestOptions(new AnthropicChatRequestOptions
+runConfig.Clients.Chat!.UseAnthropicChatRequestOptions(new AnthropicChatRequestOptions
 {
     ServiceTier = AnthropicServiceTier.Auto,
     ThinkingBudgetTokens = 4096,
@@ -122,7 +119,7 @@ runConfig.Chat.UseAnthropicChatRequestOptions(new AnthropicChatRequestOptions
 });
 ```
 
-In stored config, put Anthropic request options in chat defaults or per-run chat additional properties, not in `ConstructionOptions`:
+In stored config, put Anthropic request options in the typed `providerOptions` payload, not in `ProviderConfig`:
 
 ```json
 {
@@ -130,15 +127,13 @@ In stored config, put Anthropic request options in chat defaults or per-run chat
     "Chat": {
       "ProviderKey": "anthropic",
       "ModelName": "claude-3-5-sonnet-latest",
-      "ChatDefaults": {
-        "AdditionalProperties": {
-          "serviceTier": "auto",
-          "thinkingBudgetTokens": 4096,
-          "thinkingDisplay": "summarized",
-          "cacheControl": {
-            "systemMessages": "1h",
-            "lastUserMessage": "5m"
-          }
+      "ProviderOptions": {
+        "serviceTier": "auto",
+        "thinkingBudgetTokens": 4096,
+        "thinkingDisplay": "summarized",
+        "cacheControl": {
+          "systemMessages": "1h",
+          "lastUserMessage": "5m"
         }
       }
     }

@@ -139,7 +139,9 @@ Treat these as trends unless your dataset and threshold are already calibrated.
 
 ### LLM Judges
 
-Use judge evaluators when deterministic checks cannot express the quality bar. They require judge configuration through `EvalJudgeConfig`, `UseEvalJudgeConfig`, or `UseEvalJudgeAgent`.
+Use judge evaluators when deterministic checks cannot express the quality bar. They
+require `EvaluationJudgeRunConfig` through batch options, per-evaluator registration,
+or the live evaluation middleware.
 
 - `AnswerSimilarityEvaluator` compares the response to `GroundTruthContext`.
 - `GoalAccuracyEvaluator` scores goal achievement from ground truth or turn context.
@@ -159,9 +161,9 @@ var report = await RunEvals.ExecuteAsync(
     ],
     options: new RunEvalsOptions<string>
     {
-        JudgeConfig = new EvalJudgeConfig
+        JudgeConfig = new EvaluationJudgeRunConfig
         {
-            OverrideChatClient = judgeChatClient,
+            Chat = new ChatClientConfig { Override = new ClientOverride<IChatClient> { Client = judgeChatClient } },
         },
     });
 ```

@@ -96,7 +96,7 @@ builder.WithAudioRuntimeAttachment(audio =>
 {
     audio.UseSpeechToTextProvider(
         providerRegistry,
-        new ClientProviderConfig
+        new SpeechToTextClientConfig
         {
             ProviderKey = "openai",
             ModelName = "whisper-1",

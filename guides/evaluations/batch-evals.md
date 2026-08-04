@@ -223,8 +223,14 @@ var report = await RunEvals.ExecuteAsync(
     {
         BaseRunConfig = new AgentRunConfig
         {
-            ProviderKey = "openai",
-            ModelId = "gpt-5-mini",
+            Clients = new AgentClientsConfig
+            {
+                Chat = new ChatClientConfig
+                {
+                    ProviderKey = "openai",
+                    ModelName = "gpt-5-mini"
+                }
+            },
         },
         Concurrency = 4,
         Repeat = 1,
@@ -270,9 +276,9 @@ var report = await RunEvals.ExecuteAsync(
     evaluators: [new AspectCriticEvaluator("The answer is correct and concise.")],
     options: new RunEvalsOptions<string>
     {
-        JudgeConfig = new EvalJudgeConfig
+        JudgeConfig = new EvaluationJudgeRunConfig
         {
-            OverrideChatClient = judgeChatClient,
+            Chat = new ChatClientConfig { Override = new ClientOverride<IChatClient> { Client = judgeChatClient } },
         },
     },
     experimentName: "judge-smoke");
@@ -283,7 +289,9 @@ Treat judge metrics as quality signals unless your own policy defines a threshol
 ## Common Errors
 
 `No ChatConfiguration was provided. An IChatClient is required for judge evaluation.`  
-You used a judge evaluator such as `AspectCriticEvaluator` without `RunEvalsOptions.JudgeConfig`. Add `OverrideChatClient` or `OverrideAgent`, or use deterministic evaluators for the first CI check.
+You used a judge evaluator such as `AspectCriticEvaluator` without
+`RunEvalsOptions.JudgeConfig`. Supply `EvaluationJudgeRunConfig.Chat`, inherit a
+resolved chat client, or use deterministic evaluators for the first CI check.
 
 `Unknown evaluator '...'` from YAML loading.  
 YAML evaluator names must be one of the supported factory mappings. If you wrote a custom evaluator, construct it in code and pass it to `RunEvals.ExecuteAsync(...)`.

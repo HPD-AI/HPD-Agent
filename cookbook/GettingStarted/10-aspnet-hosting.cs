@@ -12,6 +12,7 @@ using HPD.Agent.Hosting.Configuration;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddRouting();
+builder.Services.AddHpdGeneratedProviders();
 
 // Register one named hosted agent. The name selects this hosting configuration
 // when routes call MapHPDAgentApi("cookbook-agent").
@@ -33,9 +34,9 @@ builder.Services.AddHPDAgent("cookbook-agent", config =>
     {
         Name = "Cookbook Agent",
         SystemInstructions = "You are a hosted HPD Agent. Be concise and helpful.",
-        Clients = new AgentClientConfig
+        Clients = new AgentClientsConfig
         {
-            Chat = new ClientProviderConfig
+            Chat = new ChatClientConfig
             {
                 ProviderKey = "openai",
                 ModelName = "gpt-5-mini"

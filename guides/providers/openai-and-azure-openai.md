@@ -48,9 +48,9 @@ The OpenAI provider package also contributes image generation, embeddings, and h
 
 ## Runtime Chat Options
 
-Use HPD `ChatRunConfig` for normal model-call behavior. Agent-level defaults belong in `ClientProviderConfig.ChatDefaults`; per-run or per-session overrides belong in `AgentRunConfig.Chat`.
+Use HPD `ChatClientConfig` for normal model-call behavior. Agent-level defaults belong in `AgentConfig.Clients.Chat`; complete per-run replacements belong in `AgentRunConfig.Clients.Chat`.
 
-Use `AgentRunConfig.ProviderKey` and `ModelId` for selection. Use runtime chat options for temperature, top-p, max output tokens, stop sequences, response format, tools, tool mode, seed, background responses, conversation id, and generic reasoning options.
+Use `AgentRunConfig.Clients.Chat.ProviderKey` and `ModelName` for selection. Use runtime chat options for temperature, top-p, max output tokens, stop sequences, response format, tools, tool mode, seed, background responses, conversation id, and generic reasoning options.
 
 ## OpenAI Construction Options
 
@@ -89,7 +89,7 @@ In stored config:
     "Chat": {
       "ProviderKey": "openai",
       "ModelName": "gpt-4.1",
-      "ConstructionOptions": {
+      "ProviderConfig": {
         "chatApi": "ChatCompletions"
       }
     }
@@ -183,7 +183,7 @@ Stored config uses the same names:
       "ProviderKey": "azure-openai",
       "Endpoint": "https://YOUR-RESOURCE.openai.azure.com/",
       "ModelName": "YOUR-DEPLOYMENT-NAME",
-      "ConstructionOptions": {
+      "ProviderConfig": {
         "chatApi": "ChatCompletions",
         "serviceVersion": "V2025_04_01_Preview",
         "userAgentApplicationId": "hpdos",

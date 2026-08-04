@@ -78,7 +78,13 @@ Availability is enforced both in the model-facing tool projection and again duri
 
 ## Inherit the parent run configuration
 
-By default, a subagent inherits the parent run's execution environment. HPD copies the selected values into an independent child `AgentRunConfig`; the parent and child never share the same mutable root object. The default selection carries model, chat, permission, execution, compaction, and runtime-context settings. It deliberately leaves the child agent's instructions, tools, delegated input, output contract, and evaluation behavior intact.
+By default, a subagent inherits the parent run's execution environment. HPD copies
+selected values into an independent child `AgentRunConfig`; the parent and child
+never share the same mutable root object. Chat, realtime, speech-to-text, and
+text-to-speech inherit the parent's resolved client by default, while other families
+have explicit `UseOwn` or fallback policies. Permission, execution, compaction, and
+runtime context groups are copied. The child's instructions, tools, delegated input,
+output contract, and evaluation behavior remain its own.
 
 No additional configuration is required for the default:
 
@@ -104,8 +110,8 @@ return SubAgent.FromConfig(
             .Exclude(SubAgentRunConfigFields.Compaction)
             .Override(config =>
             {
-                config.Chat ??= new ChatRunConfig();
-                config.Chat.Temperature = 0.1;
+                config.Clients.Chat ??= new ChatClientConfig();
+                config.Clients.Chat.Temperature = 0.1;
             }));
 ```
 

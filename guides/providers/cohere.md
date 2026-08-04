@@ -24,7 +24,7 @@ var result = await agent.RunAsync("Write one sentence about Cohere setup.");
 Console.WriteLine(result.Text);
 ```
 
-Provider construction stays small. Put model behavior on chat defaults or per-run chat config, and use Cohere request options only for Cohere-only request fields:
+Provider construction stays small. Put model behavior on the agent's `Clients.Chat` default or a run's complete `Clients.Chat` replacement, and use Cohere request options only for Cohere-only request fields:
 
 ```csharp
 using HPD.Agent;
@@ -32,16 +32,7 @@ using HPD.Agent.Providers.Cohere;
 
 var agent = await new AgentBuilder()
     .WithCohere(model: "command-r-plus")
-    .WithChatDefaults(chat =>
-    {
-        chat.Temperature = 0.2;
-        chat.TopP = 0.9;
-        chat.MaxOutputTokens = 1024;
-        chat.Reasoning = new ReasoningOptions
-        {
-            Effort = ReasoningEffort.High
-        };
-    })
+
     .WithCohereChatRequestOptions(cohere =>
     {
         cohere.StrictTools = true;
@@ -56,7 +47,7 @@ var agent = await new AgentBuilder()
                 Data = new Dictionary<string, object>
                 {
                     ["title"] = "Setup note",
-                    ["body"] = "Runtime model behavior belongs on ChatDefaults."
+                    ["body"] = "Runtime model behavior belongs on Clients.Chat."
                 }
             }
         ];
@@ -64,41 +55,7 @@ var agent = await new AgentBuilder()
     .BuildAsync();
 ```
 
-The equivalent `Clients.Chat` shape is:
-
-```json
-{
-  "Clients": {
-    "Chat": {
-      "ProviderKey": "cohere",
-      "ModelName": "command-r-plus",
-      "ChatDefaults": {
-        "Temperature": 0.2,
-        "TopP": 0.9,
-        "MaxOutputTokens": 1024,
-        "Reasoning": {
-          "Effort": "High"
-        },
-        "AdditionalProperties": {
-          "strict_tools": true,
-          "citation_mode": "accurate",
-          "safety_mode": "strict",
-          "thinking_token_budget": 2048,
-          "documents": [
-            {
-              "id": "setup",
-              "data": {
-                "title": "Setup note",
-                "body": "Runtime model behavior belongs on ChatDefaults."
-              }
-            }
-          ]
-        }
-      }
-    }
-  }
-}
-```
+The provider helper writes the same portable fields, typed `providerConfig`, and typed `providerOptions` into `Clients.Chat`. Use the [runtime selection guide](runtime-selection-and-authentication.md) for the canonical JSON and YAML shape.
 
 ## Embeddings
 
@@ -128,7 +85,7 @@ The equivalent family config is:
 
 ## Runtime Chat Options
 
-Use `ChatRunConfig` for shared model-call behavior such as temperature, top-p, top-k, max output tokens, stop sequences, tools, tool mode, seed, and generic reasoning options. Put agent-level defaults in `ClientProviderConfig.ChatDefaults` or `.WithChatDefaults(...)`; use `AgentRunConfig.Chat` for per-run or per-session overrides.
+Use `ChatClientConfig` for shared model-call behavior such as temperature, top-p, top-k, max output tokens, stop sequences, tools, tool mode, seed, and generic reasoning options. Put agent-level defaults in `AgentConfig.Clients.Chat`; use `AgentRunConfig.Clients.Chat` for complete per-run replacements.
 
 The Cohere adapter maps the common MEAI chat options to Cohere Chat v2 request fields:
 
@@ -183,7 +140,7 @@ Cohere chat and embeddings are available only when the `HPD-Agent.Providers.Cohe
 
 The current TryAGI Cohere MEAI streaming adapter returns a single final update rather than token-by-token streaming.
 
-Runtime validation checks model, endpoint, and embedding model options. Runtime chat options are applied through `ChatDefaults` and `AgentRunConfig.Chat`. Generic reasoning is mapped to Cohere `thinking`; set `ThinkingEnabled` or `ThinkingTokenBudget` only when you need Cohere-specific control. Credentials are resolved lazily when a run first acquires this provider client; a missing credential fails that run, not `BuildAsync()`.
+Runtime validation checks model, endpoint, and embedding model options. Runtime chat options are applied through `Clients.Chat` and `AgentRunConfig.Clients.Chat`. Generic reasoning is mapped to Cohere `thinking`; set `ThinkingEnabled` or `ThinkingTokenBudget` only when you need Cohere-specific control. Credentials are resolved lazily when a run first acquires this provider client; a missing credential fails that run, not `BuildAsync()`.
 
 ## Related Reading
 

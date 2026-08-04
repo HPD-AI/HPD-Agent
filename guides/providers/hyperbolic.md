@@ -8,7 +8,7 @@ Set an API key:
 export HYPERBOLIC_API_KEY="..."
 ```
 
-The default endpoint is `https://api.hyperbolic.xyz/v1/`, which sends chat requests to `chat/completions`. Pass `endpoint` to `WithHyperbolic(...)`, set `Endpoint` in `ClientProviderConfig`, or use `HYPERBOLIC_ENDPOINT / HYPERBOLIC_BASE_URL` when you need a compatible proxy or custom base URL.
+The default endpoint is `https://api.hyperbolic.xyz/v1/`, which sends chat requests to `chat/completions`. Pass `endpoint` to `WithHyperbolic(...)`, set `Endpoint` in `ChatClientConfig`, or use `HYPERBOLIC_ENDPOINT / HYPERBOLIC_BASE_URL` when you need a compatible proxy or custom base URL.
 
 Use fluent chat setup first:
 
@@ -39,7 +39,7 @@ The equivalent `Clients.Chat` shape is:
 
 ## Runtime Chat Options
 
-Use `ChatRunConfig` for shared model-call behavior such as temperature, top-p, max output tokens, stop sequences, response format, tools, tool mode, seed, and generic reasoning options. Put agent-level defaults in `ClientProviderConfig.ChatDefaults` or `.WithChatDefaults(...)`; use `AgentRunConfig.Chat` for per-run or per-session overrides.
+Use `ChatClientConfig` for shared model-call behavior such as temperature, top-p, max output tokens, stop sequences, response format, tools, tool mode, seed, and generic reasoning options. Put agent-level defaults in `AgentConfig.Clients.Chat`; use `AgentRunConfig.Clients.Chat` for complete per-run replacements.
 
 ## Caveats
 
@@ -47,7 +47,7 @@ This provider currently registers the chat family only. Other endpoint families,
 
 Chat uses HPD's shared OpenAI-compatible chat-completions client. It supports token streaming, function tools, response format and tool mode, seed, max output tokens, top-p, temperature, and stop sequences where the selected model supports them.
 
-Runtime validation checks model and endpoint configuration. Runtime chat options are applied through `ChatDefaults` and `AgentRunConfig.Chat`. Credentials are resolved lazily when a run first acquires this provider client; a missing credential fails that run, not `BuildAsync()`.
+Runtime validation checks model and endpoint configuration. Runtime chat options are applied through `Clients.Chat` and `AgentRunConfig.Clients.Chat`. Credentials are resolved lazily when a run first acquires this provider client; a missing credential fails that run, not `BuildAsync()`.
 
 ## Related Reading
 

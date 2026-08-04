@@ -53,7 +53,7 @@ azure-openai:Endpoint
 Providers:azure-openai:Endpoint
 ```
 
-Explicit values in `ClientProviderConfig` or fluent setup take precedence over resolver lookup.
+Explicit values in `ChatClientConfig` or fluent setup take precedence over resolver lookup.
 
 Bedrock credential env variables such as `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_SESSION_TOKEN` are accepted by the AWS SDK default credential chain and are also registered as `bedrock:*` aliases. `bedrock:Region` resolves `AWS_REGION` and `AWS_DEFAULT_REGION`.
 

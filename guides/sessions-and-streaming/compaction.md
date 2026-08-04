@@ -116,7 +116,7 @@ The selected history contributes no replacement message.
 ```csharp
 Strategy = new SummarizingCompaction
 {
-    Provider = new ClientProviderConfig
+    Summarizer = new ChatClientConfig
     {
         ProviderKey = "openai",
         ModelName = "gpt-4.1-mini"
@@ -125,7 +125,9 @@ Strategy = new SummarizingCompaction
 }
 ```
 
-When `Provider` is absent, the configured summarizer client is used, falling back to the active chat client. The built-in instructions produce a continuation handoff rather than a conversational answer.
+When `Summarizer` is absent, compaction inherits the invocation's effective chat
+client. The built-in instructions produce a continuation handoff rather than a
+conversational answer.
 
 ## Soft And Hard Commit Modes
 

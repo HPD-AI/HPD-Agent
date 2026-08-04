@@ -34,9 +34,12 @@ var workspace = new AgentWorkspace(
 
 var runConfig = new AgentRunConfig
 {
-    ContextOverrides = new Dictionary<string, object>
+    Context = new AgentContextRunConfig
     {
-        [AgentWorkspace.ContextKey] = workspace,
+        Properties = new Dictionary<string, object>
+        {
+            [AgentWorkspace.ContextKey] = workspace,
+        }
     },
 };
 ```
@@ -65,7 +68,10 @@ does not publish the complete binding, command execution fails closed as a setup
 
 Sandbox enforcement is platform-dependent. Use permissions and narrow workspace roots even when sandboxing is enabled.
 
-Command approval and process isolation are independent. `ExecuteCommandPermissionMiddleware` honors `AgentRunConfig.PermissionMode`: `Ask` applies its command-specific approval analysis, while `FullAccess` skips those approval requests for that run. Changing permission mode does not change `ExecuteCommandSandboxPolicy`; configure sandbox isolation separately through run context.
+Command approval and process isolation are independent.
+`ExecuteCommandPermissionMiddleware` honors `AgentRunConfig.Security.Approval`.
+Changing the approval policy does not change `Security.Sandbox`; configure sandbox
+isolation and capabilities separately.
 
 ### Background Commands
 

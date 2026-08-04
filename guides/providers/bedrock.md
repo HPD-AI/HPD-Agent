@@ -27,21 +27,12 @@ var result = await agent.RunAsync("Write one sentence about Bedrock setup.");
 Console.WriteLine(result.Text);
 ```
 
-Runtime chat behavior such as model selection overrides, temperature, top-p, max output tokens, stop sequences, tools, structured output, and reasoning belongs in `ChatDefaults` or per-run `AgentRunConfig.Chat`:
+Runtime chat behavior such as model selection overrides, temperature, top-p, max output tokens, stop sequences, tools, structured output, and reasoning belongs in `Clients.Chat` or per-run `AgentRunConfig.Clients.Chat`:
 
 ```csharp
 var agent = await new AgentBuilder()
     .WithBedrock(model: "anthropic.claude-3-5-sonnet-20240620-v1:0", region: "us-east-1")
-    .WithChatDefaults(chat =>
-    {
-        chat.Temperature = 0.2;
-        chat.TopP = 0.95;
-        chat.MaxOutputTokens = 4096;
-        chat.Reasoning = new()
-        {
-            Effort = ReasoningEffort.High
-        };
-    })
+
     .BuildAsync();
 ```
 
@@ -77,7 +68,7 @@ The equivalent `Clients.Chat` shape is:
     "Chat": {
       "ProviderKey": "bedrock",
       "ModelName": "anthropic.claude-3-5-sonnet-20240620-v1:0",
-      "ConstructionOptions": {
+      "ProviderConfig": {
         "region": "us-east-1",
         "profileName": "hpd-dev",
         "serviceUrl": "https://vpce-xxx.bedrock-runtime.us-east-1.vpce.amazonaws.com",

@@ -12,15 +12,16 @@ using Microsoft.AspNetCore.Builder;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddRouting();
+builder.Services.AddHpdGeneratedProviders();
 builder.Services.AddHPDAgent("tui-agent", config =>
 {
     config.DefaultAgent = new AgentConfig
     {
         Name = "Hosted TUI Agent",
         SystemInstructions = "You are concise and helpful.",
-        Clients = new AgentClientConfig
+        Clients = new AgentClientsConfig
         {
-            Chat = new ClientProviderConfig
+            Chat = new ChatClientConfig
             {
                 ProviderKey = "openai",
                 ModelName = "gpt-5-mini"
@@ -36,7 +37,12 @@ await app.RunAsync();
 
 The hosted runtime does not call an in-process `Agent`. It sends HTTP requests to the mapped HPD Agent API.
 
-The host project must reference and register the provider package used by `ProviderKey = "openai"` following the provider docs. Keep provider registration in the hosted app; the terminal client connects to the mapped API and does not create the model client itself.
+The host project must reference the provider package used by `ProviderKey = "openai"`
+and call `AddHpdGeneratedProviders()`. Keep provider composition in the hosted app;
+the terminal client connects to the mapped API and does not create the model client
+itself. If the terminal sends typed provider options, give its
+`HostedAgentTuiRuntime` the matching generated `ProviderComposition` so those
+options survive the HTTP boundary.
 
 ## Connect The TUI
 

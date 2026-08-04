@@ -20,27 +20,34 @@ HPD Agent uses family-specific provider contracts:
 | Voice activity detection | `IVoiceActivityDetectorProvider` | family-specific runtime options |
 | End-of-turn detection | `IEndOfTurnDetectorProvider` | family-specific runtime options |
 
-## Resolve A Family
+## Compose Provider Families
 
-Provider resolution is typed. A key must exist for the requested family:
+Provider resolution is typed. The application references provider packages and the
+source generator builds one immutable composition from their manifests:
 
 ```csharp
 using HPD.Agent.Providers;
+using Microsoft.Extensions.DependencyInjection;
 
-IProviderRegistry registry = new ProviderRegistry();
+var services = new ServiceCollection();
+services.AddHpdGeneratedProviders();
+using var serviceProvider = services.BuildServiceProvider();
 
-var chatProvider =
-    registry.GetRequiredProvider<IChatClientProvider>("openai");
+var composition = serviceProvider.GetRequiredService<ProviderComposition>();
+var chatFactory = composition.Runtime.GetFactory(
+    "openai",
+    ProviderClientFamily.Chat);
 
-var ttsProvider =
-    registry.GetRequiredProvider<ITextToSpeechClientProvider>("openai");
+var ttsFactory = composition.Runtime.GetFactory(
+    "openai",
+    ProviderClientFamily.TextToSpeech);
 ```
 
-Both calls require the relevant provider implementations to be registered. If `openai` is registered only for chat, the text-to-speech lookup fails with a family-specific provider error.
+Both lookups require the relevant provider manifests. Missing families fail with a
+family-specific provider-composition error. There is no global provider registry,
+assembly scan, or provider module initializer.
 
-Application code usually does not create a bare registry. `AgentBuilder` loads provider modules from referenced provider assemblies and exposes the populated registry through `builder.ProviderRegistry`.
-
-## Composite Providers
+## One Composition, Several Families
 
 When multiple provider implementations use the same key for different families, HPD Agent combines them into a composite provider. The composite lets `Clients.Chat`, `Clients.TextToSpeech`, `Clients.SpeechToText`, and other slots use the same provider key while still resolving different client contracts.
 

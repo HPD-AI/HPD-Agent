@@ -4,7 +4,7 @@ Providers connect an HPD agent to model clients. A provider package registers a 
 
 The same resolution model applies across providers:
 
-1. A fluent `AgentBuilder` helper writes a `ClientProviderConfig` into `AgentConfig.Clients.Chat`.
+1. A fluent `AgentBuilder` helper writes a `ChatClientConfig` into `AgentConfig.Clients.Chat`.
 2. `BuildAsync()` records that configuration as the default and creates the secret-resolver chain. It does not create the chat client or resolve its credential.
 3. Each `RunAsync(...)` resolves an effective provider, model, endpoint, construction options, request options, and authentication selection.
 4. The runtime lazily acquires and leases the matching chat client. Equivalent runs reuse a cached client; different construction identities acquire different clients.
@@ -63,11 +63,13 @@ Provider selection does not replace the HPD runtime. The same `Agent` runtime st
 
 Provider selection identifies the provider, model, endpoint, and optional named authentication registration. Builder configuration supplies defaults; `AgentRunConfig` can replace them for one invocation.
 
-Construction configuration is for values bound when a client is created, such as deployments, regions, API versions, SDK connection settings, and other provider-native constructor inputs. It is stored under `ConstructionOptions`. Credentials are not construction configuration and are never serialized there.
+Construction configuration is for values bound when a client is created, such as deployments, regions, API versions, SDK connection settings, and other provider-native constructor inputs. It is stored in the typed `ProviderConfig` payload on the selected family. Credentials are not provider configuration and are never serialized there.
 
-Runtime chat behavior belongs in `ChatRunConfig`. Agent-level defaults live on `ClientProviderConfig.ChatDefaults`; per-run and per-session overrides flow through `AgentRunConfig.Chat`.
+Shared chat behavior and provider/model selection live together on
+`ChatClientConfig`. Agent defaults use `AgentConfig.Clients.Chat`; a complete
+per-invocation replacement uses `AgentRunConfig.Clients.Chat`.
 
-Use `ChatRunConfig` for serializable chat controls:
+Use `ChatClientConfig` for serializable chat controls:
 
 - model selection
 - temperature, top-p, top-k, seed, max output tokens, and stop sequences
@@ -83,7 +85,9 @@ Use construction options for:
 - audio-specific voice, format, speed, transcript, or realtime settings
 - advanced API controls that do not have a generic MEAI/HPD chat option
 
-In C#, store typed construction options with `SetProviderConfig(...)`. In JSON or stored agent definitions, put the provider-specific object under `ConstructionOptions`.
+In C#, assign the provider package's typed configuration to `ProviderConfig`. In
+JSON or YAML, put the provider-specific object under `providerConfig`. Request-only
+provider settings belong under the typed `providerOptions` payload.
 
 ## Runtime Provider And Model Selection
 
@@ -92,18 +96,35 @@ One built agent can use different chat providers and models on consecutive or co
 ```csharp
 await agent.RunAsync("Use OpenAI", new AgentRunConfig
 {
-    ProviderKey = "openai",
-    ModelId = "gpt-5-mini"
+    Clients = new AgentClientsConfig
+    {
+        Chat = new ChatClientConfig
+        {
+            ProviderKey = "openai",
+            ModelName = "gpt-5-mini"
+        }
+    }
 });
 
 await agent.RunAsync("Use Anthropic", new AgentRunConfig
 {
-    ProviderKey = "anthropic",
-    ModelId = "claude-sonnet-4-5"
+    Clients = new AgentClientsConfig
+    {
+        Chat = new ChatClientConfig
+        {
+            ProviderKey = "anthropic",
+            ModelName = "claude-sonnet-4-5"
+        }
+    }
 });
 ```
 
-`OverrideChatClient` has highest priority. Otherwise a run-level family selection or the top-level Chat convenience properties override the agent default. When the provider changes, HPD discards inherited model, endpoint, authentication, headers, and construction options from the previous provider before applying defaults for the new provider.
+`AgentRunConfig.Clients.Chat` is the complete run-level chat replacement. Its
+provider key, model, portable chat controls, authentication selection, typed
+provider configuration, and typed provider options travel as one coherent unit.
+An explicitly supplied runtime client remains a runtime-only override. HPD fails
+when a provider key contradicts the provider-owned payload types; it never silently
+ignores the mismatch.
 
 ## Secret Resolution
 
@@ -113,7 +134,9 @@ await agent.RunAsync("Use Anthropic", new AgentRunConfig
 2. a resolver supplied with `WithSecretResolver(...)`, or the normal environment and additional resolver sources
 3. configuration, when an `IConfiguration` is available
 
-Explicit values passed to fluent setup remain runtime-only. `ApiKey` on a run is also runtime-only and excluded from JSON/YAML serialization. Do not put credentials in `ConstructionOptions` or `CustomHeaders`.
+Explicit values passed to fluent setup remain runtime-only. A direct API key on a
+family config is also runtime-only and excluded from JSON/YAML serialization. Do
+not put credentials in `ProviderConfig` or custom headers.
 
 Environment variables are the usual deployment path. Configuration lookup also supports provider-scoped keys such as:
 
@@ -146,9 +169,15 @@ Register the registry and `ISecretResolver` in the service provider passed to `W
 ```csharp
 await agent.RunAsync("Use the work credential", new AgentRunConfig
 {
-    ProviderKey = "openai",
-    ModelId = "gpt-5-mini",
-    AuthenticationKey = "openai-work"
+    Clients = new AgentClientsConfig
+    {
+        Chat = new ChatClientConfig
+        {
+            ProviderKey = "openai",
+            ModelName = "gpt-5-mini",
+            AuthenticationKey = "openai-work"
+        }
+    }
 });
 ```
 

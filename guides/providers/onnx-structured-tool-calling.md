@@ -50,11 +50,7 @@ var agent = await new AgentBuilder()
         {
             options.EnableStructuredToolCalling = true;
         })
-    .WithChatDefaults(new ChatRunConfig
-    {
-        Temperature = 0,
-        MaxOutputTokens = 128
-    })
+
     .BuildAsync();
 ```
 
@@ -79,11 +75,7 @@ var agent = await new AgentBuilder()
     {
         options.EnableStructuredToolCalling = true;
     })
-    .WithChatDefaults(new ChatRunConfig
-    {
-        Temperature = 0,
-        MaxOutputTokens = 128
-    })
+
     .WithToolHarness<MathTools>()
     .WithOptionsConfiguration(options =>
     {

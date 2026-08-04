@@ -8,7 +8,7 @@ This page is source-grounded in the HPD evaluators under `HPD-Agent.Evaluations/
 
 ## Add A Judge To A Batch Eval
 
-Use `EvalJudgeConfig` to keep judge routing explicit:
+Use `EvaluationJudgeRunConfig` to keep judge routing explicit:
 
 ```csharp
 using HPD.Agent.Evaluations;
@@ -24,15 +24,15 @@ var report = await RunEvals.ExecuteAsync(
     ],
     options: new RunEvalsOptions<string>
     {
-        JudgeConfig = new EvalJudgeConfig
+        JudgeConfig = new EvaluationJudgeRunConfig
         {
-            OverrideChatClient = judgeChatClient,
+            Chat = new ChatClientConfig { Override = new ClientOverride<IChatClient> { Client = judgeChatClient } },
         },
     },
     experimentName: "judge-smoke");
 ```
 
-This is a good shape for tests and small experiments. `OverrideChatClient` is a low-level escape hatch: the evaluator calls that client directly and HPD wraps it for judge-call tracing.
+This is a good shape for tests and small experiments. `Chat.Override` is a low-level escape hatch: the evaluator calls that client directly and HPD wraps it for judge-call tracing.
 
 LLM judge evaluators expect the judge to follow the evaluator's requested output shape. Many single-call evaluators parse `<S0>...</S0><S1>...</S1><S2>...</S2>` where `S2` is the score or boolean. JSON judge evaluators, including safety evaluators, expect strict JSON.
 
@@ -102,9 +102,9 @@ var report = await RunEvals.ExecuteAsync(
     evaluators: [evaluator],
     options: new RunEvalsOptions<string>
     {
-        JudgeConfig = new EvalJudgeConfig
+        JudgeConfig = new EvaluationJudgeRunConfig
         {
-            OverrideChatClient = judge,
+            Chat = new ChatClientConfig { Override = new ClientOverride<IChatClient> { Client = judge } },
         },
     },
     experimentName: "fake-judge-test");
@@ -129,65 +129,48 @@ judge.EnqueueResponse("""
 
 These snippets are runnable candidates: they use the public `IChatClient` shape, but your project still needs the same HPD and `Microsoft.Extensions.AI` references as the evaluation tests.
 
-## Use A Separate Judge Agent In Production
+## Configure A Dedicated Judge Client In Production
 
-Prefer an override agent when the judge needs its own provider, model, instructions, middleware, observability, or safety posture:
+Give the judge its own complete `ChatClientConfig` when it should use a different
+provider, model, credential, timeout, or provider-specific options:
 
 ```csharp
-options.JudgeConfig = new EvalJudgeConfig
+options.JudgeConfig = new EvaluationJudgeRunConfig
 {
-    OverrideAgent = judgeAgent,
+    Inheritance = ClientFamilyInheritanceMode.UseOwn,
+    Chat = new ChatClientConfig
+    {
+        ProviderKey = "openai",
+        ModelName = "gpt-5-mini",
+        Temperature = 0
+    },
+    Timeout = TimeSpan.FromSeconds(120)
 };
 ```
 
-That keeps the evaluated agent and the judge from accidentally sharing the wrong model or provider settings. Source behavior to know:
-
-- `OverrideAgent` wins over `OverrideChatClient` when both are set.
-- HPD wraps judge-agent calls with `DisableEvaluators = true` and `IsInternalEvalJudgeCall = true` to prevent recursive evaluation loops.
-- The builder helper `UseEvalJudgeAgentAsync` builds a judge agent with `WithMaxFunctionCallTurns(1)`, adds judge trace capture, and adapts it to `IJudgeAgent`.
-- The built judge adapter also sets `SkipTools = true` during judge calls, so a production judge should be configured to grade from the supplied prompt rather than depend on tool execution.
-
-```csharp
-using HPD.Agent.Evaluations.Integration;
-
-var appBuilder = new AgentBuilder()
-    .WithChatClient(appChatClient)
-    .AddEvaluator(new AspectCriticEvaluator(
-        "The answer follows the product support policy."));
-
-await appBuilder.UseEvalJudgeAgentAsync(judge =>
-{
-    judge
-        .WithChatClient(judgeChatClient)
-        .WithSystemInstructions("""
-            You are a strict evaluation judge.
-            Return only the schema requested by the evaluator.
-            Do not answer the user's task directly.
-            """);
-});
-
-var appAgent = await appBuilder.BuildAsync();
-```
-
-Use a separate judge agent when you want distinct model routing, retry behavior, logging, or sanitized judge prompts. Use `OverrideChatClient` when the test owns the exact response text.
+Use `InheritResolved` when the judge should borrow the invocation's effective chat
+client. Use a runtime-only `Chat.Override` for a fake or externally constructed
+`IChatClient`. Evaluation configuration no longer owns a fallback judge agent; the
+judge role follows the same explicit client-family rules as compaction and
+subagents.
 
 ## Judge Config Precedence
 
 Judge config resolves from most specific to least specific:
 
-1. Per-evaluator `judgeConfig` passed to `AddEvaluator`.
-2. Per-run override from `AgentRunConfig.WithEvalJudgeConfigOverride(...)`.
-3. Global builder config from `UseEvalJudgeConfig(...)` or `UseEvalJudgeAgent(...)`.
+1. Per-run `EvaluationRunConfig.Judge`.
+2. Per-evaluator `judgeConfig` passed to `AddEvaluator`.
+3. `LiveEvaluationMiddleware.GlobalJudgeConfig`.
 
 Batch runs use `RunEvalsOptions.JudgeConfig` unless an evaluator or case supplies a more specific configuration.
 
-Timeouts default to 30 seconds. Set `TimeoutSeconds` higher for slower judge providers or safety models:
+Timeouts default to 30 seconds. Set `Timeout` higher for slower judge providers or safety models:
 
 ```csharp
-new EvalJudgeConfig
+new EvaluationJudgeRunConfig
 {
-    OverrideAgent = judgeAgent,
-    TimeoutSeconds = 120,
+    Chat = dedicatedJudgeChat,
+    Timeout = TimeSpan.FromSeconds(120),
 };
 ```
 
@@ -250,11 +233,13 @@ Live evaluation can use the same judge config:
 ```csharp
 var agent = await new AgentBuilder()
     .WithChatClient(appChatClient)
-    .AddEvaluator(new AspectCriticEvaluator("The answer is correct and concise."))
-    .UseEvalJudgeConfig(new EvalJudgeConfig
-    {
-        OverrideAgent = judgeAgent,
-    })
+    .AddEvaluator(
+        new AspectCriticEvaluator("The answer is correct and concise."),
+        judgeConfig: new EvaluationJudgeRunConfig
+        {
+            Inheritance = ClientFamilyInheritanceMode.UseOwn,
+            Chat = dedicatedJudgeChat
+        })
     .BuildAsync();
 ```
 
@@ -278,9 +263,8 @@ Judge calls cost latency and tokens. Live evaluation runs after each sampled tur
 
 `Live evaluator never calls my judge` can mean the run used `DisableEvaluators = true` or `IsInternalEvalJudgeCall = true`, or the evaluator is deterministic and does not need judge chat configuration.
 
-`Judge agent recursively evaluates itself` should be prevented by HPD's judge-agent wrapper. If you built your own `IJudgeAgent`, set `DisableEvaluators = true` and `IsInternalEvalJudgeCall = true` on judge runs.
-
-`Judge prompt is missing from traces` can happen with `OverrideAgent`; HPD may record a placeholder when the raw prompt cannot be captured after middleware. Add `WithEvalJudgeTraceCapture()` to capture the post-middleware judge request.
+`Judge prompt is missing from traces` can happen when trace capture is not installed.
+Add `WithEvalJudgeTraceCapture()` to capture the post-middleware judge request.
 
 ## What Not To Overclaim
 

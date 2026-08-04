@@ -3,10 +3,11 @@
 Provider setup has one shape:
 
 1. Install the provider package.
-2. Configure `AgentBuilder` with the provider's fluent helper.
-3. Put secrets in environment variables or an explicit secret resolver.
-4. Call `BuildAsync()`.
-5. Run the agent with `RunAsync(...)`.
+2. Let the source generator include its provider manifest in the application.
+3. For DI hosts, call `AddHpdGeneratedProviders()`.
+4. Configure an optional agent default or provide `Clients.*` per run.
+5. Put secrets in environment variables or an explicit secret resolver.
+6. Run the agent with `RunAsync(...)`.
 
 ## Provider Capability Snapshot
 
@@ -79,11 +80,11 @@ JSON or configuration setup is useful when agent definitions are stored outside 
 }
 ```
 
-Provider-specific construction and transport options live on the same family config through `ConstructionOptions`. For example, audio providers use construction options for voice, output format, speech speed, transcript options, and realtime provider ids. Chat providers use construction options only for controls that are native to that provider or SDK.
+Provider-specific construction and transport options live on the same family config through `ProviderConfig`. For example, audio providers use provider configuration for voice, output format, speech speed, transcript options, and realtime provider ids. Chat providers use provider configuration only for controls that are native to that provider or SDK.
 
-Provider and model selection uses `AgentRunConfig.ProviderKey` and `ModelId`. Runtime chat behavior uses `ChatRunConfig`: temperature, top-p, max output tokens, stop sequences, response format, tools, tool mode, seed, and generic reasoning options. Agent-level defaults belong in `ClientProviderConfig.ChatDefaults`; per-run or per-session overrides belong in `AgentRunConfig.Chat`.
+Provider and model selection uses `AgentRunConfig.Clients.Chat.ProviderKey` and `ModelName`. Runtime chat behavior uses `ChatClientConfig`: temperature, top-p, max output tokens, stop sequences, response format, tools, tool mode, seed, and generic reasoning options. Agent-level defaults belong in `AgentConfig.Clients.Chat`; per-run replacements belong in `AgentRunConfig.Clients.Chat`.
 
-In C# code, use the provider's typed config with `SetProviderConfig(...)` when available. In stored JSON, use the `ConstructionOptions` object.
+In C# code, use the provider's typed config with `SetProviderConfig(...)` when available. In stored JSON, use the `ProviderConfig` object.
 
 ## Fluent Helpers And Family Config
 
@@ -103,8 +104,8 @@ Those helpers do not create a different system. They populate the same `Clients.
 | Setup style | Best for | Tradeoff |
 | --- | --- | --- |
 | Fluent builder extension | Normal C# apps, samples, tests, local setup. | Requires referencing the provider package in code. |
-| `Clients.*` JSON/config | Stored agent definitions, FFI, generated configs, control planes. | More verbose; construction options are stored in `ConstructionOptions`. |
-| Manual `ClientProviderConfig` + `SetProviderConfig(...)` | Advanced C# composition or dynamic family wiring. | More ceremony, but exact control over the family slot. |
+| `Clients.*` JSON/config | Stored agent definitions, FFI, generated configs, control planes. | More verbose; provider configurations are stored in `ProviderConfig`. |
+| Manual `ChatClientConfig` + `SetProviderConfig(...)` | Advanced C# composition or dynamic family wiring. | More ceremony, but exact control over the family slot. |
 
 For audio, provider setup and runtime behavior are separate. `.WithOpenAITextToSpeech(...)` chooses a TTS provider; `WithAudioRuntimeAttachment(...)` or `WithAudio()` decides when assistant text is synthesized, where artifacts go, and whether playback/projection is enabled.
 

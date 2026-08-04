@@ -115,8 +115,14 @@ The prompt submission path can attach an `AgentRunConfig` to the input event:
 ```csharp
 tui.SetRunConfigComposer(context => new AgentRunConfig
 {
-    ProviderKey = "openai",
-    ModelId = "gpt-5-mini"
+    Clients = new AgentClientsConfig
+    {
+        Chat = new ChatClientConfig
+        {
+            ProviderKey = "openai",
+            ModelName = "gpt-5-mini"
+        }
+    }
 });
 ```
 
@@ -127,7 +133,10 @@ The composer can also attach a run-level permission profile:
 ```csharp
 tui.SetRunConfigComposer(context => new AgentRunConfig
 {
-    PermissionMode = AgentPermissionMode.Ask
+    Security = new AgentSecurityRunConfig
+    {
+        Approval = AgentApprovalPolicy.ReviewProtectedActions
+    }
 });
 ```
 

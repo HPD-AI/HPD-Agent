@@ -10,7 +10,7 @@ Set an API key:
 export GROQ_API_KEY="..."
 ```
 
-The default endpoint is `https://api.groq.com/openai/v1/`. Pass `endpoint` to `WithGroq(...)`, set `Endpoint` in `ClientProviderConfig`, or set `GROQ_ENDPOINT` when you need a compatible proxy or custom Groq base URL.
+The default endpoint is `https://api.groq.com/openai/v1/`. Pass `endpoint` to `WithGroq(...)`, set `Endpoint` in `ChatClientConfig`, or set `GROQ_ENDPOINT` when you need a compatible proxy or custom Groq base URL.
 
 Use fluent chat setup first:
 
@@ -41,7 +41,7 @@ The equivalent `Clients.Chat` shape is:
 
 ## Runtime Chat Options
 
-Use `ChatRunConfig` for shared model-call behavior such as temperature, top-p, max output tokens, stop sequences, response format, tools, tool mode, seed, and generic reasoning options. Put agent-level defaults in `ClientProviderConfig.ChatDefaults` or `.WithChatDefaults(...)`; use `AgentRunConfig.Chat` for per-run or per-session overrides.
+Use `ChatClientConfig` for shared model-call behavior such as temperature, top-p, max output tokens, stop sequences, response format, tools, tool mode, seed, and generic reasoning options. Put agent-level defaults in `AgentConfig.Clients.Chat`; use `AgentRunConfig.Clients.Chat` for complete per-run replacements.
 
 ## Caveats
 
@@ -49,7 +49,7 @@ Groq chat is available only when the `HPD-Agent.Providers.Groq` package is refer
 
 Groq chat supports token streaming, function tools, reasoning-capable models, and JSON object responses through the shared OpenAI-compatible chat completions client. Embeddings, rerank, batch, files, and audio families are not registered by this provider.
 
-Runtime validation checks model and endpoint configuration. Runtime chat options are applied through `ChatDefaults` and `AgentRunConfig.Chat`. Credentials are resolved lazily when a run first acquires this provider client; a missing credential fails that run, not `BuildAsync()`.
+Runtime validation checks model and endpoint configuration. Runtime chat options are applied through `Clients.Chat` and `AgentRunConfig.Clients.Chat`. Credentials are resolved lazily when a run first acquires this provider client; a missing credential fails that run, not `BuildAsync()`.
 
 ## Related Reading
 

@@ -13,6 +13,8 @@ using HPD.Agent;
 using HPD.Agent.ToolHarness.WebSearch;
 ```
 
+The current WebSearch provider extensions predate the common `IHarnessConfig<T>` contract and finalize a configured `WebSearchTools` instance themselves. Use the package extension in this page until WebSearch adopts the shared harness configuration and dependency-registration model described in [Configure A Tool Harness](../tools/configure-a-tool-harness.md).
+
 ## Add Tavily Search
 
 Configure Tavily on `AgentBuilder` before building the agent:

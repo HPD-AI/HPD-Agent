@@ -286,6 +286,25 @@ public sealed class FunctionCountingMiddleware : IAgentMiddleware
 
 State updates are immediate: later middleware in the same phase can see them. Do not read state, `await`, and then write a derived value. Keep the read inside the update lambda so the value is based on the current state.
 
+## Harness-Owned Middleware
+
+Middleware declared by a tool harness can consume an immutable section of that harness configuration:
+
+```csharp
+public sealed class SearchCacheMiddleware(
+    [HarnessConfigurationSection(nameof(SearchHarnessConfig.Cache))]
+    SearchCacheSettings settings)
+    : IToolHarnessMiddleware
+{
+}
+```
+
+The section must exist in the owning `IHarnessConfig<T>` contract and have a compatible type. Consumers configure the harness section instead of using the middleware implementation name.
+
+Use `OverrideMiddleware<TMiddleware>(...)` when the declared middleware needs an explicit per-execution activation. It replaces the declared middleware at its generated position; it does not append an undeclared middleware.
+
+Typed harness sections and legacy `MiddlewareConfigs` are mutually exclusive for the same middleware. See [Configure A Tool Harness](../tools/configure-a-tool-harness.md) and [Collapsing And Containers](../tools/collapsing-and-containers.md).
+
 ## What Not To Use Middleware For
 
 Do not use middleware as a replacement for a tool. If the model should intentionally choose an action, make it a function or tool harness.

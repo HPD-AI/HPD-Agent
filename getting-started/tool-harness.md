@@ -52,6 +52,18 @@ Each `[AIFunction]` method becomes a tool the model can call. The method name, d
 
 Use `WithTool<T>("function_name")` when the agent should see one function. Use `WithToolHarness<T>()` when the agent should see the whole harness.
 
+A harness has exactly one public constructor. This first example uses the implicit parameterless constructor. A harness that needs settings accepts `IHarnessConfig<T>`; a harness that needs services accepts those services as normal constructor parameters.
+
+```csharp
+public sealed class SupportToolHarness(
+    IHarnessConfig<SupportSettings> configuration,
+    ITicketClient tickets)
+{
+}
+```
+
+Configure it with `.Configure(...)` and `.UseDependency(...)`, or load settings from JSON/YAML. See [Configure A Tool Harness](../guides/tools/configure-a-tool-harness.md) when the simple harness grows.
+
 ## Keep The First Harness Small
 
 Start with two or three functions that clearly belong together. A smaller tool surface usually gives the model a cleaner choice.

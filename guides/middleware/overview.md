@@ -13,7 +13,7 @@ The main DX question is not only "how do I write middleware?" It is "where shoul
 | Every run of this built agent should get the behavior | `AgentBuilder.WithMiddleware(...)` |
 | Only one call to `RunAsync` should get the behavior | `AgentRunConfig.RuntimeMiddleware` |
 | The behavior should come from JSON or hosted agent config | `middlewares` in `AgentConfig` |
-| The behavior only matters while a collapsed tool harness is expanded | `[Collapse(Middlewares = ...)]` or `WithToolHarness<T>(opts => opts.AddScopedMiddleware(...))` |
+| The behavior only matters while a collapsed tool harness is expanded | `[Collapse(Middlewares = ...)]` plus a typed settings section or exact-type `OverrideMiddleware<TMiddleware>(...)` |
 | The behavior is a built-in product feature | A builder helper such as `WithPermissions(...)`, `WithCircuitBreaker(...)`, or error-handling helpers |
 
 Start with the smallest attachment point that matches the behavior. If the middleware is just temporary telemetry for one request, do not make it part of the agent definition. If it protects the whole agent, register it on the builder or in config. If it protects one tool harness, scope it to that harness.
@@ -124,28 +124,41 @@ public sealed class DatabaseToolHarness
 }
 ```
 
-Use builder-time scoped middleware when the middleware needs services or constructor values:
+Use an exact-type activation override when declared middleware needs services:
 
 ```csharp
 var agent = await new AgentBuilder()
     .WithOpenAI(model: "gpt-5-mini")
     .WithToolHarness<DatabaseToolHarness>(opts =>
-        opts.AddScopedMiddleware(
-            new DatabaseAuditMiddleware(auditLog)))
+        opts.OverrideMiddleware<DatabaseAuditMiddleware>(context =>
+            ToolHarnessMiddlewareActivation.ExecutionOwned(
+                new DatabaseAuditMiddleware(
+                    context.GetRequiredService<IAuditLog>()))))
     .BuildAsync();
 ```
 
-If the harness declares middleware with `[Collapse(Middlewares = ...)]` and the builder also adds scoped middleware with `AddScopedMiddleware(...)`, the builder-provided instances are appended after the attribute-declared instances. The scoped pipeline is created when the harness container expands.
+The override replaces the middleware at its declared position. It cannot add an undeclared type.
 
-Config can also pass options to scoped middleware declared by the harness:
+Middleware-owned settings belong to the harness's immutable configuration:
+
+```csharp
+public sealed class DatabaseRateLimitMiddleware(
+    [HarnessConfigurationSection(nameof(DatabaseToolHarnessConfig.RateLimit))]
+    DatabaseRateLimitSettings settings)
+    : IToolHarnessMiddleware
+{
+}
+```
+
+Consumers configure that section:
 
 ```json
 {
-  "toolharnesses": [
+  "toolHarnesses": [
     {
       "name": "DatabaseToolHarness",
-      "middlewareConfigs": {
-        "DatabaseRateLimitMiddleware": {
+      "config": {
+        "rateLimit": {
           "requestsPerMinute": 20
         }
       }
@@ -153,6 +166,8 @@ Config can also pass options to scoped middleware declared by the harness:
   ]
 }
 ```
+
+`middlewareConfigs` remains available for legacy middleware without a typed harness section. Do not configure the same middleware through both paths.
 
 ## Built-In Helpers
 
@@ -211,7 +226,7 @@ HPD exposes several context surfaces. Choose the narrowest one that matches the 
 
 | Surface | Use It For |
 | --- | --- |
-| `AgentRunConfig` | Per-run provider/model selection and construction options, runtime middleware, tool context instances, attachments, compaction controls, and temporary behavior. |
+| `AgentRunConfig` | Per-run provider/model selection, harness setting overrides, runtime middleware, tool context instances, attachments, compaction controls, and temporary behavior. |
 | Middleware hook context | Turn, iteration, tool, function, thread, event, service, session, and thread data that belongs to the agent scheduler. |
 | `[MiddlewareState]` | Private middleware-owned state that should persist by session or thread. |
 | `FunctionExecutionContext` | Narrow tool/function access to event emission, bidirectional requests, services, content store, background tasks, struct events, and run metadata. |

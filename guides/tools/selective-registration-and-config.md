@@ -1,163 +1,151 @@
 # Selective Registration And Config
 
-This is an advanced configuration surface for exposing only part of a harness or constructing a harness from JSON configuration. Start with `WithToolHarness<T>()` unless you need filtering, metadata, constructor config, or scoped middleware config.
+This page covers function selection and the serialized harness reference. Configuration, dependencies, and run overrides have focused guides:
 
-## Select One Function In Code
+- [Configure A Tool Harness](configure-a-tool-harness.md)
+- [Inject Harness Dependencies](inject-harness-dependencies.md)
+- [Configure A Harness Per Run](configure-a-harness-per-run.md)
+- [Tool Harness Configuration Reference](../../reference/harness-configuration.md)
 
-Use `WithTool<T>()` when the model should see one generated function from a harness:
+## Select One Function
+
+Use `WithTool<T>()` when the model should see one generated function:
 
 ```csharp
-using HPD.Agent;
-using HPD.Agent.Providers.OpenAI;
-
 var agent = await new AgentBuilder()
     .WithOpenAI(model: "gpt-5-mini")
     .WithTool<WeatherTools>("get_weather")
     .BuildAsync();
 ```
 
-You can also use a qualified name:
+Qualified references are also supported:
 
 ```csharp
 .WithTool<WeatherTools>("WeatherTools.get_weather")
 ```
 
-Or a string-only qualified reference:
+Multiple registrations for the same harness merge their function filters. Unknown names fail with the generated function list.
 
-```csharp
-.WithTool("WeatherTools.get_weather")
-```
+## Serialized Harness Reference
 
-Multiple `WithTool<T>()` calls for the same harness merge the function filters. Unknown function names fail with an error that lists the generated function names available for that harness.
-
-## Register From JSON
-
-`AgentConfig.ToolHarnesses` uses `ToolHarnessReference`. It supports a shorthand string when no extra options are needed:
+`AgentConfig.ToolHarnesses` supports the shorthand string form:
 
 ```json
 {
-  "ToolHarnesses": [
+  "toolHarnesses": [
     "WeatherTools"
   ]
 }
 ```
 
-Use object syntax for selective functions:
+Use object syntax to select functions:
 
 ```json
 {
-  "ToolHarnesses": [
+  "toolHarnesses": [
     {
-      "Name": "WeatherTools",
-      "Functions": [ "get_weather" ]
+      "name": "WeatherTools",
+      "functions": [
+        "get_weather"
+      ]
     }
   ]
 }
 ```
 
-`Functions` is `null` by default, which exposes all generated functions for the harness.
+`functions: null` exposes every generated function.
 
-Function filters are source-confirmed, but the config path stores filters without validating names at config-resolution time. Strong early validation is confirmed for builder `.WithTool<T>()`.
+Property names are case-sensitive camelCase. Unknown and duplicate reference properties fail instead of being skipped.
 
-## Constructor Config
+## Serialized Construction Config
 
-If a harness has a supported single config constructor, generated code can deserialize `Config` and pass it to that constructor:
+```yaml
+toolHarnesses:
+  - name: SearchHarness
+    config:
+      maxResults: 20
+      endpoint: https://search.internal
+```
+
+The registered harness library binds `config` through its generated immutable settings codec. Config fields are patched over library defaults.
+
+See [Configure A Tool Harness](configure-a-tool-harness.md) for C#, YAML, precedence, and validation.
+
+## Run Config
+
+Per-run settings use a separate `harnesses` property:
 
 ```json
 {
-  "ToolHarnesses": [
+  "harnesses": [
     {
-      "Name": "SearchTools",
-      "Config": {
-        "MaxResults": 5
+      "name": "SearchHarness",
+      "config": {
+        "maxResults": 5
       }
     }
   ]
 }
 ```
 
-The generated factory owns this behavior. The config type is detected during generation, and `CreateFromConfig` is used during tool-harness resolution.
-
-The harness can be defined in a referenced library. The library that defines the harness carries its generated `ToolHarnessRegistry`, and the application can resolve that harness once the library assembly has been loaded. The JSON config type still needs source-generated JSON metadata available to HPD at runtime.
-
-For a package-owned harness, keep the config metadata with the package:
-
-```csharp
-using System.Text.Json.Serialization;
-
-[JsonSerializable(typeof(SearchToolsConfig))]
-public partial class SearchToolsJsonContext : JsonSerializerContext
-{
-}
-```
-
-HPD uses the generated factory path for config hydration. If the config metadata is not registered in the resolver chain, config resolution fails with an error naming the missing config type.
+This is a partial execution override, not another construction document. See [Configure A Harness Per Run](configure-a-harness-per-run.md).
 
 ## Typed Metadata
 
-Use `Metadata` when functions use generic capability attributes such as `[AIFunction<TMetadata>]` for dynamic descriptions or conditional logic.
+Generic metadata remains separate from construction settings:
 
 ```json
 {
-  "ToolHarnesses": [
+  "toolHarnesses": [
     {
-      "Name": "SearchTools",
-      "Metadata": {
-        "DefaultProvider": "tavily",
-        "HasTavilyProvider": true
+      "name": "SearchHarness",
+      "metadata": {
+        "defaultProvider": "tavily",
+        "hasTavilyProvider": true
       }
     }
   ]
 }
 ```
 
-The generated `DeserializeMetadata` delegate deserializes the JSON to the metadata type detected from the harness's generic capability attributes.
+The harness must declare a compatible metadata contract. Metadata affects capability descriptions, visibility, and conditions; it does not provide constructor settings or dependencies.
 
-Typed metadata follows the same JSON metadata contract as constructor config. If a metadata type is hydrated from `ToolHarnessReference.Metadata`, include it in a source-generated JSON context and make that context available to HPD's resolver chain.
+## Middleware Configuration
 
-## Scoped Middleware Config
+A harness-owned middleware setting belongs in the harness settings section:
 
-Collapsed harnesses can declare scoped middleware:
-
-```csharp
-[Collapse("Database operations", Middlewares = [typeof(DbAuditMiddleware)])]
-public sealed class DatabaseTools
-{
-    [AIFunction]
-    public string Query(string sql) => "result";
-}
+```yaml
+toolHarnesses:
+  - name: DatabaseToolHarness
+    config:
+      rateLimit:
+        requestsPerMinute: 20
 ```
 
-If a scoped middleware has a supported single `*Config` or `*Options` constructor, `MiddlewareConfigs` can provide its config:
+The middleware constructor declares that section with `[HarnessConfigurationSection]`. Consumers do not configure the middleware implementation directly.
 
-```json
-{
-  "ToolHarnesses": [
-    {
-      "Name": "DatabaseTools",
-      "MiddlewareConfigs": {
-        "DbAuditMiddleware": {
-          "AuditLevel": "Detailed"
-        }
-      }
-    }
-  ]
-}
+`middlewareConfigs` remains a compatibility path for middleware without a typed harness section:
+
+```yaml
+toolHarnesses:
+  - name: DatabaseToolHarness
+    middlewareConfigs:
+      LegacyDatabaseMiddleware:
+        auditLevel: detailed
 ```
 
-For middleware that needs dependency injection or non-config constructor arguments, configure it in code:
+Supplying both the typed section and a legacy `middlewareConfigs` value for the same middleware fails with `HarnessConfigurationConflict`.
 
-```csharp
-builder.WithToolHarness<DatabaseTools>(options =>
-    options.AddScopedMiddleware(new DbAuditMiddleware(auditLog)));
-```
+## Composition
 
-Scoped middleware pipelines are instantiated when the container expands and apply to functions owned by that harness.
+- A builder-selected harness and its serialized reference resolve to one exact owner.
+- A builder `.Configure(...)` replaces the serialized construction config.
+- A run override patches the effective agent setting.
+- Duplicate harness entries and duplicate builder owner registrations fail.
+- Explicit instances retain their existing settings and dependencies.
 
-Middleware config values use generated config factories. A middleware config type supplied through `MiddlewareConfigs` needs source-generated JSON metadata just like a tool harness constructor config type.
+## Native AOT
 
-## Builder And Config Composition
+The harness library's source generator emits the activation and settings codecs. Keep the generator on in the library project and rebuild referenced harness packages when adopting this contract.
 
-Config tool harnesses are resolved before functions are created. Builder registrations can override or skip config entries when the same harness is registered through code. `WithToolHarnessOverride(ToolHarnessReference)` exists for explicit config-plus-builder composition.
-
-For Native AOT and trimmed apps, use generated harnesses and generated JSON metadata together: registry generation makes the harness discoverable, and JSON metadata makes config and metadata hydration reflection-free.
+No application-side copy of the harness settings type is required.

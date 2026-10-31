@@ -1,43 +1,27 @@
 # Author A Tool Harness
 
-A tool harness is a public class that groups methods HPD Agent can expose to the model. The smallest useful harness is a parameterless class with public `[AIFunction]` methods.
+A tool harness is a public class that groups model-callable capabilities. It has exactly one public constructor and is registered with `WithToolHarness<T>()`.
 
-## Create The Harness
+The source generator emits direct activation, function schemas and binders, settings codecs, middleware projections, ownership metadata, and Native AOT-safe delegates.
+
+## Minimal Harness
 
 ```csharp
 using HPD.Agent;
 
 public sealed class WeatherTools
 {
-    [AIFunction(Description = "Gets the current weather for a city.")]
-    public string GetWeather(
-        [AIDescription("The city to get weather for.")] string city)
-    {
-        return $"It is sunny in {city}.";
-    }
-}
-```
-
-`[AIFunction]` makes `GetWeather` callable. The generated function name is `GetWeather` unless you set `Name`.
-
-The method signature is also the source of truth for a generated closed JSON Schema and strict argument binder. HPD generates required fields, defaults, nullability, enums, nested objects, collections, dictionaries, and discriminated unions together with the invocation adapter. See [AI Function Parameter Contracts](ai-function-parameter-contracts.md) for the complete authoring model.
-
-Use explicit names when you want stable snake_case tool names:
-
-```csharp
-public sealed class WeatherTools
-{
     [AIFunction(Name = "get_weather")]
     [AIDescription("Gets the current weather for a location.")]
     public string GetWeather(
-        [AIDescription("The city or location to get weather for.")] string location)
-    {
-        return $"It is sunny in {location}.";
-    }
+        [AIDescription("The city or location.")] string location)
+        => $"It is sunny in {location}.";
 }
 ```
 
-## Register The Harness
+The implicit public parameterless constructor is valid because this harness needs no services or settings.
+
+Register the whole harness:
 
 ```csharp
 using HPD.Agent;
@@ -48,151 +32,146 @@ var agent = await new AgentBuilder()
     .WithInstructions("Use the weather tool when the user asks about weather.")
     .WithToolHarness<WeatherTools>()
     .BuildAsync();
-
-var result = await agent.RunAsync("What is the weather in Chicago?");
-Console.WriteLine(result.Text);
 ```
 
-`WithToolHarness<WeatherTools>()` registers all generated functions from the harness.
+To expose one function instead, use `WithTool<WeatherTools>("get_weather")`.
 
-## Runtime Context
+## Add Configuration
 
-Tools can accept `FunctionExecutionContext` when they need runtime-only access during execution:
+Configuration is a separate immutable contract:
 
 ```csharp
-using HPD.Agent;
-using HPD.Agent.Middleware;
-
-public sealed record SearchProgressEvent(string Query, string Stage) : AgentEvent;
-
-public sealed class SearchTools
+public sealed record WeatherSettings : IHarnessSettingsValidator
 {
-    [AIFunction(Name = "search_documents")]
-    public async Task<string> SearchDocuments(
-        string query,
-        FunctionExecutionContext context,
-        CancellationToken cancellationToken)
+    [HarnessRunSetting]
+    public int ResultLimit { get; init; } = 5;
+
+    public string Units { get; init; } = "metric";
+
+    public void ValidateSettings()
     {
-        await context.PublishAsync(
-            new SearchProgressEvent(query, "started"),
-            cancellationToken);
+        if (ResultLimit < 1)
+            throw new AgentRunConfigurationException(
+                "WeatherSettingsInvalid",
+                "config.resultLimit",
+                "ResultLimit must be positive.");
+    }
+}
 
-        var result = await SearchAsync(query, cancellationToken);
-
-        await context.PublishAsync(
-            new SearchProgressEvent(query, "completed"),
-            cancellationToken);
-        return result;
+public sealed class WeatherTools(
+    IHarnessConfig<WeatherSettings> configuration)
+{
+    [AIFunction]
+    public string GetWeather(
+        string location,
+        FunctionExecutionContext context)
+    {
+        var settings = configuration.For(context);
+        return $"Weather for {location}: {settings.ResultLimit} results in {settings.Units}.";
     }
 }
 ```
 
-`FunctionExecutionContext` and `CancellationToken` are runtime parameters. They can appear in the C# method signature, but they are supplied by HPD Agent and excluded from the generated tool schema and argument DTO. The model does not see them and cannot provide values for them; it only sees the real tool arguments.
+`configuration.AgentDefaults` is the construction setting. `configuration.For(context)` returns the effective setting for the current execution.
 
-The generated binder validates model arguments before the function body runs. Property names and enum values are ordinal and case-sensitive, object contracts are closed, and invalid nested paths are reported precisely. Do not add manual aliases or loose dictionary compatibility layers around a generated contract.
+`[HarnessRunSetting]` opts a property into per-run overrides. Unmarked properties are construction-only.
 
-Use the context for sanctioned runtime access such as emitting events, reading call metadata, accessing services, using the content store, emitting process-local struct samples, registering background tasks, or asking bidirectional questions through `RequestAsync(...)`. For tool progress, bidirectional requests, struct event caveats, and background task events, see [Tool And Function Events](../events/tool-and-function-events.md).
+See [Configure A Tool Harness](configure-a-tool-harness.md) and [Configure A Harness Per Run](configure-a-harness-per-run.md).
 
-To register one generated function, use `WithTool<T>()`:
+## Add Dependencies
 
-```csharp
-var agent = await new AgentBuilder()
-    .WithOpenAI(model: "gpt-5-mini")
-    .WithTool<WeatherTools>("get_weather")
-    .BuildAsync();
-```
-
-`WithTool<T>()` validates the name against the generated `FunctionNames` list. You can also use a qualified reference:
+Dependencies are ordinary constructor parameters:
 
 ```csharp
-.WithTool<WeatherTools>("WeatherTools.get_weather")
+public sealed class WeatherTools(
+    IHarnessConfig<WeatherSettings> configuration,
+    IWeatherClient client)
+{
+}
 ```
 
-If the harness name in the qualified reference does not match `T`, build configuration fails early.
+Consumers can use application DI:
+
+```csharp
+builder.WithToolHarness<WeatherTools>();
+```
+
+Or override a dependency for this registration:
+
+```csharp
+builder.WithToolHarness<WeatherTools>(options => options
+    .Configure(new WeatherSettings { Units = "imperial" })
+    .UseDependency<IWeatherClient>(customClient));
+```
+
+See [Inject Harness Dependencies](inject-harness-dependencies.md).
+
+## Runtime Parameters
+
+`FunctionExecutionContext` and `CancellationToken` are supplied by HPD Agent and excluded from the model-facing function schema:
+
+```csharp
+[AIFunction]
+public async Task<string> SearchDocuments(
+    string query,
+    FunctionExecutionContext context,
+    CancellationToken cancellationToken)
+{
+    await context.PublishAsync(
+        new SearchStartedEvent(query),
+        cancellationToken);
+
+    return await SearchAsync(query, cancellationToken);
+}
+```
+
+Use the context for sanctioned runtime access such as events, services, content, background tasks, and bidirectional requests.
 
 ## Constructor Rules
 
-The common generic overload is:
+- A harness has exactly one public constructor.
+- Settings are accepted through `IHarnessConfig<T>`.
+- Services use normal dependency parameters.
+- The generic registration no longer requires `new()`.
+- Multiple public constructors produce `HPDACT001`.
+- There is no constructor-selection attribute or compatibility overload path.
+
+## Explicit Instances
 
 ```csharp
-.WithToolHarness<WeatherTools>()
+var tools = new WeatherTools(configurationHandle, client);
+builder.WithToolHarness(tools);
 ```
 
-This overload requires `WeatherTools` to satisfy `where T : class, new()`, so it needs a public parameterless constructor.
+The supplied harness and its captured dependencies retain their current state. Registration-time configuration and dependency customization are rejected for an explicit instance.
 
-For a pre-created instance, use:
+## Generated Contract
 
-```csharp
-var tools = new WeatherTools();
-
-var agent = await new AgentBuilder()
-    .WithOpenAI(model: "gpt-5-mini")
-    .WithToolHarness(tools)
-    .BuildAsync();
-```
-
-Instance registration still relies on generated factory metadata for function creation. If the generated registry is unavailable, this path does not use the reflection fallback used by the type-based overloads.
-
-For JSON-configured harnesses, use a single public config constructor:
-
-```csharp
-public sealed class SearchTools
-{
-    public SearchTools(SearchToolsConfig config)
-    {
-        Config = config;
-    }
-
-    public SearchToolsConfig Config { get; }
-
-    [AIFunction]
-    public string Search(string query) => query;
-}
-
-public sealed class SearchToolsConfig
-{
-    public int MaxResults { get; set; } = 5;
-}
-```
-
-The generated registry includes public harnesses that can be constructed through a parameterless constructor, a single config constructor, or an `ISecretResolver` constructor.
-
-If `SearchToolsConfig` is hydrated from JSON, it needs source-generated JSON metadata:
-
-```csharp
-using System.Text.Json.Serialization;
-
-[JsonSerializable(typeof(SearchToolsConfig))]
-public partial class SearchToolsJsonContext : JsonSerializerContext
-{
-}
-```
-
-The harness can live in a referenced library. That library owns the generated `ToolHarnessRegistry` for the harness, and it should also own JSON metadata for config and metadata types that it expects HPD to hydrate.
-
-## Generated Registry Behavior
-
-The generator discovers classes that contain capability methods such as `[AIFunction]`, `[Skill]`, `[SubAgent]`, `[MCPServer]`, or `[OpenApi]`, and classes marked with `[Collapse]`.
+The generator discovers public harness types containing capabilities such as `[AIFunction]`, `[Skill]`, `[SubAgent]`, `[MCPServer]`, or `[OpenApi]`.
 
 Generated output includes:
 
-- One factory entry per supported harness.
-- The generated function-name array used by `WithTool<T>()`.
-- Direct delegates for creating functions.
-- One closed JSON Schema per generated AI function.
-- One strict JSON argument binder and typed argument carrier per generated AI function.
-- Direct invocation adapters that combine bound model arguments with runtime-only parameters.
-- Metadata and config deserializers when the harness uses those features.
-- Collapse metadata for container visibility.
+- The assembly's `ToolHarnessRegistry.All` catalog.
+- Direct activation for the concrete owner.
+- Direct function creation delegates.
+- Closed JSON Schemas and strict argument binders.
+- Runtime parameter injection.
+- Typed metadata and settings support.
+- Immutable settings schemas, codecs, validators, and run-override types.
+- Middleware section projections.
+- External source collectors and collapse metadata.
+- Native AOT registration.
 
-Only publicly accessible, instantiable harnesses are included in `ToolHarnessRegistry.All`. If registration fails with a message like `ToolHarness 'WeatherTools' not found in ToolHarnessRegistry.All`, check that the class is public, the method is public, `[AIFunction]` is present, the constructor shape is supported, and source generation ran for the assembly.
+The project defining the harness must reference the source generator. A referenced library owns its generated registry and configuration codecs.
 
-## Reflection Fallback
+## Troubleshooting
 
-For type-based registration, HPD Agent can reflect over selected simple public capabilities when a generated registry entry is missing. Code-first `[Skill]` declarations require their generated registration and do not use this fallback.
+`HPDACT001` means the harness does not have exactly one public constructor.
 
-The non-generic `WithToolHarness(Type)` path can use reflection fallback for simple public harnesses in JIT development. Generic overloads still have their normal constructor constraints, and instance registration still relies on generated factory metadata.
+`HPDCFG001` means the settings type contains an unsupported mutable or unverifiable shape.
 
-Do not rely on reflection fallback for Native AOT, trimmed apps, generated dependency registration, external MCP/OpenAPI harness sources, collapse-scoped middleware factories, or generated config/metadata deserialization. The generated path uses registry entries and JSON metadata; reflection fallback is annotated with trimming and dynamic-code warnings and does not provide the full generated dependency picture.
+`HPDCFG002` means a middleware section projection does not match the owning immutable settings contract.
 
-For progressive instruction-and-capability workflows inside a harness, see [Skills Overview](../skills/overview.md).
+`ToolHarness '...' not found in ToolHarnessRegistry.All` usually means the harness is not publicly accessible, has no recognized capability, or was compiled without the source generator.
+
+For progressive instruction-and-capability workflows, continue with [Skills Overview](../skills/overview.md).

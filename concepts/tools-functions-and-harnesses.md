@@ -6,7 +6,7 @@ A tool is the model-facing callable capability. In native .NET code, a tool is u
 
 For a generated native tool, the method is a compiled protocol rather than a method plus runtime inference. HPD emits its closed JSON Schema, strict binder, typed argument carrier, defaults, and invocation adapter from the same signature. See [AI Function Parameter Contracts](../guides/tools/ai-function-parameter-contracts.md).
 
-A tool harness is a class that groups related capabilities. A harness can contain native `[AIFunction]` methods and other capability methods such as skills or subagents. Register a harness with `WithToolHarness<T>()`, or register one generated function from the harness with `WithTool<T>("FunctionName")`.
+A tool harness is a class that groups related capabilities. A harness can contain native `[AIFunction]` methods and other capability methods such as skills or subagents. It is also the generated activation contract for its constructor settings, dependencies, middleware, and owned resources. Register a harness with `WithToolHarness<T>()`, or register one generated function from the harness with `WithTool<T>("FunctionName")`.
 
 A skill is a progressive harness capability: the model initially sees its name and description, then receives its instructions and child capabilities only after activation. See [Skills Overview](../guides/skills/overview.md).
 
@@ -90,7 +90,9 @@ Most functions should use the default `SynchronousOnly`. Use background invocati
 
 ## Generated Contract First
 
-The source generator is the normal path. It discovers public, instantiable harnesses and emits a registry under `HPD.Agent.Generated.ToolHarnessRegistry.All`. Generated entries include direct creation delegates, function-name lists, metadata/config deserializers, and collapse metadata.
+The source generator is the production path. It discovers public concrete harness owners and emits a registry under `HPD.Agent.Generated.ToolHarnessRegistry.All`. Generated entries include direct activation, DI requirements, immutable settings contracts, function-name lists, metadata codecs, middleware projections, and collapse metadata.
+
+A native harness has exactly one public constructor. Settings are supplied through `IHarnessConfig<T>`; service dependencies are ordinary constructor parameters. Generated activation does not use special parameterless, config-only, or secret-only constructor selection.
 
 For every generated `[AIFunction]`, it also emits:
 
@@ -103,7 +105,9 @@ For every generated `[AIFunction]`, it also emits:
 
 Unknown properties, incorrect property casing, invalid enum names, and fields from the wrong union branch fail before the function body executes. The schema and binder come from one generated contract, so they do not drift independently.
 
-At runtime, `WithToolHarness<T>()` forces the harness assembly module initializer, loads generated registries, and resolves the harness by class name. If the registry entry is missing for a simple public harness, HPD Agent can use reflection fallback in normal JIT development. Treat that as troubleshooting support, not as the intended production path for Native AOT or trimmed apps.
+At runtime, `WithToolHarness<T>()` forces the harness assembly module initializer, loads the generated registry, and resolves the exact owner type. The generated activation delegate resolves constructor dependencies and creates one agent-owned harness instance. Harness registration does not use reflection fallback.
+
+See [Configure A Tool Harness](../guides/tools/configure-a-tool-harness.md), [Inject Harness Dependencies](../guides/tools/inject-harness-dependencies.md), and [Configure A Harness Per Run](../guides/tools/configure-a-harness-per-run.md).
 
 ## Related Guides
 

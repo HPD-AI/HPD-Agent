@@ -43,6 +43,23 @@ You can also submit an event envelope:
 
 `messages` is optional on `USER_MESSAGES_INPUT`. Normal user submissions should include at least one message. Omitting it or sending an empty array asks the runtime to resume the scoped thread with the supplied run configuration; the thread must already have history.
 
+The submitted `runConfig` may include harness settings for one execution:
+
+```json
+{
+  "harnesses": [
+    {
+      "name": "SearchHarness",
+      "config": {
+        "maxResults": 5
+      }
+    }
+  ]
+}
+```
+
+The agent must already contain the matching registered harness and generated codec. See [Configure A Harness Per Run](../tools/configure-a-harness-per-run.md).
+
 Accepted input returns `202 Accepted` with the backend-owned run identity:
 
 ```json

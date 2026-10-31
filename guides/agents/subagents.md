@@ -128,6 +128,55 @@ return SubAgent.FromConfig(
 
 The child still owns its complete `AgentConfig`. Run-configuration inheritance only controls the per-invocation values layered over that child configuration.
 
+`AgentRunConfig.Harnesses` is not inherited implicitly. Configure direct child harness settings explicitly through `SubAgentRunConfig.Harnesses`:
+
+```csharp
+var childRun = new SubAgentRunConfig();
+
+childRun.Harnesses
+    .For<SearchHarness>()
+    .Override(new SearchSettingsOverrides
+    {
+        MaxResults = 5
+    });
+
+await parentAgent.RunAsync(
+    "Research this question",
+    subAgentRunConfig: childRun);
+```
+
+The override is resolved against the child's registered harness owner. It does not copy the parent's harness identity or configuration handle. The child keeps its own dependencies, middleware, construction settings, and configuration baseline.
+
+Use `SubAgentRunDefaults.Harnesses` when a child should intentionally pass a harness setting to its own descendants:
+
+```csharp
+var descendantDefaults = new SubAgentRunDefaults();
+
+descendantDefaults.Harnesses
+    .For<SearchHarness>()
+    .Override(new SearchSettingsOverrides
+    {
+        MaxResults = 3
+    });
+
+var childRun = new SubAgentRunConfig
+{
+    DescendantDefaults = descendantDefaults
+};
+```
+
+The equivalent serialized direct-child setting is:
+
+```yaml
+subAgentRunConfig:
+  harnesses:
+    - name: SearchHarness
+      config:
+        maxResults: 5
+```
+
+The child must register the named harness. Missing or ambiguous owners fail with a child-specific configuration path before a child harness tool executes.
+
 For synchronous calls, the tool result is the child agent's text response. HPD also records subagent metadata on the tool result, including `subAgentStatus`, `subAgentSessionId`, `subAgentThreadId`, `subAgentName`, and `invocationId`.
 
 ## Invocation Mode
@@ -338,6 +387,6 @@ See [Multi-Agent Overview](../multi-agent/overview.md) and [Multi-Agent Capabili
 
 ## Boundaries
 
-`[SubAgent]` is the normal authoring path. The source generator is the production path and reflection fallback exists for development and troubleshooting.
+`[SubAgent]` is the normal authoring path. The containing harness must use generated registration; harness registration no longer falls back to runtime reflection.
 
 Generated and reflection-created subagent wrappers freeze the same declaration and materialize the same durable definition. Both use the configured runtime resolver, session store, agent store, event coordination, and hierarchical metadata. Treat low-level runtime helpers as implementation details unless you are extending HPD Agent itself.

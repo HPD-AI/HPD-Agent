@@ -1,177 +1,194 @@
 # Source Generation, AOT, And Trimming
 
-HPD Agent's tool-harness path is designed around generated contracts. The generator discovers harnesses and emits registration factories, model-facing schemas, strict argument binders, typed argument carriers, and invocation adapters so the normal path does not reflect over methods or infer argument contracts at runtime.
+The source generator is the production path for native tool harnesses. It emits direct activation, capability registration, function contracts, configuration codecs, middleware projections, and ownership metadata.
 
-## What Gets Generated
+## What The Generator Discovers
 
-The generator selects classes with `[Collapse]` and classes with methods carrying capability attributes such as `[AIFunction]`, `[Skill]`, `[SubAgent]`, `[MCPServer]`, or `[OpenApi]`.
+The generator selects public concrete harness owners containing capabilities such as:
 
-Generated artifacts include:
+- `[AIFunction]`
+- `[Skill]`
+- `[SubAgent]`
+- `[MultiAgent]`
+- `[MCPServer]`
+- `[OpenApi]`
 
-- Per-harness registration classes.
+`[Collapse]` controls visibility and contributes instructions and middleware. It is not required for discovery.
+
+## Generated Artifacts
+
+Each harness library receives:
+
 - `HPD.Agent.Generated.ToolHarnessRegistry.All`.
-- Direct constructor delegates.
-- Direct `CreateFunctions` delegates.
-- Closed JSON Schemas for generated AI functions.
-- Strict JSON argument binders.
-- Typed argument carriers with declared defaults.
-- Invocation adapters that inject runtime-only parameters.
-- Function-name arrays for selective registration.
-- Metadata deserializers for generic capability attributes such as `[AIFunction<TMetadata>]`.
-- Config constructor delegates for supported `*Config` constructor parameters.
-- `ISecretResolver` constructor delegates.
-- External source collectors for harness-owned MCP and OpenAPI sources.
-- Collapse middleware factories for supported middleware constructors.
-- A module initializer that registers generated tool harnesses.
+- A direct activation delegate for the concrete owner.
+- Constructor dependency requirements and owner-local defaults.
+- Direct function creation delegates.
+- Closed JSON Schemas and strict argument binders.
+- Typed argument carriers and runtime parameter injection.
+- Metadata codecs.
+- Immutable settings schemas and codecs.
+- Generated presence-aware run-override types.
+- Middleware configuration section projections.
+- MCP and OpenAPI source collectors.
+- Collapse metadata and inherited composition.
+- A module initializer that registers the generated catalog.
 
-Publicly accessible, instantiable harnesses are the reliable target for generated registry inclusion. Classes without `[Collapse]` are still discovered when they contain capability methods; they simply remain non-collapsed.
+## Constructor Contract
 
-The generated parameter contract supports deterministic scalars, nullable and defaulted values, exact string enums, nested records and classes, supported collections, string-keyed dictionaries, and closed discriminated unions. See [AI Function Parameter Contracts](ai-function-parameter-contracts.md) for authoring rules and examples.
-
-Instantiable means the generator can create a factory for the harness shape. Supported generated construction paths include:
-
-- Public parameterless constructors.
-- Public single config constructors.
-- Public `ISecretResolver` constructors.
-
-## Cross-Assembly Harnesses
-
-A tool harness can live in a referenced library. The source generator runs in the project that defines the harness, and that assembly carries its own generated `ToolHarnessRegistry`.
-
-For example, an application can reference a coding harness package and register a harness from that package:
+A native harness has exactly one public constructor.
 
 ```csharp
-var agent = await new AgentBuilder()
-    .WithOpenAI(model: "gpt-5-mini")
-    .WithToolHarness<CodingHarness>()
-    .BuildAsync();
-```
-
-`WithToolHarness<T>()` runs the module initializer for `typeof(T).Assembly`, loads that assembly's generated registry, and resolves the harness from the registry entry emitted by the harness library. The harness does not need to be defined in the application project.
-
-Stored agent configuration can also reference generated harnesses by name once the relevant harness assembly has been loaded and its generated catalog has registered.
-
-## JSON Metadata Contract
-
-Generated factories avoid reflection-based JSON hydration. When a generated factory needs to hydrate JSON, it resolves a `JsonTypeInfo<T>` and uses the source-generation-friendly serializer overload.
-
-This applies to:
-
-- Tool harness config constructor types.
-- Typed tool metadata from generic capability attributes such as `[AIFunction<TMetadata>]`.
-- Collapse-scoped middleware config types.
-- Standalone middleware config types.
-
-Any type hydrated from JSON must have source-generated JSON metadata available to HPD at runtime.
-
-This configuration and metadata hydration path is separate from generated AI-function argument binding. Generated function arguments use direct generated binders; they do not require authors to add every argument record to a `JsonSerializerContext`.
-
-For a harness library, place the metadata beside the harness:
-
-```csharp
-using System.Text.Json.Serialization;
-
-[JsonSerializable(typeof(CodingHarnessConfig))]
-[JsonSerializable(typeof(CodingMiddlewareConfig))]
-public partial class CodingToolHarnessJsonContext : JsonSerializerContext
+public sealed class SearchHarness(
+    IHarnessConfig<SearchSettings> configuration,
+    ISearchClient client)
 {
 }
 ```
 
-The context must be part of the resolver chain used by HPD's generated factory path. If the metadata is missing, config resolution fails with a message that names the missing config or metadata type instead of falling back to reflection.
+The generator emits `context => new SearchHarness(...)` and resolves each constructor parameter directly. It does not inspect constructors at runtime.
 
-## Provider Tool Schemas
+`WithToolHarness<T>()` does not impose a `new()` constraint; generated activation owns construction.
 
-HPD providers consume the same generated or reflected `AIFunction` metadata. A provider should not regenerate function schemas when HPD has already produced them.
+## Dependency Defaults
 
-For example, ONNX Runtime structured tool calling uses the existing function name, description, and `JsonSchema` from `ChatOptions.Tools`. The ONNX adapter converts those declarations into a compact model-facing tool payload, asks the local model for a constrained JSON tool-call envelope, and returns `FunctionCallContent`. HPD still performs function execution through the normal middleware, permission, event, and result pipeline.
+```csharp
+[ToolHarnessDependency(typeof(ISearchClient), typeof(SearchClient))]
+public sealed class SearchHarness(
+    IHarnessConfig<SearchSettings> configuration,
+    ISearchClient client)
+{
+}
+```
 
-For Native AOT and trimmed apps, this means the same rule applies: keep generated tool registration and JSON metadata available for every config or metadata type HPD hydrates. Local ONNX tool calling does not remove the need for generated schemas; it reuses them.
+The generated catalog can create `SearchClient` when application DI has no registration. HPD owns defaults it creates; DI and registration-local overrides remain borrowed.
 
-## Strict Argument Ingress
+## Configuration Codecs
 
-Generated binders consume JSON so exact property names, JSON kinds, enum names, nested paths, and union branches remain observable.
+The harness settings type is an immutable data contract:
 
-When a provider integration exposes the original argument document, HPD preserves it. `Microsoft.Extensions.AI.FunctionCallContent` otherwise guarantees parsed arguments, so `FunctionExecutionCore` attaches a canonical JSON document using rooted, source-generated serializer metadata before invoking a generated function.
+```csharp
+public sealed record SearchSettings
+{
+    [HarnessRunSetting]
+    public int MaxResults { get; init; } = 10;
 
-Direct programmatic invocation of a generated `HPDAIFunction` must attach JSON through HPD's argument APIs. There is no reflection-based dictionary fallback for generated binders. This keeps production behavior deterministic under trimming and Native AOT.
+    public string Endpoint { get; init; } = "https://search.example";
+}
+```
 
-Runtime-only parameters such as `FunctionExecutionContext` and `CancellationToken` are excluded from the model schema and supplied by the invocation adapter after binding.
+The generator emits:
+
+- library-default construction
+- schema descriptions
+- generated JSON read/write delegates
+- constructor binding
+- run-override presence tracking
+- reset validation
+- inherited base views
+
+Application code should not create a parallel `JsonSerializerContext` for these settings. The harness package carries its generated contract.
+
+## Cross-Assembly Harnesses
+
+A harness can live in a referenced assembly or NuGet package:
+
+```csharp
+var agent = await new AgentBuilder()
+    .WithOpenAI(model: "gpt-5-mini")
+    .WithToolHarness<CodingToolHarness>()
+    .BuildAsync();
+```
+
+`WithToolHarness<T>()` loads that assembly's generated registry and resolves the exact owner type.
+
+An external base class and immutable base settings type communicate their generated contracts through compiled metadata. The consumer does not need source code, but the library must have been built with the current generator.
+
+## Configuration Loading
+
+Construction JSON uses `toolHarnesses`:
+
+```json
+{
+  "toolHarnesses": [
+    {
+      "name": "SearchHarness",
+      "config": {
+        "maxResults": 20
+      }
+    }
+  ]
+}
+```
+
+Run JSON uses `harnesses`:
+
+```json
+{
+  "harnesses": [
+    {
+      "name": "SearchHarness",
+      "config": {
+        "maxResults": 5
+      }
+    }
+  ]
+}
+```
+
+The outer HPD serializer parses the envelope. The registered harness library supplies the opaque config codec. Unknown fields, duplicate keys, wrong scalar types, and invalid effective settings fail before tool construction or run execution.
 
 ## Runtime Lookup
 
-`WithToolHarness<T>()` runs the target assembly module initializer, loads the generated registry for that assembly, and resolves the harness by class name.
+`WithToolHarness<T>()`:
 
-```csharp
-var agent = await new AgentBuilder()
-    .WithOpenAI(model: "gpt-5-mini")
-    .WithToolHarness<WeatherTools>()
-    .BuildAsync();
-```
+- runs the target assembly's generated module initializer;
+- loads its registry;
+- resolves the exact concrete type;
+- activates one owner instance;
+- retains it for the built agent.
 
-`WithTool<T>("FunctionName")` uses the generated `FunctionNames` array to validate the requested function:
+`WithTool<T>("FunctionName")` uses the generated function-name list to validate the selected capability from that owner.
 
-```csharp
-var agent = await new AgentBuilder()
-    .WithOpenAI(model: "gpt-5-mini")
-    .WithTool<WeatherTools>("get_weather")
-    .BuildAsync();
-```
+## Native AOT
 
-If the name is wrong, HPD Agent throws an error that lists the available generated functions for that harness.
+Generated activation and configuration paths are Native AOT compatible when every included harness library carries its generated metadata.
 
-## Reflection Fallback
+The AOT acceptance path must cover:
 
-If a generated registry entry is unavailable, type-based registration can reflect over simple public harnesses as a convenience in normal JIT development.
+- external-library constructor activation;
+- immutable settings decoding;
+- a typed or serialized run override;
+- middleware configuration access;
+- function execution;
+- deterministic owner disposal.
 
-Fallback supports selected simple public capability methods in normal JIT development. Generated `[Skill]` declarations specifically require source generation; HPD does not reflect over `Skill.Create(...)` as a fallback. For instance methods supported by fallback, the harness needs a public parameterless constructor.
+The framework smoke tests publish and execute these paths; publishing an unused assembly is insufficient.
 
-Do not rely on fallback for:
+## Diagnostics
 
-- Native AOT.
-- Trimmed apps.
-- Generated dependency registration.
-- Generated metadata/config deserialization.
-- Harness-owned MCP/OpenAPI source collection.
-- Collapse-scoped middleware factories.
-- Code-first `[Skill]` declarations.
+Important source-generation diagnostics:
 
-The reflection path is annotated with `RequiresUnreferencedCode` and `RequiresDynamicCode`. It also does not provide the same dependency picture as generated factories: referenced harness and function maps are empty.
+- `HPDACT001`: harness does not have exactly one public constructor.
+- `HPDCFG001`: unsupported or unverifiable immutable settings shape.
+- `HPDCFG002`: invalid middleware settings section projection.
+- `HPD020`: unsupported runtime parameter; use `FunctionExecutionContext` when appropriate.
+- `HPDAG0101`–`HPDAG0103`: conflicting collapse declarations.
+- `HPDAG0201`–`HPDAG0204`: harness/middleware declaration problems.
+- `HPDAG0301`–`HPDAG0304`: MCP source problems.
+- `HPDAG0401`–`HPDAG0403`: OpenAPI source problems.
 
-## Common Diagnostics
+Runtime configuration errors include `HarnessNotRegistered`, `HarnessConfigUnknownProperty`, `HarnessRunOverrideNotSupported`, `HarnessResetConflict`, and `HarnessConfigurationOwnerMismatch`.
 
-Generator diagnostics to watch for:
+## Troubleshooting
 
-- `HPD001`: invalid template property for dynamic descriptions.
-- `HPD002`: invalid conditional property.
-- `HPD003`: dynamic features used without generic `[AIFunction<TMetadata>]` context.
-- `HPD020`: unsupported runtime parameter type; use `FunctionExecutionContext` for sanctioned runtime access.
-- `HPDAG0101` and `HPDAG0102`: conflicting literal and expression collapse settings.
-- `HPDAG0103`: suspicious string literal used as a collapse expression.
-- `HPDAG0201` through `HPDAG0204`: currently reused by multiple generator surfaces. Check the diagnostic title/message to distinguish `[MultiAgent]` diagnostics from `[Collapse(Middlewares = ...)]` diagnostics.
-- `HPDAG0301` through `HPDAG0304`: MCP source declaration problems.
-- `HPDAG0401` through `HPDAG0403`: OpenAPI source declaration problems.
+`ToolHarness 'WeatherTools' not found in ToolHarnessRegistry.All` means the concrete owner was not generated.
 
-## Troubleshooting Registry Errors
+Check that:
 
-This error usually means the generated registry did not include the harness:
+- the class is public;
+- it contains a recognized capability;
+- the project references the source generator;
+- exactly one public constructor exists;
+- external libraries were rebuilt after adopting the configuration contract.
 
-```text
-ToolHarness 'WeatherTools' not found in ToolHarnessRegistry.All.
-```
-
-Check the harness shape first:
-
-- The class is public or otherwise publicly accessible from the generated registry.
-- The class is instantiable by the generation path you are using.
-- The method is public.
-- The method has `[AIFunction]` or another supported capability attribute.
-- The project references the generator package/source and generated files are being produced.
-
-For Native AOT or trimming work, treat the generated path as mandatory. Reflection fallback is a development convenience, not an AOT strategy. For config and metadata hydration, also register JSON metadata for every user-defined type that HPD hydrates from JSON.
-
-## External Source Guides
-
-- [MCP Servers](mcp-servers.md)
-- [OpenAPI Tools](openapi-tools.md)
-- [Multi-Agent Capabilities](multi-agent-capabilities.md)
+See [Configure A Tool Harness](configure-a-tool-harness.md) and [Tool Harness Configuration Reference](../../reference/harness-configuration.md).

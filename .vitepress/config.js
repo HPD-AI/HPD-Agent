@@ -40,6 +40,11 @@ const sidebar = [
     collapsed: true,
     items: [
       link('Author A Tool Harness', '/guides/tools/author-a-tool-harness'),
+      link('Configure A Tool Harness', '/guides/tools/configure-a-tool-harness'),
+      link('Inject Harness Dependencies', '/guides/tools/inject-harness-dependencies'),
+      link('Configure A Harness Per Run', '/guides/tools/configure-a-harness-per-run'),
+      link('Inherit A Tool Harness', '/guides/tools/inherit-a-tool-harness'),
+      link('Tool Harness Configuration Reference', '/reference/harness-configuration'),
       link('AI Function Parameter Contracts', '/guides/tools/ai-function-parameter-contracts'),
       link('Selective Registration And Config', '/guides/tools/selective-registration-and-config'),
       link('Source Generation, AOT, And Trimming', '/guides/tools/source-generation-aot-and-trimming'),

@@ -19,6 +19,37 @@ var agent = await new AgentBuilder()
 
 `WithPermissions()` gives mutation and command tools an approval path. `WithLocalSandbox()` publishes the atomic process-execution binding used by command execution.
 
+## Configure The Harness
+
+`CodingToolHarness` uses the common `IHarnessConfig<CodingHarnessConfig>` contract. Its portable settings cover command limits, glob traversal, environment selection, and language-server policy.
+
+```yaml
+toolHarnesses:
+  - name: CodingToolHarness
+    config:
+      commands:
+        maxActiveBackgroundCommands: 4
+        defaultTimeout: "00:02:00"
+      glob:
+        maxTraversalEntries: 20000
+      languageServer:
+        enabled: true
+```
+
+Command and glob settings are run-overridable. Environment and language-server settings are construction-only unless their contract marks a nested field otherwise.
+
+For one run:
+
+```yaml
+harnesses:
+  - name: CodingToolHarness
+    config:
+      commands:
+        maxActiveBackgroundCommands: 2
+```
+
+See [Configure A Tool Harness](../tools/configure-a-tool-harness.md) and [Configure A Harness Per Run](../tools/configure-a-harness-per-run.md).
+
 ## Provide A Workspace
 
 Pass an `AgentWorkspace` in run context:
@@ -30,7 +61,13 @@ Directory.CreateDirectory(workspacePath);
 var workspace = new AgentWorkspace(
     "default",
     workspacePath,
-    [new AgentWorkspaceRoot("default", workspacePath, "Sample workspace")]);
+    [
+        new AgentWorkspaceRoot(
+            "default",
+            workspacePath,
+            AgentWorkspaceAccess.ReadWrite,
+            "Sample workspace")
+    ]);
 
 var runConfig = new AgentRunConfig
 {
@@ -51,6 +88,8 @@ var result = await agent.RunAsync(
     "Find where provider keys are documented.",
     runConfig);
 ```
+
+Workspace roots remain part of `AgentRunConfig.Context`; they are not `CodingHarnessConfig` settings. Harness configuration controls behavior, while the workspace selects the filesystem scope for the run.
 
 ## Command Execution
 

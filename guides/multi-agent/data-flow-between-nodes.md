@@ -121,6 +121,7 @@ Node options can also affect each child agent run:
 - `WithInstructions(...)` appends node-specific system instructions.
 - `WithTimeout(...)` sets the child run timeout.
 - `WithContext(...)` provides runtime context instances for tool harnesses.
+- serializable `AgentRunConfig.Harnesses` entries patch that child agent's registered harness settings for the node run.
 - structured and union modes set structured-output options.
 - handoff mode injects generated handoff tools and requires a handoff tool call.
 

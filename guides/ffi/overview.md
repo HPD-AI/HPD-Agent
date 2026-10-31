@@ -66,6 +66,10 @@ Streaming callbacks receive event pointers that are valid only during the callba
 
 Agent creation receives JSON for `AgentConfig` plus native function metadata. Thread messages use `ChatMessage` JSON. Streaming events use the same HPD agent event serializer as .NET event streaming.
 
+Serialized `AgentRunConfig` documents may include a `harnesses` array of per-run setting overrides. The override is bound only after the FFI host has registered the matching harness library and its generated configuration codec. Executable dependency instances and runtime configuration handles are never portable.
+
+See [Configure A Harness Per Run](../tools/configure-a-harness-per-run.md) and [Tool Harness Configuration Reference](../../reference/harness-configuration.md).
+
 Native tool harness integration expects a separate native library named:
 
 ```text

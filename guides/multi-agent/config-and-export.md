@@ -46,6 +46,10 @@ Config can include:
 - routing edges and declarative conditions
 - workflow settings and iteration options
 
+An agent node's serializable `AgentRunConfig` may also contain `harnesses` overrides. Binding occurs when the node's agent is built and run, using that child agent's registered harness descriptors. Parent harness owner identities and runtime configuration bindings are never blindly forwarded.
+
+See [Configure A Harness Per Run](../tools/configure-a-harness-per-run.md).
+
 ## Load From Config
 
 ```csharp
@@ -83,6 +87,8 @@ These pieces need care:
 
 - prebuilt agent object state is not serialized
 - predicate edge delegates are non-serializable runtime code
+- executable harness dependencies and runtime configuration bindings are not serialized
+- a node's harness override requires a compatible harness registration in that node's built agent
 - structured and union type names are represented, but workflows that depend on full `Type` restoration should verify import behavior in their target runtime
 - handoff target descriptions are not fully represented by the current node config shape
 - error/fallback settings exist in config/export, but execution wiring should be validated before relying on them as runtime policy

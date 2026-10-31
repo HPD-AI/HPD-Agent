@@ -114,22 +114,38 @@ public sealed class DatabaseTools
 }
 ```
 
-The source generator can create factories for middleware with public parameterless constructors or a single public `*Config` or `*Options` constructor. Middleware that needs DI should be supplied through `WithToolHarness<T>(options => options.AddScopedMiddleware(...))`.
+The source generator can create execution-owned middleware from supported parameterless, configuration, or agent-resource plus configuration constructor shapes.
 
-Scoped pipelines are instantiated when the container expands and route iteration, tool-execution, function, parallel-batch, wrapping, turn-completion, and error hooks. Global agent middleware remains active; the scoped pipeline is an additional harness-local layer closest to functions owned by that harness. A subagent may receive only an allowlisted subset of the expanded harness, but those visible functions still use the same scoped middleware pipeline.
-
-If scoped middleware uses a config constructor and that config is supplied from JSON, register JSON metadata for the config type:
+For a declared middleware type that needs an explicit activation, use the exact-type override:
 
 ```csharp
-using System.Text.Json.Serialization;
+.WithToolHarness<DatabaseTools>(options =>
+    options.OverrideMiddleware<DbAuditMiddleware>(context =>
+        ToolHarnessMiddlewareActivation.ExecutionOwned(
+            new DbAuditMiddleware(
+                context.GetRequiredService<IAuditLog>()))))
+```
 
-[JsonSerializable(typeof(DbAuditMiddlewareConfig))]
-public partial class DatabaseToolsJsonContext : JsonSerializerContext
+`OverrideMiddleware<TMiddleware>` replaces a middleware type already declared by the harness. It does not append an undeclared middleware.
+
+Middleware-owned settings can also bind directly to a section of the harness configuration:
+
+```csharp
+public sealed class DatabaseRateLimitMiddleware(
+    [HarnessConfigurationSection(nameof(DatabaseToolsConfig.RateLimit))]
+    DatabaseRateLimitSettings settings)
+    : IToolHarnessMiddleware
 {
 }
 ```
 
-This is the same AOT contract used by tool harness constructor config. The generated factory discovers the middleware config type; the JSON context makes hydration reflection-free.
+The section must exist in the owning `IHarnessConfig<T>` contract and have the same type, or an explicitly declared projection. Consumers then set the harness section rather than the middleware type name.
+
+Scoped pipelines are instantiated when the container expands and route iteration, tool-execution, function, parallel-batch, wrapping, turn-completion, and error hooks. Global agent middleware remains active; the scoped pipeline is an additional harness-local layer closest to functions owned by that harness. A subagent may receive only an allowlisted subset of the expanded harness, but those visible functions still use the same scoped middleware pipeline.
+
+The source generator emits codecs for settings nested in the owning immutable harness contract. Do not create a second JSON context for the same typed section.
+
+Do not provide the same settings through both the typed harness section and legacy `MiddlewareConfigs`; that conflict fails before activation.
 
 ## Persistence Caveat
 

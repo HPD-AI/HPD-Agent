@@ -50,7 +50,7 @@ const sidebar = [
       link('Source Generation, AOT, And Trimming', '/guides/tools/source-generation-aot-and-trimming'),
       link('Collapsing And Containers', '/guides/tools/collapsing-and-containers'),
       link('Externally Executed Client Tools', '/guides/tools/externally-executed-client-tools'),
-      link('MCP Tools', '/guides/tools/mcp-tools'),
+      link('MCP Tools', '/guides/tools/mcp-servers'),
       link('OpenAPI Tools', '/guides/tools/openapi-tools'),
       link('Multi-Agent Capabilities', '/guides/tools/multi-agent-capabilities')
     ]
@@ -185,7 +185,8 @@ const sidebar = [
       link('FileSystem Harness', '/guides/harnesses/filesystem'),
       link('Web Search Harness', '/guides/harnesses/web-search'),
       link('Sandboxing Overview', '/guides/sandboxing/overview'),
-      link('Local Process Isolation', '/guides/sandboxing/local-process-isolation'),
+      link('Host Process Isolation', '/guides/sandboxing/host-process-isolation'),
+      link('Bundled Workspace Search', '/guides/sandboxing/ripgrep'),
       link('FFI Overview', '/guides/ffi/overview'),
       link('Content Upload And Resolution', '/guides/content/content-upload-and-resolution'),
       link('Document Handling And Text Extraction', '/guides/content/document-handling-and-text-extraction')

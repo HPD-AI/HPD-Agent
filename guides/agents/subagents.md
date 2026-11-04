@@ -36,7 +36,10 @@ var agent = await new AgentBuilder()
     .BuildAsync();
 ```
 
-The first argument is the durable child `AgentId`; the second is the model-facing tool name. `SubAgent.FromConfig(...)` defaults to `SubAgentContextPolicy.Fork`. Each call uses the parent session, forks from the current parent thread, and writes the child conversation to an agent-owned hidden child thread.
+The first argument is the durable child `AgentId`; the second is the model-facing tool name.
+`SubAgent.FromConfig(...)` defaults to `SubAgentContextPolicy.Handoff`. Each call
+creates a hidden child thread and passes the parent conversation as handoff
+context unless the author selects a different context policy.
 
 `AgentBuilder` provides an in-memory session store by default. Use `WithSessionStore(...)` when subagent threads should survive process restarts or be visible to another host.
 
@@ -76,57 +79,35 @@ return SubAgent.FromConfig(
 
 Availability is enforced both in the model-facing tool projection and again during invocation. A stale or manually constructed call therefore cannot bypass the policy. The per-capability policy may be stricter than `MaxSubAgentDepth`, but never less restrictive.
 
-## Inherit the parent run configuration
+## Configure Direct Child Runs
 
-By default, a subagent inherits the parent run's execution environment. HPD copies
-selected values into an independent child `AgentRunConfig`; the parent and child
-never share the same mutable root object. Chat, realtime, speech-to-text, and
-text-to-speech inherit the parent's resolved client by default, while other families
-have explicit `UseOwn` or fallback policies. Permission, execution, compaction, and
-runtime context groups are copied. The child's instructions, tools, delegated input,
-output contract, and evaluation behavior remain its own.
-
-No additional configuration is required for the default:
+`SubAgentRunConfig` is the per-input configuration for every direct child
+invoked while processing that parent input:
 
 ```csharp
-return SubAgent.FromConfig(
-    "research/reviewer",
-    "reviewer",
-    "Reviews the current change.",
-    reviewerConfig);
+var childRun = new SubAgentRunConfig
+{
+    SystemInstructions = new SystemInstructionsRunConfig
+    {
+        Append = "Report concrete review findings first."
+    },
+    Security = new AgentSecurityRunConfig
+    {
+        Approval = AgentApprovalPolicy.ReviewProtectedActions
+    }
+};
+
+await parentAgent.RunAsync(
+    "Review the current change.",
+    subAgentRunConfig: childRun);
 ```
 
-Choose additional groups, remove a default group, or apply child-only overrides with `WithRunConfig(...)`:
+The child still owns its complete `AgentConfig`. `SubAgentRunConfig` provides
+per-invocation values, and parent and child security authority is intersected
+so a child cannot silently broaden the controller's permissions.
 
-```csharp
-return SubAgent.FromConfig(
-    "research/reviewer",
-    "reviewer",
-    "Reviews the current change.",
-    reviewerConfig)
-    .WithRunConfig(
-        SubAgentRunConfig.Inherit()
-            .Include(SubAgentRunConfigFields.Instructions)
-            .Exclude(SubAgentRunConfigFields.Compaction)
-            .Override(config =>
-            {
-                config.Clients.Chat ??= new ChatClientConfig();
-                config.Clients.Chat.Temperature = 0.1;
-            }));
-```
-
-`Override(...)` runs after inheritance, so explicit child values win. Calls can be chained and are applied in order. Use `InheritOnly(...)` when the child should receive an exact set of groups, or `Isolated()` when it should receive none of the parent's run configuration:
-
-```csharp
-return SubAgent.FromConfig(
-    "research/reviewer",
-    "reviewer",
-    "Reviews the current change.",
-    reviewerConfig)
-    .WithRunConfig(SubAgentRunConfig.Isolated());
-```
-
-The child still owns its complete `AgentConfig`. Run-configuration inheritance only controls the per-invocation values layered over that child configuration.
+There is no implicit inheritance of the parent's full `AgentRunConfig`. Pass
+only the portable child behavior the invocation should receive.
 
 `AgentRunConfig.Harnesses` is not inherited implicitly. Configure direct child harness settings explicitly through `SubAgentRunConfig.Harnesses`:
 
@@ -193,10 +174,10 @@ public SubAgent Reviewer() =>
         "reviewer",
         "Reviews a draft and reports actionable issues.",
         reviewerConfig,
-        contextPolicy: SubAgentContextPolicy.Fork,
+        contextPolicy: SubAgentContextPolicy.Handoff,
         metadata: null,
         invocationModePolicy: AgentInvocationModePolicy.ModelChoice,
-        backgroundNotification: null);
+        operationNotification: null);
 ```
 
 Policies:
@@ -248,7 +229,7 @@ public SubAgent Researcher() =>
             Name = "Researcher",
             SystemInstructions = "Research the request and return cited notes.",
         },
-        contextPolicy: SubAgentContextPolicy.Fork,
+        contextPolicy: SubAgentContextPolicy.Handoff,
         toolharnessTypes: [typeof(SearchTools), typeof(CitationTools)]);
 ```
 
@@ -260,12 +241,14 @@ The context policy directly decides how the child conversation begins.
 
 | Policy | Session | History | Use When |
 | --- | --- | --- | --- |
-| `SubAgentContextPolicy.Fork` | Parent session | Inherits the parent thread | Default. The child needs the current conversation. |
+| `SubAgentContextPolicy.Handoff` | Parent session | Parent conversation rendered as text | Default. The child needs the current conversation. |
 | `SubAgentContextPolicy.Fresh` | Parent session | Starts empty | The delegated input is self-contained. |
 | `SubAgentContextPolicy.Isolated` | New session | Starts empty | The child should be isolated from the parent session. |
-| `SubAgentContextPolicy.ModelChoice` | Parent session | Model chooses `fork` or `fresh` | Different calls need different amounts of context. |
+| `SubAgentContextPolicy.ModelChoice` | Parent session unless isolated | Model chooses `handoff`, `fresh`, or `isolated` | Different calls need different amounts of context. |
 
-When `ModelChoice` is enabled, the tool schema exposes `context: "fork" | "fresh"`. Omitting it defaults to `fresh`. Fixed policies do not expose the argument.
+When `ModelChoice` is enabled, the tool schema exposes
+`context: "handoff" | "fresh" | "isolated"`. Omitting it defaults to `fresh`.
+Fixed policies do not expose the argument.
 
 ## Continue A Child Conversation
 
@@ -301,7 +284,7 @@ SubAgent.FromConfig(
     "reviewer",
     "Reviews the draft.",
     reviewerConfig,
-    contextPolicy: SubAgentContextPolicy.Fork,
+    contextPolicy: SubAgentContextPolicy.Handoff,
     metadata: new Dictionary<string, object>
     {
         ["team"] = "writing",
@@ -328,36 +311,30 @@ The parent runtime state includes answerable requests originating from descendan
 
 For rendering patterns, see [Event Streams And Hierarchies](../../concepts/event-streams-and-hierarchies.md), [Workflow Events](../multi-agent/workflow-events.md), and [Render An Event Stream](../sessions-and-streaming/render-an-event-stream.md).
 
-## Thread Compaction
+## Handoff Compaction
 
-Only forked-thread subagents can set thread compaction at fork time. This lets the subagent control how much parent thread history is copied into the child thread when the child thread is created:
+For `Handoff` subagents, configure the optional textual handoff compaction on
+the direct child run:
 
 ```csharp
-SubAgent.FromConfig(
-    "specialist.reviewer",
-    "reviewer",
-    "Reviews the current work.",
-    reviewerConfig,
-    contextPolicy: SubAgentContextPolicy.Fork,
-    forkCompaction: new ApplyThreadForkCompaction(
-        new CompactionSpecification
-        {
-            Point = new CompactAtCurrentHead(),
-            Preservation = new PreservePreviousTurns(3),
-            Strategy = new SummarizingCompaction(),
-            CommitMode = CompactionCommitMode.Hard
-        }))
+var childRun = new SubAgentRunConfig
+{
+    HandoffCompaction = new CompactionSpecification
+    {
+        Point = new CompactAtCurrentHead(),
+        Preservation = new PreservePreviousTurns(3),
+        Strategy = new SummarizingCompaction(),
+        CommitMode = CompactionCommitMode.Hard
+    }
+};
 ```
 
-Use:
+The compaction runs before the child receives the parent text handoff. Set
+`SubAgentRunDefaults.HandoffCompaction` when descendants should receive the
+same policy. The child run configuration and execution policy are captured
+before invocation, so later caller mutation does not change an admitted child.
 
-- `InheritThreadForkCompaction` to use `CompactionConfig.ForkCompaction`
-- `ApplyThreadForkCompaction` to supply the exact child-thread compaction specification
-- `DisableThreadForkCompaction` to keep the child thread uncompacted
-
-The compaction runs against the fork target before the subagent starts. In practice, that means a `SubAgentContextPolicy.Fork` subagent can inherit the parent's recent context without copying every parent message into the child thread.
-
-The supplied `CompactionSpecification` defines the point, preservation, strategy, and commit mode. The shared compaction engine applies it through the fork middleware hook. See [Compaction](../sessions-and-streaming/compaction.md).
+See [Compaction](../sessions-and-streaming/compaction.md).
 
 ## Permissions
 

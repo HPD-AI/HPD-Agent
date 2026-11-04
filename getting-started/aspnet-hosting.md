@@ -9,8 +9,8 @@ Use hosting when a web app, TypeScript client, TUI, or another process needs to 
 ```bash
 dotnet new web -n HpdAgentHost
 cd HpdAgentHost
-dotnet add package HPD-Agent.AspNetCore --version 0.5.5
-dotnet add package HPD-Agent.Providers.OpenAI --version 0.5.5
+dotnet add package HPD-Agent.AspNetCore --version 0.9.2
+dotnet add package HPD-Agent.Providers.OpenAI --version 0.9.2
 ```
 
 Set an OpenAI API key:

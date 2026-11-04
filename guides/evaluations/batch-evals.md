@@ -9,7 +9,7 @@ The examples below are grounded in the current `HPD-Agent.Evaluations` source: t
 For an app or test project that consumes packages:
 
 ```bash
-dotnet add package HPD-Agent.Evaluations --version 0.5.5
+dotnet add package HPD-Agent.Evaluations --version 0.9.2
 ```
 
 For source-tree development, reference the projects directly instead:

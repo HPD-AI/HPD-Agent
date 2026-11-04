@@ -6,18 +6,32 @@ The coding harness gives an agent workspace-aware coding tools. Use it for agent
 
 ```csharp
 using HPD.Agent;
-using HPD.Agent.Sandbox.Local;
+using HPD.Agent.Sandbox.HostProcess;
 using HPD.Agent.ToolHarness.Coding;
+using HPD.Environment.Contracts;
 
 var agent = await new AgentBuilder()
     .WithInstructions("Inspect before editing. Stay inside the configured workspace.")
     .WithPermissions()
-    .WithLocalSandbox()
+    .WithHostProcessSandbox(new HostProcessSandboxOptions
+    {
+        Workspaces =
+        [
+            new HostProcessWorkspaceOptions
+            {
+                RootId = "default",
+                Path = Path.GetFullPath("sample-workspace"),
+                Access = AccessMode.ReadWrite,
+            },
+        ],
+    })
     .WithToolHarness<CodingToolHarness>()
     .BuildAsync();
 ```
 
-`WithPermissions()` gives mutation and command tools an approval path. `WithLocalSandbox()` publishes the atomic process-execution binding used by command execution.
+`WithPermissions()` gives mutation and command tools an approval path.
+`WithHostProcessSandbox()` publishes the process and workspace bindings used by
+the Environment-backed coding tools.
 
 ## Configure The Harness
 
@@ -91,6 +105,38 @@ var result = await agent.RunAsync(
 
 Workspace roots remain part of `AgentRunConfig.Context`; they are not `CodingHarnessConfig` settings. Harness configuration controls behavior, while the workspace selects the filesystem scope for the run.
 
+The sandbox provider must expose the same root to process and file operations.
+For a workspace selected dynamically per run, map the run's `AgentWorkspace`
+through `WorkspaceOptionsFactory`:
+
+```csharp
+.WithHostProcessSandbox(new HostProcessSandboxOptions
+{
+    WorkspaceOptionsFactory = runConfig =>
+    {
+        if (runConfig is null)
+        {
+            return [];
+        }
+
+        AgentWorkspace workspace = AgentWorkspace.From(runConfig);
+        return workspace.Roots.Select(root =>
+            new HostProcessWorkspaceOptions
+            {
+                RootId = root.Id,
+                Path = root.Path,
+                DisplayName = root.Label,
+                Access = root.Access == AgentWorkspaceAccess.ReadWrite
+                    ? AccessMode.ReadWrite
+                    : AccessMode.ReadOnly,
+            }).ToArray();
+    },
+})
+```
+
+The resulting Environment session publishes one `RuntimeWorkspaceBinding`.
+Coding file tools never resolve the host path themselves.
+
 ## Command Execution
 
 Command execution depends on `RuntimeProcessExecutionBinding`. The binding pairs all process authority
@@ -101,9 +147,10 @@ that must come from the same selected runtime:
 - optional `IEnvironmentRuntime`;
 - the authorized `TargetHandle<ExecutionUnit>`.
 
-`WithLocalSandbox()` publishes a complete local binding. The Coding harness does not look up an
-`IProcessProvider` separately and does not manufacture an execution target. If the selected runtime
-does not publish the complete binding, command execution fails closed as a setup error.
+`WithHostProcessSandbox()` publishes a complete Host Process binding. The
+Coding harness does not look up an `IProcessProvider` separately and does not
+manufacture an execution target. If the selected runtime does not publish the
+complete binding, command execution fails closed as a setup error.
 
 Sandbox enforcement is platform-dependent. Use permissions and narrow workspace roots even when sandboxing is enabled.
 
@@ -111,6 +158,20 @@ Command approval and process isolation are independent.
 `ExecuteCommandPermissionMiddleware` honors `AgentRunConfig.Security.Approval`.
 Changing the approval policy does not change `Security.Sandbox`; configure sandbox
 isolation and capabilities separately.
+
+## Search And Ripgrep
+
+`Grep` searches through `RuntimeWorkspaceBinding.Files.SearchTextAsync`. The
+Environment backend owns the search process:
+
+- Host Process executes the target-specific bundled `rg` through its process
+  lane.
+- Host Containers materializes the Linux bundle inside the retained container.
+- Apple Virtualization materializes the musl bundle inside the guest.
+
+If the execution target is unsupported or bundle provisioning fails,
+Environment uses its managed search fallback. Users do not need to install
+`rg`, and the coding harness does not discover or launch `rg` directly.
 
 ### Background Commands
 

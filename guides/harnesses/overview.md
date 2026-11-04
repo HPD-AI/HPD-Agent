@@ -39,14 +39,14 @@ Filesystem and coding tools can mutate files or run processes. Start with:
 
 - an explicit workspace root
 - `WithPermissions()`
-- `WithLocalSandbox()` when command execution is available
+- `WithHostProcessSandbox()` when command execution is available
 - shell disabled unless the workflow truly needs it
 
 ```csharp
 var agent = await new AgentBuilder()
     .WithInstructions("Stay inside the configured workspace.")
     .WithPermissions()
-    .WithLocalSandbox()
+    .WithHostProcessSandbox()
     .WithToolHarness<CodingToolHarness>()
     .BuildAsync();
 ```

@@ -69,7 +69,7 @@ The start/stop middleware hooks belong to this started-runtime shape:
 | Hosting | HTTP commands, authoritative state, and resumable SSE for external clients | [ASP.NET Core Hosting](../guides/hosting/aspnet-core.md) |
 | Observability | Logging, OpenTelemetry, and usage tracking at agent and client layers | [Logging And Telemetry](../guides/observability/logging-and-telemetry.md) |
 | Evaluations | Batch, live, judge, safety, red-team, and report workflows | [Evaluations Overview](../guides/evaluations/overview.md) |
-| Sandboxing | Local process isolation and execution boundaries for command-capable tools | [Sandboxing Overview](../guides/sandboxing/overview.md) |
+| Sandboxing | Environment-backed process placement, workspace binding, and isolation for command-capable tools | [Sandboxing Overview](../guides/sandboxing/overview.md) |
 
 ## Run Inputs And Outputs
 

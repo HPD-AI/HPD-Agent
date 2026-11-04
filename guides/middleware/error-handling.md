@@ -36,7 +36,15 @@ using HPD.Agent.Providers.OpenAI;
 
 var errorHandling = new ErrorHandlingConfig
 {
-    MaxRetries = 2,
+    ModelRetries = new()
+    {
+        MaxRetries = 2
+    },
+    FunctionRetries = new()
+    {
+        MaxRetries = 2,
+        RetryDelay = TimeSpan.FromSeconds(1)
+    },
     SingleFunctionTimeout = TimeSpan.FromSeconds(10),
     IncludeDetailedErrorsInChat = false
 };
@@ -49,17 +57,28 @@ var agent = await new AgentBuilder()
     .BuildAsync();
 ```
 
-If these are enabled through builder configuration, keep the same mental model: retry should wrap timeout, and formatting should be innermost for exhausted function errors and sanitized model errors. Builder auto-registration follows this order when `ErrorHandling.MaxRetries > 0`, `ErrorHandling.SingleFunctionTimeout` is set, and error formatting is added as the final error boundary.
+Functions opt into automatic retry explicitly:
+
+```csharp
+[AIFunction(Replay = ReplayPolicy.Idempotent)]
+public string LookUpOrder(string id) => orders.Find(id);
+```
+
+Omitting `Replay` also means `Never`; unsafe functions need no annotation.
+Write `Never` explicitly only when overriding an inherited or function-level
+safe policy.
+
+Retry registration is explicit. A configured budget does not install retry middleware, and a positive budget does not make a function replay-safe. A function must resolve to `ReplayPolicy.Idempotent` through its function or action declaration, and application exclusions always win. When these wrappers are enabled, retry should wrap timeout, and formatting should be innermost for exhausted function errors and sanitized model errors.
 
 The builder extension helpers are useful for explicit stacks:
 
 ```csharp
 var agent = await new AgentBuilder()
     .WithOpenAI(model: "gpt-5-mini")
-    .WithFunctionRetry(config =>
+    .WithRetry(config =>
     {
-        config.MaxRetries = 2;
-        config.RetryDelay = TimeSpan.FromSeconds(1);
+        config.FunctionRetries.MaxRetries = 2;
+        config.FunctionRetries.RetryDelay = TimeSpan.FromSeconds(1);
         config.IncludeDetailedErrorsInChat = false;
     })
     .WithFunctionTimeout(TimeSpan.FromSeconds(10))
@@ -67,7 +86,7 @@ var agent = await new AgentBuilder()
     .BuildAsync();
 ```
 
-Manual extension registration uses the generic provider error handler. The build-time auto-registration path can pass the provider-specific error handler into retry and formatting.
+Manual extension registration uses the generic provider error handler. Hosts that need provider-specific classification can construct `RetryMiddleware` with their provider handler while preserving the same wrapper order.
 
 ## Retry Events
 
@@ -97,7 +116,27 @@ using var functionRetries = agent.Subscribe<FunctionRetryEvent>(evt =>
 });
 ```
 
-Retry uses `CustomRetryStrategy` first when configured. Otherwise it asks the provider error handler for classification and retry delay, including provider retry-after guidance when available, then falls back to exponential backoff with jitter. It does not retry every exception forever: non-retryable errors and exhausted retry limits propagate.
+Function retries require effective `ReplayPolicy.Idempotent` metadata, no matching exclusion, and an available function budget. Model retries use `ModelRetries` independently. Each scope can configure a custom strategy; otherwise retry asks the provider error handler for classification and delay, including retry-after guidance when available, then falls back to exponential backoff with jitter. Non-retryable errors, exclusions, and exhausted budgets propagate.
+
+Exclusions use exact ordinal names and always win over metadata:
+
+```csharp
+config.ErrorHandling.FunctionRetries.Exclude = new()
+{
+    Harnesses = ["ComputerHarness"],
+    Functions = ["SendPayment"],
+    Actions =
+    [
+        new ActionRetryExclusion
+        {
+            Function = "Files",
+            Action = "delete"
+        }
+    ]
+};
+```
+
+An exclusion does not grant permission, change timeout behavior, or affect model retries.
 
 ## Function Timeout
 
@@ -160,10 +199,10 @@ Use these symptoms to pick the fix:
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | Users see partial text followed by unrelated retry text | UI ignored `ModelCallRetryEvent` | Clear or mark the partial response when the event arrives. |
-| Function timeout retries take longer than expected | Timeout is inside retry, so each attempt gets a full timeout | Lower `SingleFunctionTimeout`, lower `MaxRetries`, or add an application-level deadline. |
+| Function timeout retries take longer than expected | Timeout is inside retry, so each attempt gets a full timeout or the tool is not eligible for retry | Lower `SingleFunctionTimeout`, lower `FunctionRetries.MaxRetries`, or add an application-level deadline. |
 | Sensitive exception text appears in chat | Detailed errors are enabled or the tool returns sensitive strings itself | Set `IncludeDetailedErrorsInChat = false` and sanitize tool return values. |
 | `OnErrorAsync` did not run for provider failure | Provider/model error happened outside function execution core | Use model wrappers, retry events, and `RunAsync(...)` exception handling. |
-| Retry policy ignores provider-specific behavior | Middleware was manually added without provider handler | Prefer build-time auto-registration when provider-specific parsing matters. |
+| Retry policy ignores provider-specific behavior | Middleware was manually added without a provider handler | Register through builder composition that supplies the provider error handler when provider-specific parsing matters. |
 
 ## What Not To Overclaim
 

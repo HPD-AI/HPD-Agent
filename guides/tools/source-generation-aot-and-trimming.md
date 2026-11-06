@@ -13,7 +13,10 @@ The generator selects public concrete harness owners containing capabilities suc
 - `[MCPServer]`
 - `[OpenApi]`
 
-`[Collapse]` controls visibility and contributes instructions and middleware. It is not required for discovery.
+`[Collapse]` controls visibility and contributes instructions and
+expansion-gated middleware. `[ToolHarnessMiddleware]` contributes eager
+accepted-input middleware without requiring a collapse container. Neither
+attribute is required for capability discovery.
 
 ## Generated Artifacts
 
@@ -29,6 +32,7 @@ Each harness library receives:
 - Immutable settings schemas and codecs.
 - Generated presence-aware run-override types.
 - Middleware configuration section projections.
+- Separate ordered expansion-gated and eager middleware descriptors.
 - MCP and OpenAPI source collectors.
 - Collapse metadata and inherited composition.
 - A module initializer that registers the generated catalog.
@@ -164,6 +168,16 @@ The AOT acceptance path must cover:
 
 The framework smoke tests publish and execute these paths; publishing an unused assembly is insufficient.
 
+The AOT fixture covers both policies:
+
+- `Collapse.Middlewares` activates when its harness expands;
+- `[ToolHarnessMiddleware]` activates for the accepted input without requiring
+  expansion.
+
+Both use generated construction, ownership, configuration, and Native AOT
+activation descriptors. Reflection registration rejects either middleware
+declaration.
+
 ## Diagnostics
 
 Important source-generation diagnostics:
@@ -174,6 +188,8 @@ Important source-generation diagnostics:
 - `HPD020`: unsupported runtime parameter; use `FunctionExecutionContext` when appropriate.
 - `HPDAG0101`–`HPDAG0103`: conflicting collapse declarations.
 - `HPDAG0201`–`HPDAG0204`: harness/middleware declaration problems.
+- `HPDAG0213`: empty eager middleware declaration.
+- `HPDAG0214`: same middleware type declared with both activation policies.
 - `HPDAG0301`–`HPDAG0304`: MCP source problems.
 - `HPDAG0401`–`HPDAG0403`: OpenAPI source problems.
 

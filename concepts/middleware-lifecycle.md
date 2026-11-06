@@ -31,6 +31,25 @@ Wrapper hooks are different from `Before*` and `After*` hooks. They receive a ha
 
 Runtime start/stop hooks run when an agent is used as a started runtime, such as hosted HTTP/SSE, bot, TUI, client-tool, or other long-lived input-loop scenarios. Direct one-shot `RunAsync(...)` calls still use the message-turn, iteration, function, thread, and error hooks. See [Agent Runtime And Capabilities](agent-runtime-and-capabilities.md) for the distinction.
 
+## ToolHarness Middleware
+
+`IToolHarnessMiddleware` inherits all `IAgentMiddleware` hooks and adds hooks
+for the harness-local pipeline:
+
+| Hook | When it runs |
+| --- | --- |
+| `OnHarnessActivatedAsync` | After all middleware instances for the harness are constructed |
+| `OnHarnessExpandedAsync` | Once after a collapsed harness visibility transition commits |
+| `OnHarnessDeactivatingAsync` | Before harness middleware disposal, in reverse order |
+
+Harness middleware has two activation policies. `Collapse.Middlewares` is
+expansion-gated. `[ToolHarnessMiddleware]` is eager and activates for each
+accepted input even while the harness remains collapsed. Collapsing continues
+to control visibility only.
+
+See [ToolHarness Middleware](../guides/middleware/tool-harness-middleware.md)
+for declaration and lifecycle examples.
+
 ## Hook Reference
 
 `IAgentMiddleware` has hooks at each layer of the runtime. Override only the hooks your middleware needs.

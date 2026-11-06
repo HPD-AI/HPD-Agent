@@ -88,6 +88,7 @@ const sidebar = [
     items: [
       link('Middleware Overview', '/guides/middleware/overview'),
       link('Custom Middleware', '/guides/middleware/custom-middleware'),
+      link('ToolHarness Middleware', '/guides/middleware/tool-harness-middleware'),
       link('Permissions Middleware', '/guides/middleware/permissions'),
       link('State Persistence', '/guides/middleware/state-persistence'),
       link('Error Handling', '/guides/middleware/error-handling')

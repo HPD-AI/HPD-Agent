@@ -13,7 +13,8 @@ The main DX question is not only "how do I write middleware?" It is "where shoul
 | Every run of this built agent should get the behavior | `AgentBuilder.WithMiddleware(...)` |
 | Only one call to `RunAsync` should get the behavior | `AgentRunConfig.RuntimeMiddleware` |
 | The behavior should come from JSON or hosted agent config | `middlewares` in `AgentConfig` |
-| The behavior only matters while a collapsed tool harness is expanded | `[Collapse(Middlewares = ...)]` plus a typed settings section or exact-type `OverrideMiddleware<TMiddleware>(...)` |
+| Every selected ToolHarness input should get the behavior, even before expansion | `[ToolHarnessMiddleware]` |
+| The behavior only matters while a collapsed ToolHarness is expanded | `[Collapse(Middlewares = ...)]` |
 | The behavior is a built-in product feature | A builder helper such as `WithPermissions(...)`, `WithCircuitBreaker(...)`, or error-handling helpers |
 
 Start with the smallest attachment point that matches the behavior. If the middleware is just temporary telemetry for one request, do not make it part of the agent definition. If it protects the whole agent, register it on the builder or in config. If it protects one tool harness, scope it to that harness.
@@ -112,9 +113,21 @@ Middleware listed in config is resolved in the order it appears in the `middlewa
 
 ## Tool-Harness Scoped Middleware
 
-Use tool-harness scoped middleware when the behavior should exist only while a collapsed harness is active. This is useful for harness-specific audit logs, provider limits, credentials checks, or policies that would be too broad as whole-agent middleware.
+ToolHarness middleware runs in an execution-local pipeline owned by one
+selected harness. It is narrower than global agent middleware and can use the
+harness's DI, configuration, and Agent resources.
 
-Declare simple scoped middleware on the harness:
+Choose its activation policy deliberately:
+
+| Policy | Declaration | Activation |
+| --- | --- | --- |
+| Expansion-gated | `[Collapse(Middlewares = ...)]` | When the container expands |
+| Eager | `[ToolHarnessMiddleware]` | At accepted-input admission, regardless of visibility |
+
+Eager middleware is appropriate for authorization, audit, policy, context
+setup, and telemetry that must run before tools become visible.
+
+Declare expansion-gated middleware:
 
 ```csharp
 [Collapse(Middlewares = [typeof(DatabaseAuditMiddleware)])]
@@ -123,6 +136,31 @@ public sealed class DatabaseToolHarness
     // Tool functions live here.
 }
 ```
+
+Declare eager middleware:
+
+```csharp
+[ToolHarnessMiddleware(typeof(DatabaseAuthorizationMiddleware))]
+public sealed class DatabaseToolHarness
+{
+    // Tool functions live here.
+}
+```
+
+Eager middleware can preserve normal collapsing by using a description-only
+`[Collapse]`:
+
+```csharp
+[Collapse("Database operations")]
+[ToolHarnessMiddleware(typeof(DatabaseAuthorizationMiddleware))]
+public sealed class DatabaseToolHarness;
+```
+
+Both policies may coexist with different middleware types. Eager middleware is
+active from accepted-input admission; expansion-gated middleware is appended
+when the harness expands. A single middleware type cannot use both policies.
+See [ToolHarness Middleware](tool-harness-middleware.md) for hooks and
+lifecycle.
 
 Use an exact-type activation override when declared middleware needs services:
 

@@ -288,6 +288,34 @@ State updates are immediate: later middleware in the same phase can see them. Do
 
 ## Harness-Owned Middleware
 
+Middleware can belong to a ToolHarness and use its execution-scoped DI and
+configuration while remaining independent of the global agent middleware list.
+Choose the activation policy based on when the middleware must exist:
+
+```csharp
+// Expansion-gated.
+[Collapse("Database operations", Middlewares = [typeof(DbAuditMiddleware)])]
+public sealed class DatabaseTools;
+
+// Eager for each accepted input.
+[ToolHarnessMiddleware(typeof(DatabaseAuthorizationMiddleware))]
+public sealed class DatabaseTools;
+
+// Eager middleware with normal collapsing.
+[Collapse("Database operations")]
+[ToolHarnessMiddleware(typeof(DatabaseAuthorizationMiddleware))]
+public sealed class DatabaseTools;
+```
+
+Use `Collapse.Middlewares` for behavior that belongs to the expanded capability.
+Use `[ToolHarnessMiddleware]` for authorization, policy, audit, context setup,
+or telemetry that must run before the harness expands. Both lists may coexist
+on one harness when they contain different types; the deferred group joins the
+already-active eager group at expansion.
+
+See [ToolHarness Middleware](tool-harness-middleware.md) for lifecycle hooks,
+ordering, configuration, and ownership.
+
 Middleware declared by a tool harness can consume an immutable section of that harness configuration:
 
 ```csharp

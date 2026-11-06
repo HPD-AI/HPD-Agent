@@ -83,7 +83,7 @@ collapsing settings in its own `AgentConfig`, so a child can independently keep 
 default, customize it, or opt out.
 
 `AgentRunConfig` does not configure collapsing. It controls one invocation, while
-collapsing defines the agent's tool topology and middleware. Runtime tools inherited or
+collapsing defines the agent's tool visibility and expansion-gated middleware. Runtime tools inherited or
 added for a run still pass through the agent's configured visibility and collapsing
 rules.
 
@@ -93,7 +93,17 @@ Collapsing is runtime visibility behavior, not a one-time source-generation rewr
 
 `ContainerMiddleware` filters `ChatOptions.Tools` before each model iteration. It starts from the full initial tool list, then asks `ToolVisibilityManager` which tools should be visible for the current expanded-container state.
 
-When a container is called, `ContainerMiddleware` records the expanded container, captures its active instructions, and creates any scoped middleware pipeline for that harness. On the next model iteration, `ToolVisibilityManager` exposes the permitted member functions owned by that expanded container. Visibility is projected from the complete function registry, so an availability filter does not permanently discard functions while the harness is collapsed. The exposed members are the original `AIFunction` instances, not bare replacements; they retain their metadata, execution delegates, and normal global middleware path.
+When a container is called, `ContainerMiddleware` prepares the visibility
+transition and captures active instructions. The neutral
+`ToolHarnessExecutionMiddleware` activates any expansion-gated harness pipeline
+before the container state commits. After the commit, the execution router
+publishes the expansion hook. On the next model iteration,
+`ToolVisibilityManager` exposes the permitted member functions owned by the
+expanded container. Visibility is projected from the complete function
+registry, so an availability filter does not permanently discard functions
+while the harness is collapsed. The exposed members are the original
+`AIFunction` instances, not bare replacements; they retain their metadata,
+execution delegates, and normal global middleware path.
 
 ## Recovery Behavior
 
@@ -101,7 +111,7 @@ Hidden function recovery is enabled by default. If a model calls a hidden child 
 
 Recovery is a safety net. Prompts and descriptions should still make the container path clear.
 
-## Scoped Middleware
+## Harness Middleware
 
 Collapsed harnesses can activate scoped middleware when the container expands:
 
@@ -115,6 +125,25 @@ public sealed class DatabaseTools
 ```
 
 The source generator can create execution-owned middleware from supported parameterless, configuration, or agent-resource plus configuration constructor shapes.
+
+Middleware that must run before expansion uses the standalone declaration:
+
+```csharp
+[Collapse("Database operations")]
+[ToolHarnessMiddleware(typeof(DbAuthorizationMiddleware))]
+public sealed class DatabaseTools
+{
+    [AIFunction]
+    public string Query(string sql) => "result";
+}
+```
+
+This middleware is eager for each accepted input even while the functions are
+hidden behind the container. A harness can also declare both eager and
+expansion-gated middleware with distinct types. The eager group is active from
+input admission; the expansion group is appended to the same pipeline when the
+container expands. See
+[ToolHarness Middleware](../middleware/tool-harness-middleware.md).
 
 For a declared middleware type that needs an explicit activation, use the exact-type override:
 
@@ -141,7 +170,14 @@ public sealed class DatabaseRateLimitMiddleware(
 
 The section must exist in the owning `IHarnessConfig<T>` contract and have the same type, or an explicitly declared projection. Consumers then set the harness section rather than the middleware type name.
 
-Scoped pipelines are instantiated when the container expands and route iteration, tool-execution, function, parallel-batch, wrapping, turn-completion, and error hooks. Global agent middleware remains active; the scoped pipeline is an additional harness-local layer closest to functions owned by that harness. A subagent may receive only an allowlisted subset of the expanded harness, but those visible functions still use the same scoped middleware pipeline.
+Expansion-gated pipelines are instantiated when the container expands. Eager
+harness pipelines are instantiated at accepted-input admission. Both route
+iteration, tool-execution, function, parallel-batch, wrapping,
+turn-completion, and error hooks through the harness-local pipeline. Global
+agent middleware remains active; the harness pipeline is an additional layer
+closest to functions owned by that harness. A subagent may receive only an
+allowlisted subset of the expanded harness, but those visible functions still
+use the same harness middleware pipeline.
 
 The source generator emits codecs for settings nested in the owning immutable harness contract. Do not create a second JSON context for the same typed section.
 

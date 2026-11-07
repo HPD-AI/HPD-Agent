@@ -71,20 +71,31 @@ Use transient state for data that should reset for each run: retry windows, batc
 
 Persistent state is for data the user or conversation should remember:
 
+Permission approvals use the framework-owned session state:
+
 ```csharp
 using HPD.Agent;
 
-[MiddlewareState(Persistent = true, Scope = StateScope.Session)]
-public sealed record PermissionMemoryState
+[MiddlewareState(Persistent = true, Scope = StateScope.Session, Version = 1)]
+public sealed record PermissionDecisionStateData
 {
-    public string[] AlwaysAllowedFunctions { get; init; } = [];
-    public string[] AlwaysDeniedFunctions { get; init; } = [];
+    public ImmutableArray<PermissionDecisionRecord> Decisions { get; init; } = [];
 }
 ```
 
+`PermissionDecisionStateData` stores reusable approvals only. Denials and
+feedback are not persisted, and a denial never revokes an earlier approval. A
+record identifies the agent, authority, action, and policy descriptor, or a
+validated rule that the selected policy must revalidate before reuse.
+
+After an approval candidate is created, the permission middleware marks state
+as pending. The runtime checkpoints that state through the existing session save
+path before the function body executes. A failed checkpoint prevents body
+execution.
+
 Built-in examples follow the same split:
 
-- `PermissionPersistentStateData` is persistent and session-scoped, so remembered permission choices apply across threads in the same session.
+- `PermissionDecisionStateData` is persistent and session-scoped, so reusable approvals apply across threads in the same session.
 - Compaction does not use persistent middleware state; its trigger reads the actual model input and its successful semantic change is a canonical checkpoint.
 - `PlanModePersistentStateData` is persistent and thread-scoped because `Scope` is omitted and thread is the default.
 - `BatchPermissionStateData`, continuation permission state, error tracking state, total error threshold state, and circuit breaker state are transient unless their attribute says otherwise.

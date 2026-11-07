@@ -159,7 +159,7 @@ Do not assume:
 
 - every provider supports the same content, tool, response-format, or streaming features
 - `AgentTurnResult.Text` includes everything important that happened
-- permissions sandbox a tool body or authorize external services
+- function permission also controls every resource a tool body will access
 - local file stores are production storage
 - canonical delivery and replay preserve the same registered event value
 - middleware `OnErrorAsync` catches every provider or turn failure

@@ -162,6 +162,18 @@ tui.AddInteractionHandler(
 
 Interaction handlers handle request/response workflows such as permissions, continuations, clarifications, and client tools. Keep product policy in your app layer. For example, a development TUI might allow an approval prompt, while a production TUI might deny or restrict the same request.
 
+`AddAgentTuiDefaults()` installs the generic
+`PermissionRequestInteractionHandler` under the `hpd.permission` key. It presents
+the server-authored choice labels, returns the selected choice ID, maps dialog
+cancellation to the request's deny choice, and handles the transient
+`allow_for_turn` behavior for sandbox capability requests.
+
+To replace the prompt presentation, use
+`ReplaceInteractionHandler("hpd.permission", ...)` rather than registering a
+second matching handler under another key. A replacement must preserve exact
+`PermissionId`, `SourceName`, and `ChoiceId` values. Policy and reusable approval
+state belong to the permission middleware, not the TUI.
+
 ## Composition Boundary
 
 Provider pickers, model catalogs, coding harness UI, and product-specific diagnostics can all be layered through composition, but they are not core TUI guarantees. Treat them as app features built on the shell primitives.

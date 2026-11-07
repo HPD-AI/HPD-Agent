@@ -1,37 +1,309 @@
 # Permissions Middleware
 
-Permission middleware gates tool/function execution through bidirectional events. It is a runtime policy: tools declare or receive a permission requirement, middleware asks the UI or host for a decision, and the function either runs or is blocked.
+Permissions are HPD's call-level authorization gate. A function can be admitted
+only after HPD resolves its effective permission binding, evaluates the exact
+validated invocation, records the decision, and issues an invocation-bound
+grant.
 
-Permissions are tied to events. Any runtime that wants interactive permissions must route permission request events to a user interface and return permission response events to the same run.
+Permissions answer one question:
 
-In rendered event views, permissions usually sit under the tool/function call that requested them. Generated subagent and multi-agent tools require permission by default, so a parent permission prompt can appear before child subagent or workflow events. See [Bidirectional Events](../events/bidirectional-events.md) and [Event Streams And Hierarchies](../../concepts/event-streams-and-hierarchies.md).
+```text
+May this exact function or action execute?
+```
 
-## Built-In Vs Custom Permission Policy
+They do not sandbox the function body or authorize a filesystem path, network
+destination, local port, external tenant, or other resource. Sandbox capability
+authorization uses the same request lifecycle but has a separate decision
+domain. See [Sandboxing Overview](../sandboxing/overview.md).
 
-HPD Agent separates permission metadata from permission policy.
+## One Gate, One Function Representation
 
-`[RequiresPermission]`, `RequirePermissionFor(...)`, `DisablePermissionFor(...)`, and generated capability metadata say that a capability should be considered by permission middleware. They do not define every possible permission model.
+`PermissionMiddleware` is the framework permission middleware. HPD normalizes a
+registered function into one `HPDAIFunction` and attaches zero or one permission
+binding:
 
-The built-in `PermissionMiddleware` implements `IAgentPermissionMiddleware` and provides a simple function-level policy:
+```text
+FunctionCallContent
+  -> canonical argument validation
+  -> action resolution
+  -> effective permission binding
+  -> policy Allow, Deny, or Ask
+  -> invocation-bound grant or terminal result
+```
 
-- the protected subject is the function name
-- the prompt is a `PermissionRequestEvent`
-- the response is a `PermissionResponseEvent`
-- remembered choices are `Ask`, `AlwaysAllow`, or `AlwaysDeny`
-- persistent grants are stored in middleware state by function name
+An ordinary `AIFunction` imported into HPD must declare its permission status.
+Use `HPDAIFunctionFactory.Import(...)` with either an HPD permission binding or
+the explicit ungoverned designation. HPD rejects an imported function whose
+permission status is ambiguous. Approval wrappers such as
+`ApprovalRequiredAIFunction` and delegating wrapper chains are not admitted.
 
-If your app needs command-level, path-level, network-level, tenant-level, risk-based, or workspace-scoped grants, write custom middleware. Custom permission middleware can still use `[RequiresPermission]` metadata, or it can define its own metadata, custom permission events, and custom middleware state.
+## Register The Gate
 
-Use the built-in middleware for ordinary function gating. Use custom permission middleware when the user is approving a more specific subject than "this function may run."
+Use `WithPermissions()` for normal applications:
 
-## Per-Run Approval Policy
+```csharp
+using HPD.Agent;
+using HPD.Agent.Permissions;
+using HPD.Agent.Providers.OpenAI;
 
-`AgentRunConfig.Security.Approval` selects the approval policy for one run:
+var agent = await new AgentBuilder()
+    .WithOpenAI(model: "gpt-5-mini")
+    .WithPermissions()
+    .RequirePermissionFor("run_command")
+    .WithTool<ShellTools>("run_command")
+    .BuildAsync();
+```
+
+`WithPermissions()` constructs `PermissionMiddleware` with the builder's stable
+agent identity, permission overrides, and generated policy descriptors.
+
+There are two construction-time authorization modes:
 
 | Mode | Behavior |
 | --- | --- |
-| `AgentApprovalPolicy.ReviewProtectedActions` | Enforces registered permission middleware and requests approval when required. This is the default. |
-| `AgentApprovalPolicy.AutoApprove` | Automatically approves protected operations for that run. |
+| `AuthorizationMode.Enforce` | Resolves and enforces the function's permission binding. This is the default. |
+| `AuthorizationMode.Bypass` | Issues a host-bypass grant without evaluating the policy, while still journaling one `PermissionResolvedEvent`. |
+
+Bypass is a trusted host construction decision. Do not expose it as a portable
+run configuration.
+
+## Declare A Permission
+
+Mark a generated tool function with `[RequiresPermission]`:
+
+```csharp
+using HPD.Agent;
+
+public sealed class ShellTools
+{
+    [AIFunction(Name = "run_command")]
+    [AIDescription("Runs a shell command.")]
+    [RequiresPermission(PermissionAuthority = "shell/run")]
+    public string RunCommand(string command)
+        => $"Would run: {command}";
+}
+```
+
+The declaration contains:
+
+- whether the function requires permission;
+- a stable authority such as `shell/run`;
+- an optional stable policy descriptor ID.
+
+The source generator emits a portable descriptor package for the selected
+policy. HPD resolves declarations by stable ID during AOT-compatible
+composition; it does not load policy implementations by CLR type name from
+portable configuration.
+
+`RequirePermissionFor(...)`, `DisablePermissionFor(...)`, and
+`ClearPermissionOverride(...)` can add a builder override. A run can use
+`AgentSecurityRunConfig.PermissionOverrides` for an exact function, action, or
+authority selector.
+
+## Default Policy
+
+When no custom policy is declared, HPD uses
+`hpd.permission.default.v1`. Its choices are:
+
+| Choice ID | Kind | Persistence |
+| --- | --- | --- |
+| `allow_once` | Allow | This invocation only |
+| `allow_session` | Allow | Session approval, when session persistence is available |
+| `deny_once` | Deny | This invocation only |
+| `feedback` | Feedback | Return the user's instruction to the model |
+
+Persistent denial is not supported. A denial never revokes a previously stored
+approval.
+
+`allow_session` is removed before prompting when HPD has no stable agent
+identity or no writable session store. If filtering leaves no Allow choice, the
+middleware records a framework denial with
+`PermissionPersistenceUnavailable`.
+
+## Custom Policies
+
+Declare a policy implementation with a stable descriptor ID and attach it to a
+function:
+
+```csharp
+using HPD.Agent.Permissions;
+
+[PermissionPolicyDefinition("acme.reports.write.v1")]
+public sealed class ReportWritePolicy : IPermissionPolicy
+{
+    public ValueTask<PermissionPolicyResult> EvaluateAsync(
+        ValidatedPermissionInput input,
+        PermissionEvaluationContext context,
+        CancellationToken cancellationToken)
+    {
+        var destination = input.GetRequiredString("path");
+        var choices = new[]
+        {
+            new PermissionChoice(
+                "allow_once", "Allow this write", PermissionDecisionKind.Allow),
+            new PermissionChoice(
+                "allow_session", "Allow report writes this session",
+                PermissionDecisionKind.Allow),
+            new PermissionChoice(
+                "deny_once", "Deny", PermissionDecisionKind.Deny),
+        };
+
+        return ValueTask.FromResult(new PermissionPolicyResult
+        {
+            Outcome = new PermissionAsk(
+                $"Write {destination}?",
+                PermissionRisk.Medium,
+                new PermissionResource(destination, Path.GetFileName(destination)),
+                choices),
+            PersistenceByChoice = new Dictionary<string, PermissionPersistenceProposal>
+            {
+                ["allow_session"] = new()
+                {
+                    Kind = PermissionPersistenceKind.Session,
+                },
+            },
+        });
+    }
+}
+```
+
+```csharp
+[RequiresPermission(
+    PermissionAuthority = "reports/write",
+    PermissionPolicy = typeof(ReportWritePolicy))]
+public Task WriteReport(string path, string body)
+{
+    // Tool body.
+}
+```
+
+An Ask result is validated before it is shown:
+
+- it contains 2–16 unique choices;
+- at least one choice is Allow and one is Deny;
+- every choice has a canonical ID and bounded label;
+- persistence mappings target Allow choices only;
+- evidence and validated rules remain within framework bounds.
+
+`PermissionDeny` can return `InterruptTurn` or `ReturnToModel`. A deny or
+feedback choice can use the same behaviors. Only approval records are persisted.
+
+## Function Permission Flow
+
+`PermissionMiddleware` uses this lifecycle:
+
+1. Resolve the binding for the registered function and selected action.
+2. Validate the canonical arguments and freeze the invocation authority.
+3. Evaluate the policy unless construction bypass is active.
+4. Publish `PermissionEvaluatedEvent` for policy outcomes.
+5. For Allow, issue an invocation-bound grant.
+6. For Deny, return the configured interruption or model-facing denial.
+7. For Ask, reuse a matching stored approval or publish one durable
+   `PermissionRequestEvent`.
+8. Validate the returned `PermissionResponseEvent` against the exact permission
+   ID, source, and declared choice set.
+9. Publish `PermissionResolvedEvent`, checkpoint any new reusable approval, and
+   execute the function only when the final disposition is Allow.
+
+The final PermissionResolvedEvent records a decision source such as
+`PolicyDecision`, `StoredDecision`, `HostAutoApprove`, `HostBypass`,
+`UserDecision`, `Cancelled`, or `TimedOut`.
+
+## Request And Response
+
+`PermissionRequestEvent` contains the domain-neutral decision contract:
+
+```text
+PermissionId
+CallId
+SourceName
+PermissionDomain
+Authority
+Action
+PermissionResource
+Reason
+Risk
+Choices
+Evidence
+PersistenceUnavailableReason
+FunctionName
+Arguments
+```
+
+The host must return one exact declared choice:
+
+```csharp
+new PermissionResponseEvent(
+    PermissionId: request.PermissionId,
+    SourceName: request.SourceName,
+    ChoiceId: selectedChoice.Id,
+    Feedback: selectedChoice.Kind == PermissionDecisionKind.Feedback
+        ? userInstruction
+        : null);
+```
+
+For ordinary approve/deny hosts, use the smaller projection:
+
+```csharp
+var prompt = request.GetPrompt();
+var response = request.Answer(new PermissionAnswer(
+    prompt.PermissionId,
+    Approved: true));
+```
+
+The simple projection requires `allow_once` and `deny_once` in the request.
+Custom choice sets must return the full `PermissionResponseEvent`.
+
+```csharp
+using var permissionRequests = agent.Subscribe<PermissionRequestEvent>(request =>
+{
+    var allow = request.Choices.Single(choice => choice.Id == "allow_once");
+    return agent.AnswerRequestAsync(new PermissionResponseEvent(
+        request.PermissionId,
+        request.SourceName,
+        allow.Id));
+});
+
+var result = await agent.RunAsync("Run the command pwd.");
+```
+
+Preserve `PermissionId` and `SourceName`. A response with an unknown choice,
+different source, or different permission ID is rejected.
+
+## Reusable Approvals
+
+Reusable approvals are stored in the persistent, session-scoped
+`PermissionDecisionStateData`, using the existing middleware-state and session
+store APIs.
+
+Two persistence kinds are available:
+
+| Kind | Reuse rule |
+| --- | --- |
+| `Session` | One agent + authority + action + policy descriptor approval applies to later calls in the session. |
+| `ValidatedRule` | The policy revalidates the stored canonical rule against each new input. |
+
+A new session approval for the same agent, authority, and action supersedes the
+previous policy-descriptor version. Distinct validated rules can coexist.
+Framework limits bound each individual rule and evidence document; the
+framework does not impose a fixed count or aggregate byte ceiling on the
+decision collection.
+
+After an approval candidate is created, HPD marks the permission state pending.
+Before executing the tool body, the runtime saves that state through the
+existing session save path. A failed checkpoint prevents body execution and
+requires the session to be reloaded before another permission decision can use
+the failed state.
+
+## Per-Run Approval Policy
+
+`AgentRunConfig.Security.Approval` controls what happens when an Ask policy is
+evaluated:
+
+| Mode | Behavior |
+| --- | --- |
+| `AgentApprovalPolicy.ReviewProtectedActions` | Uses stored approvals or requests a host decision. |
+| `AgentApprovalPolicy.AutoApprove` | Resolves the Ask as `HostAutoApprove` without prompting. |
 
 ```csharp
 await agent.RunAsync(
@@ -40,184 +312,48 @@ await agent.RunAsync(
     {
         Security = new AgentSecurityRunConfig
         {
-            Approval = AgentApprovalPolicy.AutoApprove
-        }
+            Approval = AgentApprovalPolicy.AutoApprove,
+        },
     });
 ```
 
-`AutoApprove` is run-scoped. It does not unregister middleware, delete remembered
-choices, or change later runs. Per-tool decisions belong in
-`AgentRunConfig.Security.PermissionOverrides`.
+Autoapproval remains a durable permission event path: the runtime still requires
+the thread journal. It does not disable function bindings or bypass
+construction-time enforcement.
 
-Custom permission middleware must explicitly inspect
-`context.RunConfig.Security.Approval` if it wants to honor the shared policy. The
-coding harness's command permission middleware does honor it.
+Approval and sandbox policy are independent. Autoapproving the function call
+does not expand filesystem, network, or process capabilities.
 
-Approval and sandboxing are separate controls. `AutoApprove` does not disable
-process isolation, expand filesystem access, grant network access, or bypass
-authorization performed inside a tool. Configure `Security.Sandbox` separately.
+## Hosted And In-Process Routing
 
-## Function Permission Flow
-
-`PermissionMiddleware` uses these phases:
-
-1. `BeforeIterationAsync` resets transient batch permission state.
-2. `BeforeParallelBatchAsync` checks a parallel tool batch sequentially and records approvals or denials.
-3. `BeforeFunctionAsync` checks whether a function requires permission.
-4. If no stored choice applies, it emits `PermissionRequestEvent` and waits for `PermissionResponseEvent`.
-5. Approval allows execution. Denial blocks execution and supplies the denial result.
-
-Persistent choices are middleware state, not external storage. `AlwaysAllow` and `AlwaysDeny` are stored in session-scoped `PermissionPersistentStateData`, so they apply across threads in the same session. `Ask` is request-scoped and does not remember the decision.
-
-Permission prompts are sequential even for a parallel tool batch. The batch hook asks for each gated function, records approvals and denials in transient batch state, and the later per-function hook reuses that state instead of prompting again.
-
-## Register Permission Middleware
-
-Use the builder helper for normal applications:
-
-```csharp
-using HPD.Agent;
-using HPD.Agent.Permissions;
-using HPD.Agent.Providers.OpenAI;
-
-var agent = await new AgentBuilder()
-    .WithOpenAI(model: "gpt-5-mini")
-    .WithInstructions("Ask before running tools that require permission.")
-    .WithPermissions()
-    .RequirePermissionFor("run_command")
-    .WithTool<ShellTools>("run_command")
-    .BuildAsync();
-```
-
-`WithPermissions()` constructs `PermissionMiddleware` with the builder's agent config and permission override registry. That is what makes `RequirePermissionFor(...)`, `DisablePermissionFor(...)`, and `ClearPermissionOverride(...)` effective.
-
-Use direct `PermissionMiddleware` registration only when manually composing middleware and not relying on builder permission overrides:
-
-```csharp
-using HPD.Agent;
-using HPD.Agent.Permissions;
-
-var agent = await new AgentBuilder()
-    .WithMiddleware(new PermissionMiddleware())
-    .WithTool<ShellTools>("run_command")
-    .BuildAsync();
-```
-
-With direct registration, attribute-based requirements still work, but builder override helpers are not wired into that middleware instance.
-
-Mark a tool function as requiring permission:
-
-```csharp
-using HPD.Agent;
-using Microsoft.Extensions.AI;
-
-public sealed class ShellTools
-{
-    [AIFunction(Name = "run_command")]
-    [AIDescription("Runs a shell command.")]
-    [RequiresPermission]
-    public string RunCommand(
-        [AIDescription("The command to run.")] string command)
-    {
-        return $"Would run: {command}";
-    }
-}
-```
-
-You can also require permission from the builder when the tool comes from a third-party harness or generated surface that you do not own:
-
-```csharp
-var agent = await new AgentBuilder()
-    .WithPermissions()
-    .RequirePermissionFor("DeleteAllData")
-    .BuildAsync();
-```
-
-Use `DisablePermissionFor("ReadFile")` sparingly and only when the function is safe in your runtime. It overrides the attribute-based decision for that function name.
-
-## Handle Events
-
-Permission UI is event-driven. A local app, hosted API client, TUI, or bot adapter must show the request and send a matching response.
-
-The sample below uses the direct in-process `Agent` API. Hosted API clients use the hosted response route shown after the sample.
-
-```csharp
-using HPD.Agent;
-using HPD.Agent.Permissions;
-
-using var permissionRequests = agent.Subscribe<PermissionRequestEvent>(request =>
-{
-    Console.WriteLine($"Allow {request.FunctionName} from {request.SourceName}?");
-
-    // In a real UI, collect the user's choice before sending the response.
-    _ = agent.TryAnswerRequestAsync(new PermissionResponseEvent(
-        PermissionId: request.PermissionId,
-        SourceName: request.SourceName,
-        Approved: true,
-        Reason: "Approved from sample handler",
-        Choice: PermissionChoice.Ask));
-});
-
-var result = await agent.RunAsync("Run the command pwd.");
-Console.WriteLine(result.Text);
-```
-
-`PermissionChoice.Ask` approves or denies only the current request. `PermissionChoice.AlwaysAllow` persists an approval for the function in session-scoped middleware state. `PermissionChoice.AlwaysDeny` persists a denial.
-
-Preserve the `PermissionId` and `SourceName` from the request. They are how the response is matched to the active waiter. Do not synthesize a new id in the UI.
-
-Denials are normal tool results, not process failures. The middleware sets `BlockExecution` and supplies a denial message as the function result. The model may continue the turn using that result.
-
-## Hosted API
-
-Hosted runtimes expose one response route for standardized response events. A hosted UI should read `PermissionRequestEvent` from the event stream, render the request, and post the corresponding `PermissionResponseEvent` envelope through the hosted response path.
-
-The response route is:
+Hosted runtimes use one response route for all standardized response events:
 
 ```http
-POST /agents/{agentId}/sessions/{sid}/threads/{bid}/responses
+POST /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/responses
 ```
 
-Hosted responses are posted to the active coordinator route from which the request was surfaced. For a normal request, that is the same `agentId + sessionId + threadId`. Parent runtime state can also surface a descendant subagent request; in that case post through the active parent route while preserving the child `sessionId` and `threadId` carried by the response event. The coordinator resolves the matching descendant waiter. If the routed runtime is not active, the service returns `ThreadRuntimeNotActive`; if no matching request is waiting, it returns a conflict.
+Read `PermissionRequestEvent` from the canonical event stream. Post the matching
+`PermissionResponseEvent` envelope through the runtime route that surfaced the
+request.
 
-Do not treat permissions as a separate hidden channel. They are part of the same event vocabulary as other agent runtime interactions.
+For a direct in-process agent, subscribe to the request and answer with
+`AnswerRequestAsync(...)`. A late responder can use
+`TryAnswerRequestAsync(...)` and inspect the returned status.
 
-## TUI And Bots
+The TUI installs `PermissionRequestInteractionHandler` through
+`AddAgentTuiDefaults()`. It presents the server-authored choices and returns
+their exact IDs. Bot adapters follow the same rule and preserve the request
+identity; platform-specific approval UX belongs in that adapter.
 
-The TUI can render permission prompts in its local or hosted runtime, but it still depends on the same request/response event routing. Local TUI code responds through the in-process runtime; hosted TUI code answers through the hosted thread runtime.
+## Boundaries
 
-Bot integrations must preserve the permission request identity, map the platform user action back to a `PermissionResponseEvent`, and respect platform webhook/auth constraints. Keep platform-specific permission UX in the bot adapter page for that platform.
+`RequiresPermission` is metadata consumed by the HPD policy resolver. It is not
+a firewall, tenant check, credential broker, or sandbox rule.
 
-## Continuation Permission
+Resource authorization performed inside a trusted tool remains part of that
+tool or host. For HPD's Coding sandbox escalations, the tool uses the shared
+permission event lifecycle documented in
+[Sandboxing Overview](../sandboxing/overview.md).
 
-`ContinuationPermissionMiddleware` is separate from function permission and is not auto-registered. It asks whether an agent may continue after an iteration limit.
-
-```csharp
-using HPD.Agent;
-using HPD.Agent.Providers.OpenAI;
-
-var agent = await new AgentBuilder()
-    .WithOpenAI(model: "gpt-5-mini")
-    .WithMiddleware(new ContinuationPermissionMiddleware(maxIterations: 15))
-    .BuildAsync();
-```
-
-It emits `ContinuationRequestEvent`, waits for `ContinuationResponseEvent`, and can skip the next model call, override the response, and terminate the run when continuation is denied.
-
-Hosted continuation responses use the same bidirectional response route:
-
-```http
-POST /agents/{agentId}/sessions/{sid}/threads/{bid}/responses
-```
-
-## What Not To Overclaim
-
-Permissions are a tool/function gate. They do not sandbox the function body, authorize external services, or guarantee that a trusted function is harmless. Put OS, network, tenant, and platform authorization checks in the tool implementation or host environment.
-
-Stored `AlwaysAllow` and `AlwaysDeny` choices are session-scoped. They are not global user preferences, and they are not thread-local.
-
-`[RequiresPermission]` is metadata, not a universal security boundary. It is consumed by permission middleware. A custom `IAgentPermissionMiddleware` can interpret it differently or ignore it entirely.
-
-`AgentPermissionMode.FullAccess` is also not a universal security bypass. It is a shared run-level signal honored by the built-in permission middleware and by custom middleware that deliberately opts into it.
-
-The snippets above are source-checked example candidates. They have not been clean-compiled in a separate consumer project.
+The snippets above are documentation examples and are not compiled as a
+consumer project.

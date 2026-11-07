@@ -41,7 +41,7 @@ Start with a small routing table. Add product-specific rendering after the basic
 | `TextMessageStartEvent`, `TextDeltaEvent`, `TextMessageEndEvent` | Assistant message block |
 | `ReasoningMessageStartEvent`, `ReasoningDeltaEvent`, `ReasoningMessageEndEvent` | Collapsible reasoning block |
 | `ToolCallStartEvent`, `ToolCallArgsEvent`, `ToolCallResultEvent`, `ToolCallEndEvent` | Tool activity under the current message or agent |
-| `PermissionRequestEvent`, `PermissionResponseEvent` | Blocking prompt attached to a tool/function |
+| `PermissionRequestEvent`, `PermissionResponseEvent`, `PermissionResolvedEvent` | Blocking prompt and terminal decision attached to a tool/function |
 | `Workflow*` | Workflow timeline, layer, node, or route |
 | Retry, middleware, schema, and diagnostic events | Debug or observability lane |
 | Thread events | History and replay projection |
@@ -67,6 +67,7 @@ static string ProjectionKey(AgentEvent evt) =>
     {
         PermissionRequestEvent e => $"permission:{e.PermissionId}",
         PermissionResponseEvent e => $"permission:{e.PermissionId}",
+        PermissionResolvedEvent e => $"permission:{e.PermissionId}",
         ToolCallStartEvent e => $"tool:{e.CallId}",
         ToolCallArgsEvent e => $"tool:{e.CallId}",
         ToolCallResultEvent e => $"tool:{e.CallId}",

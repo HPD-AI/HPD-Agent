@@ -54,5 +54,8 @@ infer enforcement merely because a process ran through Host Process.
 | Linux | Bubblewrap, namespaces, seccomp, and provider-mediated networking when dependencies pass. |
 | Windows | No accepted OS-confined Host Process backend; explicit degraded admission is required. |
 
-Use permissions and narrowly selected workspace roots in addition to the
-Environment isolation policy.
+Use function permissions, narrow workspace roots, and the shared sandbox
+capability flow in addition to the Environment isolation policy. Function
+autoapproval does not authorize a boundary crossing; current Coding filesystem
+and command escalations use `PermissionRequestEvent` with
+`PermissionDomains.SandboxCapability`.

@@ -25,6 +25,7 @@ TextDeltaEvent
 ToolCallStartEvent
 PermissionRequestEvent
 PermissionResponseEvent
+PermissionResolvedEvent
 ToolCallResultEvent
 ToolCallEndEvent
 TextMessageEndEvent

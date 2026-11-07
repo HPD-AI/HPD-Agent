@@ -197,17 +197,21 @@ Permission, continuation, and clarification requests are bidirectional events. W
 client.on(EventTypes.PERMISSION_REQUEST, async (request) => {
   const approved = await permissions.confirm({
     title: request.functionName,
-    description: request.description,
+    description: request.reason,
     arguments: request.arguments,
   });
+  const requiredChoiceId = approved ? 'allow_once' : 'deny_once';
+  const choice = request.choices.find((candidate) => candidate.id === requiredChoiceId);
+  if (!choice) {
+    throw new Error(`Permission request does not offer ${requiredChoiceId}.`);
+  }
 
   const result = await client.respond({
     type: EventTypes.PERMISSION_RESPONSE,
     permissionId: request.permissionId,
     sourceName: request.sourceName,
-    approved,
-    reason: approved ? undefined : 'Denied by user.',
-    choice: 'ask',
+    choiceId: choice.id,
+    feedback: approved ? undefined : 'Denied by user.',
   });
 
   if (!result.accepted) {

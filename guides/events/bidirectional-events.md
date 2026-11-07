@@ -36,7 +36,15 @@ domain facts. An unanswered durable request is closed by
 `Abandoned`. Lower-level coordinator lifecycle notifications remain process-local
 implementation details.
 
-Do not create request-family terminal events such as `FooApprovedEvent`, `FooDeniedEvent`, `FooResolvedEvent`, `FooExpiredEvent`, or `FooCancelledEvent`. Put the domain decision on the response payload, then let the generic lifecycle events describe the request session outcome.
+Permission requests additionally publish one shared
+`PermissionResolvedEvent`. It records the authorization domain, selected
+choice, decision kind, source, and denial reason. Do not create a parallel
+family such as `FooPermissionApprovedEvent` or `FooPermissionResolvedEvent`.
+
+For other request families, do not create `FooApprovedEvent`,
+`FooDeniedEvent`, `FooExpiredEvent`, or `FooCancelledEvent`. Put the domain
+decision on the response payload and let `AgentRequestTerminatedEvent` describe
+why an unanswered request stopped being actionable.
 
 ## Direct Subscribe And Respond
 
@@ -45,14 +53,15 @@ In direct in-process code, subscribe before the run starts. When a request arriv
 ```csharp
 using var permissions = agent.Subscribe<PermissionRequestEvent>(async request =>
 {
-    var approved = await ui.ConfirmAsync(
-        $"Allow {request.FunctionName}?");
+    var allow = request.Choices.Single(choice => choice.Id == "allow_once");
+    var deny = request.Choices.First(choice => choice.Kind == PermissionDecisionKind.Deny);
+    var approved = await ui.ConfirmAsync($"Allow {request.FunctionName}?");
 
     await agent.AnswerRequestAsync(new PermissionResponseEvent(
         PermissionId: request.PermissionId,
         SourceName: request.SourceName,
-        Approved: approved,
-        Reason: approved ? null : "User denied"));
+        ChoiceId: approved ? allow.Id : deny.Id,
+        Feedback: approved ? null : "User denied"));
 });
 
 await agent.RunAsync("Clean up temporary files.");
@@ -71,21 +80,33 @@ ASP.NET Core hosted clients do not call `agent.Subscribe(...)` or `agent.AnswerR
 
 ## Ask From Middleware
 
-Middleware can emit a request and wait for a typed response:
+Middleware can author a full permission request and wait for its typed response:
 
 ```csharp
+var choices = new[]
+{
+    new PermissionChoice("allow_once", "Allow once", PermissionDecisionKind.Allow),
+    new PermissionChoice("deny_once", "Deny", PermissionDecisionKind.Deny),
+};
+
 var response = await context.RequestAsync<PermissionRequestEvent, PermissionResponseEvent>(
     new PermissionRequestEvent(
         PermissionId: Guid.NewGuid().ToString("N"),
-        SourceName: "PermissionMiddleware",
-        FunctionName: functionName,
-        Description: description,
         CallId: callId,
+        SourceName: "PermissionMiddleware",
+        PermissionDomain: PermissionDomains.ToolExecution,
+        Authority: authority,
+        Action: null,
+        PermissionResource: null,
+        Reason: description,
+        Risk: PermissionRisk.Medium,
+        Choices: choices,
+        FunctionName: functionName,
         Arguments: arguments),
     timeout: TimeSpan.FromSeconds(30));
 
-if (!response.Approved)
-    throw new InvalidOperationException(response.Reason);
+if (response.ChoiceId != "allow_once")
+    throw new InvalidOperationException(response.Feedback ?? "Permission denied.");
 ```
 
 `RequestAsync(...)` is available from hook contexts, agent context, and `FunctionExecutionContext`.
@@ -133,7 +154,16 @@ Responses sent through `agent.AnswerRequestAsync(...)`, `agent.TryAnswerRequestA
 
 Client tool outcomes are the immediate domain response to the request. `Completed`, `Failed`, and `Rejected` finish the tool call during the request session. `AcceptedBackground` resolves the request session because the client has accepted ownership of later work; the later work is then tracked by the background task lifecycle.
 
-Built-in permission events are one permission protocol, not the whole permission architecture. `PermissionMiddleware` uses them for function-level approvals keyed by function name. Apps that need command, path, network, tenant, or workspace-scoped permission grants can implement custom `IAgentPermissionMiddleware` and use custom bidirectional events with their own state model.
+Built-in permission events are the shared authorization protocol. HPD's
+`PermissionMiddleware` uses the `ToolExecution` domain for function calls, and
+the Coding sandbox adapter uses `SandboxCapability` for path, network,
+local-binding, terminal, and unsandboxed-execution decisions.
+
+Application-owned domains may use the same `PermissionRequestEvent`,
+`PermissionResponseEvent`, and `PermissionResolvedEvent` records with another
+domain string and an application-owned policy. Keep one request/response shape
+across domains so hosts, hosted APIs, bots, and TUIs do not need a second
+interaction protocol.
 
 ## Author Custom Request Families
 
@@ -215,7 +245,8 @@ Content-Type: application/json
   "type": "PERMISSION_RESPONSE",
   "permissionId": "permission-id-from-request",
   "sourceName": "PermissionMiddleware",
-  "approved": true
+  "choiceId": "allow_once",
+  "feedback": null
 }
 ```
 
@@ -224,6 +255,11 @@ The body must be a serialized `AgentEvent` envelope whose event implements
 `AgentRespondResult`, including nonaccepted outcomes such as `AlreadyResolved`,
 `TimedOut`, `Cancelled`, `ExecutionEnded`, or `RuntimeUnavailable`. Invalid event
 envelopes return `400`, and a missing route scope returns `404`.
+
+The `choiceId` must come from the request's server-authored `choices`. A host
+may use `request.GetPrompt()` and `request.Answer(...)` when it needs only
+`allow_once`/`deny_once`; hosts that expose custom or turn-scoped choices should
+return the exact rich response.
 
 ## Related Pages
 

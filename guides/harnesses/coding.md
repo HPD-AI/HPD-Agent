@@ -154,10 +154,16 @@ complete binding, command execution fails closed as a setup error.
 
 Sandbox enforcement is platform-dependent. Use permissions and narrow workspace roots even when sandboxing is enabled.
 
-Command approval and process isolation are independent.
-`ExecuteCommandPermissionMiddleware` honors `AgentRunConfig.Security.Approval`.
-Changing the approval policy does not change `Security.Sandbox`; configure sandbox
-isolation and capabilities separately.
+`ExecuteCommand` uses the common `PermissionMiddleware` gate for the function
+call. When a command starts inside the sandbox and the provider reports a
+filesystem, network, or local-binding violation, the Coding harness projects
+that boundary crossing onto the shared sandbox permission lifecycle. Approval
+adds a narrow exception to the retry's process policy.
+
+Command permission, automatic function approval, and process isolation are
+independent. Changing `AgentRunConfig.Security.Approval` does not change
+`Security.Sandbox`; configure sandbox isolation and capabilities separately.
+See [Sandboxing Overview](../sandboxing/overview.md).
 
 ## Search And Ripgrep
 

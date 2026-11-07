@@ -62,10 +62,11 @@ For request/response flows, subscribe to the request event and respond inside th
 ```csharp
 using var permission = agent.Subscribe<PermissionRequestEvent>(request =>
 {
+    var allow = request.Choices.Single(choice => choice.Id == "allow_once");
     return agent.AnswerRequestAsync(new PermissionResponseEvent(
         PermissionId: request.PermissionId,
         SourceName: request.SourceName,
-        Approved: true));
+        ChoiceId: allow.Id));
 });
 
 await agent.RunAsync("Use the file tool if needed.");

@@ -234,8 +234,8 @@ Content-Type: application/json
   "type": "PERMISSION_RESPONSE",
   "permissionId": "permission-id-from-request",
   "sourceName": "PermissionMiddleware",
-  "approved": true,
-  "choice": "ask"
+  "choiceId": "allow_once",
+  "feedback": null
 }
 ```
 

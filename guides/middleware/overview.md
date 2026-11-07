@@ -225,7 +225,13 @@ Use the focused guide for the feature you are enabling:
 - [Error Handling Middleware](error-handling.md)
 - [Middleware State Persistence](state-persistence.md)
 
-Permission middleware is just middleware with a policy role. Built-in `PermissionMiddleware` implements `IAgentPermissionMiddleware`, but apps can define their own permission middleware when grants need to be keyed by command, file path, network host, tenant, workspace, risk class, or another application-specific subject.
+`PermissionMiddleware` is the framework call gate. It evaluates the registered
+function or action through a trusted `IPermissionPolicy`, validates the exact
+choice set, journals the request and resolution, and issues an invocation-bound
+grant. Applications customize the decision by selecting a policy descriptor;
+they do not replace the request/response protocol. Resource-level checks such as
+path, network, or workspace capability use the same shared permission lifecycle
+with a different permission domain.
 
 ## Events From Middleware
 

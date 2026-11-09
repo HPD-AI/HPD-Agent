@@ -6,7 +6,7 @@ Multi-agent workflows coordinate multiple HPD agents through explicit stages and
 
 ## Mental Model
 
-A workflow has four moving parts:
+A workflow has five moving parts:
 
 - nodes: named HPD agents
 - edges: routes between nodes
@@ -29,36 +29,50 @@ START
 
 ```csharp
 using HPD.Agent;
+using HPD.Agent.Serialization;
 using HPD.MultiAgent;
 ```
 
 ## Smallest Workflow
 
 ```csharp
+await using var drafter = await new AgentBuilder(new AgentConfig
+{
+    Name = "Drafter",
+    SystemInstructions = "Draft a concise answer.",
+})
+    .WithChatClient(chatClient)
+    .BuildAsync();
+
+await using var reviewer = await new AgentBuilder(new AgentConfig
+{
+    Name = "Reviewer",
+    SystemInstructions = "Improve the draft for clarity and correctness.",
+})
+    .WithChatClient(chatClient)
+    .BuildAsync();
+
 var workflow = await AgentWorkflow.Create()
     .WithName("DraftAndReview")
-    .AddAgent("draft", new AgentConfig
-    {
-        Name = "Drafter",
-        SystemInstructions = "Draft a concise answer.",
-    })
-    .AddAgent("review", new AgentConfig
-    {
-        Name = "Reviewer",
-        SystemInstructions = "Improve the draft for clarity and correctness.",
-    }, node => node.WithInputKey("draft"))
+    .AddAgent("draft", drafter, node => node.WithOutputKey("draft"))
+    .AddAgent("review", reviewer, node => node.WithInputKey("draft"))
     .From("draft").To("review")
     .BuildAsync();
 ```
 
-`BuildAsync()` creates a runnable workflow instance. Agents backed by `AgentConfig` are built lazily when the workflow executes, which allows them to inherit a parent chat client when the workflow is run from another agent.
+`BuildAsync()` creates a runnable workflow instance. A config-backed node can be built lazily, but direct `RunAsync(...)` and `ExecuteStreamingAsync(...)` execution still needs that node to resolve a provider client. When a workflow is exposed through `[MultiAgent]`, a child without its own provider can inherit the invoking parent agent's client.
 
 By default, workflow data flows through node outputs and live events. Add a conversation policy when node agent transcripts should be written into HPD sessions and threads:
 
 ```csharp
+if (!AgentEventCompositionHost.TryGetDefaultApplication(out var events))
+    throw new InvalidOperationException("A generated application event composition is required.");
+
+var sessionStore = new FileSessionStore("App_Data/sessions", events.Codec);
+
 var workflow = await AgentWorkflow.Create()
     .WithName("DraftAndReview")
-    .WithSessionStore(new FileSessionStore("App_Data/sessions"))
+    .WithSessionStore(sessionStore)
     .WithConversation(MultiAgentConversationPolicies.ForkThreadPerAgent())
     .AddAgent("draft", draftConfig)
     .AddAgent("review", reviewConfig)
@@ -66,7 +80,7 @@ var workflow = await AgentWorkflow.Create()
     .BuildAsync();
 ```
 
-`WithSessionStore(...)` is separate from workflow checkpoint storage. The session store saves conversations and threads; the workflow store saves workflow definitions and checkpoints.
+The session store must use the host's generated event codec. Prebuilt node agents must use that exact same store. Durable graph execution and restart recovery are owned by HPD Base activations rather than by the session store.
 
 ## Run And Observe
 
@@ -80,9 +94,6 @@ using var subscription = workflow.SubscribeAny(evt =>
 
 await foreach (var _ in workflow.ExecuteStreamingAsync(
     "Write a short release note.",
-    parentCoordinator: null,
-    parentAgentMetadata: null,
-    parentChatClient: chatClient,
     cancellationToken: CancellationToken.None))
 {
     // Drain the stream while the subscription observes events.
@@ -90,6 +101,8 @@ await foreach (var _ in workflow.ExecuteStreamingAsync(
 ```
 
 Use `RunAsync(...)` when you only need the final workflow result.
+
+When the workflow is called through `[MultiAgent]`, the generated wrapper supplies parent event and client context automatically. It does not use a separate `parentChatClient` execution overload.
 
 ## Common Patterns
 

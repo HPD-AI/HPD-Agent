@@ -6,7 +6,8 @@ This page is family-based. It is not an exhaustive generated schema reference.
 
 ## Event Envelope
 
-Hosted SSE uses `AgentEventSerializer` envelopes:
+Hosted SSE uses envelopes produced by the selected application composition's
+`AgentEventCodec`:
 
 ```json
 {
@@ -22,9 +23,45 @@ The envelope includes injected `version` and `type` fields. Built-in type names 
 
 Unknown or missing `type` values cannot be deserialized as known events. HTTP input treats invalid event envelopes as bad requests.
 
-Custom event types must be registered with the event serializer, normally through source generation, and need JSON metadata for AOT-safe serialization. See [Custom Events](../guides/events/custom-events.md).
+The envelope version is strict. HPD Agent `1.0.0` accepts only `"version":
+"1.0"` and rejects missing or unsupported versions.
+
+The event catalog exposes a structural contract digest per discriminator. It
+covers the serialized property shape independently of effective durability.
+
+Custom event types must be part of the selected generated application
+composition and must provide AOT-safe JSON metadata. See
+[Application Composition](../guides/events/application-composition.md) and
+[Custom Events](../guides/events/custom-events.md).
 
 For the practical serialization path, see [Serialization And Registration](../guides/events/serialization-and-registration.md).
+
+## Durability
+
+`Durable` events are canonical thread facts. They are appended before live
+dispatch, survive restart, participate in replay, and contribute to the
+composition compatibility digest.
+
+`LiveOnly` events are observable runtime activity. They can be streamed,
+archived by a host, or sent to telemetry, but cannot enter a thread journal.
+Diagnostics, retries, progress, execution snapshots, skill read/script
+mechanics, raw content I/O, and explicit runtime-extension live events use this
+classification.
+
+The distinction is part of the application contract. A sufficiently important
+live fact needs its own durable event rather than a blanket promotion of a
+diagnostic event.
+
+Hosts can select overridable event durability through
+`AgentBuilder.WithEventDurability<TEvent>(...)`,
+`WithEventDurability(discriminator, ...)`, or
+`WithEventDurabilityPolicy(...)`. This choice is frozen at agent construction.
+Recovery-critical events marked as required-durable reject a live-only
+override.
+
+Text and reasoning delta journaling is coalesced above the session-store
+abstraction. Custom `ISessionStore` implementations receive one compact delta
+plus the message boundary rather than one durable record per provider token.
 
 ## Channels, Direction, And Canonical Publication
 
@@ -41,7 +78,9 @@ Common channel meanings:
 
 Response events for permission, continuation, and clarification use upstream direction.
 
-A thread-scoped projectable event published through `IThreadEventPublisher` is committed before publication and is replayable by definition. Process-local diagnostics, struct events, and stateless output use separate paths.
+A thread-scoped projectable event published through `IAgentEventPublisher` is
+committed before publication and is replayable by definition. Process-local
+diagnostics, struct events, and stateless output use separate paths.
 
 ## Correlation And Projection Fields
 
@@ -69,7 +108,11 @@ Do not require every event to have every field. For example, some tool events ca
 
 ## Canonical Event Parity
 
-Hosted live delivery and durable replay decode to the same registered event value. SSE adds `id`, `event`, and heartbeat framing; it does not define a second event schema. Stable agent attribution required for projection must be canonical data. Volatile delivery information belongs outside the event payload.
+Hosted live delivery and durable replay decode to the same event value from the
+selected composition. SSE adds `id`, `event`, and heartbeat framing; it does not
+define a second event schema. Stable agent attribution required for projection
+must be canonical data. Volatile delivery information belongs outside the event
+payload.
 
 ## Event Families
 
@@ -147,7 +190,12 @@ For registration examples, suppression reasons, and TypeScript shapes, see [Back
 
 ## Struct Events
 
-Struct events are a separate process-local surface for realtime samples. HPD Agent-owned samples implement `AgentStructEvent`, which is an agent-level marker over the lower HPD Events struct-event contract. They do not inherit from `AgentEvent`, do not use `AgentEventSerializer`, and do not appear in hosted SSE or thread history unless a component explicitly converts or summarizes them as an `AgentEvent`.
+Struct events are a separate process-local surface for realtime samples. HPD
+Agent-owned samples implement `AgentStructEvent`, which is an agent-level marker
+over the lower HPD Events struct-event contract. They do not inherit from
+`AgentEvent`, do not use the application composition's `AgentEventCodec`, and do
+not appear in hosted SSE or thread history unless a component explicitly
+converts or summarizes them as an `AgentEvent`.
 
 Selected struct events can be exported with `AgentStructEventSerializer`. That serializer uses a separate envelope from hosted `AgentEvent` streaming and is for diagnostics, local capture, replay tooling, or telemetry export. Serializing a struct event does not make it visible to the TypeScript client or durable thread history.
 
@@ -157,7 +205,7 @@ Use `agent.ObserveStruct<TEvent>(...)` or `agent.StructEvents.Route<TEvent>()` f
 
 Assistant audio output events use the same envelope as other `AgentEvent` values. The event payload includes `sessionId` when the event has a session scope, plus audio-specific identifiers such as `outputFlowId`, `responseId`, `segmentId`, and provider or playback fields.
 
-Source-registered assistant audio output type names include:
+Source-generated assistant audio output type names include:
 
 | Type | Purpose |
 | --- | --- |
@@ -227,6 +275,10 @@ Thread-scoped projectable `AgentEvent` values pass through the canonical publish
 identify -> commit -> assign ThreadSequenceNumber -> publish -> replay
 ```
 
-The registered codec preserves the concrete event type and canonical payload across in-process subscribers, hosted observation, and replay. Process-local publication keeps `ThreadSequenceNumber == 0` and provides no replay guarantee. High-volume `AgentStructEvent` values use the separate struct-event rail.
+The selected composition's codec preserves the concrete event type and canonical
+payload across in-process subscribers, hosted observation, and replay.
+Process-local publication keeps `ThreadSequenceNumber == 0` and provides no
+replay guarantee. High-volume `AgentStructEvent` values use the separate
+struct-event rail.
 
 See [Canonical And Process-Local Events](../guides/events/canonical-and-process-local-events.md) and [Canonical Thread Journal](../guides/sessions-and-streaming/canonical-thread-journal.md).

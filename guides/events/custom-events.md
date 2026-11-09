@@ -117,9 +117,11 @@ await agent.RunAsync("Find the latest support article for this issue.");
 Use `SubscribeAny(...)` when direct in-process code is building a generic event router, logger, hosted stream implementation, or trace view:
 
 ```csharp
+var codec = agent.Config!.EventComposition!.Codec;
+
 using var allEvents = agent.SubscribeAny(evt =>
 {
-    var json = AgentEventSerializer.ToJson(evt);
+    var json = codec.Serialize(evt);
     stream.Write(json);
 });
 ```
@@ -147,14 +149,43 @@ Custom events use the same event envelope as built-in events:
 }
 ```
 
-For ordinary app projects, define the event record and let source generation handle the rest. The custom event generator discovers concrete `AgentEvent` records outside HPD framework namespaces and generates:
+The concrete event record is the registration. Source generation discovers it
+and closes it into the application event composition or the library event
+module:
 
-- assembly-local discriminator constants
-- module-initializer registration for `AgentEventSerializer`
+- assembly-local discriminator constants;
+- required source-generated JSON metadata;
+- durability and owning module metadata;
+- the complete generated application or module composition.
 
-That means `AgentEventSerializer` can use the right discriminator without manual registration.
+Custom events are live-only by default. Add `[DurableEvent]` only when the event
+is required to reconstruct thread state, continue or resolve execution, enforce
+idempotency, or prove a canonical fact:
 
-For Native AOT or other strict source-generated JSON paths, register JSON metadata manually with `AgentEventSerializer.RegisterEventType(...)` as shown below. System.Text.Json source generation does not consume JSON context attributes emitted by another source generator, so the custom event generator cannot safely create that context for you.
+```csharp
+using HPD.Agent;
+using HPD.Agent.Serialization;
+
+[DurableEvent]
+public sealed record RetrievalCompletedEvent(
+    string Query,
+    int DocumentsMatched) : AgentEvent;
+```
+
+Serialize through the codec selected for the agent:
+
+```csharp
+var codec = agent.Config!.EventComposition!.Codec;
+var json = codec.Serialize(new RetrievalProgressEvent("refund policy", 12, 3));
+```
+
+There is no runtime `RegisterEventType` path for `AgentEvent` values. The event
+must be present in the selected application composition before the agent is
+built.
+
+For Native AOT, provide the source-generated JSON metadata required by the
+event contract. Do not replace composition with reflection or a process-global
+registry.
 
 ## Generator Rules
 
@@ -170,39 +201,28 @@ It reports:
 
 Prefer top-level public event records for events that need to cross assembly, hosted, or serialized boundaries.
 
-## Manual Registration
+## Composition Requirements
 
-Use manual registration only for special package boundaries or libraries where the source generator is not participating.
+The event must be part of the active application composition:
 
-```csharp
-using System.Runtime.CompilerServices;
-using System.Text.Json.Serialization;
-using HPD.Agent;
-using HPD.Agent.Serialization;
+- In an executable, the generated application composition includes the event.
+- In a library, the generated module must be referenced and closed into the
+  consuming application composition.
+- In a multi-application process, select the intended composition with
+  `WithEventApplicationIdentity(...)`.
+- In a custom host, select the known composition with
+  `WithEventComposition(...)` and use its codec for persistence.
 
-[JsonSerializable(typeof(RetrievalProgressEvent))]
-public partial class AppEventJsonContext : JsonSerializerContext
-{
-}
-
-internal static class AppEventRegistration
-{
-#pragma warning disable CA2255
-    [ModuleInitializer]
-    internal static void RegisterEvents()
-#pragma warning restore CA2255
-    {
-        AgentEventSerializer.RegisterEventType(
-            typeof(RetrievalProgressEvent),
-            "RETRIEVAL_PROGRESS",
-            AppEventJsonContext.Default.RetrievalProgressEvent);
-    }
-}
-```
+An event that is merely declared in a loaded assembly is not automatically
+admitted to every application composition.
 
 ## Canonical Publication
 
-Publishing from a session-and-thread-scoped runtime context commits the custom event to the canonical thread journal before subscribers receive it. Replay, reconnect catch-up, simultaneous observers, and live subscribers therefore receive the same registered event type, payload, `EventId`, and `ThreadSequenceNumber`.
+Publishing from a session-and-thread-scoped runtime context commits the custom
+event to the canonical thread journal before subscribers receive it. Replay,
+reconnect catch-up, simultaneous observers, and live subscribers therefore
+receive the same composed event type, payload, `EventId`, and
+`ThreadSequenceNumber`.
 
 Publishing without thread scope produces process-local output with `ThreadSequenceNumber == 0`. Use that mode for activity that does not belong in thread reconstruction.
 
@@ -211,6 +231,7 @@ Consumers should use one projection handler for both historical and live deliver
 ## Related Pages
 
 - [Events Overview](overview.md)
+- [Application Composition](application-composition.md)
 - [Canonical And Process-Local Events](canonical-and-process-local-events.md)
 - [Event Streams And Hierarchies](../../concepts/event-streams-and-hierarchies.md)
 - [Render An Event Stream](../sessions-and-streaming/render-an-event-stream.md)

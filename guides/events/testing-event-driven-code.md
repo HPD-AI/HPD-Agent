@@ -43,17 +43,21 @@ Assert.NotEmpty(progress);
 Assert.All(progress, evt => Assert.Equal("refund policy", evt.Query));
 ```
 
-For custom events that cross a hosted or persisted boundary, add a serializer round-trip test:
+For custom events that cross a hosted or persisted boundary, test the codec from
+the same application composition selected by the agent:
 
 ```csharp
-var json = AgentEventSerializer.ToJson(
-    new RetrievalProgressEvent("refund policy", 12, 3));
+var codec = agent.Config!.EventComposition!.Codec;
+var json = codec.Serialize(new RetrievalProgressEvent("refund policy", 12, 3));
 
 var roundTripped = Assert.IsType<RetrievalProgressEvent>(
-    AgentEventSerializer.FromJson(json));
+    codec.DeserializeEvent(json));
 
 Assert.Equal(3, roundTripped.DocumentsMatched);
 ```
+
+Use a separate `AgentInputCodec` when testing semantic input envelopes. Do not
+use the output-event codec for `AgentInputEvent`.
 
 ## Assert Bidirectional Flows
 
@@ -92,3 +96,4 @@ Avoid relying on exact global ordering across unrelated event families unless th
 - [Tool And Function Events](tool-and-function-events.md)
 - [Bidirectional Events](bidirectional-events.md)
 - [Custom Events](custom-events.md)
+- [Application Composition](application-composition.md)

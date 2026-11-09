@@ -72,6 +72,7 @@ const sidebar = [
     collapsed: true,
     items: [
       link('Events Overview', '/guides/events/overview'),
+      link('Application Composition', '/guides/events/application-composition'),
       link('Tool And Function Events', '/guides/events/tool-and-function-events'),
       link('Bidirectional Events', '/guides/events/bidirectional-events'),
       link('Custom Events', '/guides/events/custom-events'),
@@ -89,6 +90,7 @@ const sidebar = [
     items: [
       link('Middleware Overview', '/guides/middleware/overview'),
       link('Custom Middleware', '/guides/middleware/custom-middleware'),
+      link('Hook Fields', '/guides/middleware/hook-fields'),
       link('ToolHarness Middleware', '/guides/middleware/tool-harness-middleware'),
       link('Permissions Middleware', '/guides/middleware/permissions'),
       link('State Persistence', '/guides/middleware/state-persistence'),
@@ -174,6 +176,7 @@ const sidebar = [
       link('ASP.NET Multi-Agent Workflows', '/guides/hosting/multiagent-aspnet'),
       link('Hosted Lifecycle And Recovery', '/guides/hosting/hosted-lifecycle-and-recovery'),
       link('Hosted Streaming API', '/guides/hosting/hosted-streaming-api'),
+      link('OpenAPI Contract And Client', '/guides/hosting/openapi-contract'),
       link('Stored Agent Definitions', '/guides/hosting/stored-agent-definitions'),
       link('Hosted Endpoints Reference', '/reference/hosted-endpoints')
     ]
@@ -252,6 +255,7 @@ export default defineConfig({
   description: 'Build production-ready agent applications in .NET',
   base,
   srcDir: '.',
+  srcExclude: ['vendor/**'],
   outDir: './.site-dist',
   cacheDir: './.site-cache',
   cleanUrls: true,

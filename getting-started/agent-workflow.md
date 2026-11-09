@@ -9,7 +9,7 @@ This page is an orchestration detour after the single-agent basics. If you are s
 ## Add The Package
 
 ```bash
-dotnet add package HPD-Agent.MultiAgent --version 0.9.2
+dotnet add package HPD-Agent.MultiAgent
 ```
 
 ## Add Program.cs

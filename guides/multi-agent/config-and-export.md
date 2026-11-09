@@ -6,34 +6,33 @@ Multi-agent workflows have a serializable configuration shape for agents, edges,
 
 ```json
 {
-  "Name": "ReviewWorkflow",
-  "Version": "1.0.0",
-  "Agents": {
+  "name": "ReviewWorkflow",
+  "version": "1.0.0",
+  "agents": {
     "draft": {
-      "Agent": {
-        "Name": "Drafter",
-        "SystemInstructions": "Draft a concise answer."
+      "agent": {
+        "name": "Drafter",
+        "systemInstructions": "Draft a concise answer."
       },
-      "OutputMode": "String",
-      "OutputKey": "draft"
+      "outputMode": "String",
+      "outputKey": "draft"
     },
     "review": {
-      "Agent": {
-        "Name": "Reviewer",
-        "SystemInstructions": "Improve the draft."
+      "agent": {
+        "name": "Reviewer",
+        "systemInstructions": "Improve the draft."
       },
-      "InputKey": "draft"
+      "inputKey": "draft"
     }
   },
-  "Edges": [
+  "edges": [
     {
-      "From": "draft",
-      "To": "review"
+      "from": "draft",
+      "to": "review"
     }
   ],
-  "Settings": {
-    "EnableCheckpointing": false,
-    "EnableMetrics": true
+  "settings": {
+    "enableMetrics": true
   }
 }
 ```
@@ -45,6 +44,7 @@ Config can include:
 - per-node output mode, timeout, retry, input/output keys, input template, and additional instructions
 - routing edges and declarative conditions
 - workflow settings and iteration options
+- optional conversation routing settings
 
 An agent node's serializable `AgentRunConfig` may also contain `harnesses` overrides. Binding occurs when the node's agent is built and run, using that child agent's registered harness descriptors. Parent harness owner identities and runtime configuration bindings are never blindly forwarded.
 
@@ -54,16 +54,15 @@ See [Configure A Harness Per Run](../tools/configure-a-harness-per-run.md).
 
 ```csharp
 var workflow = await AgentWorkflow
-    .FromJson("review-workflow.json")
+    .FromFile("review-workflow.json")
     .BuildAsync();
 ```
 
-or:
+Or build from an in-memory config object:
 
 ```csharp
-var workflow = await AgentWorkflow
-    .FromConfig(config)
-    .BuildAsync();
+var workflow = await new MultiAgentFactory()
+    .BuildAsync(config);
 ```
 
 ## Export
@@ -92,7 +91,7 @@ These pieces need care:
 - structured and union type names are represented, but workflows that depend on full `Type` restoration should verify import behavior in their target runtime
 - handoff target descriptions are not fully represented by the current node config shape
 - error/fallback settings exist in config/export, but execution wiring should be validated before relying on them as runtime policy
-- direct export currently uses Pascal-case property names
+- export uses camel-case property names
 
 ## Iteration Settings
 
@@ -113,21 +112,17 @@ Prefer `IterationOptions` for cyclic and change-aware workflows:
 
 `WorkflowSettingsConfig.MaxIterations` also exists, but the clearest wired path is fluent `WithMaxIterations(...)` or `Settings.IterationOptions.MaxIterations`.
 
-## Checkpointing
+## Durable Execution
 
-`EnableCheckpointing` controls whether workflow execution asks for a checkpoint store. Fluent workflows can enable checkpointing and provide storage without adding extra package-facing setup:
+The workflow configuration shape does not contain a checkpoint-store setting. Durable
+execution is registered separately as an HPD Base graph activation.
 
-```csharp
-var workflow = await AgentWorkflow.Create()
-    .WithCheckpointing()
-    .WithJsonWorkflowStore("App_Data/workflows")
-    .AddAgent("draft", draftConfig)
-    .BuildAsync();
-```
+Use `AgentWorkflowInstance` for direct in-process execution. Use HPD Base and
+`HPD-Agent.MultiAgent.HpdBase` when the workflow must survive process restart and be
+executed by activation workers. See [Checkpointing](checkpointing.md).
 
-Use `WithInMemoryWorkflowStore()` for tests and short-lived development runs. Use `WithJsonWorkflowStore(...)` when local checkpoints should survive process restarts.
-
-Workflow stores are for workflow definitions and checkpoints. Use `WithSessionStore(...)` with a [Conversation Policy](conversation-policies.md) when node agent transcripts should be saved into HPD sessions and threads.
+Use `WithSessionStore(...)` with a [Conversation Policy](conversation-policies.md) when
+node agent transcripts should be saved into HPD sessions and threads.
 
 ## Related Pages
 

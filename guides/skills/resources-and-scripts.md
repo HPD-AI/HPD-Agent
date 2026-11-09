@@ -2,6 +2,10 @@
 
 Resources and scripts become individually selectable functions only after their parent skill activates. Resources are parameterless. Every script has an explicit input contract, including scripts that intentionally accept no arguments.
 
+Resource and script names must contain 1-64 ASCII letters, digits, underscores,
+or hyphens and must start with a letter or underscore. The same model-facing
+name rules apply to code-first and directory-defined capabilities.
+
 ## Resources
 
 A resource is read-only supporting content:

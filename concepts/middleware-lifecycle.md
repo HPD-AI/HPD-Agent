@@ -41,7 +41,7 @@ Message-turn hooks run around a user message turn. Iteration hooks run around an
 
 Wrapper hooks are different from `Before*` and `After*` hooks. They receive a handler and can decide whether to call it, call it more than once, transform inputs, transform outputs, or catch errors. Function wrappers always participate. Streaming model wrappers opt in by returning a non-null stream.
 
-Runtime start/stop hooks run when an agent is used as a started runtime, such as hosted HTTP/SSE, bot, TUI, client-tool, or other long-lived input-loop scenarios. Direct one-shot `RunAsync(...)` calls still use the message-turn, iteration, function, thread, and error hooks. See [Agent Runtime And Capabilities](agent-runtime-and-capabilities.md) for the distinction.
+Runtime start/stop hooks run when an agent is used as a started runtime, such as hosted HTTP/SSE, bot, TUI, client-tool, or other long-lived input-loop scenarios. Direct one-shot `RunAsync(...)` calls still use the input, message-turn, iteration, function, thread, and error hooks. See [Agent Runtime And Capabilities](agent-runtime-and-capabilities.md) for the distinction.
 
 ## ToolHarness Middleware
 
@@ -72,6 +72,8 @@ for declaration and lifecycle examples.
 | Runtime | `AfterStartedAsync` | After the runtime input loop has started | Availability diagnostics, background work that depends on the running loop |
 | Runtime | `BeforeStopAsync` | Before the runtime input loop stops | Graceful drain decisions, buffer flushing, shutdown diagnostics |
 | Runtime | `AfterStoppedAsync` | After the runtime input loop has stopped and registered resources were disposed | Final telemetry, cleanup confirmation |
+| Input | `BeforeInputAsync` | Before an accepted input event reaches its handler | Input normalization, rejection, auditing, input-level policy |
+| Input | `AfterInputAsync` | After input handling completes, fails, or is cancelled | Input metrics, diagnostics, cleanup |
 | Message turn | `BeforeMessageTurnAsync` | Before processing one user message turn | RAG injection, memory retrieval, context augmentation, run-config inspection |
 | Message turn | `AfterMessageTurnAsync` | After a message turn completes | Memory extraction, analytics, turn-level logging |
 | Iteration | `BeforeIterationAsync` | Before each model iteration | Prompt/message modification, chat option tuning, per-iteration policy |
@@ -83,7 +85,10 @@ for declaration and lifecycle examples.
 | Function | `AfterFunctionAsync` | After a function completes or throws | Result formatting, function telemetry, exception observation |
 | Iteration | `AfterIterationAsync` | After tool results are collected for an iteration | Result aggregation, error recovery, state updates |
 | Thread lifecycle | `BeforeThreadForkCommitAsync` | After a target thread has been materialized for a fork, before it is persisted | Compact copied history, stamp thread metadata, rewrite thread-local middleware state |
-| Error | `OnErrorAsync` | During the tool/function error path | Function error logging, circuit breakers, graceful degradation |
+| Error | `OnErrorAsync` | Once for each terminal non-cancellation failure | Centralized logging, metrics, policy, graceful termination |
+
+For the exact properties and mutable control fields on every hook context, see
+[Middleware Hook Fields](../guides/middleware/hook-fields.md).
 
 `BeforeThreadForkCommitAsync` is the fork hook. It sees both the source thread and the not-yet-persisted target thread, plus the fork point and `ThreadForkOptions`. Use it when the target thread should start differently from a raw copy, such as compacting copied history, adding thread-local metadata, or adjusting copied middleware state before the new thread becomes durable.
 
@@ -162,11 +167,33 @@ context.UpdateState(state => state with
 });
 ```
 
+## Scoped Middleware
+
+Function-level middleware can be scoped with `AsGlobal`, `ForToolHarness`,
+`ForSkill`, or `ForFunction`. Scope filtering applies to all three function
+surfaces:
+
+- `BeforeFunctionAsync`
+- `WrapFunctionCallAsync`
+- `AfterFunctionAsync`
+
+Model and turn hooks remain global because they do not target one function call.
+Function scopes are evaluated against the current request, including any function
+substitution performed by an outer wrapper.
+
+Skill scopes use the active typed capability relationship between the skill
+activation and its revealed functions. They do not depend on legacy
+`IsSkillContainer` metadata.
+
 ## Error Scope
 
-`OnErrorAsync` currently belongs to the tool/function error path. A function body exception is routed through `OnErrorAsync` and then through `AfterFunctionAsync`.
+`OnErrorAsync` is the terminal failure observer for the middleware runtime. It
+runs exactly once for model, function, iteration, message-turn, input, runtime,
+and thread-fork failures.
 
-Do not assume `OnErrorAsync` catches every provider, model-call, streaming, or whole message-turn exception. Model-call errors are handled by model streaming wrappers such as retry and error formatting. Message-turn failures are surfaced through message-turn error events.
+Caller cancellation remains on the cancellation lifecycle and does not invoke
+`OnErrorAsync`. An exception may cross several framework boundaries, but the
+router marks it after the first observation so handlers do not run twice.
 
 ## Built-In Middleware Order
 

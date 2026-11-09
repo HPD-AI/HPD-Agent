@@ -17,12 +17,15 @@ The simplest event experience is streaming text. The broader event model lets yo
 Start here:
 
 - [Streaming Events](../../getting-started/streaming-events.md): first local subscription.
+- [Application Composition](application-composition.md): how generated event
+  schemas are selected, persisted, and kept AOT-safe.
 - [Event Streams And Hierarchies](../../concepts/event-streams-and-hierarchies.md): the mental model for flat streams and nested projections.
 - [Render An Event Stream](../sessions-and-streaming/render-an-event-stream.md): practical rendering guidance for UIs and clients.
 - [Tool And Function Events](tool-and-function-events.md): render tool calls and emit progress from tool code.
 - [Bidirectional Events](bidirectional-events.md): request/response event flows for permissions, clarification, and host decisions.
 - [TypeScript Client Events](typescript-client.md): consume live streams, thread history, custom events, and interactive requests from TypeScript apps.
-- [Custom Events](custom-events.md): define app-specific events, emit them from middleware, and stream them through the serializer.
+- [Custom Events](custom-events.md): define app-specific events, emit them from
+  middleware, and encode them through the selected application composition.
 - [Serialization And Registration](serialization-and-registration.md): event envelopes, custom discriminators, and AOT metadata.
 - [Canonical And Process-Local Events](canonical-and-process-local-events.md): choose between replayable thread facts and process-local activity.
 - [Lifecycle, Retry, And Error Events](lifecycle-retry-and-error-events.md): turn lifecycle, retries, and failure rendering.

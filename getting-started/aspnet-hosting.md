@@ -179,6 +179,7 @@ Choose a next track:
 | Host multiple agents | [Host Profiles And Agents](../concepts/host-profiles-and-agents.md) and [Stored Agent Definitions](../guides/hosting/stored-agent-definitions.md) |
 | Expose a workflow over HTTP | [ASP.NET Multi-Agent Workflows](../guides/hosting/multiagent-aspnet.md) |
 | Add real tool surfaces | [Author A Tool Harness](../guides/tools/author-a-tool-harness.md), [MCP Servers](../guides/tools/mcp-servers.md), and [OpenAPI Tools](../guides/tools/openapi-tools.md) |
+| Publish a contract or client | [ASP.NET OpenAPI Contracts](../guides/hosting/openapi-contract.md) |
 | Add safety and control | [Middleware Overview](../guides/middleware/overview.md) and [Permissions Middleware](../guides/middleware/permissions.md) |
 | Add orchestration | [Subagents](../guides/agents/subagents.md) and [Multi-Agent Overview](../guides/multi-agent/overview.md) |
 | Ship the runtime | [ASP.NET Core Hosting](../guides/hosting/aspnet-core.md), [Stored Agent Definitions](../guides/hosting/stored-agent-definitions.md), and [Logging And Telemetry](../guides/observability/logging-and-telemetry.md) |

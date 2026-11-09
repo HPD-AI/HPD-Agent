@@ -10,7 +10,7 @@ The generator selects public concrete harness owners containing capabilities suc
 - `[Skill]`
 - `[SubAgent]`
 - `[MultiAgent]`
-- `[MCPServer]`
+- `[McpServer]`
 - `[OpenApi]`
 
 `[Collapse]` controls visibility and contributes instructions and
@@ -167,6 +167,19 @@ The AOT acceptance path must cover:
 - deterministic owner disposal.
 
 The framework smoke tests publish and execute these paths; publishing an unused assembly is insufficient.
+
+External integration packages use the same generated composition boundary:
+
+- MCP AgentConfig activation and `[McpServer]` declarations use generated
+  application composition and AOT-safe MCP serializers.
+- `[OpenApi]` sources are collected through generated ToolHarness registration.
+- `WithMcp` and `WithOpenApi` use the same generated capability catalog as native
+  functions.
+
+The MCP qualification job publishes and executes a native binary covering
+discovery, tool listing, invocation, permissions, and serialization. The OpenAPI
+test suite exercises flat and collapsed builder registration on every supported
+.NET target.
 
 The AOT fixture covers both policies:
 

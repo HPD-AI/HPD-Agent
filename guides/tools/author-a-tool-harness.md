@@ -147,7 +147,7 @@ The supplied harness and its captured dependencies retain their current state. R
 
 ## Generated Contract
 
-The generator discovers public harness types containing capabilities such as `[AIFunction]`, `[Skill]`, `[SubAgent]`, `[MCPServer]`, or `[OpenApi]`.
+The generator discovers public harness types containing capabilities such as `[AIFunction]`, `[Skill]`, `[SubAgent]`, `[McpServer]`, or `[OpenApi]`.
 
 Generated output includes:
 

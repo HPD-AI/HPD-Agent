@@ -17,7 +17,7 @@ The journal is the public source of truth for transcript reconstruction, model p
 
 A committed event preserves:
 
-- concrete registered event type;
+- concrete event type from the selected application composition;
 - payload and stable `EventId`;
 - session and thread scope;
 - authoritative journal generation and positive `ThreadSequenceNumber`;

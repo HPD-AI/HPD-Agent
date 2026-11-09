@@ -20,7 +20,10 @@ A node can be backed by:
 - a prebuilt `Agent`
 - an inline `AgentBuilder` configuration
 
-Config-backed and inline-built agents are created when the workflow executes. If a child agent does not configure its own provider, it can inherit the parent chat client passed to `ExecuteStreamingAsync(...)`.
+Config-backed and inline-built agents are created when the workflow executes. If a child
+agent does not configure its own provider, it can inherit the parent agent's client when
+the workflow is invoked through `[MultiAgent]`. Direct `RunAsync(...)` and
+`ExecuteStreamingAsync(...)` calls require each node to resolve its own provider client.
 
 ## Boundary Nodes
 
@@ -161,14 +164,16 @@ Use loops for bounded refinement, validation, or retry-style workflows where the
 
 ## Checkpointing
 
-Checkpointing is opt-in:
+Durable checkpointing and restart recovery are not features of the in-process
+`AgentWorkflowInstance`:
 
 ```csharp
-.WithCheckpointing()
-.WithJsonWorkflowStore("App_Data/workflows")
+var result = await workflow.RunAsync("Run this graph in the current process.");
 ```
 
-Checkpoint storage is a workflow execution feature. It does not add a separate public checkpoint event family to the multi-agent event stream.
+Register the graph as an HPD Base activation when execution must survive worker restart,
+retry, or deferred scheduling. The multi-agent API enqueues that durable activation rather
+than running the graph inside the HTTP request.
 
 See [Checkpointing](checkpointing.md).
 

@@ -1,5 +1,5 @@
-#:package HPD-Agent.Framework@0.5.5
-#:package HPD-Agent.Providers.OpenAI@0.5.5
+#:package HPD-Agent.Framework@1.0.0
+#:package HPD-Agent.Providers.OpenAI@1.0.0
 #:property TargetFramework=net10.0
 
 // This sample uses middleware to add retrieved context before the agent answers.
@@ -36,7 +36,7 @@ public class ProductDocsContext : IAgentMiddleware
     public Task BeforeMessageTurnAsync(BeforeMessageTurnContext context, CancellationToken cancellationToken)
     {
         // Look at the user's message and collect any matching snippets.
-        var query = context.UserMessage?.Text ?? string.Empty;
+        var query = context.UserInputMessages.LastOrDefault()?.Text ?? string.Empty;
         var matches = Docs
             .Where(doc => query.Contains(doc.Key, StringComparison.OrdinalIgnoreCase))
             .Select(doc => doc.Value)

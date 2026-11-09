@@ -206,6 +206,7 @@ Hosted clients should load `/state` to restore `activeExecution` and `pendingReq
 - [Host Profiles And Agents](../../concepts/host-profiles-and-agents.md)
 - [Stored Agent Definitions](stored-agent-definitions.md)
 - [Hosted Streaming API](hosted-streaming-api.md)
+- [ASP.NET OpenAPI Contracts](openapi-contract.md)
 - [Hosted Lifecycle And Recovery](hosted-lifecycle-and-recovery.md)
 - [ASP.NET Multi-Agent Workflows](multiagent-aspnet.md)
 - [Hosted Endpoints Reference](../../reference/hosted-endpoints.md)

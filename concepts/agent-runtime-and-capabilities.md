@@ -161,8 +161,8 @@ Do not assume:
 - `AgentTurnResult.Text` includes everything important that happened
 - function permission also controls every resource a tool body will access
 - local file stores are production storage
-- canonical delivery and replay preserve the same registered event value
-- middleware `OnErrorAsync` catches every provider or turn failure
+- canonical delivery and replay preserve the same composed event value
+- middleware `OnErrorAsync` observes every terminal non-cancellation failure but does not roll back side effects
 - a hosted client can respond to an old permission request after the run has moved on
 
 The runtime is powerful because these concerns are explicit. Keep the boundary visible in app code and docs.

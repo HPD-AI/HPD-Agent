@@ -44,6 +44,10 @@ Validate it before analysis.
 
 The frontmatter supplies discovery metadata. The Markdown body becomes the activation instructions.
 
+`name` follows the same model-facing naming rules as code-first skills: 1-64
+ASCII letters, digits, underscores, or hyphens, beginning with a letter or
+underscore. Invalid names are rejected before the directory revision publishes.
+
 ## Describe Packaged Capabilities
 
 In strict mode, describe resources and scripts in `skill.json`:
@@ -90,6 +94,10 @@ Files under `references/` become parameterless read functions. Every file under 
 ```
 
 Missing or invalid `parameters` metadata invalidates the directory snapshot; HPD does not silently substitute an empty contract.
+
+Strict import failures identify the metadata file, script path, and missing or
+invalid field. Script filenames must also derive a valid model-facing capability
+name.
 
 ## Generated Contract Sidecars
 

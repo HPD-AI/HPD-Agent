@@ -140,6 +140,40 @@ Config with middleware-specific options:
 
 Middleware listed in config is resolved in the order it appears in the `middlewares` array.
 
+Every configured middleware reference is required. Agent construction fails with a
+structured `AgentRunConfigurationException` when:
+
+- the generated registry does not contain the name;
+- a constructor dependency cannot be resolved;
+- the middleware constructor throws; or
+- the supplied middleware-config payload cannot be materialized.
+
+Multiple failures are reported together under
+`middleware_configuration_invalid`. There is no implicit skip-and-continue path for
+configured middleware.
+
+## Scoped Function Middleware
+
+Use scoped registration when one middleware instance should run only for a
+function, ToolHarness, or active skill:
+
+```csharp
+var agent = await new AgentBuilder()
+    .WithOpenAI(model: "gpt-5-mini")
+    .WithMiddleware(new ToolLimitMiddleware().ForFunction("WriteFile"))
+    .WithMiddleware(new FileAuditMiddleware().ForToolHarness("FileSystemTools"))
+    .WithMiddleware(new AnalysisPolicyMiddleware().ForSkill("analyze_codebase"))
+    .BuildAsync();
+```
+
+Scopes filter `BeforeFunctionAsync`, `WrapFunctionCallAsync`, and
+`AfterFunctionAsync`. They do not filter model or turn hooks, which remain global.
+Skill scope follows the active typed capability relationship between the skill and
+the functions it reveals.
+
+The scope is checked against the current `FunctionRequest`, so replacing the
+function in an outer wrapper cannot bypass an inner scope.
+
 ## Tool-Harness Scoped Middleware
 
 ToolHarness middleware runs in an execution-local pipeline owned by one

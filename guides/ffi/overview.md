@@ -64,7 +64,27 @@ Streaming callbacks receive event pointers that are valid only during the callba
 
 ## JSON Contracts
 
-Agent creation receives JSON for `AgentConfig` plus native function metadata. Thread messages use `ChatMessage` JSON. Streaming events use the same HPD agent event serializer as .NET event streaming.
+Agent creation receives JSON for `AgentConfig` plus native function metadata.
+Thread messages use `ChatMessage` JSON. Streaming events use the generated
+application composition selected inside `HPD-Agent.FFI`.
+
+The FFI project is generated as an application composition. Its
+`create_agent_with_ToolHarnesses` entry point selects that composition
+internally through its assembly identity. Native callers do not select a
+composition and do not pass an assembly name.
+
+Event JSON is part of the integration contract:
+
+- output events are encoded by the composition's `AgentEventCodec`;
+- discriminators, durability, module ownership, and JSON metadata are fixed at
+  FFI build time;
+- unknown or incompatible events fail closed instead of being skipped;
+- the FFI build and the .NET host must be upgraded together when event contracts
+  change.
+
+See [Application Composition](../events/application-composition.md) for the
+selection model and [Serialization And Registration](../events/serialization-and-registration.md)
+for output and input codec responsibilities.
 
 Serialized `AgentRunConfig` documents may include a `harnesses` array of per-run setting overrides. The override is bound only after the FFI host has registered the matching harness library and its generated configuration codec. Executable dependency instances and runtime configuration handles are never portable.
 

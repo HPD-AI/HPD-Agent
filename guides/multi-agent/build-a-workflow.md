@@ -27,6 +27,8 @@ var workflow = await AgentWorkflow.Create()
 
 Agent insertion order is not the execution order. Declare edges for the order you want. A workflow with two unrelated agents and no declared edge has two entry nodes, not an automatic `first -> second` chain.
 
+The example above constructs the graph. Direct execution still needs each config-backed node to resolve a provider client. For a standalone workflow, either configure providers on those agents through the host's provider composition or construct prebuilt agents with `AgentBuilder.WithChatClient(...)`. Parent-client inheritance applies when the workflow is invoked from an agent through `[MultiAgent]`.
+
 ## Construction Forms
 
 Use `AgentConfig` when the workflow should build the child agent at execution time:
@@ -55,16 +57,23 @@ Use inline builder configuration when the node needs local builder customization
 })
 ```
 
-Config-backed and inline-built agents are created lazily when the workflow executes. If they do not configure their own provider, they can inherit the parent chat client passed to `ExecuteStreamingAsync(...)`.
+Config-backed and inline-built agents are created lazily when the workflow executes. If they do not configure their own provider, they can inherit the invoking parent agent's client when the workflow is called through `[MultiAgent]`. Direct workflow execution has no parent agent from which to inherit.
 
 ## Conversation Policy
 
 Workflow outputs are separate from durable conversation history. Add a conversation policy when each node agent's transcript should be saved into HPD sessions and threads:
 
 ```csharp
+using HPD.Agent.Serialization;
+
+if (!AgentEventCompositionHost.TryGetDefaultApplication(out var events))
+    throw new InvalidOperationException("A generated application event composition is required.");
+
+var sessionStore = new FileSessionStore("App_Data/sessions", events.Codec);
+
 var workflow = await AgentWorkflow.Create()
     .WithName("ResearchAndWrite")
-    .WithSessionStore(new FileSessionStore("App_Data/sessions"))
+    .WithSessionStore(sessionStore)
     .WithConversation(MultiAgentConversationPolicies.ForkThreadPerAgent())
     .AddAgent("research", researchConfig, node => node.WithOutputKey("research"))
     .AddAgent("write", writeConfig, node => node.WithInputKey("research"))
@@ -72,7 +81,7 @@ var workflow = await AgentWorkflow.Create()
     .BuildAsync();
 ```
 
-`WithSessionStore(...)` stores conversations and threads. It is different from `WithJsonWorkflowStore(...)`, which stores workflow definitions and checkpoints.
+`WithSessionStore(...)` stores conversations and threads. The store must use the application's generated event codec. If nodes are prebuilt, configure those agents with the exact same store.
 
 Use `SharedWorkflowThread()` for one transcript, `ThreadPerAgent()` for durable agent-local threads, or `ForkThreadPerAgent()` when agents should start from the same request and write into separate threads.
 
@@ -118,9 +127,6 @@ using var events = workflow.SubscribeAny(evt =>
 
 await foreach (var evt in workflow.ExecuteStreamingAsync(
     "Compare the two implementation options.",
-    parentCoordinator: null,
-    parentAgentMetadata: null,
-    parentChatClient: chatClient,
     cancellationToken: CancellationToken.None))
 {
     // Render from this stream, or from subscriptions, but avoid double-rendering both.
@@ -128,6 +134,8 @@ await foreach (var evt in workflow.ExecuteStreamingAsync(
 ```
 
 `ExecuteStreamingAsync(...)` emits workflow graph events and child agent events. `RunAsync(...)` drains the workflow and returns a `WorkflowResult`.
+
+The direct overloads accept an optional parent `IEventCoordinator` or `AgentMetadata`. When the workflow is generated as a `[MultiAgent]` tool, the wrapper supplies this parent context internally.
 
 ## Runtime Options
 
@@ -146,30 +154,11 @@ Node options control input, output, structured result handling, retry, timeout, 
 
 Error-mode helpers such as `OnErrorFallback(...)` are part of the configuration/export surface, but validate execution behavior in your workflow before relying on them as runtime policy.
 
-## Checkpointing
+## Durable Host Execution
 
-Checkpointing is opt-in. Enable it on the workflow and choose a workflow store when the execution should keep resumable checkpoints.
+`AgentWorkflowInstance` is an in-process graph runtime. It does not own restart-durable checkpoint or resume state.
 
-```csharp
-var workflow = await AgentWorkflow.Create()
-    .WithName("DurableReview")
-    .WithCheckpointing()
-    .WithInMemoryWorkflowStore()
-    .AddAgent("draft", draftConfig, node => node.WithOutputKey("draft"))
-    .AddAgent("review", reviewConfig, node => node.WithInputKey("draft"))
-    .From("draft").To("review")
-    .BuildAsync();
-```
-
-For file-backed development storage:
-
-```csharp
-.WithJsonWorkflowStore(
-    rootDirectory: "App_Data/workflows",
-    retentionMode: MultiAgentCheckpointRetention.LatestOnly)
-```
-
-Use `MultiAgentCheckpointRetention.FullHistory` when the application needs every checkpoint for debugging or audit history.
+For durable, restart-safe execution, install the graph as an HPD Base activation and expose it through the multi-agent ASP.NET projection. HPD Base owns activation state, retries, checkpointing, and worker recovery. See [Checkpointing](checkpointing.md) and [ASP.NET Multi-Agent Workflows](../hosting/multiagent-aspnet.md).
 
 ## Related Pages
 

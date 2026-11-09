@@ -261,7 +261,10 @@ client.onAny((event) => {
 });
 ```
 
-Register custom event serialization on the .NET side so hosted streams can produce the event envelope. Add TypeScript types locally when the event belongs to your app; add them to the SDK only when the event becomes a shared protocol event.
+Include the custom event in the .NET application's generated event composition so
+hosted streams can produce its envelope. Add TypeScript types locally when the
+event belongs to your app; add them to the SDK only when the event becomes a
+shared protocol event.
 
 ## Control State, Observation, And Recovery
 
@@ -297,7 +300,10 @@ The `hpd-agent-headless-ui` thread controller performs this reset and rehydratio
 
 ## What Does Not Reach TypeScript
 
-`AgentStructEvent` values do not flow through the TypeScript client. Struct events are process-local samples on the .NET `StructEventHub`; they are not `AgentEvent` values, not serialized by `AgentEventSerializer`, and not sent over hosted SSE.
+`AgentStructEvent` values do not flow through the TypeScript client. Struct
+events are process-local samples on the .NET `StructEventHub`; they are not
+`AgentEvent` values, are not encoded by the application composition's
+`AgentEventCodec`, and are not sent over hosted SSE.
 
 `AgentStructEventSerializer` can serialize selected struct events for explicit export or diagnostics, but that is not the hosted agent event stream.
 

@@ -10,11 +10,14 @@ A projectable event with a session and thread scope is published through the can
 append -> assign ThreadSequenceNumber -> publish -> replay
 ```
 
-The live subscriber and later replay reader receive the same concrete registered event type, payload, `EventId`, scope, and thread position. Canonical append failure produces no live-only fact.
+The live subscriber and later replay reader receive the same concrete event
+type from the selected composition, payload, `EventId`, scope, and thread
+position. Canonical append failure produces no live-only fact.
 
 Canonical families include text and reasoning streams, tool lifecycle, thread-run lifecycle, background task lifecycle, interactive requests and accepted responses, middleware state commits, and application-defined events published through the thread context.
 
-Custom canonical events use the registered event codec and become durable when published through a thread-scoped runtime context.
+Custom canonical events use the selected composition's event codec and become
+durable when published through a thread-scoped runtime context.
 
 ## Process-Local Activity
 
@@ -49,7 +52,9 @@ One handler should be able to project the same event during:
 
 ## JSON And Codecs
 
-Canonical storage and hosted SSE use the registered `AgentEvent` codec. SSE adds transport framing, but it does not translate the event into a different durable presentation type:
+Canonical storage and hosted SSE use the selected composition's `AgentEventCodec`.
+SSE adds transport framing, but it does not translate the event into a
+different durable presentation type:
 
 ```text
 id: 3:43

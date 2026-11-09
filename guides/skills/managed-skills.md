@@ -14,6 +14,10 @@ ISkillSource
 
 Installing a package does not expose it globally. `AddSkillsFromStore()` explicitly attaches selected packages to a harness.
 
+Package, resource, and script names use the model-facing naming rule: 1-64 ASCII
+letters, digits, underscores, or hyphens, beginning with a letter or underscore.
+Invalid names fail installation before the package publishes.
+
 ## Share One Store Across Harnesses
 
 A store may contain packages intended for different harnesses. Add host-defined tags to package manifests and select a filtered view for each harness:
@@ -148,10 +152,13 @@ Watchable stores notify attached agents automatically. HPD rereads and validates
 Manual reload is also available and detects changes made by another store or process:
 
 ```csharp
-var result = await agent.ReloadSkillsAsync();
+var result = await agent.RefreshCapabilitiesAsync();
 
 if (!result.Published)
     Console.WriteLine(result.Error);
 ```
+
+`RefreshCapabilitiesAsync()` rereads every attached dynamic source and publishes
+the complete validated capability epoch. There is no skills-only reload method.
 
 Hot reload applies to instructions, resources, scripts, and runtime package metadata. Changes to compiled C# methods, generated harnesses, or assemblies require a rebuild and restart.

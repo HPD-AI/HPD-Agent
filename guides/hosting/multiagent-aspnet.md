@@ -32,7 +32,7 @@ A multi-agent API route needs three separate pieces:
 1. A `BaseGraphActivationDefinition` containing the installed workflow graph identity and input
    authority.
 2. HPD.Base persistence and activation workers capable of executing that definition.
-3. `AddHPDMultiAgentAspNetCore(...)` so the API can discover and enqueue the same definition.
+3. `AddHPDMultiAgentHpdBase(...)` so the API adapter can discover and enqueue the same definition.
 
 The graph definition is trusted host configuration. Use HPD-Graph and HPD.Base setup to create a
 `BaseGraphActivationDefinition` with the required activation grants, execution limits, source grant
@@ -42,6 +42,7 @@ The host wiring has this shape:
 
 ```csharp
 using HPD.Agent.MultiAgent.AspNetCore;
+using HPD.Agent.MultiAgent.HpdBase;
 using HPD.Base;
 using HPD.Base.AspNetCore;
 using HPD.Graph.Base;
@@ -58,7 +59,7 @@ builder.Services.AddHPDBase(baseBuilder => baseBuilder
     .AddGraphActivation(workflowDefinition));
 
 builder.Services.AddHPDBaseActivationWorkers();
-builder.Services.AddHPDMultiAgentAspNetCore(workflowDefinition);
+builder.Services.AddHPDMultiAgentHpdBase(workflowDefinition);
 
 var app = builder.Build();
 
@@ -70,8 +71,25 @@ app.Run();
 `CreateInstalledWorkflow()` is application setup, not a helper supplied by this package. The host
 must retain the same sealed definition for both the API projection and the Base activation worker.
 
-`AddHPDMultiAgentAspNetCore(...)` requires at least one uniquely identified installed graph. Calling
-it without definitions fails during service registration.
+`AddHPDMultiAgentHpdBase(...)` registers the HPD Base-backed
+`IHPDMultiAgentWorkflowBackend`. It requires at least one uniquely identified installed graph and
+fails during service registration when no graph is supplied.
+
+## Provider-Neutral Backend
+
+`HPD-Agent.MultiAgent.AspNetCore` can also project another durable implementation. Register the
+neutral services and one or more backends before mapping the routes:
+
+```csharp
+builder.Services.AddHPDMultiAgentAspNetCore();
+builder.Services.AddSingleton<IHPDMultiAgentWorkflowBackend, MyWorkflowBackend>();
+
+var app = builder.Build();
+app.MapHPDMultiAgentApi();
+```
+
+The backend owns persistence and idempotency. `MapHPDMultiAgentApi()` fails at startup when no
+backend is registered.
 
 ## Discover Workflows
 

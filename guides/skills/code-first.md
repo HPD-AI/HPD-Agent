@@ -50,7 +50,13 @@ Use `SkillCapabilities.Function<T>(nameof(Member))` for C# function references. 
 
 Every model-selectable resource and script requires a useful description. Describe what it returns or changes and when it should be selected; do not merely repeat its filename.
 
-Only `SkillActivationLifetime.MessageTurn` is currently supported. Other enum values fail validation instead of silently using different behavior.
+Skill and child capability names must contain 1-64 ASCII letters, digits,
+underscores, or hyphens and must start with a letter or underscore. Generated
+declarations report `HPDSKILL019` for invalid names; runtime and managed-package
+validation reject the same names during construction or installation.
+
+Skill activation lasts for the remainder of the current message turn. No other
+activation lifetime is exposed in 1.0.
 
 ## Optional Reinforcement
 

@@ -1,10 +1,25 @@
 # MCP Servers
 
-MCP servers are external tool sources. HPD Agent connects to configured MCP servers, imports their tools, and exposes them as model-callable functions. Servers can run locally over stdio or remotely over HTTP.
+Use `HPD-Agent.MCP` to consume Model Context Protocol servers as HPD Agent
+capabilities. MCP tools, resources, and prompts become HPD-managed
+`AIFunction`s and participate in the same visibility, permission, retry, and
+operation systems as native tools.
 
-## Quick Start: Stdio
+The package targets .NET 8, .NET 9, and .NET 10.
 
-Create an MCP manifest and register it with the agent:
+## Install
+
+```bash
+dotnet add package HPD-Agent.MCP
+dotnet add package HPD-Agent.Providers.OpenAI
+```
+
+`HPD-Agent.MCP` brings in `HPD-Agent.Framework`. Install a provider package or
+configure an `IChatClient` directly.
+
+## Quick Start
+
+Create `mcp.json`:
 
 ```json
 {
@@ -13,28 +28,90 @@ Create an MCP manifest and register it with the agent:
       "name": "filesystem",
       "transport": "stdio",
       "command": "npx",
-      "arguments": ["-y", "@modelcontextprotocol/server-filesystem", "."],
-      "workingDirectory": "/workspace",
-      "enabled": true
+      "arguments": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem@1.2.3",
+        "/workspace"
+      ],
+      "permission": {
+        "requiresPermission": false
+      }
     }
   ]
 }
 ```
 
+Register the manifest:
+
 ```csharp
 using HPD.Agent;
 using HPD.Agent.MCP;
 
-var agent = await new AgentBuilder()
-    .WithMCP("mcp.json")
+await using var agent = await new AgentBuilder(new AgentConfig
+{
+    Name = "assistant"
+})
+    .WithChatClient(chatClient)
+    .WithMcp("mcp.json")
+    .BuildAsync();
+
+var sessionId = await agent.CreateSessionAsync();
+var result = await agent.RunAsync(
+    "List the files available through MCP.",
+    sessionId);
+```
+
+The quick-start manifest disables permission so it can run without an approval
+UI. Keep the default permission behavior for real use.
+
+## Permission Defaults
+
+MCP tools require permission by default. A protected source fails publication
+when the agent does not contain permission middleware.
+
+```csharp
+await using var agent = await new AgentBuilder(config)
+    .WithChatClient(chatClient)
+    .WithPermissions()
+    .WithMcp("mcp.json")
     .BuildAsync();
 ```
 
-Every server entry must declare `transport`. For local servers, use `transport: "stdio"` with `command` and optional `arguments`.
+Handle `PermissionRequestEvent` with `agent.AnswerRequestAsync(...)`. See
+[Permissions Middleware](../middleware/permissions.md) for approval and denial
+handling.
 
-## Remote HTTP
+Permission and allowlist configuration belongs to each server:
 
-Use `transport: "http"` for remote MCP servers:
+```json
+{
+  "servers": [
+    {
+      "name": "filesystem",
+      "transport": "stdio",
+      "command": "npx",
+      "arguments": ["-y", "@modelcontextprotocol/server-filesystem@1.2.3", "/workspace"],
+      "allowedTools": ["read_file", "list_directory"],
+      "permission": {
+        "requiresPermission": true,
+        "policy": "hpd.mcp.filesystem.v1",
+        "tools": {
+          "list_directory": {
+            "requiresPermission": false
+          }
+        }
+      }
+    }
+  ]
+}
+```
+
+`allowedTools` is an exact allowlist of original MCP tool names. Omitting it
+admits every tool returned by the server, subject to the permission policy.
+
+## Streamable HTTP
+
+Use `transport: "http"` and an absolute HTTP(S) `endpoint`:
 
 ```json
 {
@@ -43,7 +120,6 @@ Use `transport: "http"` for remote MCP servers:
       "name": "search",
       "transport": "http",
       "endpoint": "https://mcp.example.com/mcp",
-      "httpTransportMode": "auto",
       "headers": {
         "X-Workspace": "example"
       },
@@ -55,40 +131,72 @@ Use `transport: "http"` for remote MCP servers:
 }
 ```
 
-Use literal `headers` for non-secret values and `headerSecretKeys` for values resolved by HPD's secret resolver.
+Use literal `headers` for non-secret values and `headerSecretKeys` for values
+resolved through `ISecretResolver`. MCP protocol headers, transport session IDs,
+and bearer values cannot be supplied through the manifest.
 
-## JSON Content
+Protocol negotiation uses SDK discovery first and may fall back to the
+initialize-era protocol. Set `exactVersion` only when a server requires an exact
+revision.
 
-You can also pass manifest JSON directly:
+## Registration Policies
+
+Configure package-wide policy with `WithMcp` or `WithMcpOptions`:
 
 ```csharp
-var manifest = """
-{
-  "servers": [
+await using var agent = await new AgentBuilder(config)
+    .WithChatClient(chatClient)
+    .WithMcp("mcp.json", options =>
     {
-      "name": "local-stdio",
-      "transport": "stdio",
-      "command": "dotnet",
-      "arguments": ["--info"],
-      "enabled": false
-    }
-  ]
-}
-""";
-
-var agent = await new AgentBuilder()
-    .WithMCPContent(manifest, new MCPOptions
-    {
-        FailOnServerError = true
+        options.FailOnServerError = true;
+        options.Protocol.DiscoveryTimeout = TimeSpan.FromSeconds(5);
+        options.Catalog.LoadMode = McpCatalogLoadMode.Eager;
+        options.Catalog.StaleRetention = TimeSpan.FromMinutes(5);
     })
     .BuildAsync();
 ```
 
-A disabled server is useful for validating configuration shape without starting the process.
+Required sources load during agent construction. Use
+`McpCatalogLoadMode.Deferred` only when loading at the first capability boundary
+is acceptable.
+
+Set `FailOnServerError = false` to retain successful servers when another server
+fails. The default is fail-fast.
+
+Manifest JSON can be provided directly:
+
+```csharp
+builder.WithMcpContent(
+    manifestJson,
+    sourceName: "application-mcp",
+    options => options.Catalog.LoadMode = McpCatalogLoadMode.Deferred);
+```
+
+The source name is a stable identity, not the server display name.
+
+## Agent Configuration
+
+Inline servers and external manifests can also be declared through `AgentConfig`:
+
+```yaml
+name: McpAgent
+mcp:
+  servers:
+    - name: local
+      transport: stdio
+      command: mcp-server
+  manifests:
+    - path: ./config/mcp.json
+      sourceName: application-mcp
+```
+
+Relative manifest paths resolve from the source configuration document. Duplicate
+server names across inline and file sources fail configuration validation.
 
 ## OAuth
 
-OAuth server/client configuration belongs in the manifest. Browser login, token cache, and dynamic registration persistence belong to application code through `MCPOptions.OAuthRuntime`.
+MCP OAuth configuration remains in the server manifest and never contains token
+state:
 
 ```json
 {
@@ -98,9 +206,9 @@ OAuth server/client configuration belongs in the manifest. Browser login, token 
       "transport": "http",
       "endpoint": "https://mcp.example.com/mcp",
       "oauth": {
-        "redirectUri": "http://localhost:8787/callback",
-        "clientId": "client-id",
-        "clientSecretKey": "mcp:enterprise:ClientSecret",
+        "registrationMode": "ClientIdMetadataDocument",
+        "redirectUri": "http://127.0.0.1:43110/callback",
+        "clientIdMetadataDocument": "https://client.example.com/oauth/metadata.json",
         "scopes": ["read", "write"]
       }
     }
@@ -108,72 +216,33 @@ OAuth server/client configuration belongs in the manifest. Browser login, token 
 }
 ```
 
-```csharp
-var agent = await new AgentBuilder()
-    .WithMCP("mcp.json", options =>
-    {
-        options.OAuthRuntime = new JsonMcpOAuthRuntime(
-            "~/.hpd/mcp/oauth",
-            authorizationRedirectDelegate: McpOAuthRedirectHandlers.LocalBrowser());
-    })
-    .BuildAsync();
-```
-
-Built-in runtimes:
-
-- `InMemoryMcpOAuthRuntime` stores tokens and dynamic client registrations for the runtime instance.
-- `JsonMcpOAuthRuntime` stores tokens and dynamic client registrations as JSON files.
-
-## Stdio Process Isolation
-
-Stdio MCP servers are external processes. Use `processIsolation` when a local server should run inside HPD's process boundary instead of launching directly through the MCP SDK's default stdio transport.
+Pre-registered clients use `registrationMode: "PreRegistered"` with `clientId`
+and an optional `clientSecretKey`. Dynamic Client Registration is compatibility
+only and requires both:
 
 ```json
 {
-  "name": "filesystem",
-  "transport": "stdio",
-  "command": "npx",
-  "arguments": ["-y", "@modelcontextprotocol/server-filesystem", "."],
-  "processIsolation": {
-    "mode": "Isolated",
-    "profile": "filesystem-only",
-    "allowWrite": ["."],
-    "denyRead": ["~/.ssh", "~/.aws", "~/.gnupg"],
-    "networkMode": "Blocked"
-  }
+  "registrationMode": "DynamicRegistration",
+  "allowDynamicRegistration": true
 }
 ```
 
-The host application must provide an MCP process provider to enforce this policy:
+Durable authorization state is application-owned. Implement
+`IMcpAuthorizationStore` and pass it to the builder:
 
 ```csharp
-var agent = await new AgentBuilder()
-    .WithMCP("mcp.json", options =>
-    {
-        options.ProcessProvider = myProcessProvider;
-    })
-    .BuildAsync();
+.WithMcp("mcp.json", options =>
+{
+    options.AuthorizationStore = applicationAuthorizationStore;
+})
 ```
 
-If `processIsolation.mode` is `Isolated` and no provider is configured, HPD fails closed instead of launching the MCP server unsandboxed. HTTP MCP servers do not use `processIsolation` because HPD does not launch their server process.
-
-`processIsolation` currently has 20 manifest fields, grouped into seven policy areas:
-
-| Area | Fields |
-| --- | --- |
-| Mode/profile | `mode`, `profile` |
-| Filesystem | `allowRead`, `denyRead`, `allowWrite`, `denyWrite` |
-| Network | `networkMode`, `allowedDomains`, `deniedDomains` |
-| Unix sockets | `allowUnixSockets`, `allowAllUnixSockets` |
-| Environment | `allowedEnvironmentVariables`, `stripUnlistedEnvironmentVariables` |
-| TLS trust | `tlsTrustMode`, `injectTlsTrustEnvironmentVariables` |
-| Process behavior | `allowPty`, `allowLocalBinding`, `allowedMachLookups`, `ignoreViolations`, `violationAction` |
-
-Named profiles are `filesystem-only`, `network-only`, `permissive`, and `disabled`. Omitting `profile` uses HPD's restrictive default profile.
+Records are bound to the resource identity, authorization-server issuer, client
+identity, and normalized scopes. Mismatched records fail closed.
 
 ## Resources And Prompts
 
-MCP resources and prompts are not imported automatically as agent context. Enable them when you want generic MCP functions for listing and reading them.
+Resources and prompts are projected only when enabled:
 
 ```json
 {
@@ -200,62 +269,119 @@ Prompt functions:
 - `mcp_{server}_list_prompts`
 - `mcp_{server}_get_prompt`
 
-Text reads are capped by the configured content limits. Binary resource content returns metadata instead of base64 payloads.
+Resource and prompt text is bounded. Binary resource content returns metadata
+instead of unbounded base64 payloads.
 
-## Live Updates
+## MRTR Input
 
-Live updates emit HPD agent events when an MCP server reports that tools, prompts, resources, or a subscribed resource URI changed.
+SDK 2.x owns `input_required` reconstruction, retries, cancellation, and the
+round limit. HPD supplies the application policy:
+
+```csharp
+.WithMcp("mcp.json", options =>
+{
+    options.Invocation.InputResolver = inputResolver;
+    options.Invocation.InputAuthorizer = inputAuthorizer;
+    options.Invocation.MaxInputPayloadCharacters = 200_000;
+    options.Invocation.HandlerTimeout = TimeSpan.FromMinutes(10);
+})
+```
+
+An unresolved or unauthorized input request never becomes successful tool output.
+
+## Local Background Work And Remote Tasks
+
+HPD local background invocation and provider-owned remote MCP Tasks are distinct:
+
+- HPD background work is controlled by the application's operation registry.
+- Remote MCP Tasks are server-owned jobs observed through that registry.
+
+Local invocation policy is configured per server or exact tool:
 
 ```json
 {
-  "name": "workspace",
-  "transport": "stdio",
-  "command": "mcp-server",
-  "enableLiveUpdates": true,
-  "resourceSubscriptions": [
-    "file:///workspace/README.md"
-  ]
+  "name": "search",
+  "transport": "http",
+  "endpoint": "https://mcp.example.com/mcp",
+  "invocationModePolicy": "modelChoice",
+  "toolInvocationModePolicies": {
+    "long_running_index": "backgroundOnly"
+  }
 }
 ```
 
+Policies are `synchronousOnly`, `backgroundOnly`, and `modelChoice`. In
+`modelChoice`, HPD adds an `invocationMode` field and removes it before calling
+the server.
+
+Remote MCP Tasks are inert until explicitly enabled:
+
 ```csharp
-using var subscription = agent.Subscribe<McpServerChangedEvent>(evt =>
+.WithMcp("mcp.json", options =>
 {
-    Console.WriteLine($"{evt.ServerName}: {evt.ChangeKind} changed");
-});
+    options.AddTasksExtension();
+    options.Invocation.RecoveryReferenceProtector = recoveryProtector;
+})
 ```
 
-Live update event types:
+The resulting operation keeps HPD's `OperationId` separately from the provider
+task ID. Detaching local observation does not imply remote cancellation.
 
-- `McpServerChangedEvent`
-- `McpLiveUpdatesStartedEvent`
-- `McpLiveUpdatesStoppedEvent`
-- `McpLiveUpdatesErrorEvent`
+## Catalog Refresh And Subscriptions
 
-Live updates are invalidation signals. HPD does not mutate the active tool list mid-turn. Restarting or rebuilding the agent picks up the updated server tool list.
+Catalog pages honor server TTL and cache-scope facts. HPD limits TTL, coalesces
+refreshes, and may serve scope-compatible stale pages after a transient failure.
 
-## Collapsing And Server Instructions
+```csharp
+.WithMcp("mcp.json", options =>
+{
+    options.Catalog.MaximumTtl = TimeSpan.FromHours(1);
+    options.Catalog.RefreshOnInvalidation = true;
+    options.Catalog.ServeStaleOnTransientFailure = true;
+    options.Subscriptions.EnableCatalogInvalidation = true;
+    options.Subscriptions.ResourceUris = ["file:///workspace/README.md"];
+    options.Subscriptions.FailurePolicy = McpSubscriptionFailurePolicy.ReportAndContinue;
+})
+```
 
-Set `enablecollapsing` to group all functions from a server behind an `MCP_{server}` container.
+Notifications make a source eligible for transactional refresh. They never
+mutate the tool list of a turn already in progress.
+
+## Isolated Stdio
+
+`processIsolation` changes the process launch and byte ownership path:
 
 ```json
 {
   "name": "filesystem",
   "transport": "stdio",
   "command": "npx",
-  "arguments": ["-y", "@modelcontextprotocol/server-filesystem", "."],
-  "enablecollapsing": true,
-  "description": "File operations inside the workspace",
-  "functionResult": "Working directory: /workspace",
-  "systemPrompt": "Never write outside /workspace."
+  "arguments": ["-y", "@modelcontextprotocol/server-filesystem@1.2.3", "/workspace"],
+  "processIsolation": {
+    "enabled": true,
+    "allowNetwork": false,
+    "allowedPaths": ["/workspace"],
+    "maxMessageBytes": 4194304
+  }
 }
 ```
 
-`functionResult` is appended to the one-time expansion result. `systemPrompt` is injected persistently while the container is expanded. Both require collapsing.
+An application-provided `IProcessProvider` is required:
 
-## Harness-Owned MCP Servers
+```csharp
+.WithMcp("mcp.json", options =>
+{
+    options.ProcessProvider = applicationProcessProvider;
+})
+```
 
-A generated harness can contribute MCP server config. The attributed method provides server configuration; it does not become a model-facing function.
+When isolation is enabled without a provider, agent construction fails closed.
+HTTP servers cannot use process isolation.
+
+## Harness-Owned Servers
+
+A generated ToolHarness can contribute an MCP server. The method returns server
+configuration and does not become a model-facing function:
 
 ```csharp
 using HPD.Agent;
@@ -263,107 +389,43 @@ using HPD.Agent.MCP;
 
 public sealed class ExternalTools
 {
-    [MCPServer(Description = "Local MCP server", CollapseWithinToolHarness = true)]
-    public MCPServerConfig LocalMcp() => new()
+    [McpServer(Name = "local")]
+    [RequiresPermission]
+    public McpServerConfig Local() => new()
     {
-        Name = "local-stdio",
+        Name = "local",
         Transport = "stdio",
-        Command = "dotnet",
-        Arguments = ["--info"],
-        Enabled = false,
-        RequiresPermission = false
+        Command = "mcp-server"
     };
 }
 ```
 
-For harness-owned servers without a standalone manifest, configure package-wide MCP options separately:
+Use `WithMcpOptions(...)` for package-wide policy before registering the harness.
+Set `CollapseWithinToolHarness = true` when the MCP tools should sit behind their
+own `MCP_{server}` container inside the harness.
 
-```csharp
-var agent = await new AgentBuilder()
-    .WithMCPOptions(options =>
-    {
-        options.FailOnServerError = true;
-    })
-    .WithToolHarness<ExternalTools>()
-    .BuildAsync();
-```
+## Native AOT And Public API
 
-## Background Invocation
+Declarative `AgentConfig.mcp` and source-generated `[McpServer]` are the Native
+AOT paths. The package has a publish-and-run Native AOT gate covering discovery,
+tool listing, invocation, permissions, serialization, and shutdown.
 
-MCP server processes may stay alive independently of a tool call, but that is separate from model-facing background invocation. To let the parent model launch an MCP tool and continue immediately, configure the server's invocation mode policy:
+Application code should use builder extensions, `McpOptions`, resolver/store
+interfaces, and `AddTasksExtension`. The raw runtime, serializer context,
+projection models, transport framing, and catalog cache are internal.
 
-```json
-{
-  "name": "filesystem",
-  "transport": "stdio",
-  "command": "npx",
-  "arguments": ["-y", "@modelcontextprotocol/server-filesystem", "."],
-  "invocationModePolicy": "modelChoice"
-}
-```
+Generated support types remain public because consumer-generated code references
+them, but they are hidden from IntelliSense and are not application APIs.
 
-Policies:
+## Troubleshooting
 
-| Policy | Tool Shape | Tool Result |
-| --- | --- | --- |
-| `synchronousOnly` | Original MCP schema | Original MCP result |
-| `backgroundOnly` | Original MCP schema | Background launch receipt |
-| `modelChoice` | Original MCP schema plus `invocationMode` | Original MCP result or background launch receipt |
-
-For `modelChoice`, HPD augments each imported MCP tool schema with:
-
-```json
-{
-  "invocationMode": "background"
-}
-```
-
-The adapter removes `invocationMode` before calling the MCP server, so the server receives only its original arguments. Background calls return a structured receipt containing the runtime `taskId`. Completion or failure is delivered later through [Background Tasks And Notifications](../../concepts/background-tasks-and-notifications.md).
-
-Use `toolInvocationModePolicies` when only specific MCP tools should differ from the server default. Keys are exact MCP tool names from the server's tool list:
-
-```json
-{
-  "name": "filesystem",
-  "transport": "stdio",
-  "command": "npx",
-  "arguments": ["-y", "@modelcontextprotocol/server-filesystem", "."],
-  "invocationModePolicy": "synchronousOnly",
-  "toolInvocationModePolicies": {
-    "search": "modelChoice",
-    "long_running_index": "backgroundOnly"
-  }
-}
-```
-
-Resolution is exact tool override first, then the server default. If neither is configured, the server default is `synchronousOnly`.
-
-Use `backgroundNotification` to change when background MCP tool calls wake the model:
-
-```json
-{
-  "backgroundNotification": {
-    "kind": "on_final_state",
-    "completed": true,
-    "faulted": true,
-    "cancelled": false
-  }
-}
-```
-
-## Production Notes
-
-Pin local server package versions in production so startup does not pull unexpected changes:
-
-```json
-{
-  "name": "filesystem",
-  "transport": "stdio",
-  "command": "npx",
-  "arguments": ["-y", "@modelcontextprotocol/server-filesystem@1.2.3", "."]
-}
-```
-
-Use `processIsolation` for stdio servers that should run inside HPD's process boundary. If isolated mode is requested without a configured process provider, HPD fails closed.
-
-The C# MCP SDK handles MCP task results in the default synchronous tool-call path by waiting and polling for completion. HPD background invocation is an adapter-level launch mode for the parent model; it does not change the MCP transport protocol.
+- `McpToolProtectedWithoutPermissionMiddleware`: add `.WithPermissions()` and
+  handle permission requests.
+- `McpManifestNotFound` or `McpManifestUnreadable`: verify the manifest path is
+  relative to the owning agent configuration document.
+- `McpServerNameConflict`: inline and file-backed declarations must use unique
+  server names.
+- Discovery failure: leave `Protocol.ExactVersion` unset so legacy fallback is
+  available.
+- Isolation failure: configure `ProcessProvider`; HPD never silently launches an
+  isolated server without an enforcing provider.

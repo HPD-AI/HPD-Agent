@@ -48,9 +48,6 @@ using var childEvents = workflow.SubscribeAny(evt =>
 
 await foreach (var _ in workflow.ExecuteStreamingAsync(
     "Explain what changed in this thread.",
-    parentCoordinator: null,
-    parentAgentMetadata: null,
-    parentChatClient: chatClient,
     cancellationToken: CancellationToken.None))
 {
     // Subscriptions handle rendering while the stream is drained.
@@ -59,7 +56,10 @@ await foreach (var _ in workflow.ExecuteStreamingAsync(
 
 The returned async stream and workflow subscriptions expose the same public projection. Render from one path, or de-duplicate if you use both.
 
-Use `RunAsync(...)` when you only need the final workflow result. Use `ExecuteStreamingAsync(...)` when you need streaming iteration, parent event bubbling, parent metadata, or parent chat-client inheritance.
+Use `RunAsync(...)` when you only need the final workflow result. Use
+`ExecuteStreamingAsync(...)` when you need streaming iteration. Direct overloads can also
+accept a parent `IEventCoordinator` and `AgentMetadata`; the generated `[MultiAgent]`
+wrapper supplies those values automatically.
 
 ## Event Families
 
@@ -77,7 +77,10 @@ Use `RunAsync(...)` when you only need the final workflow result. Use `ExecuteSt
 
 Child agent events pass through as their normal event types. A workflow node can contain text deltas, reasoning events, tool call events, permission requests, structured result events, retries, and diagnostics.
 
-Checkpointing does not add a separate public checkpoint event family. When checkpointing is enabled, checkpoint saves are storage side effects. They may appear as diagnostic messages, but do not rely on a structured `CheckpointSaved` event in the workflow stream.
+Checkpointing does not add a separate public workflow event family. HPD Base owns
+durable activation state and checkpoint persistence; use its inspection surfaces for
+durable execution state. Do not rely on a structured `CheckpointSaved` event in the
+multi-agent workflow stream.
 
 ## Metadata
 
@@ -95,7 +98,11 @@ Use workflow event fields for graph structure. Use child `AgentEvent` metadata f
 
 ## Parent Agent Tools
 
-When a parent agent exposes a workflow with `[MultiAgent]`, the parent sees it as a normal tool call with `CallType = MultiAgent`. In the source-generated streaming path, the generated wrapper calls `ExecuteStreamingAsync(...)` with the parent event coordinator, parent metadata, and parent chat client. Workflow events and child events then bubble into the parent stream.
+When a parent agent exposes a workflow with `[MultiAgent]`, the parent sees it as a normal
+tool call with `CallType = MultiAgent`. In the source-generated streaming path, the
+generated wrapper invokes the `IMultiAgentWorkflow` path with the parent execution context.
+That context carries the parent event coordinator, agent metadata, and client inheritance.
+Workflow events and child events then bubble into the parent stream.
 
 `[MultiAgent]` has `StreamEvents = true` by default. If streaming is disabled, the generated wrapper uses `RunAsync(...)`, so the parent stream does not receive the same live workflow projection.
 

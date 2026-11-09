@@ -4,7 +4,10 @@ Error handling is split across wrapper middleware, iteration safety middleware, 
 
 For UI rendering and event capture, see [Lifecycle, Retry, And Error Events](../events/lifecycle-retry-and-error-events.md).
 
-Do not treat `OnErrorAsync` as a global catch-all. Source verification shows it is currently invoked for tool/function body exceptions. Provider/model streaming errors are handled by model-turn wrappers such as retry and error formatting. Whole message-turn failures surface through message-turn error events and the `RunAsync(...)` failure path.
+`OnErrorAsync` is the terminal failure observer for middleware execution. It runs
+exactly once for model, function, iteration, message-turn, input, runtime, and
+thread-fork failures. Caller cancellation stays on the cancellation lifecycle and
+does not invoke `OnErrorAsync`.
 
 ## Choose The Boundary
 
@@ -12,11 +15,11 @@ Use the boundary that matches the failure:
 
 | Failure | Primary mechanism | Notes |
 | --- | --- | --- |
-| Transient model/provider streaming error | `RetryMiddleware` model wrapper, then `ErrorFormattingMiddleware` model wrapper | `ModelCallRetryEvent` can arrive after partial text streamed. |
-| Function body exception | Function wrappers, `MiddlewareErrorEvent`, `OnErrorAsync`, then `AfterFunctionAsync` formatting | This is the current `OnErrorAsync` path. |
+| Transient model/provider streaming error | `RetryMiddleware` model wrapper, then `ErrorFormattingMiddleware` model wrapper | On final failure, `OnErrorAsync` receives `ErrorSource.ModelCall`; `ModelCallRetryEvent` can arrive after partial text streamed. |
+| Function body exception | Function wrappers, `MiddlewareErrorEvent`, `OnErrorAsync`, then `AfterFunctionAsync` formatting | `OnErrorAsync` receives `ErrorSource.ToolCall` before result formatting. |
 | Slow function | `FunctionTimeoutMiddleware` | Put timeout inside retry for per-attempt timeout. |
 | Repeated tool errors or loops | `ErrorTrackingMiddleware`, `TotalErrorThresholdIterationMiddleware`, `CircuitBreakerMiddleware` | These are iteration safety policies, not exception formatters. |
-| Whole turn failure | `MessageTurnErrorEvent` and application `try`/`catch` around `RunAsync(...)` | Do not rely on `OnErrorAsync` here. |
+| Whole turn failure | `OnErrorAsync`, `MessageTurnErrorEvent`, and the exception from `RunAsync(...)` | `OnErrorAsync` receives `ErrorSource.MessageTurn`; the original failure still propagates. |
 
 ## Recommended Wrapper Order
 
@@ -154,7 +157,10 @@ Timeout only wraps function execution. It does not impose a whole conversation t
 
 Set `IncludeDetailedErrorsInChat = false` for production-facing agents unless the tool errors are already sanitized. With detailed errors disabled, function errors sent back into the model are generic. The original exception remains available to middleware context and observability paths.
 
-With detailed errors enabled, exception messages may be exposed to the model and user; use that only in trusted development environments. Source comments are not fully aligned on the default, so docs should not overclaim that the default is always sanitized. Choose the setting explicitly in application configuration.
+`ErrorHandlingConfig.IncludeDetailedErrorsInChat` defaults to `true`. With detailed
+errors enabled, exception messages may be exposed to the model and user. Set the
+option to `false` for production-facing agents when tool exception text can contain
+secrets, filesystem paths, connection strings, or internal implementation details.
 
 For model-call errors, formatting rethrows an `InvalidOperationException` with either a sanitized provider-aware message or a detailed message, depending on the same setting.
 
@@ -186,11 +192,26 @@ Use circuit breaker for repeated identical tool calls. Use error tracking for co
 
 ## OnErrorAsync Scope
 
-Use `OnErrorAsync` for tool/function body errors that flow through the function execution core.
+Use `OnErrorAsync` as the single terminal error observer. Each exception is
+reported once, even when it crosses multiple execution boundaries.
 
-Do not rely on it for every provider exception, model-stream exception, cancellation, or message-turn failure. Handle those with model wrappers, typed event subscriptions, and application-level `try`/`catch` around `RunAsync(...)`.
+| `ErrorSource` | Failure boundary |
+| --- | --- |
+| `ModelCall` | Provider resolution, model request, or final model-stream failure |
+| `ToolCall` | Function-body failure |
+| `Iteration` | Iteration hook, function-wrapper, or agent-loop processing failure |
+| `MessageTurn` | Turn preparation, turn hook, finalization, or persistence failure |
+| `Input` | Input dispatch or input middleware/handler failure |
+| `Runtime` | Runtime start, stop, or resource lifecycle failure |
+| `ThreadFork` | Fork preparation or `BeforeThreadForkCommitAsync` failure |
 
-`OnErrorAsync` runs in reverse middleware registration order. Exceptions thrown by error handlers are swallowed by the pipeline so the original function exception is preserved.
+`ErrorContext.RunConfig` exposes the run configuration when available. Source flags
+such as `IsModelError`, `IsInputError`, and `IsThreadForkError` avoid string or enum
+checks in common handlers.
+
+`OnErrorAsync` runs in reverse middleware registration order. Exceptions thrown by
+an error handler are swallowed so they cannot replace the original failure. The
+original exception continues to propagate after all handlers complete.
 
 ## Common Errors
 
@@ -201,7 +222,7 @@ Use these symptoms to pick the fix:
 | Users see partial text followed by unrelated retry text | UI ignored `ModelCallRetryEvent` | Clear or mark the partial response when the event arrives. |
 | Function timeout retries take longer than expected | Timeout is inside retry, so each attempt gets a full timeout or the tool is not eligible for retry | Lower `SingleFunctionTimeout`, lower `FunctionRetries.MaxRetries`, or add an application-level deadline. |
 | Sensitive exception text appears in chat | Detailed errors are enabled or the tool returns sensitive strings itself | Set `IncludeDetailedErrorsInChat = false` and sanitize tool return values. |
-| `OnErrorAsync` did not run for provider failure | Provider/model error happened outside function execution core | Use model wrappers, retry events, and `RunAsync(...)` exception handling. |
+| `OnErrorAsync` receives a formatted model error | `ErrorFormattingMiddleware` finished before the terminal error boundary | Inspect `ErrorContext.Error.InnerException` when the original provider exception is required. |
 | Retry policy ignores provider-specific behavior | Middleware was manually added without a provider handler | Register through builder composition that supplies the provider error handler when provider-specific parsing matters. |
 
 ## What Not To Overclaim

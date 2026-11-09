@@ -5,7 +5,7 @@ Middleware is for cross-cutting behavior that belongs inside the agent loop: log
 Use the core framework package and middleware namespace:
 
 ```bash
-dotnet add package HPD-Agent.Framework --version 0.9.2
+dotnet add package HPD-Agent.Framework --version 1.0.0
 ```
 
 ```csharp
@@ -16,7 +16,7 @@ using HPD.Agent.Middleware;
 If your sample builds an agent with OpenAI, also reference the provider package and namespace:
 
 ```bash
-dotnet add package HPD-Agent.Providers.OpenAI --version 0.9.2
+dotnet add package HPD-Agent.Providers.OpenAI --version 1.0.0
 ```
 
 ```csharp
@@ -78,6 +78,8 @@ Console.WriteLine(result.Text);
 | Run diagnostics or background work after the runtime input loop has started | `AfterStartedAsync` |
 | Flush buffers or make graceful drain decisions before the runtime stops | `BeforeStopAsync` |
 | Emit final telemetry after the runtime has stopped and resources were disposed | `AfterStoppedAsync` |
+| Normalize or reject an accepted input before its handler runs | `BeforeInputAsync` |
+| Record input completion, failure, cancellation, or duration | `AfterInputAsync` |
 | Add context, rewrite the current user message, or inspect run config once per user turn | `BeforeMessageTurnAsync` |
 | Inspect final response, persisted turn history, or total usage for a turn | `AfterMessageTurnAsync` |
 | Add model context, tune chat options, skip a model call, or enforce per-iteration policies | `BeforeIterationAsync` |
@@ -90,9 +92,12 @@ Console.WriteLine(result.Text);
 | Format a function result or observe a function exception after execution | `AfterFunctionAsync` |
 | Inspect tool results after an iteration | `AfterIterationAsync` |
 | Adjust middleware state before a thread fork is committed | `BeforeThreadForkCommitAsync` |
-| React to function/tool execution errors | `OnErrorAsync` |
+| Observe each terminal non-cancellation failure | `OnErrorAsync` |
 
 `BeforeToolExecutionAsync` and `BeforeParallelBatchAsync` are easy to confuse. Use `BeforeToolExecutionAsync` when the model response has been parsed and you want a whole-iteration decision across all pending tool calls. Use `BeforeParallelBatchAsync` when HPD Agent has identified a batch of functions that will execute in parallel and your policy depends on the batch shape, batch id, or model order before per-function hooks run.
+
+See [Middleware Hook Fields](hook-fields.md) for every context property,
+control field, and writable result on each hook.
 
 ## Ordering
 
@@ -127,6 +132,28 @@ OuterMiddleware(InnerMiddleware(core))
 ```
 
 This matters for wrappers such as retry, timeout, and formatting. If retry is registered before timeout, retry sees timeout failures from the inner wrapper and can decide whether to run the function again.
+
+## Scoped Middleware
+
+Function middleware can be filtered by function, ToolHarness, or active skill:
+
+```csharp
+var agent = await new AgentBuilder()
+    .WithOpenAI(model: "gpt-5-mini")
+    .WithMiddleware(new ReadAuditMiddleware().ForFunction("ReadFile"))
+    .WithMiddleware(new FileHarnessPolicyMiddleware().ForToolHarness("FileSystemTools"))
+    .WithMiddleware(new AnalysisPolicyMiddleware().ForSkill("analyze_codebase"))
+    .BuildAsync();
+```
+
+Scope filtering applies to `BeforeFunctionAsync`, `WrapFunctionCallAsync`, and
+`AfterFunctionAsync`. This means a scoped retry, timeout, or result transform
+cannot leak to another function through the wrapper path.
+
+Model and turn hooks remain global because they do not target one function call.
+Function scope is evaluated against the current request, including function
+substitution by another wrapper. Skill scope follows the typed active capability
+relationship to functions revealed by that skill.
 
 ## Change Registration And Order
 
@@ -231,7 +258,7 @@ public sealed class MemoryContextMiddleware(IMemoryStore memoryStore) : IAgentMi
 
         var snippets = await memoryStore.SearchAsync(
             scopeId,
-            context.UserMessage?.Text ?? string.Empty,
+            context.UserInputMessages.LastOrDefault()?.Text ?? string.Empty,
             cancellationToken);
 
         if (snippets.Count > 0)
@@ -366,7 +393,11 @@ Typed harness sections and legacy `MiddlewareConfigs` are mutually exclusive for
 
 Do not use middleware as a replacement for a tool. If the model should intentionally choose an action, make it a function or tool harness.
 
-Do not use middleware as the only application-level error boundary. `OnErrorAsync` is source-checked for the function/tool error path, but it is not a global catch-all for provider errors, streaming model errors, or every message-turn failure. Handle `RunAsync(...)` failures in application code and subscribe to events for runtime reporting.
+Do not use middleware as a transactional boundary. `OnErrorAsync` observes every
+terminal model, function, iteration, turn, input, runtime, and fork failure once,
+but it does not roll back side effects and the original failure still propagates.
+Caller cancellation remains on the cancellation lifecycle. Application code can
+still wrap `RunAsync(...)` when it needs a process-level boundary.
 
 Do not mutate live agent state from function bodies. Function bodies receive a narrow `FunctionExecutionContext`; scheduler-owned state changes belong in middleware hooks.
 
@@ -378,7 +409,7 @@ Do not overuse `BeforeToolExecutionAsync` for per-function decisions. If only on
 
 **Missing namespace:** `IAgentMiddleware`, typed hook contexts, `FunctionRequest`, `AgentModelTurnRequest`, and `UpdateMiddlewareState<TState>(...)` are in `HPD.Agent.Middleware`.
 
-**Wrong wrapper order:** the first registered wrapper is outermost. Do not rely on the stale interface XML comment that says last registered is outermost.
+**Wrong wrapper order:** the first registered wrapper is outermost.
 
 **Forgetting to call the handler:** wrapper hooks must call `handler(request)` unless they intentionally replace execution.
 

@@ -32,7 +32,7 @@ public class ProductDocsContext : IAgentMiddleware
 
     public Task BeforeMessageTurnAsync(BeforeMessageTurnContext context, CancellationToken cancellationToken)
     {
-        var query = context.UserMessage?.Text ?? string.Empty;
+        var query = context.UserInputMessages.LastOrDefault()?.Text ?? string.Empty;
         var matches = Docs
             .Where(doc => query.Contains(doc.Key, StringComparison.OrdinalIgnoreCase))
             .Select(doc => doc.Value)

@@ -1,8 +1,10 @@
-#:package HPD-Agent.Framework@0.6.0
+#:package HPD-Agent.Framework@1.0.0
+#:package HPD-Agent.Providers.OpenAI@1.0.0
 #:property TargetFramework=net10.0
 
 using System.Text;
 using HPD.Agent;
+using HPD.Agent.Providers.OpenAI;
 
 var content = new InMemoryContentStore();
 var store = new ContentStoreSkillStore(content, ContentStoreScopes.Skills);
@@ -11,6 +13,7 @@ await store.InstallAsync(Package("1", "Version one instructions."));
 var agent = await new AgentBuilder(new AgentConfig { Name = "managed-skills" })
     .WithContentStore(content)
     .WithSkillStore(store)
+    .WithOpenAI("gpt-5-mini")
     .WithToolHarness<DataTools>(options => options.AddSkillsFromStore())
     .BuildAsync();
 
@@ -19,7 +22,7 @@ await store.UpdateAsync(
     Package("2", "Version two instructions."),
     expectedVersion: "1");
 
-var reload = await agent.ReloadSkillsAsync();
+var reload = await agent.RefreshCapabilitiesAsync();
 Console.WriteLine($"Published: {reload.Published}; epoch: {reload.Epoch}");
 
 await store.DeleteAsync("data-analysis", expectedVersion: "2");

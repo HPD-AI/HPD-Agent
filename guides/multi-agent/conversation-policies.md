@@ -2,12 +2,29 @@
 
 Multi-agent workflows have two separate state paths:
 
-- workflow state: node execution, node outputs, routing, approvals, and checkpoints
+- workflow execution state: node execution, node outputs, routing, approvals, and Base activation state
 - conversation state: HPD sessions and threads that store agent transcripts
 
-Workflow storage is configured with `WithInMemoryWorkflowStore(...)` or `WithJsonWorkflowStore(...)`. Conversation storage is configured with `WithSessionStore(...)`. They are intentionally separate.
+Conversation storage is configured with `WithSessionStore(...)`. Durable workflow
+execution and checkpoint persistence are configured separately through HPD Base. They are
+intentionally separate.
 
 Conversation policy controls where node agent transcripts are written. It does not control node output routing, edge traversal, approvals, checkpointing, or the data passed between workflow nodes.
+
+## Session Store Setup
+
+Create the conversation store from the application's generated event codec:
+
+```csharp
+using HPD.Agent.Serialization;
+
+if (!AgentEventCompositionHost.TryGetDefaultApplication(out var events))
+    throw new InvalidOperationException("A generated application event composition is required.");
+
+var sessionStore = new FileSessionStore("App_Data/sessions", events.Codec);
+```
+
+Use the same store instance for the workflow and every prebuilt node agent.
 
 ## Default
 
@@ -31,7 +48,7 @@ Use one thread when the workflow should read like a single collaborative transcr
 ```csharp
 var workflow = await AgentWorkflow.Create()
     .WithName("DraftAndReview")
-    .WithSessionStore(new FileSessionStore("App_Data/sessions"))
+    .WithSessionStore(sessionStore)
     .WithConversation(MultiAgentConversationPolicies.SharedWorkflowThread())
     .AddAgent("draft", draftConfig)
     .AddAgent("review", reviewConfig)
@@ -48,7 +65,7 @@ When multiple nodes target the same thread at the same time, the workflow serial
 Use one thread per node when each agent needs its own durable workspace:
 
 ```csharp
-.WithSessionStore(new FileSessionStore("App_Data/sessions"))
+.WithSessionStore(sessionStore)
 .WithConversation(MultiAgentConversationPolicies.ThreadPerAgent())
 ```
 
@@ -59,7 +76,7 @@ The workflow creates one session for the execution and a stable thread for each 
 Use forked threads when each agent should see the same starting request but write separately:
 
 ```csharp
-.WithSessionStore(new FileSessionStore("App_Data/sessions"))
+.WithSessionStore(sessionStore)
 .WithConversation(MultiAgentConversationPolicies.ForkThreadPerAgent())
 ```
 
@@ -81,7 +98,13 @@ The workflow still creates threads according to the selected policy, but those t
 
 Conversation policies other than `None` require `WithSessionStore(...)`.
 
-Config-backed and inline-built node agents receive the workflow session store automatically. Prebuilt agents must already use the same session store, otherwise the workflow fails early. This prevents one workflow run from scattering threads across multiple stores.
+Config-backed and inline-built node agents receive the workflow session store
+automatically. Prebuilt agents must already use that exact same store instance, otherwise
+the workflow fails early. This prevents one workflow run from scattering threads across
+multiple stores.
+
+The store must also use the same application event codec as the workflow. Do not manually
+pair a store created with a different or core-only codec.
 
 ## Choosing A Policy
 

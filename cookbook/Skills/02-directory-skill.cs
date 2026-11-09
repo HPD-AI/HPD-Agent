@@ -1,5 +1,5 @@
-#:package HPD-Agent.Framework@0.6.0
-#:package HPD-Agent.Providers.OpenAI@0.6.0
+#:package HPD-Agent.Framework@1.0.0
+#:package HPD-Agent.Providers.OpenAI@1.0.0
 #:property TargetFramework=net10.0
 
 using HPD.Agent;

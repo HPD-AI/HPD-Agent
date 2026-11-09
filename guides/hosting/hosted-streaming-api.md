@@ -245,6 +245,11 @@ Middleware responses are not thread executions. Canonical request events are com
 
 ## Event Bodies
 
-Hosted streaming uses `AgentEventSerializer` envelopes: `version`, `type`, and camelCase payload properties, with null values omitted.
+Hosted streaming uses the selected application composition's `AgentEventCodec`.
+Envelopes contain `version`, `type`, and camelCase payload properties, with null
+values omitted.
 
-This page intentionally shows contract-level examples only. For event families and publication semantics, see [Events](../../reference/events.md).
+This page intentionally shows contract-level examples only. For composition
+selection and persistence compatibility, see
+[Application Composition](../events/application-composition.md). For event
+families and publication semantics, see [Events](../../reference/events.md).

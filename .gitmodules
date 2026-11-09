@@ -1,0 +1,3 @@
+[submodule "vendor/HPD-AI-Framework"]
+	path = vendor/HPD-AI-Framework
+	url = https://github.com/HPD-AI/HPD-AI-Framework.git

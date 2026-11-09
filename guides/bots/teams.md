@@ -9,9 +9,9 @@ using HPD.Agent.Bots.Teams;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddHPDAgent(options =>
+builder.Services.AddHPDAgentHost("support-agent", options =>
 {
-    options.ConfigureAgent = agent => agent.WithOpenAI(
+    options.ConfigureEachAgentBuilder = agent => agent.WithOpenAI(
         model: builder.Configuration["Agent:Model"]!,
         apiKey: builder.Configuration["OpenAI:ApiKey"]);
 });

@@ -5,12 +5,20 @@ HPD Agent hosting exposes sessions, threads, stored agent definitions, authorita
 The core hosting model is:
 
 ```text
-AddHPDAgent(...) registers a hosting bundle
-MapHPDAgentApi(...) maps that bundle to routes
-agentId + sessionId + threadId selects a runtime scope inside the bundle
+AddHPDAgentHost(...) registers a hosting profile
+MapHPDAgentRuntimeApi(...) maps the application runtime surface
+MapHPDAgentClientToolProvidersApi(...) maps client-tool attachment routes
+MapHPDAgentAdministrationApi(...) maps stored definitions and administration
+agentId + sessionId + threadId selects a runtime scope inside the profile
 ```
 
-The hosting registration name is not the route `agentId`.
+A host profile owns infrastructure and may contain many stored agent definitions. At startup it
+declares one default definition. `DefaultAgentId` names that definition and defaults to the profile
+name. Additional definitions can be created through the administration API.
+
+Use [Host Profiles And Agents](../../concepts/host-profiles-and-agents.md) for the lifecycle
+difference between the profile, a stored definition, a built agent, a session, a thread, and a
+runtime instance.
 
 ## Minimal Setup
 
@@ -21,87 +29,165 @@ using HPD.Agent.Providers.OpenAI;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddHPDAgent(options =>
+builder.Services.AddHPDAgentHost("assistant", options =>
 {
-    options.ConfigureAgent = agent =>
+    options.DefaultAgentId = "assistant";
+    options.ConfigureEachAgentBuilder = agent =>
         agent.WithOpenAI(model: "gpt-5-mini")
              .WithInstructions("You are a concise helpful assistant.");
 });
 
 var app = builder.Build();
 
-app.MapHPDAgentApi();
+app.MapGroup("/hpd").MapHPDAgentRuntimeApi("assistant");
 
 app.Run();
 ```
 
-This maps the default hosting bundle. Requests can then use route `agentId` values to select stored definitions or fallback build paths inside that bundle.
+Before the server accepts requests, hosting creates `/agents/assistant` if that definition does
+not already exist. This maps the application-facing session, thread, content, streaming,
+runtime-state, execution, middleware-response, event-catalog, and input-catalog routes. Runtime
+requests resolve only definitions that exist in the agent store.
 
 ## Route Prefix
 
-Use endpoint options to place all hosted routes under a prefix:
+Compose the prefix with normal ASP.NET routing:
 
 ```csharp
-app.MapHPDAgentApi(options =>
-{
-    options.RoutePrefix = "/api/hpd";
-});
+var hpd = app.MapGroup("/api/hpd");
+hpd.MapHPDAgentRuntimeApi("assistant");
 ```
 
 With this prefix, a sessions request becomes `POST /api/hpd/sessions`.
 
-## Named Hosting Bundles
+`MapHPDAgentHostApi(...)` remains available as the complete composite mapping. It includes the
+runtime, client-tool, and stored-definition surfaces and honors `HPDAgentEndpointOptions` flags
+for reference hosts.
 
-Use named registrations when one ASP.NET Core app hosts multiple independent HPD Agent bundles:
+## Mapping Surfaces And Authorization
+
+Map each surface onto a separate route group so it can receive independent authorization:
 
 ```csharp
-builder.Services.AddHPDAgent("support", options =>
+builder.Services.AddAuthorization(options =>
 {
-    options.ConfigureAgent = agent =>
+    options.AddPolicy("AgentUser", policy => policy.RequireAuthenticatedUser());
+    options.AddPolicy("AgentAdmin", policy => policy.RequireRole("AgentAdmin"));
+});
+
+var app = builder.Build();
+
+app.UseAuthentication();
+app.UseAuthorization();
+
+var hpd = app.MapGroup("/hpd");
+
+hpd.MapHPDAgentRuntimeApi("assistant")
+   .RequireAuthorization("AgentUser");
+
+hpd.MapGroup("/client-tools")
+   .MapHPDAgentClientToolProvidersApi()
+   .RequireAuthorization("AgentUser");
+
+hpd.MapGroup("/admin")
+   .MapHPDAgentAdministrationApi("assistant")
+   .RequireAuthorization("AgentAdmin");
+```
+
+`RequireAuthorization(...)` is standard ASP.NET Core endpoint metadata. You must also register
+authentication and authorization services, define the named policies, and add the corresponding
+middleware. The HPD library does not choose an authentication scheme.
+
+`MapHPDAgentClientToolProvidersApi()` retains the development attachment route, which does not
+require an `IClientToolProviderConnectionAuthorizer`. Production application-gateway deployments
+should map `MapAuthorizedHPDClientToolProviderConnection(...)` instead.
+
+## Named Host Profiles
+
+Use named profiles when one ASP.NET Core app needs independent storage, policies, or API
+boundaries:
+
+```csharp
+builder.Services.AddHPDAgentHost("support", options =>
+{
+    options.ConfigureEachAgentBuilder = agent =>
         agent.WithOpenAI(model: "gpt-5-mini")
              .WithInstructions("You help with support requests.");
 });
 
-builder.Services.AddHPDAgent("research", options =>
+builder.Services.AddHPDAgentHost("research", options =>
 {
-    options.ConfigureAgent = agent =>
+    options.ConfigureEachAgentBuilder = agent =>
         agent.WithOpenAI(model: "gpt-5-mini")
              .WithInstructions("You help with research tasks.");
 });
 
-app.MapHPDAgentApi("support", options => options.RoutePrefix = "/support-agent");
-app.MapHPDAgentApi("research", options => options.RoutePrefix = "/research-agent");
+app.MapGroup("/support-agent").MapHPDAgentRuntimeApi("support");
+app.MapGroup("/research-agent").MapHPDAgentRuntimeApi("research");
 ```
 
-The hosting name selects the server-side bundle. The URL prefix is whatever you configure. The route `agentId` still refers to a requested agent definition or runtime agent inside that bundle.
+The hosting name selects the server-side profile. The URL prefix is whatever you configure. Each
+profile declares its default agent using `DefaultAgentId`, falling back to the registration name.
+Additional agent definitions are created explicitly through that profile's `POST /agents` route.
 
-## Hosting Bundle Contents
+## Host Profile Contents
 
-Each named bundle owns its own:
+Each named profile owns its own:
 
 - session manager
 - agent manager
 - agent store
 - session store
+- content store
 - hosting service facade
 
 If `SessionStorePath` is configured, hosting creates a segmented `FileSessionStore`. Otherwise, the default session store is `InMemorySessionStore`. The default agent store is also in-memory.
 
-Created-resource `Location` headers are currently prefixless even when the API is mapped under a route prefix. Content uploads use a hosting content store scoped to the thread. The default hosting service creates an in-memory content store, so do not treat uploaded content as durable unless a durable content store is configured.
+`GET /storage` reports whether each store was explicitly configured or selected as the default
+fallback, plus whether the implementation declares `Ephemeral` or `RestartDurable` persistence.
+In-memory is a valid implementation, not an error; deployment policy decides whether an ephemeral
+store is acceptable.
+
+`PersistAfterTurn` defaults to `true` for `HPDAgentHostOptions`. After a completed turn, the hosted
+agent saves session metadata and ensures the active thread descriptor exists. Canonical thread
+events are committed through the configured session store independently. Set the option to `false`
+only when the application explicitly owns that post-turn bookkeeping.
+
+Created-resource `Location` headers include the mapped route prefix. Content uploads use a hosting
+content store scoped to the thread. The default hosting service creates an in-memory content store,
+so do not treat uploaded content as durable unless a durable content store is configured.
 
 ## Agent Build Resolution
+
+At host startup, each registered hosting profile ensures that its declared agent definition
+exists. `DefaultAgent`, `DefaultAgentDocument`, and `DefaultAgentPath` are definition sources for
+that startup declaration, not per-request fallback sources. Existing definitions are not
+overwritten.
 
 When a hosted runtime needs an agent, the manager resolves it in this order:
 
 1. `IAgentFactory` from dependency injection, if registered.
-2. Stored agent definition for the route `agentId`.
-3. `HPDAgentConfig.DefaultAgent`.
-4. `HPDAgentConfig.DefaultAgentPath`.
-5. An empty `AgentBuilder`.
+2. The stored definition for the route `agentId`.
 
-After selecting the source, hosting enriches the builder with the service provider, route agent id, agent store, session store, and configured hosting options.
+An unknown `agentId` returns `404`. Runtime requests never synthesize, persist, or resurrect a
+definition. `IAgentFactory` remains an advanced escape hatch for applications that own dynamic
+runtime construction.
 
-Configure stores through hosting options. Avoid configuring a separate session store inside `ConfigureAgent`, because hosted runtime state should use the hosting bundle's store.
+When the profile creates an agent from a stored definition, hosting enriches the builder with the
+service provider, route agent id, agent store, session store, content store, event composition,
+and configured hosting options. `ConfigureEachAgentBuilder` then runs last for that agent instance.
+
+The callback may add runtime capabilities or override individual settings. Its changes are applied
+to the built agent but are not written back to the stored definition. It runs when a runtime
+instance is built, not on every request, because built runtimes are cached by agent/session/thread
+scope.
+
+The callback is skipped when a custom `IAgentFactory` owns construction. In that case the factory
+must attach the required event composition, session store, service provider, and middleware or
+server policy itself.
+
+Configure stores through hosting options. Avoid configuring a separate session store inside
+`ConfigureEachAgentBuilder`, because hosted runtime state should use the host profile's store.
 
 ## Runtime Scope
 
@@ -114,3 +200,12 @@ Runtime routes include:
 That scope is used by HTTP input, state, interrupt, resumable SSE, thread executions, and the bidirectional response route. TUI hosted runtimes and bot adapters should map their UI or platform identity into the same runtime scope before sending input or responses.
 
 Hosted clients should load `/state` to restore `activeExecution` and `pendingRequests`, then open `/events?after={appliedCursor}`. A client without local projection starts at zero and rebuilds the complete conversation incrementally. See [Hosted Lifecycle And Recovery](hosted-lifecycle-and-recovery.md).
+
+## Related Pages
+
+- [Host Profiles And Agents](../../concepts/host-profiles-and-agents.md)
+- [Stored Agent Definitions](stored-agent-definitions.md)
+- [Hosted Streaming API](hosted-streaming-api.md)
+- [Hosted Lifecycle And Recovery](hosted-lifecycle-and-recovery.md)
+- [ASP.NET Multi-Agent Workflows](multiagent-aspnet.md)
+- [Hosted Endpoints Reference](../../reference/hosted-endpoints.md)

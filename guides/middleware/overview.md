@@ -45,6 +45,35 @@ var agent = await new AgentBuilder()
 
 Builder-registered middleware is reusable and testable because dependencies can be passed in directly or resolved through the builder's service provider.
 
+### Inspect And Adjust The Pipeline
+
+`AgentBuilder.Middlewares` is an `IReadOnlyList<IAgentMiddleware>`. Use it to
+inspect the current order, but change the pipeline through builder methods:
+
+```csharp
+IReadOnlyList<IAgentMiddleware> middleware = builder.Middlewares;
+
+builder
+    .ReplaceMiddleware<RateLimitMiddleware>(
+        new RateLimitMiddleware(limitPerMinute: 120))
+    .InsertMiddlewareBefore<ContentLifecycleMiddleware>(
+        new RequestAuditMiddleware())
+    .MoveMiddlewareToStart<RequestLoggingMiddleware>()
+    .RemoveMiddleware<LegacyTelemetryMiddleware>();
+```
+
+| Method | Behavior |
+| --- | --- |
+| `WithMiddleware(...)` | Appends one middleware; null is rejected immediately. |
+| `ReplaceMiddleware<T>(...)` | Replaces the first matching middleware in place, removes additional matches, and appends when no match exists. |
+| `InsertMiddlewareBefore<TAnchor>(...)` | Inserts before the first anchor, or appends when the anchor has not been registered yet. |
+| `MoveMiddlewareToStart<T>()` | Moves the first matching middleware to the outermost position. |
+| `RemoveMiddleware<T>()` | Removes every matching middleware. |
+
+The replacement type must be assignable to `T`. Configure the pipeline before
+`BuildAsync()`. Mutating builder state after a build cannot reshape the already
+created agent. The built `Agent.Middlewares` surface remains read-only.
+
 ## Runtime Middleware
 
 Use runtime middleware when a single run needs extra behavior that should not become part of the agent definition. `RuntimeMiddleware` is C# only and is ignored by JSON serialization.

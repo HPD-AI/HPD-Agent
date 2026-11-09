@@ -129,3 +129,4 @@ Use a normal tool harness when a single agent can call one capability directly. 
 - [Checkpointing](checkpointing.md)
 - [Workflow Events](workflow-events.md)
 - [Multi-Agent Capabilities](../tools/multi-agent-capabilities.md)
+- [ASP.NET Multi-Agent Workflows](../hosting/multiagent-aspnet.md)

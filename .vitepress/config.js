@@ -26,6 +26,7 @@ const sidebar = [
     collapsed: false,
     items: [
       link('Agent Runtime And Capabilities', '/concepts/agent-runtime-and-capabilities'),
+      link('Host Profiles And Agents', '/concepts/host-profiles-and-agents'),
       link('Background Tasks And Notifications', '/concepts/background-tasks-and-notifications'),
       link('Agent Builder And Agent', '/concepts/agent-builder-and-agent'),
       link('Providers, Clients, And Secrets', '/concepts/providers-clients-and-secrets'),
@@ -170,6 +171,7 @@ const sidebar = [
     collapsed: true,
     items: [
       link('ASP.NET Core Hosting', '/guides/hosting/aspnet-core'),
+      link('ASP.NET Multi-Agent Workflows', '/guides/hosting/multiagent-aspnet'),
       link('Hosted Lifecycle And Recovery', '/guides/hosting/hosted-lifecycle-and-recovery'),
       link('Hosted Streaming API', '/guides/hosting/hosted-streaming-api'),
       link('Stored Agent Definitions', '/guides/hosting/stored-agent-definitions'),

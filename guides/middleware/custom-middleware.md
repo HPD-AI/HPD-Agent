@@ -128,6 +128,35 @@ OuterMiddleware(InnerMiddleware(core))
 
 This matters for wrappers such as retry, timeout, and formatting. If retry is registered before timeout, retry sees timeout failures from the inner wrapper and can decide whether to run the function again.
 
+## Change Registration And Order
+
+Inspect `AgentBuilder.Middlewares` without mutating it:
+
+```csharp
+IReadOnlyList<IAgentMiddleware> pipeline = builder.Middlewares;
+```
+
+Use semantic builder operations when a feature helper must replace or position
+middleware:
+
+```csharp
+builder
+    .ReplaceMiddleware<ToolTimingMiddleware>(
+        new ToolTimingMiddleware())
+    .InsertMiddlewareBefore<ContentLifecycleMiddleware>(
+        new FunctionAuditMiddleware())
+    .MoveMiddlewareToStart<RequestLoggingMiddleware>()
+    .RemoveMiddleware<LegacyTelemetryMiddleware>();
+```
+
+`ReplaceMiddleware<T>` preserves the first matching position and removes
+additional matches. If none exists, it appends the replacement.
+`InsertMiddlewareBefore<TAnchor>` appends when the anchor is not present, which
+allows the operation to run before automatic middleware composition.
+
+Registration and ordering are construction-time operations. Finish them before
+`BuildAsync()`. The built agent exposes only read-only middleware inspection.
+
 ## Tool And Function Decisions
 
 To skip every tool call requested in the current model response, set the control fields on `BeforeToolExecutionContext`:

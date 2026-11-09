@@ -11,14 +11,13 @@ Every bot host needs the normal HPD runtime first:
 ```csharp
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddHPDAgent(options =>
+builder.Services.AddHPDAgentHost("support-agent", options =>
 {
-    options.ConfigureAgent = agent => agent
+    options.ConfigureEachAgentBuilder = agent => agent
         .WithOpenAI(
             model: builder.Configuration["Agent:Model"]!,
             apiKey: builder.Configuration["OpenAI:ApiKey"]);
 
-    options.PersistAfterTurn = true;
 });
 
 var agentId = builder.Configuration["Agent:Id"] ?? "support-agent";

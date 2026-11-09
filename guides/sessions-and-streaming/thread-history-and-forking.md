@@ -1,11 +1,14 @@
 # Thread History And Forking
 
-Threads let one session hold multiple replayable paths. A thread can be created directly, forked from a message id, updated for UI metadata, listed with sibling/tree information, and deleted subject to thread protection rules.
+Threads let one session hold multiple replayable paths. A thread can be created directly, forked
+from a message id or the pre-message root, updated for UI metadata, listed with thread-tree
+information, and deleted subject to graph-integrity and active-mutation rules.
 
 There are two public ways to work with threads:
 
 - Direct in-process `Agent` APIs, where your code calls methods on a built `Agent` that has a session store.
-- ASP.NET Core hosted APIs, where clients use HTTP routes and DTOs exposed by `MapHPDAgentApi(...)`.
+- ASP.NET Core hosted APIs, where clients use HTTP routes and DTOs exposed by
+  `MapHPDAgentHostApi(...)`.
 
 ## Direct Agent API
 
@@ -26,7 +29,11 @@ var forkId = await agent.ForkThreadAsync(
     fromMessageId: messageId);
 ```
 
-Direct APIs require a configured session store. `CreateSessionAsync(...)` creates the default `main` thread. `ForkThreadAsync(...)` returns the new thread id and can also accept `ThreadForkOptions` for programmatic fork behavior such as fork compaction.
+Direct APIs require a configured session store. `CreateSessionAsync(...)` creates an initial
+`main` thread for convenience. When `RunAsync(...)` omits `threadId`, a one-thread session uses
+its sole thread, while an empty session creates `main`. Multiple threads make the omitted ID
+ambiguous. `ForkThreadAsync(...)` returns the new thread id and can also accept
+`ThreadForkOptions` for programmatic fork behavior such as fork compaction.
 
 ## ASP.NET Core Hosted Routes
 
@@ -41,7 +48,6 @@ Thread read, update, delete, content, and event-log routes are scoped by `sessio
 | Update thread | `PATCH /sessions/{sessionId}/threads/{threadId}` |
 | Delete thread | `DELETE /sessions/{sessionId}/threads/{threadId}?recursive=false` |
 | Observe thread events | `GET /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/events?after={appliedCursor}` |
-| Get siblings | `GET /sessions/{sessionId}/threads/{threadId}/siblings` |
 
 ## Hosted Create A Thread
 
@@ -66,7 +72,9 @@ Forking accepts a `ForkThreadRequest`:
 }
 ```
 
-`fromMessageId` is required. If the message id is not present on the source thread, the hosted API returns a validation error.
+`fromMessageId` is optional. A string is an inclusive committed-message fork point; `null`
+creates a root fork before any source messages. If a supplied message id is not present on the
+source thread, the hosted API returns a validation error.
 
 The new thread records its source thread and fork point. Persistent thread-scoped middleware state is copied to the new thread when the fork is committed and then evolves independently.
 
@@ -78,9 +86,14 @@ Use thread metadata for UI labels, filters, annotations, and runtime hints that 
 
 ## Delete Threads
 
-The `main` thread is protected and cannot be deleted.
+`main` is not protected. It can be deleted when it has no children and no conflicting thread
+operation. Deleting the last thread leaves the session intact with zero threads. The next
+in-process run that omits a thread ID creates a fresh `main` thread.
 
-In the hosted API, deleting a thread with children returns a conflict unless `recursive=true`. Recursive deletion must also be enabled by server configuration. If recursive deletion is disabled, the API returns a validation error even when the request includes `recursive=true`.
+In the hosted API, deleting a thread with children returns a validation error unless
+`recursive=true`. Recursive deletion must also be enabled by server configuration. If recursive
+deletion is disabled, the API returns a validation error even when the request includes
+`recursive=true`.
 
 Hosted thread deletion uses a thread operation lock. A lock conflict means another exclusive thread mutation is in progress; it does not mean an agent run is active.
 
@@ -117,9 +130,3 @@ The source thread is unchanged. The target thread starts with the compacted sema
 Hosted `ForkThreadRequest.Compaction` accepts the same inherit, disabled, or enabled union as `ThreadForkOptions.Compaction`. Omitting it inherits the server-side configuration.
 
 The middleware hook for this phase is `BeforeThreadForkCommitAsync`. It receives the source thread, the in-memory target thread, the fork point, and `ThreadForkOptions`. This is the place for middleware that needs to change the target thread before it becomes durable. After the fork is committed, durable thread events such as `THREAD_CREATED` with fork metadata and later `THREAD_UPDATED` changes describe the committed thread state; they are not mutation hooks.
-
-## Sibling Navigation
-
-The hosted sibling endpoint returns thread DTOs with tree and sibling fields such as sibling index, total siblings, previous sibling id, next sibling id, original thread id, and total forks.
-
-Current implementation returns full `ThreadDto` values for siblings. Avoid depending on a separate lightweight sibling DTO until that contract is reconciled.

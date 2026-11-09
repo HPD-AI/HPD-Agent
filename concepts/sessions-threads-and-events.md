@@ -18,7 +18,7 @@ In ASP.NET Core hosted applications, a runtime scope is selected by:
 agentId + sessionId + threadId
 ```
 
-The `agentId` selects the hosted agent definition or runtime build path. The `sessionId` and `threadId` select the state and thread path used by that runtime agent.
+The `agentId` selects a stored hosted agent definition. The `sessionId` and `threadId` select the state and thread path used by that runtime agent.
 
 ## Sessions
 
@@ -29,7 +29,10 @@ A session is the top-level durable scope for an interaction. It has:
 - metadata
 - session-scoped middleware state
 
-Creating a session also creates the default thread named `main`. Session metadata updates are merge patches: new keys are added, existing keys are overwritten, and null values remove keys.
+Hosted session creation and `Agent.CreateSessionAsync(...)` create an initial thread named `main`.
+The lower-level session store can also create a session without any threads. Session metadata
+updates are merge patches: new keys are added, existing keys are overwritten, and null values
+remove keys.
 
 Use sessions for identity, grouping, UI lists, and state that should be shared across threads. For example, permission choices that apply across a user's thread tree are session-scoped middleware state.
 
@@ -46,7 +49,18 @@ A thread is the replayable path inside a session. A thread has:
 - thread-scoped middleware state
 - a durable thread event log
 
-Threads are the unit for forking, replay, thread-specific state, and hosted runtime ownership. The default `main` thread is protected from deletion.
+Threads are the unit for forking, replay, thread-specific state, and hosted runtime ownership.
+`main` is the conventional ID for an automatically created first thread, not a protected
+identity. It can be deleted like any other leaf thread. Deleting the last thread leaves the
+session and its session-scoped state intact.
+
+When an in-process `RunAsync(...)` omits `threadId`:
+
+- a session with one thread uses that thread, regardless of its ID;
+- a session with no threads creates and uses `main`;
+- a session with multiple threads raises `AmbiguousThreadException`.
+
+An explicitly supplied missing thread ID still fails rather than creating a replacement.
 
 Forking creates a new thread from a message id on an existing thread. Thread-scoped persistent middleware state is copied at fork time and then diverges between threads.
 

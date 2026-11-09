@@ -4,6 +4,18 @@ Middleware participates in an agent run through lifecycle hooks, wrappers, state
 
 Common uses include permission gates, retry policy, error formatting, tool-call timeout, logging, compaction, content handling, and UI-facing request/response events.
 
+## Builder Pipeline Shape
+
+Middleware order is fixed when the agent is built. `AgentBuilder.Middlewares`
+is a read-only view of the current pipeline; use `WithMiddleware`,
+`ReplaceMiddleware<T>`, `InsertMiddlewareBefore<T>`,
+`MoveMiddlewareToStart<T>`, and `RemoveMiddleware<T>` to change it.
+
+`ReplaceMiddleware<T>` keeps the first existing position and removes duplicate
+matches. `InsertMiddlewareBefore<T>` uses the first anchor and appends when the
+anchor has not been registered yet. Complete all ordering operations before
+`BuildAsync()`.
+
 ## Execution Order
 
 Hooks follow a stack-shaped model:

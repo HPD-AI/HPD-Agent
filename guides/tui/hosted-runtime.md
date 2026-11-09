@@ -7,40 +7,33 @@
 ```csharp
 using HPD.Agent;
 using HPD.Agent.AspNetCore;
+using HPD.Agent.Providers.OpenAI;
 using Microsoft.AspNetCore.Builder;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddRouting();
-builder.Services.AddHpdGeneratedProviders();
-builder.Services.AddHPDAgent("tui-agent", config =>
+builder.Services.AddHPDAgentHost("tui-agent", options =>
 {
-    config.DefaultAgent = new AgentConfig
+    options.DefaultAgentId = "tui-agent";
+    options.DefaultAgent = new AgentConfig
     {
         Name = "Hosted TUI Agent",
-        SystemInstructions = "You are concise and helpful.",
-        Clients = new AgentClientsConfig
-        {
-            Chat = new ChatClientConfig
-            {
-                ProviderKey = "openai",
-                ModelName = "gpt-5-mini"
-            }
-        }
+        SystemInstructions = "You are concise and helpful."
     };
+
+    options.ConfigureEachAgentBuilder = agent =>
+        agent.WithOpenAI(model: "gpt-5-mini");
 });
 
 var app = builder.Build();
-app.MapGroup("/hpd").MapHPDAgentApi("tui-agent");
+app.MapGroup("/hpd").MapHPDAgentRuntimeApi("tui-agent");
 await app.RunAsync();
 ```
 
 The hosted runtime does not call an in-process `Agent`. It sends HTTP requests to the mapped HPD Agent API.
 
-The host project must reference the provider package used by `ProviderKey = "openai"`
-and call `AddHpdGeneratedProviders()`. Keep provider composition in the hosted app;
-the terminal client connects to the mapped API and does not create the model client
-itself. If the terminal sends typed provider options, give its
+Keep provider composition in the hosted app. The terminal client connects to the mapped API and
+does not create the model client itself. If the terminal sends typed provider options, give its
 `HostedAgentTuiRuntime` the matching generated `ProviderComposition` so those
 options survive the HTTP boundary.
 
@@ -76,7 +69,7 @@ Set `HostedAgentTuiRuntimeOptions.BaseAddress` to the HPD Agent API route root, 
 If your server maps the API at root:
 
 ```csharp
-app.MapHPDAgentApi("tui-agent");
+app.MapHPDAgentRuntimeApi("tui-agent");
 ```
 
 use:
@@ -88,7 +81,7 @@ BaseAddress = new Uri("http://127.0.0.1:5057/")
 If your server maps the API under a group:
 
 ```csharp
-app.MapGroup("/hpd").MapHPDAgentApi("tui-agent");
+app.MapGroup("/hpd").MapHPDAgentRuntimeApi("tui-agent");
 ```
 
 use:

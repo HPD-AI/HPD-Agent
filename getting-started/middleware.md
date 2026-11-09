@@ -60,6 +60,10 @@ dotnet run
 
 `WithMiddleware(...)` registers behavior around each turn.
 
+It rejects null middleware immediately. Registration order determines the
+outermost-to-innermost pipeline. Finish all middleware registration and
+ordering before `BuildAsync()`.
+
 `BeforeMessageTurnAsync(...)` runs before the model call.
 
 The middleware inspects the user message, finds matching snippets, and adds a system message to the thread history for this turn.

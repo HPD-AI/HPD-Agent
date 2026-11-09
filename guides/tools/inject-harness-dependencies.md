@@ -87,6 +87,17 @@ builder.WithToolHarness(harness);
 
 An explicit instance uses its current dependencies and captured state. Registration-time `.Configure(...)` and `.UseDependency(...)` are rejected for that instance. The caller owns it.
 
+Explicit-instance registration validates immediately:
+
+- A null instance throws `ArgumentNullException`.
+- Registering the same harness instance slot twice throws
+  `InvalidOperationException`.
+- A harness without a generated registration fails before the agent is built.
+
+Instance registration is builder state. It is not exposed as a mutable public
+collection; use `WithToolHarness(instance)` and optional registration metadata
+through the context argument.
+
 ## Lifetime Rules
 
 | Object | Owner |

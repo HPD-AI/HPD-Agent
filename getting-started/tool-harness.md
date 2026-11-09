@@ -54,6 +54,10 @@ Use `WithTool<T>("function_name")` when the agent should see one function. Use `
 
 A harness has exactly one public constructor. This first example uses the implicit parameterless constructor. A harness that needs settings accepts `IHarnessConfig<T>`; a harness that needs services accepts those services as normal constructor parameters.
 
+If the application supplies a pre-created harness with
+`WithToolHarness(instance)`, null and duplicate registration fail immediately.
+The generated registry must contain that harness before registration succeeds.
+
 ```csharp
 public sealed class SupportToolHarness(
     IHarnessConfig<SupportSettings> configuration,

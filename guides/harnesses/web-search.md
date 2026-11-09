@@ -22,9 +22,7 @@ Configure Tavily on `AgentBuilder` before building the agent:
 ```csharp
 var agent = await new AgentBuilder()
     .WithInstructions("Use web search when current facts or source links matter.")
-    .WithOpenAI(openai => openai
-        .WithApiKey(Environment.GetEnvironmentVariable("OPENAI_API_KEY")!)
-        .WithModel("gpt-4.1-mini"))
+    .WithOpenAI(model: "gpt-4.1-mini")
     .WithTavilyWebSearch(tavily => tavily
         .WithApiKey(Environment.GetEnvironmentVariable("TAVILY_API_KEY")!)
         .WithMaxResults(5))

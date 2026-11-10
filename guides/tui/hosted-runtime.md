@@ -12,6 +12,7 @@ using Microsoft.AspNetCore.Builder;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.Services.AddHPD();
 builder.Services.AddHPDAgentHost("tui-agent", options =>
 {
     options.DefaultAgentId = "tui-agent";
@@ -26,7 +27,7 @@ builder.Services.AddHPDAgentHost("tui-agent", options =>
 });
 
 var app = builder.Build();
-app.MapGroup("/hpd").MapHPDAgentRuntimeApi("tui-agent");
+app.MapGroup("/hpd").MapHPDAgentHostApi("tui-agent");
 await app.RunAsync();
 ```
 
@@ -40,25 +41,39 @@ options survive the HTTP boundary.
 ## Connect The TUI
 
 ```csharp
+using HPD.Agent;
 using HPD.Agent.TUI;
 using HPD.Agent.TUI.Runtime;
+
+if (!HPDApplicationCompositionHost.TryGetApplication(out var application))
+{
+    throw new InvalidOperationException(
+        "A generated HPD application composition is required.");
+}
 
 var scope = new AgentTuiRuntimeScope("tui-agent", "local-session", "main");
 await using var runtime = new HostedAgentTuiRuntime(new HostedAgentTuiRuntimeOptions
 {
     BaseAddress = new Uri("http://127.0.0.1:5057/hpd/"),
-    DefaultScope = scope
+    DefaultScope = scope,
+    ProviderComposition = application.Providers,
+    EventComposition = application.Events
 });
 
 await using var tui = HpdAgentTuiApp.Create(
     runtime,
-    scope,
+    new DirectAgentTuiExecutionTarget(scope),
     builder => builder
         .AddAgentTuiDefaults()
         .AddSubAgentTui());
 
 await tui.RunAsync();
 ```
+
+The TUI executable needs the same generated provider and output-event compositions as the host.
+The source-generated application composition registers both. A custom event or provider used by
+the server must also be present in the client composition, or the client cannot serialize inputs
+or decode the server's event stream.
 
 ## Route-Base Warning
 
@@ -69,7 +84,7 @@ Set `HostedAgentTuiRuntimeOptions.BaseAddress` to the HPD Agent API route root, 
 If your server maps the API at root:
 
 ```csharp
-app.MapHPDAgentRuntimeApi("tui-agent");
+app.MapHPDAgentHostApi("tui-agent");
 ```
 
 use:
@@ -81,7 +96,7 @@ BaseAddress = new Uri("http://127.0.0.1:5057/")
 If your server maps the API under a group:
 
 ```csharp
-app.MapGroup("/hpd").MapHPDAgentRuntimeApi("tui-agent");
+app.MapGroup("/hpd").MapHPDAgentHostApi("tui-agent");
 ```
 
 use:
@@ -102,7 +117,7 @@ The hosted runtime uses the hosted API for:
 - loading authoritative runtime control state with the journal boundary, active run, and pending interactions
 - catching up and observing committed thread events through one resumable SSE stream
 - submitting `AgentInputEvent` instances
-- interrupting the expected backend-owned run with structured outcomes
+- cancelling the expected backend-owned execution with structured outcomes
 - sending middleware responses for permissions, continuations, clarifications, and client tools
 
 Hosted TUI middleware responses go through hosted response endpoints. Interactive requests are canonical journal events and also appear in runtime control state while they remain answerable, so a reconnecting TUI can restore its prompt controls before transcript catch-up completes. Bot adapters use their platform-specific callback protocols.
@@ -111,7 +126,9 @@ Hosted TUI middleware responses go through hosted response endpoints. Interactiv
 
 ## Thread Projection And Compaction
 
-The hosted TUI observes the server's session, thread, and compaction behavior. It can fork threads through the hosted API and may inherit, disable, or explicitly configure compaction for the new fork target.
+The hosted TUI observes the server's session, thread, and compaction behavior. Its thread-fork API
+carries the same metadata-oriented fork request supported by the TUI runtime; it does not expose a
+compaction toggle. Configure fork-target compaction through the backend agent.
 
 After hard compaction, hosted observation reports the journal rebase. The runtime clears transcript state derived from the old generation, hydrates the replacement generation, and resumes from its new cursor. `CompactionEvent` remains lifecycle information; the checkpoint defines the semantic change.
 
@@ -137,7 +154,17 @@ The hosted runtime opens a thread by reading `/state`, restoring `activeExecutio
 
 Submission returns the authoritative `threadExecutionId`. The hosted backend remains authoritative if another client starts work.
 
-While idle, Enter submits `USER_MESSAGES_INPUT`. While an execution is active, Enter retains a TUI-local follow-up and submits nothing yet. The preview above the editor shows these follow-ups; `Alt+Up` removes the newest one from the queue and restores it to the composer for editing or deletion. Escape promotes the oldest follow-up to `STEERING_INPUT` with the observed `threadExecutionId`; if the execution finishes first, the TUI submits it normally as the next input. Without a pending follow-up, double Escape submits `INTERRUPTION_REQUEST` through `/inputs`. Pending follow-ups are isolated per runtime scope, remain local until submitted, and are removed only after the hosted runtime accepts them. A rejected or failed ordinary submission is restored to the composer, and a stale TUI never retargets a newer execution automatically.
+While idle, Enter submits a `UserMessagesInputEvent`. While an execution is active, Enter retains
+a TUI-local follow-up and submits nothing yet. The preview above the editor shows these follow-ups;
+`Alt+Up` removes the newest one from the queue and restores it to the composer for editing or
+deletion. Escape promotes the oldest follow-up by submitting a `UserMessagesInputEvent` with
+`Delivery = AgentInputDelivery.Steer` and the observed `threadExecutionId`. If the execution
+finishes first, the TUI submits it normally as the next input. Without a pending follow-up, double
+Escape calls `IHpdAgentTuiRuntime.CancelExecutionAsync(scope, threadExecutionId, ...)`, which uses
+the hosted execution cancellation route. Pending follow-ups are isolated per runtime scope,
+remain local until submitted, and are removed only after the hosted runtime accepts them. A
+rejected or failed ordinary submission is restored to the composer, and a stale TUI never
+retargets a newer execution automatically.
 
 If an event schema cannot be decoded or projected, hydration stops at the last successfully applied thread position. Register every application-owned event codec in the host and client projection before opening journals that contain that event type.
 

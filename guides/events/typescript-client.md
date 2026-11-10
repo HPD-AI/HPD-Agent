@@ -289,7 +289,10 @@ For a lifecycle-aware UI:
 5. Submit input and retain its authoritative `threadExecutionId`.
 6. Apply committed events serially and persist the cursor only after successful projection.
 
-To cancel safely, use `chat.cancelActiveTurn()`. It reloads state, constructs `INTERRUPTION_REQUEST` with the current `threadExecutionId`, and submits it through `/inputs`. Use `chat.steer(text)` to submit `STEERING_INPUT` against that same authoritative execution. Inspect the returned `disposition` instead of assuming the control was accepted.
+To cancel safely, use `thread.interrupt()`. It reloads state and calls the dedicated execution
+`cancel` route with the active `threadExecutionId`. Use `thread.steer(text)` to submit a
+`USER_MESSAGES_INPUT` event with `delivery: "Steer"` against the same authoritative execution.
+Inspect the returned `disposition` instead of assuming the control was accepted.
 
 ### Recover from hard compaction
 

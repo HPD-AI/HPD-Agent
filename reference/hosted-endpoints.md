@@ -132,9 +132,9 @@ Projected execution status values are `active`, `succeeded`, `failed`, `cancelle
 Only one active hosted thread execution is allowed for a given `sessionId + threadId`.
 
 The dedicated `cancel` route targets one exact runtime-owned execution and waits for its terminal
-fact. The `/inputs` route accepts semantic controls such as `INTERRUPTION_REQUEST` and
-`STEERING_INPUT` against the active execution observed from `/state`. `queue/start` resumes queue
-promotion after an accepted hosted cancellation.
+fact. Steering uses `/inputs` with a `UserMessagesInputEvent` whose `delivery` is `Steer` and whose
+`threadExecutionId` matches the active execution observed from `/state`. `queue/start` resumes
+queue promotion after an accepted hosted cancellation.
 
 ## Agent Definitions
 
@@ -180,7 +180,12 @@ Default hosted content storage is in-memory. Do not assume durability unless the
 
 SSE sends committed events after the requested applied cursor, catches up to the current head, and remains open for future commits. Every canonical frame has `id: {Generation}:{ThreadSequenceNumber}`, `event: agent-event`, and the exact serialized event in `data:`. Hard replacement sends a `thread-journal-rebased` control frame and ends the old-generation stream. The server accepts `Last-Event-ID` when `after` is absent; comment heartbeats keep quiet streams alive. HTTP clients post any serialized `AgentEvent` envelope implementing `IAgentResponseEvent` to the single `/responses` route. Ordinary response races are typed `200` results rather than HTTP conflicts.
 
-`/inputs` is the only semantic-input mutation route. Queued inputs return `queued` with a newly assigned execution id. Active controls such as `STEERING_INPUT` and `INTERRUPTION_REQUEST` carry the observed `threadExecutionId` and return `accepted`, `no_active_execution`, `active_execution_mismatch`, `active_input_not_steerable`, or `execution_finishing` as applicable. See [Hosted Lifecycle And Recovery](../guides/hosting/hosted-lifecycle-and-recovery.md).
+`/inputs` is the only semantic-input mutation route. An ordinary `UserMessagesInputEvent` with
+`delivery: "Queue"` returns `queued` with a newly assigned execution id. A steering
+`UserMessagesInputEvent` carries `delivery: "Steer"` and the observed `threadExecutionId`; it
+returns `accepted`, `no_active_execution`, `active_execution_mismatch`,
+`active_input_not_steerable`, or `execution_finishing` as applicable. Cancellation uses the
+dedicated execution `cancel` route. See [Hosted Lifecycle And Recovery](../guides/hosting/hosted-lifecycle-and-recovery.md).
 
 `context-usage` estimates the scoped thread's current input-token pressure against the supplied `runConfig`, including model context-window metadata when the client has it. It does not start a thread execution and does not compact history.
 

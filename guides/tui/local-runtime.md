@@ -31,7 +31,7 @@ var scope = new AgentTuiRuntimeScope(agentId, sessionId, "main");
 await using var runtime = new InMemoryAgentTuiRuntime(agent, scope);
 await using var app = HpdAgentTuiApp.Create(
     runtime,
-    scope,
+    new DirectAgentTuiExecutionTarget(scope),
     tui => tui
         .AddAgentTuiDefaults()
         .AddSubAgentTui()

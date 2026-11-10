@@ -114,6 +114,63 @@ services.AddOpenTelemetry()
 
 Use the same source name in `WithTelemetry(...)` and `AddMeter(...)`.
 
+## Tracing
+
+`WithTracing(...)` converts structural HPD events into OpenTelemetry activities:
+
+```csharp
+var agent = await new AgentBuilder()
+    .WithTracing(sourceName: "MyApp.Agent")
+    .WithOpenAI(model: "gpt-5-mini")
+    .BuildAsync();
+```
+
+The HPD observer creates this span hierarchy:
+
+```text
+agent.turn
+└── agent.iteration
+    └── agent.tool_call
+```
+
+`agent.turn` represents one user message. `agent.iteration` represents one model call inside that
+turn. `agent.tool_call` represents one function or tool invocation under its iteration. Decisions,
+permission requests and responses, retries, circuit-breaker events, tool results, and turn errors
+are attached as events on the relevant span instead of creating unrelated top-level spans.
+
+Register the same source name with the host's trace exporter:
+
+```csharp
+services.AddOpenTelemetry()
+    .WithTracing(tracing =>
+    {
+        tracing
+            .AddSource("MyApp.Agent")
+            .AddOtlpExporter();
+    });
+```
+
+`WithTracing(...)` is independent of `WithTelemetry(...)`: tracing controls the HPD turn,
+iteration, and tool-call spans, while telemetry controls metrics and MEAI chat-client
+instrumentation. Both can be enabled together.
+
+Tool-result and error payloads pass through a span sanitizer. It redacts sensitive JSON fields and
+limits each string to 4,096 characters by default. Supply `SpanSanitizerOptions` to change those
+limits:
+
+```csharp
+var agent = await new AgentBuilder()
+    .WithTracing(
+        sourceName: "MyApp.Agent",
+        sanitizerOptions: new SpanSanitizerOptions
+        {
+            MaxStringLength = 2_000,
+            EnableRedaction = true
+        })
+    .WithOpenAI(model: "gpt-5-mini")
+    .BuildAsync();
+```
+
 ## Usage Tracking
 
 Usage exists in two places.

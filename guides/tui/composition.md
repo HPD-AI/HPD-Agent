@@ -7,7 +7,7 @@
 ```csharp
 await using var app = HpdAgentTuiApp.Create(
     runtime,
-    scope,
+    new DirectAgentTuiExecutionTarget(scope),
     tui => tui.AddAgentTuiDefaults());
 ```
 
@@ -110,20 +110,23 @@ Shortcuts should map to clear shell actions. Autocomplete providers can suggest 
 
 ## Run Configuration
 
-The prompt submission path can attach an `AgentRunConfig` to the input event:
+The prompt submission path returns an `AgentTuiInputRunConfig`, which carries the independent
+configuration for the current agent and its direct children. In the common case, populate only
+the current agent's `AgentRunConfig`:
 
 ```csharp
-tui.SetRunConfigComposer(context => new AgentRunConfig
-{
-    Clients = new AgentClientsConfig
+tui.SetRunConfigComposer(context => new AgentTuiInputRunConfig(
+    new AgentRunConfig
     {
-        Chat = new ChatClientConfig
+        Clients = new AgentClientsConfig
         {
-            ProviderKey = "openai",
-            ModelName = "gpt-5-mini"
+            Chat = new ChatClientConfig
+            {
+                Provider = new ProviderReference { Key = "openai" },
+                ModelName = "gpt-5-mini"
+            }
         }
-    }
-});
+    }));
 ```
 
 Model selection helpers are composition conveniences. They do not change the underlying rule: each submitted prompt can carry run configuration into the agent runtime.
@@ -131,23 +134,36 @@ Model selection helpers are composition conveniences. They do not change the und
 The composer can also attach a run-level permission profile:
 
 ```csharp
-tui.SetRunConfigComposer(context => new AgentRunConfig
-{
-    Security = new AgentSecurityRunConfig
+tui.SetRunConfigComposer(context => new AgentTuiInputRunConfig(
+    new AgentRunConfig
     {
-        Approval = AgentApprovalPolicy.ReviewProtectedActions
-    }
-});
+        Security = new AgentSecurityRunConfig
+        {
+            Approval = AgentApprovalPolicy.ReviewProtectedActions
+        }
+    }));
 ```
 
 The TUI only transports this setting. Permission middleware decides how it is enforced, and sandbox policy remains a separate host concern.
+
+To configure direct child runs, set the second constructor argument:
+
+```csharp
+tui.SetRunConfigComposer(context => new AgentTuiInputRunConfig(
+    RunConfig: childRunConfig,
+    SubAgentRunConfig: new SubAgentRunConfig()));
+```
+
+Return `null` when a prompt should use the runtime's existing defaults.
 
 ## Transcript Checkpoint Boundaries
 
 Use `TranscriptModel.ReplaceHistoryWith(...)` when an authoritative checkpoint supersedes everything currently visible before it:
 
 ```csharp
-context.Shell.Transcript.ReplaceHistoryWith(checkpointEntry);
+context.Shell.Transcript.ReplaceHistoryWith(
+    checkpointEntry,
+    CommittedHistoryMutationPolicy.VisibleEpochBoundary);
 ```
 
 The replacement is atomic: it removes finalized and live entries regardless of their cell or event type, inserts the supplied entry as finalized, and advances the transcript history epoch. Use it for real history boundaries such as a compaction checkpoint, not as a general-purpose clear-and-add convenience.

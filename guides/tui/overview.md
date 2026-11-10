@@ -16,6 +16,9 @@ The same shell can run against an in-process agent or against an ASP.NET Core ho
 
 `HostedAgentTuiRuntime` talks to the hosted HPD Agent API with relative HTTP paths.
 
+`DirectAgentTuiExecutionTarget` identifies the scope the shell should execute against. Use it
+alongside the selected runtime when creating the app.
+
 `HpdAgentTuiBuilder` composes shell defaults, event handlers, pages, widgets, slash commands, shortcuts, autocomplete providers, run-config composers, and interaction handlers.
 
 ## Minimal Shape
@@ -25,7 +28,7 @@ var scope = new AgentTuiRuntimeScope(agentId, sessionId, "main");
 await using var runtime = new InMemoryAgentTuiRuntime(agent, scope);
 await using var app = HpdAgentTuiApp.Create(
     runtime,
-    scope,
+    new DirectAgentTuiExecutionTarget(scope),
     tui => tui
         .AddAgentTuiDefaults()
         .AddEventHandler("myapp.text", new TextMessageStreamHandler()));

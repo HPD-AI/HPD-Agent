@@ -70,6 +70,8 @@ wrapper supplies those values automatically.
 | `WorkflowAgentStartedEvent` | Start a workflow node row or card |
 | `WorkflowAgentCompletedEvent` | Complete a node and show output, progress, duration, or error |
 | `WorkflowAgentSkippedEvent` | Show a skipped node caused by routing or conditions |
+| `WorkflowApprovalRequestedEvent` | Prompt the application or user for node approval |
+| `WorkflowApprovalTimedOutEvent` | Report an approval request that exceeded its wait limit |
 | `WorkflowEdgeTraversedEvent` | Show route decisions in graph/debug views |
 | `WorkflowLayerStartedEvent` | Start a layer group in parallel or layer-based execution |
 | `WorkflowLayerCompletedEvent` | Complete a layer group |
@@ -121,6 +123,8 @@ The public workflow stream contains selected workflow events plus normal child a
 | agent node starts | `WorkflowAgentStartedEvent` |
 | agent node completes | `WorkflowAgentCompletedEvent` |
 | agent node is skipped | `WorkflowAgentSkippedEvent` |
+| a node requests approval | `WorkflowApprovalRequestedEvent` |
+| an approval request times out | `WorkflowApprovalTimedOutEvent` |
 | parallel layer starts | `WorkflowLayerStartedEvent` |
 | parallel layer completes | `WorkflowLayerCompletedEvent` |
 | route is traversed | `WorkflowEdgeTraversedEvent` |

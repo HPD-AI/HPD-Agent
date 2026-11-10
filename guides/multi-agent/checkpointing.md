@@ -71,6 +71,8 @@ Application code can continue to consume the public live workflow events:
 - `WorkflowAgentStartedEvent`
 - `WorkflowAgentCompletedEvent`
 - `WorkflowAgentSkippedEvent`
+- `WorkflowApprovalRequestedEvent`
+- `WorkflowApprovalTimedOutEvent`
 - `WorkflowEdgeTraversedEvent`
 - `WorkflowLayerStartedEvent`
 - `WorkflowLayerCompletedEvent`

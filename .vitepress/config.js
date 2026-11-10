@@ -27,7 +27,7 @@ const sidebar = [
     items: [
       link('Agent Runtime And Capabilities', '/concepts/agent-runtime-and-capabilities'),
       link('Host Profiles And Agents', '/concepts/host-profiles-and-agents'),
-      link('Background Tasks And Notifications', '/concepts/background-tasks-and-notifications'),
+      link('Agent Operations And Background Work', '/concepts/background-tasks-and-notifications'),
       link('Agent Builder And Agent', '/concepts/agent-builder-and-agent'),
       link('Providers, Clients, And Secrets', '/concepts/providers-clients-and-secrets'),
       link('Tools, Functions, And Harnesses', '/concepts/tools-functions-and-harnesses'),

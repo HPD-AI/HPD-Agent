@@ -133,6 +133,8 @@ Do not increment counters, emit events, mutate request-related state, or start b
 Middleware state is immutable. Use `UpdateState(...)` for core state or multi-state atomic updates. Use `UpdateMiddlewareState<TState>(...)` for simple updates to one middleware state record.
 
 ```csharp
+namespace GettingStarted;
+
 public sealed class TurnCountingMiddleware : IAgentMiddleware
 {
     public Task BeforeIterationAsync(

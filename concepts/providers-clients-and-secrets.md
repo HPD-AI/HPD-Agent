@@ -28,10 +28,12 @@ Configuration-based setup uses the same model, but writes the client selection d
 
 ```json
 {
-  "Clients": {
-    "Chat": {
-      "ProviderKey": "openai",
-      "ModelName": "gpt-4o"
+  "clients": {
+    "chat": {
+      "provider": {
+        "key": "openai"
+      },
+      "modelName": "gpt-4o"
     }
   }
 }
@@ -94,25 +96,25 @@ provider settings belong under the typed `providerOptions` payload.
 One built agent can use different chat providers and models on consecutive or concurrent runs:
 
 ```csharp
-await agent.RunAsync("Use OpenAI", new AgentRunConfig
+await agent.RunAsync("Use OpenAI", runConfig: new AgentRunConfig
 {
     Clients = new AgentClientsConfig
     {
         Chat = new ChatClientConfig
         {
-            ProviderKey = "openai",
+            Provider = new ProviderReference { Key = "openai" },
             ModelName = "gpt-5-mini"
         }
     }
 });
 
-await agent.RunAsync("Use Anthropic", new AgentRunConfig
+await agent.RunAsync("Use Anthropic", runConfig: new AgentRunConfig
 {
     Clients = new AgentClientsConfig
     {
         Chat = new ChatClientConfig
         {
-            ProviderKey = "anthropic",
+            Provider = new ProviderReference { Key = "anthropic" },
             ModelName = "claude-sonnet-4-5"
         }
     }
@@ -134,9 +136,10 @@ ignores the mismatch.
 2. a resolver supplied with `WithSecretResolver(...)`, or the normal environment and additional resolver sources
 3. configuration, when an `IConfiguration` is available
 
-Explicit values passed to fluent setup remain runtime-only. A direct API key on a
-family config is also runtime-only and excluded from JSON/YAML serialization. Do
-not put credentials in `ProviderConfig` or custom headers.
+Explicit values passed to fluent setup remain runtime-only. Portable authentication
+publishes only a secret key, account reference, or external-identity name; credential
+material is never serialized. Do not put credentials in `ProviderConfig` or custom
+headers.
 
 Environment variables are the usual deployment path. Configuration lookup also supports provider-scoped keys such as:
 
@@ -149,39 +152,35 @@ Configuration capitalization is mechanical. Prefer the exact provider key in doc
 
 Secret resolution happens when a run first needs a provider client, not while the agent is built. This means an application can build an agent without a provider or credential, and a configured default that is never selected never contacts its provider.
 
-## Multiple Credentials For One Provider
+## Selecting A Static Credential
 
-Use `IProviderAuthenticationRegistry` when a host has independently selectable credentials such as personal, work, or tenant-specific API keys. A registration contains safe metadata and a secret-resolver key, never the secret value:
-
-```csharp
-var authentication = new InMemoryProviderAuthenticationRegistry();
-authentication.Register(new ProviderAuthenticationRegistration
-{
-    Key = "openai-work",
-    ProviderKey = "openai",
-    SecretKey = "openai:work:ApiKey",
-    IsDefault = true
-});
-```
-
-Register the registry and `ISecretResolver` in the service provider passed to `WithServiceProvider(...)`. A run selects it by opaque name:
+Use the portable authentication union on `ProviderReference` when a host has independently selectable credentials such as personal, work, or tenant-specific API keys. The selection contains a secret-resolver key, never the secret value:
 
 ```csharp
-await agent.RunAsync("Use the work credential", new AgentRunConfig
+using HPD.Agent;
+using HPD.Agent.Providers;
+
+await agent.RunAsync("Use the work credential", runConfig: new AgentRunConfig
 {
     Clients = new AgentClientsConfig
     {
         Chat = new ChatClientConfig
         {
-            ProviderKey = "openai",
-            ModelName = "gpt-5-mini",
-            AuthenticationKey = "openai-work"
+            Provider = new ProviderReference
+            {
+                Key = "openai",
+                Authentication = new ApiKeyProviderAuthentication
+                {
+                    SecretKey = "openai:work:ApiKey"
+                }
+            },
+            ModelName = "gpt-5-mini"
         }
     }
 });
 ```
 
-Only `AuthenticationKey` is serialized. If several compatible registrations exist without an explicit selection or one unique host default, the run fails with `AuthenticationSelectionRequired`; HPD never chooses arbitrarily.
+The host must register the corresponding secret with its `ISecretResolver`. The serialized configuration contains the secret key, not the resolved value. `OAuthProviderAuthentication` selects a durable authorization account, and `ExternalIdentityProviderAuthentication` selects an SDK-native identity registered by the host.
 
 ## Setup Caveats
 

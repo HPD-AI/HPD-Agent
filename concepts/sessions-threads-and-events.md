@@ -22,7 +22,8 @@ The `agentId` selects a stored hosted agent definition. The `sessionId` and `thr
 
 ## Sessions
 
-A session is the top-level durable scope for an interaction. It has:
+A session is the top-level state scope for an interaction. It becomes restart-durable when the
+application configures a durable session store. It has:
 
 - an id
 - creation and last-activity timestamps

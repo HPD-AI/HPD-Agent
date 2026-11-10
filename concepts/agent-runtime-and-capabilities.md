@@ -38,7 +38,7 @@ user input
 
 Most in-process code can call `RunAsync(...)` directly. In that shape, the call executes the input turn immediately and returns the completed `AgentTurnResult`.
 
-`StartAsync(...)` is for the long-lived runtime shape. It does not run a prompt by itself. It creates the runtime input loop, runtime event coordinator, runtime struct-event hub, input queue, cancellation lifetime, runtime capabilities, and background-task registry. It then runs the start middleware hooks and begins a single-reader loop that accepts `AgentInputEvent` values.
+`StartAsync(...)` is for the long-lived runtime shape. It does not run a prompt by itself. It creates the runtime input loop, runtime event coordinator, runtime struct-event hub, input queue, cancellation lifetime, runtime capabilities, and operation registry. It then runs the start middleware hooks and begins a single-reader loop that accepts `AgentInputEvent` values.
 
 After an agent is started, `RunAsync(input)` queues the input into that runtime loop and returns `AgentTurnResult.Empty`. The runtime loop processes queued inputs, publishes thread-execution lifecycle events, keeps the runtime alive after interrupted turns, and gives hosted clients a live target for events, responses, client tools, permissions, and interruptions.
 

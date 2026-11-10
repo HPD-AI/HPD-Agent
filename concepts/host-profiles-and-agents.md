@@ -98,9 +98,10 @@ The callback is skipped when a custom `IAgentFactory` owns construction.
 
 ## Session And Thread
 
-A session is a durable workspace that can contain several threads. A thread is one conversation
-path inside that session. The thread may carry a default agent id for continuation, while runtime
-routes still include the agent id selected for the execution.
+A session is a persistence-capable workspace that can contain several threads. It is restart-durable
+when the profile is configured with a durable session store. A thread is one conversation path
+inside that session. The thread may carry a default agent id for continuation, while runtime routes
+still include the agent id selected for the execution.
 
 Use the same profile for agents that share infrastructure but have different roles:
 

@@ -1,270 +1,188 @@
-# Background Tasks, Handles, And Notifications
+# Agent Operations, Background Work, And Notifications
 
-Background tasks let runtime code continue work after the active model turn has yielded. They are useful for long-running work such as command observation, indexing, monitors, subagent work, or maintenance tasks that should not block the current response.
+HPD uses `AgentOperation` as the common model for work that can outlive the call that started
+it. The same aggregate describes provider background responses, background tool invocations,
+subagents, workflows, MCP tasks, and other long-running operations.
 
-This page covers the three pieces of HPD background work together because they are meant to be understood as one model:
-
-```text
-BackgroundTask
-  records lifecycle and drives final-state events
-
-BackgroundHandle
-  exposes operations for a live resource after launch
-
-Notification
-  decides whether final-state task facts should wake the model
-```
-
-Keep these concepts separate in code, but learn them together. A task id is for lifecycle. A handle id is for control. A notification rule is for model wakeups.
-
-Rule of thumb:
+There are three related surfaces:
 
 ```text
-Need only final completion? Use a BackgroundTask.
-Need to operate it while alive? Add a BackgroundHandle.
+provider background response
+  provider owns a long-running model response
+
+runtime background invocation
+  HPD starts a function, subagent, or workflow and returns an operation receipt
+
+tool-body operation
+  a function explicitly registers its own runtime-owned work
 ```
 
-## Function Vs Handle
+These are related, but they are not interchangeable. Choose the surface that owns the work.
 
-A function is the capability the model can call. A handle is the live resource created by one call.
+## Provider Background Responses
 
-```text
-Function
-  the callable tool or capability
+Some chat providers can accept a long-running request, return a continuation token, and expose
+the result through polling. Enable that behavior at the agent level:
 
-Handle
-  one live instance created by a call
+```csharp
+using HPD.Agent;
+using HPD.Agent.Providers.OpenAI;
+
+var agent = await new AgentBuilder()
+    .WithOpenAI("gpt-5-mini")
+    .WithBackgroundResponses(config =>
+    {
+        config.DefaultAllow = true;
+        config.AutoPollToCompletion = true;
+        config.DefaultPollingInterval = TimeSpan.FromSeconds(3);
+        config.DefaultTimeout = TimeSpan.FromMinutes(10);
+    })
+    .BuildAsync();
 ```
 
-For example:
+Provider support is required. With `AutoPollToCompletion = true`, the caller still waits for the
+turn result while HPD follows the provider's continuation. With it disabled, HPD can preserve the
+provider operation for the runtime and hosted operation projections to observe and control.
 
-```text
-ExecuteCommand
-  function that can run, list, read, or stop commands
+Use `AgentRunConfig.BackgroundResponses` to override this default for one run.
 
-cmd_abc123
-  handle for one background command process
-```
+## Runtime Background Invocation
 
-Follow-up operations still call a function, but the handle id tells that function which live resource to operate:
+Functions, subagents, and multi-agent capabilities can declare an invocation-mode policy:
 
-```json
+```csharp
+[AIFunction(
+    Name = "build_index",
+    InvocationModePolicy = AgentInvocationModePolicy.ModelChoice)]
+public async Task<string> BuildIndex(string path, CancellationToken cancellationToken)
 {
-  "request": {
-    "action": "readOutput",
-    "backgroundHandleId": "cmd_abc123"
-  }
+    await BuildIndexAsync(path, cancellationToken);
+    return "Index build completed.";
 }
 ```
 
-In short:
+The policies are:
 
-```text
-Function = what can be done
-Handle = which live thing to do it to
-```
+| Policy | Behavior |
+| --- | --- |
+| `SynchronousOnly` | Wait for the result before continuing the model turn. |
+| `BackgroundOnly` | Register the work and immediately return an operation receipt. |
+| `ModelChoice` | Expose `invocationMode` so the model chooses synchronous or background execution. |
 
-The runtime owns the lifecycle:
+Background invocation returns an `AgentOperationReceipt` to the model instead of waiting for the
+function or child-agent result. HPD commits an `AgentOperationRegisteredEvent` before the work
+starts and records subsequent state through `AgentOperationTransitionedEvent`.
 
-```text
-background task registered
-  -> BackgroundTaskStartedEvent
-  -> task runs under runtime cancellation
-  -> BackgroundTaskCompletedEvent / BackgroundTaskCancelledEvent / BackgroundTaskFaultedEvent
-  -> notification rule decides whether to wake the model
-  -> queued notification becomes hidden model context
-```
+The work needs a runtime with an operation registry. Subagent and other runtime-owned background
+invocations therefore belong in started-runtime scenarios such as hosted HTTP/SSE, bot, or TUI
+applications.
 
-Background tasks are not a separate permission flow. They are runtime-owned work with lifecycle events and optional model wakeups.
+## Tool-Body Operations
 
-## Background Handles
-
-Some background work is also a live resource that can be operated after launch. Use a background handle for that second layer.
-
-```text
-BackgroundTask
-  records lifecycle and drives notifications
-
-BackgroundHandle
-  exposes status, read, stop, cancel, artifacts, or events for a live resource
-```
-
-For example, a background command registers both:
-
-```text
-BackgroundTask
-  observes process completion and may wake the model
-
-BackgroundHandle
-  lets the model list the command, read output, stop it, and inspect artifacts
-```
-
-Function bodies can use `FunctionExecutionContext.BackgroundHandles` or `RegisterBackgroundHandle(...)` when the active runtime supports handles. A handle advertises supported operations with `BackgroundHandleOperation`, and lookup/list operations are scoped by session and optionally thread.
-
-Do not use the background task id for handle operations. Handle-backed tools should return and accept a `handleId` or source-specific equivalent such as `backgroundHandleId`.
-
-Handles are optional. Use a background task by itself for fire-and-complete work such as indexing, cleanup, report generation, or summarization. Add a handle only when the launched resource needs follow-up operations such as status, read, stop, cancel, artifacts, events, or list.
-
-## Register Background Work
-
-Middleware and function bodies can register background work when an active runtime exposes `IAgentBackgroundTaskRegistry`.
+When a synchronous tool call needs to return promptly while keeping work alive, start an operation
+from `FunctionExecutionContext`:
 
 ```csharp
-var registration = context.BackgroundTasks!.RegisterBackgroundTask(
-    new BackgroundTaskDescriptor
+using HPD.Agent;
+using HPD.Agent.Middleware;
+
+public sealed class IndexingTools
+{
+    [AIFunction(Name = "start_indexing")]
+    public async Task<string> StartIndexing(
+        FunctionExecutionContext context,
+        CancellationToken cancellationToken)
     {
-        Name = "IndexWorkspace",
-        SourceKind = BackgroundTaskSourceKind.ToolCall,
-        SourceId = context.FunctionCallId,
-        Invocation = context.InvocationSnapshot,
-        Notification = new BackgroundTaskNotificationRule.OnFinalStateRule(
-            Completed: true,
-            Faulted: true)
-    },
-    async (backgroundContext, runtimeToken) =>
-    {
-        await IndexWorkspaceAsync(runtimeToken);
-        backgroundContext.SetCompletion(
-            summary: "Workspace index completed.",
-            metadata: new Dictionary<string, string>
+        AgentOperationReceipt receipt = await context.StartOperationAsync(
+            "IndexWorkspace",
+            new Dictionary<string, string> { ["workspace"] = "default" },
+            new AgentOperationNotificationPolicy { IncludeTerminal = true },
+            async (operationId, runtimeToken) =>
             {
-                ["workspace"] = "default"
-            });
-    });
+                await IndexWorkspaceAsync(runtimeToken);
+                return new AgentOperationCompletion(
+                    Summary: "Workspace index completed.");
+            },
+            cancellationToken);
+
+        return $"Started indexing operation {receipt.OperationId}.";
+    }
+
+    private static Task IndexWorkspaceAsync(CancellationToken cancellationToken) =>
+        Task.CompletedTask;
+}
 ```
 
-`BackgroundTaskDescriptor` describes the work. The runtime creates the task id, returns it in `BackgroundTaskRegistration`, emits lifecycle events, applies runtime cancellation, and dispatches selected final-state facts back into the model loop.
+The tool call returns after HPD commits the operation. The work body receives an operation ID and
+a runtime-owned cancellation token. Use `FunctionExecutionContext.CancelOperationAsync(...)` to
+request cancellation of an operation that advertises the `Cancel` capability.
 
-Use `BackgroundTaskContext.SetCompletion(...)` when the task has a useful final summary or metadata. `BackgroundTaskCompletedEvent.Summary` flows into the notification summary when the rule wakes the model.
+Function permission applies before the tool body runs. Background execution does not create a
+second permission domain; it is one function call whose result is represented by an operation.
 
-Common source kinds include `ToolCall`, `Command`, `SubAgent`, `MultiAgent`, `Runtime`, `Maintenance`, and `Other`.
+## Operation State
 
-## Notification Rules
+`AgentOperationSnapshot` is the durable control projection. It includes:
 
-Each background task carries a `Notification` rule:
+- source kind: `LocalTool`, `McpTask`, `SubAgent`, `Workflow`, `MultiAgent`, or `ProviderOperation`
+- provider status and HPD observation status
+- the owning agent, session, and thread
+- the original function invocation when present
+- completion, failure, and protected recovery information
+- supported controls such as cancel, update, detach, or reconcile
+- the notification policy and optimistic concurrency version
+
+`AgentOperationNotificationPolicy` controls which transitions can become semantic model input:
 
 ```csharp
-Notification = BackgroundTaskNotificationRule.None
+new AgentOperationNotificationPolicy
+{
+    IncludeInputRequired = true,
+    IncludeProgress = false,
+    IncludeTerminal = true,
+    MinimumInterval = TimeSpan.FromSeconds(5)
+}
 ```
 
-```csharp
-Notification = new BackgroundTaskNotificationRule.OnFinalStateRule(
-    Completed: true,
-    Faulted: true,
-    Cancelled: false)
-```
-
-```csharp
-Notification = new BackgroundTaskNotificationRule.StrategyRule(
-    "coding-command",
-    Parameters: new Dictionary<string, string>
-    {
-        ["commandId"] = commandId
-    },
-    Fallback: new BackgroundTaskNotificationRule.OnFinalStateRule(
-        Completed: true,
-        Faulted: true))
-```
-
-`None` never wakes the model. `OnFinalStateRule` queues notifications only for selected final states. `StrategyRule` delegates the decision and notification content to a named source-specific strategy, with an optional fallback rule if the strategy is unavailable.
-
-Keep source-specific semantics out of `HPD.Agent`. The core runtime should not know what a shell, process, test runner, PR URL, or output file means. Those decisions belong in the harness or package that owns the source.
-
-## Dispatcher Behavior
-
-The background task notification dispatcher handles delivery mechanics:
-
-- subscribes to completed, cancelled, and faulted task events
-- batches final-state events briefly
-- resolves `sessionId` and `threadId`
-- suppresses runtime shutdown cancellations
-- suppresses duplicate final-state notifications for the same task id
-- evaluates the task notification rule
-- emits queued or suppressed notification events
-- writes hidden notification input into the runtime inbox
-
-Queued notifications become hidden system context with:
-
-```text
-source: BackgroundNotification
-visibility: Hidden
-persistence: ModelContextOnly
-```
-
-UIs should not render the hidden XML payload as assistant text. Use the lifecycle, queued, delivered, and suppressed events for visible status if the app needs to show background activity.
+Terminal notifications can wake a started runtime and queue the operation result as hidden model
+context. Progress notifications are opt-in because they can be frequent and noisy. A source-specific
+operation may still expose richer controls through its own tools or handle ID; HPD does not have a
+generic public `BackgroundHandle` API.
 
 ## Events
 
-Background work uses these event families:
-
 | Event | Meaning |
 | --- | --- |
-| `BackgroundTaskStartedEvent` | Background task began. |
-| `BackgroundTaskCompletedEvent` | Background task completed successfully. |
-| `BackgroundTaskCancelledEvent` | Background task observed cancellation. |
-| `BackgroundTaskFaultedEvent` | Background task failed with an exception. |
-| `BackgroundHandleRegisteredEvent` | A controllable background handle was registered. |
-| `BackgroundHandleStatusChangedEvent` | A controllable background handle reported a status change. |
-| `BackgroundTaskNotificationQueuedEvent` | A rule selected final-state facts for model delivery. |
-| `BackgroundTaskNotificationSuppressedEvent` | A rule or runtime integrity check suppressed model delivery. |
-| `BackgroundTaskNotificationDeliveredEvent` | A queued notification was delivered into a model turn. |
+| `AgentOperationRegisteredEvent` | The complete initial operation snapshot was committed. |
+| `AgentOperationTransitionedEvent` | A version-checked status or observation transition was committed. |
+| `AgentOperationNotificationQueuedEvent` | A terminal or selected transition was queued for model delivery. |
+| `AgentOperationNotificationDeliveredEvent` | Queued operation context reached a model turn. |
+| `AgentOperationNotificationSuppressedEvent` | Policy or integrity checks suppressed model delivery. |
+| `AgentOperationTombstonedEvent` | Retention compacted a terminal operation. |
+| `AgentOperationTombstoneEvictedEvent` | The retained tombstone expired. |
 
-The event payload carries the full `notification` rule. Hosted thread-run projections expose a lighter `notification` summary:
+Use these events to build operation timelines. Hosted clients can also read the authoritative
+operation projection from the active thread execution returned by runtime state and execution
+routes.
 
-```json
-{
-  "notification": {
-    "kind": "strategy",
-    "strategyName": "coding-command"
-  }
-}
-```
+## Boundaries
 
-Use live background task events when an app needs the full rule payload. Use the thread-run projection for run lists, dashboards, and status panes.
+Do not confuse operation registration with provider durability. HPD durably records the facts it
+knows in the thread journal, while the provider or source system remains authoritative for work it
+owns. Recovery references are protected metadata, not credentials.
 
-## Suppression Reasons
+Use:
 
-Suppressed events carry machine-readable reasons. Common reasons include:
-
-| Reason | Meaning |
-| --- | --- |
-| `runtime-stopping-cancellation` | Runtime shutdown cancelled the task. |
-| `missing-thread-scope` | The dispatcher could not resolve a session/thread. |
-| `duplicate-final-state-notification` | The task already produced a final-state notification decision. |
-| `runtime-input-closed` | The runtime input channel was closed before delivery. |
-| `rule-suppressed:none:{status}` | The task used `None`. |
-| `rule-suppressed:on-final-state:{status}` | The task reached a final state not selected by the rule. |
-| `strategy-not-found:{name}` | A named strategy was unavailable and no fallback handled it. |
-| `strategy-faulted:{name}:{exceptionType}` | A strategy threw while evaluating the task. |
-
-Suppression is observable by design. It lets hosts and tests distinguish quiet expected behavior from lost work.
-
-## TypeScript Shape
-
-Hosted clients see rules as discriminated objects:
-
-```typescript
-type BackgroundTaskNotificationRule =
-  | { kind: 'none' }
-  | {
-      kind: 'on_final_state';
-      completed?: boolean;
-      faulted?: boolean;
-      cancelled?: boolean;
-    }
-  | {
-      kind: 'strategy';
-      name: string;
-      parameters?: Record<string, string> | null;
-      fallback?: BackgroundTaskNotificationRule | null;
-    };
-```
-
-Treat the rule as descriptive runtime metadata. Do not infer product behavior from it unless your package owns the named strategy.
+- provider background responses when the model provider owns the long-running response
+- background invocation when HPD should launch and observe a function, subagent, or workflow
+- `StartOperationAsync(...)` when a tool owns a custom long-running resource
+- an application-owned queue or durable workflow when work must survive more than the operation
+  contracts of the selected runtime and provider
 
 ## Related Pages
 
 - [Events Reference](../reference/events.md)
-- [TypeScript Client Events](../guides/events/typescript-client.md)
-- [Canonical And Process-Local Events](../guides/events/canonical-and-process-local-events.md)
-- [Middleware Lifecycle](middleware-lifecycle.md)
+- [Tool And Function Events](../guides/events/tool-and-function-events.md)
+- [Tools, Functions, And Harnesses](tools-functions-and-harnesses.md)
+- [Subagents](../guides/agents/subagents.md)
+- [Hosted Lifecycle And Recovery](../guides/hosting/hosted-lifecycle-and-recovery.md)

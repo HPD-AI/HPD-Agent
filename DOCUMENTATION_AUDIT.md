@@ -20,8 +20,8 @@ published NuGet contracts.
 | Runtime Systems | Complete | `35f5a95` | Corrected coding run-config usage, deprecated FileSystem guidance, content lifecycle references, document extraction ownership, FFI exports/subscriptions, and sandbox response imports. |
 | Audio | Complete | `269f519` | Corrected provider references, realtime invocation, portable audio modes, hosted Audio-session boundaries, and managed LiveKit transport guidance. |
 | Bots | Complete | `9c448ed` | Corrected custom adapter configuration, handler signatures, thread-id shape, mapper imports, and documented the multi-platform analyzer packaging workaround. |
-| Evaluations | Next | — | — |
-| Observability And UI | Pending | — | — |
+| Evaluations | Complete | `ec9637b` | Restricted deterministic evaluator and red-team implementation guidance to public factories, corrected judge config, live run overrides, HTTP catalog/storage contracts, and HPD Base eval stores. |
+| Observability And UI | Next | — | — |
 
 ## Verification Standard
 

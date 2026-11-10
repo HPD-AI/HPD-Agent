@@ -72,7 +72,11 @@ Audio uses the same generic content pipeline as other binary inputs: user bytes 
 
 ## Boundaries
 
-HPD Agent audio does not include microphone capture, browser device handling, or WebRTC UI plumbing. Those belong in the host application. The TypeScript client and hosted text streaming APIs also do not currently expose the full audio submission and realtime configuration surface.
+HPD Agent audio does not include microphone capture, browser device handling, or
+WebRTC UI plumbing. Those belong in the host application. The hosted `/inputs`
+route accepts public `AUDIO_SESSION_INPUT` commands for retained audio sessions,
+but the repository's browser and telephony Web Audio leaves are qualification
+artifacts rather than published transport packages.
 
 ## Where To Go Next
 

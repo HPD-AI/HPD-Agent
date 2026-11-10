@@ -16,14 +16,17 @@ using HPD.Agent.Audio;
 ```csharp
 var result = await agent.RunAsync(
     input,
-    new AgentRunConfig
+    runConfig: new AgentRunConfig
     {
         Clients = new AgentClientsConfig
         {
             Transport = AgentModelTransportMode.Realtime,
             Realtime = new RealtimeClientConfig
             {
-                ProviderKey = "openai",
+                Provider = new HPD.Agent.Providers.ProviderReference
+                {
+                    Key = "openai"
+                },
                 ModelName = "gpt-realtime"
             }
         }
@@ -77,9 +80,44 @@ Realtime can emit user audio transcript deltas, completed transcripts, and faile
 
 Assistant text from realtime responses is also part of the thread projection path. Provider-owned assistant audio is not the same path as post-turn final-text TTS.
 
+## Managed LiveKit Transport
+
+`HPD-Agent.Audio.LiveKit` provides a managed retained Audio transport. Configure
+speech-to-text first, then select the transport:
+
+```csharp
+using HPD.Agent.Audio.LiveKit;
+
+var agent = await new AgentBuilder()
+    .WithChatClient(chatClient)
+    .WithOpenAISpeechToText("gpt-4o-mini-transcribe")
+    .WithOpenAITextToSpeech("gpt-4o-mini-tts", voice: "alloy")
+    .WithLiveKitAudioTransport(
+        endpoint: "wss://your-livekit-host",
+        credentialResolver: ResolveParticipantCredentialAsync)
+    .WithAudio(audio =>
+    {
+        audio.InputMode = AudioInputMode.StreamingSpeechToText;
+        audio.OutputMode = AudioOutputMode.TextToSpeech;
+        audio.AssistantOutputMode =
+            AssistantOutputSynthesisMode.ProgressiveWithFinalFallback;
+        audio.EnablePlayback = true;
+    })
+    .BuildAsync();
+```
+
+The managed LiveKit artifact is qualified for `osx-arm64` in this release. Other
+runtime identifiers fail closed with `livekit-runtime-unsupported`. The package
+verifies the native artifact before use and resolves room credentials per session;
+credentials are not stored in agent configuration.
+
 ## Client Boundaries
 
-The .NET runtime has the source-confirmed realtime agent path. The TypeScript client and hosted text streaming request shape do not currently expose the same audio submission and realtime configuration surface. Treat browser capture, WebRTC, and device UX as host-application responsibilities.
+The hosted ASP.NET `/inputs` route accepts public `AUDIO_SESSION_INPUT` commands
+for starting, updating, committing, interrupting, and stopping retained audio
+sessions. The browser Web Audio transport in the repository is a private
+qualification artifact rather than a published npm package. Applications still
+own browser capture, device permissions, WebRTC UI, and transport integration.
 
 ## Related Reading
 

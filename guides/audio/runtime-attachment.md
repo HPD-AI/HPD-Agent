@@ -18,20 +18,23 @@ var agent = await new AgentBuilder()
     .BuildAsync();
 ```
 
-Use `WithAudioRuntimeAttachment(...)` when the application needs explicit options:
+Use `WithAudio(...)` for the portable input/output policy and
+`WithAudioRuntimeAttachment(...)` when the application needs low-level runtime or sink
+configuration:
 
 ```csharp
 var agent = await new AgentBuilder()
     .WithChatClient(chatClient)
-    .WithAudioRuntimeAttachment(audio =>
+    .WithAudio(audio =>
     {
         audio.InputMode = AudioInputMode.BatchSpeechToText;
-        audio.AssistantOutputSynthesisMode = AssistantOutputSynthesisMode.FinalText;
+        audio.OutputMode = AudioOutputMode.TextToSpeech;
+        audio.AssistantOutputMode = AssistantOutputSynthesisMode.FinalText;
     })
     .BuildAsync();
 ```
 
-There are also overloads for passing attachment options, a thread projection sink, or a session store. Use the session-store overload when committed transcript and assistant-output projections should be written into durable session history.
+There are also `WithAudioRuntimeAttachment(...)` overloads for passing low-level attachment options, a thread projection sink, or a session store. Use the session-store overload when committed transcript and assistant-output projections should be written into durable session history.
 
 ## Configuration Precedence
 
@@ -39,11 +42,13 @@ Runtime options are compiled in layers:
 
 | Layer | Purpose |
 | --- | --- |
-| `AudioRuntimeAttachmentOptions` | Base attachment defaults and explicit builder options. |
-| `AgentConfig.Audio` | Agent-level audio policy. |
-| `AgentRunConfig.Audio` | Per-run audio overrides. |
+| `AudioRuntimeAttachmentOptions` | Low-level runtime, provider route, projection, sink, and output controls. |
+| `AgentConfig.Audio` | Portable agent-level input/output modes and policy. |
+| `AgentRunConfig.Audio` | Per-run overrides for the portable audio policy. |
 
-When the same behavior is configured in more than one place, the run config is the most specific layer.
+The compiler applies low-level options, then `AgentConfig.Audio`, then
+`AgentRunConfig.Audio`. When the same portable behavior is configured in more than
+one place, the run config is the most specific layer.
 
 ## Input Modes
 
@@ -55,6 +60,7 @@ When the same behavior is configured in more than one place, the run config is t
 | `ReferenceOnly` | Keep audio as reference content without batch transcription. |
 | `Reject` | Reject audio input for this agent or run. |
 | `ProviderRealtime` | Leave finite-audio handling alone for native realtime provider transport. |
+| `StreamingSpeechToText` | Use the retained streaming STT path for an Audio session transport. |
 
 Use `BatchSpeechToText` for uploaded audio files. Use `ProviderRealtime` with [Realtime Audio](realtime-audio.md), where the realtime model path owns the audio interaction.
 

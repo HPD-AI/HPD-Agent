@@ -10,10 +10,12 @@ Configure the TTS provider family in app configuration:
 
 ```json
 {
-  "Clients": {
-    "TextToSpeech": {
-      "ProviderKey": "openai",
-      "ModelName": "tts-1"
+  "clients": {
+    "textToSpeech": {
+      "provider": {
+        "key": "openai"
+      },
+      "modelName": "tts-1"
     }
   }
 }

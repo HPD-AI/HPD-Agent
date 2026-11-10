@@ -65,7 +65,7 @@ Attach audio runtime behavior to the agent:
 ```csharp
 var agent = await new AgentBuilder()
     .WithChatClient(chatClient)
-    .WithAudioRuntimeAttachment(audio =>
+    .WithAudio(audio =>
     {
         audio.InputMode = AudioInputMode.BatchSpeechToText;
     })
@@ -76,33 +76,28 @@ Configure the STT provider family in app configuration:
 
 ```json
 {
-  "Clients": {
-    "SpeechToText": {
-      "ProviderKey": "openai",
-      "ModelName": "whisper-1"
+  "clients": {
+    "speechToText": {
+      "provider": {
+        "key": "openai"
+      },
+      "modelName": "whisper-1"
     }
   }
 }
 ```
 
-When using provider registry wiring directly, register the provider family and attach it to the runtime:
+Configure the STT provider with its provider package, then attach the audio runtime:
 
 ```csharp
-using HPD.Agent.Providers.Audio.Meai;
-```
-
-```csharp
-builder.WithAudioRuntimeAttachment(audio =>
+var agent = await new AgentBuilder()
+    .WithChatClient(chatClient)
+    .WithOpenAISpeechToText("whisper-1")
+    .WithAudio(audio =>
 {
-    audio.UseSpeechToTextProvider(
-        providerRegistry,
-        new SpeechToTextClientConfig
-        {
-            ProviderKey = "openai",
-            ModelName = "whisper-1",
-            ApiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY")
-        });
-});
+    audio.InputMode = AudioInputMode.BatchSpeechToText;
+})
+    .BuildAsync();
 ```
 
 ## What The Runtime Does

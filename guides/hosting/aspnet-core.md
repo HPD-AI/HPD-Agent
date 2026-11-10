@@ -148,6 +148,44 @@ fallback, plus whether the implementation declares `Ephemeral` or `RestartDurabl
 In-memory is a valid implementation, not an error; deployment policy decides whether an ephemeral
 store is acceptable.
 
+### HPD Base-Backed Stores
+
+For restart-durable session journals and stored agent definitions, use
+`HPD-Agent.Stores.HpdBase` with an HPD Base store provider such as SQLite:
+
+```csharp
+using HPD.Agent.Hosting.Configuration;
+using HPD.Agent.Serialization;
+using HPD.Agent.Stores.HpdBase;
+using HPD.Base;
+using HPD.Base.Sqlite;
+
+if (!AgentEventCompositionHost.TryGetDefaultApplication(out var events))
+    throw new InvalidOperationException("A generated application event composition is required.");
+
+builder.Services.AddHPDBase(hpd => hpd
+    .AddHpdAgentStores()
+    .UseStore(SqliteStore.Configure(options =>
+    {
+        options.DataSource = "data/hpd-agent.db";
+    })));
+
+builder.Services.AddHpdBaseAgentStore();
+builder.Services.AddHpdBaseSessionStore(events.Codec);
+
+builder.Services.AddHPDAgentHost("assistant");
+builder.Services.AddOptions<HPDAgentHostOptions>("assistant")
+    .Configure<IAgentStore, ISessionStore>((options, agentStore, sessionStore) =>
+    {
+        options.AgentStore = agentStore;
+        options.SessionStore = sessionStore;
+    });
+```
+
+The HPD Base session store must use the same `AgentEventCodec` as the host's event composition.
+Use this path when restart durability, centralized storage, or HPD Base-backed backup and
+inspection matter; use `SessionStorePath` for a simple local filesystem deployment.
+
 `PersistAfterTurn` defaults to `true` for `HPDAgentHostOptions`. After a completed turn, the hosted
 agent saves session metadata and ensures the active thread descriptor exists. Canonical thread
 events are committed through the configured session store independently. Set the option to `false`
@@ -197,9 +235,9 @@ Runtime routes include:
 /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/...
 ```
 
-That scope is used by HTTP input, state, interrupt, resumable SSE, thread executions, and the bidirectional response route. TUI hosted runtimes and bot adapters should map their UI or platform identity into the same runtime scope before sending input or responses.
+That scope is used by HTTP input, state, cancellation, resumable SSE, thread executions, and the bidirectional response route. TUI hosted runtimes and bot adapters should map their UI or platform identity into the same runtime scope before sending input or responses.
 
-Hosted clients should load `/state` to restore `activeExecution` and `pendingRequests`, then open `/events?after={appliedCursor}`. A client without local projection starts at zero and rebuilds the complete conversation incrementally. See [Hosted Lifecycle And Recovery](hosted-lifecycle-and-recovery.md).
+Hosted clients should load `/state` to restore `activeExecution` and `pendingRequests`, then open `/events?after={generation}:{sequence}`. A client without local projection starts at sequence zero of the observed generation and rebuilds the complete conversation incrementally. See [Hosted Lifecycle And Recovery](hosted-lifecycle-and-recovery.md).
 
 ## Related Pages
 

@@ -57,7 +57,9 @@ Create accepts:
   "config": {
     "clients": {
       "chat": {
-        "providerKey": "openai",
+        "provider": {
+          "key": "openai"
+        },
         "modelName": "gpt-5-mini"
       }
     }
@@ -75,7 +77,9 @@ Update accepts a replacement config body:
   "config": {
     "clients": {
       "chat": {
-        "providerKey": "openai",
+        "provider": {
+          "key": "openai"
+        },
         "modelName": "gpt-5-mini"
       }
     }

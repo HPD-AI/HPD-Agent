@@ -77,9 +77,11 @@ The stream sends committed catch-up events and then waits for new commits on the
 ```text
 id: 3:18
 event: agent-event
-data: {"version":"1.0","type":"TEXT_DELTA","threadSequenceNumber":18,"text":"hello"}
+data: {"event":{"version":"1.0","type":"TEXT_DELTA","threadSequenceNumber":18,"text":"hello","messageId":"message-1"},"route":{"origin":{"sessionId":"session-1","threadId":"main"},"path":[{"sessionId":"session-1","threadId":"main"}],"threadExecutionId":"execution-123"}}
 
 ```
+
+Historical catch-up uses `event: agent-event`; newly committed live deliveries use `event: live-agent-event`. Both carry the same `{ "event": ..., "route": ... }` data envelope, so project `data.event` and retain `data.route` for hierarchy and cursor attribution.
 
 The server also accepts `Last-Event-ID` when the `after` query parameter is absent. It sends comment heartbeats while idle:
 
@@ -121,26 +123,41 @@ Accepted input returns:
 }
 ```
 
-Only one execution can own a thread at a time. Hosting reserves ownership, commits `THREAD_EXECUTION_STARTED`, exposes `activeExecution`, executes the input, commits `THREAD_EXECUTION_FINISHED`, and only then clears active ownership. A conflicting submission returns `409`.
+Only one execution can own a thread at a time. Hosting reserves ownership, commits `THREAD_EXECUTION_STARTED`, exposes `activeExecution`, executes the input, commits `THREAD_EXECUTION_FINISHED`, and only then clears active ownership. A conflicting submission returns `409` with the `ThreadExecutionActive` error.
 
 ## Steer Or Interrupt Safely
 
-Read `/state`, then submit the active execution id:
+Read `/state`, then cancel that exact execution with its dedicated route:
 
 ```http
-POST /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/inputs
-Content-Type: application/json
+POST /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/executions/execution-123/cancel
+```
 
+The successful response is a `ThreadExecutionCancellationDto` with the terminal status, whether cancellation was applied, and the queue-promotion state. When queue promotion is reported as `pausedAfterCancellation`, call `POST /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/queue/start` when the application is ready to resume queued work.
+
+Steering still uses the normal `/inputs` route, but it is a `USER_MESSAGES_INPUT` envelope with `delivery: "Steer"` and the active execution id:
+
+```json
 {
   "version": "1.0",
-  "type": "INTERRUPTION_REQUEST",
+  "type": "USER_MESSAGES_INPUT",
+  "delivery": "Steer",
   "threadExecutionId": "execution-123",
-  "reason": "User cancelled the request.",
-  "source": "User"
+  "messages": [
+    {
+      "role": "user",
+      "contents": [
+        {
+          "$type": "text",
+          "text": "Focus on the failing tests first."
+        }
+      ]
+    }
+  ]
 }
 ```
 
-Steering uses the same route with `type: "STEERING_INPUT"`, the same `threadExecutionId`, and a `messages` array. Possible dispositions include `accepted`, `no_active_execution`, `active_execution_mismatch`, `active_input_not_steerable`, and `execution_finishing`. Never automatically retry against a mismatched execution; it may be newer work started by another client.
+Possible submission dispositions include `accepted`, `no_active_execution`, `active_execution_mismatch`, `active_input_not_steerable`, and `execution_finishing`. Never automatically retry against a mismatched execution; it may be newer work started by another client.
 
 ## Interactive Responses
 
@@ -162,7 +179,7 @@ For a laptop sleep, proxy timeout, or UI closed for hours:
 4. Apply catch-up events through the same projector.
 5. Continue on the same stream as commits become live.
 
-A client with no local projection starts at `after=0` and reconstructs the complete conversation incrementally. It retains semantic UI state, not the raw event graph.
+A client with no local projection starts at sequence zero of the observed generation, such as `after=4:0`, and reconstructs the complete conversation incrementally. It retains semantic UI state, not the raw event graph.
 
 ## Transport Responsibilities
 

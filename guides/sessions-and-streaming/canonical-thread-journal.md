@@ -97,6 +97,8 @@ The journal is canonical. The descriptor and index are derived and rebuildable. 
 
 Applications configure `FileSessionStore` for filesystem-backed persistence or provide another `ISessionStore` implementation with the same journal guarantees.
 
+`HPD-Agent.Stores.HpdBase` provides `HpdBaseSessionStore`, a restart-durable HPD Base implementation of the same journal and pending-delta contracts. It stores session metadata, thread records, event blocks, event identities, and progressive deltas through HPD Base collections.
+
 SQLite, PostgreSQL, remote, and application-defined stores can implement the same contract with their native transactions, indexes, and notification mechanisms. No storage technology appears in event or HTTP semantics.
 
 ## Canonical Versus Process-Local Events

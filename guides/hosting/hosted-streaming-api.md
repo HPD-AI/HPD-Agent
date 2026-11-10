@@ -35,7 +35,12 @@ You can also submit an event envelope:
   "messages": [
     {
       "role": "user",
-      "text": "Continue from here."
+      "contents": [
+        {
+          "$type": "text",
+          "text": "Continue from here."
+        }
+      ]
     }
   ]
 }
@@ -72,7 +77,7 @@ Accepted input returns `202 Accepted` with the backend-owned run identity:
 
 Observe committed SSE events to render output, completion, errors, and interactive requests. Keep the returned `threadExecutionId` for lifecycle correlation, steering, and interruption.
 
-Only one active hosted run is allowed per thread. A second input submitted to the same `sessionId + threadId` while a run is active returns a conflict with a thread-run-active error.
+Only one active hosted run is allowed per thread. A second queued input submitted to the same `sessionId + threadId` while a run is active returns `409` with the `ThreadExecutionActive` error.
 
 ## Estimate Context Usage
 
@@ -84,8 +89,14 @@ Content-Type: application/json
 
 {
   "runConfig": {
-    "providerKey": "openai",
-    "modelId": "gpt-4.1",
+    "clients": {
+      "chat": {
+        "provider": {
+          "key": "openai"
+        },
+        "modelName": "gpt-4.1"
+      }
+    },
     "compaction": null
   }
 }
@@ -151,10 +162,12 @@ The same stream catches up every committed event after the cursor and then remai
 ```text
 id: 3:43
 event: agent-event
-data: {"version":"1.0","type":"TEXT_DELTA","threadSequenceNumber":43,"text":"hello","messageId":"..."}
+data: {"event":{"version":"1.0","type":"TEXT_DELTA","threadSequenceNumber":43,"text":"hello","messageId":"message-1"},"route":{"origin":{"sessionId":"session-1","threadId":"main"},"path":[{"sessionId":"session-1","threadId":"main"}],"threadExecutionId":"execution-123"}}
 ```
 
-Process events serially and advance the applied cursor only after the consumer applies an event successfully. `observedCursor` classifies the initial catch-up boundary; it must never overwrite the applied cursor. On EOF or a connection error, reconnect with the last applied `generation:sequence` cursor. The server also accepts `Last-Event-ID` when `after` is absent. Comment heartbeats can be ignored. If observation fails after SSE headers are committed, the server closes the stream; it never fabricates an uncommitted error `AgentEvent`.
+Historical catch-up uses `agent-event`; live deliveries use `live-agent-event`. In both cases the data is the delivery envelope: read `event` as the domain event and `route` as its immutable origin/path attribution.
+
+Process events serially and advance the applied cursor only after the consumer applies `event` successfully. `observedCursor` classifies the initial catch-up boundary; it must never overwrite the applied cursor. On EOF or a connection error, reconnect with the last applied `generation:sequence` cursor. The server also accepts `Last-Event-ID` when `after` is absent. Comment heartbeats can be ignored. If observation fails after SSE headers are committed, the server closes the stream; it never fabricates an uncommitted error `AgentEvent`.
 
 Hard compaction sends `event: thread-journal-rebased` with the previous and current generations, then ends observation. Clear the old projection, reload state, and reconnect at sequence zero of the current generation.
 
@@ -194,22 +207,15 @@ Use `$type: "inherit"` to apply configured fork compaction, `$type: "disabled"` 
 
 ## Control An Active Execution
 
-Interrupt the active thread execution by submitting its semantic input:
+Cancel the active thread execution through its exact execution route:
 
 ```http
-POST /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/inputs
-Content-Type: application/json
-
-{
-  "version": "1.0",
-  "type": "INTERRUPTION_REQUEST",
-  "threadExecutionId": "execution-123",
-  "reason": "User cancelled the request.",
-  "source": "User"
-}
+POST /agents/{agentId}/sessions/{sessionId}/threads/{threadId}/executions/execution-123/cancel
 ```
 
-Read `/state` immediately before cancellation and send its active execution id as `threadExecutionId`. Steering uses a `STEERING_INPUT` envelope with that same target and a `messages` array.
+Read `/state` immediately before cancellation. The cancellation response reports the terminal status and whether queue promotion is paused. Resume queued work with `POST .../queue/start` when the application is ready.
+
+Steering uses `/inputs` with a `USER_MESSAGES_INPUT` envelope, `delivery: "Steer"`, the active `threadExecutionId`, and the same serialized `messages` shape shown above.
 
 The `202` response has a `disposition`:
 

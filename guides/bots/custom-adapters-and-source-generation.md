@@ -2,6 +2,16 @@
 
 HPD bot source generation can produce transport-neutral dispatch, dependency-injection registration, and ASP.NET webhook mapping code for custom adapters. This page documents the verified shape and caveats for adapter authors. It does not document platform-specific setup.
 
+Add both packages before using the generated adapter surface:
+
+```bash
+dotnet add package HPD-Agent.Bots.Abstractions --version 1.0.0
+dotnet add package HPD-Agent.Bots.AspNetCore --version 1.0.0
+```
+
+The generated registry references the ASP.NET Core bridge even when a custom host
+drives the adapter through a non-HTTP transport.
+
 ## Adapter Attribute
 
 Mark an adapter with `[HpdBot("name")]`:
@@ -48,7 +58,6 @@ Generated registration configures adapter options, named streaming options when 
 Use `[HpdBotEventHandler("event-type")]` to mark methods that handle extracted platform events:
 
 ```csharp
-[HpdBotPayload]
 public sealed record ContosoMessage(string Text);
 
 [HpdBotEventHandler("message.created")]
@@ -60,7 +69,6 @@ private Task<BotAdapterResponse> HandleMessageAsync(
 }
 ```
 
-`[HpdBotPayload]` currently applies to the payload type, not the handler parameter.
 Handlers must be private or internal, accept `(BotRequestContext, Payload)`, and
 return `Task<BotAdapterResponse>`.
 
@@ -105,6 +113,8 @@ private (string? eventType, byte[] dispatchBytes) ExtractEnvelope(
 Keep platform-specific auth and verification code in the adapter package, not in generic app code.
 
 Generated dispatch currently expects a hand-written JSON context named for the adapter, such as `ContosoBotJsonContext`, with payload types registered through `JsonSerializable` attributes.
+
+The pre-1.0 `[HpdBotPayload]` marker is internal and is not part of the custom-adapter contract yet. It does not generate JSON metadata.
 
 `BotRequestContext` intentionally exposes request data through neutral helpers such as `Header(...)`, `QueryValue(...)`, `Method`, `Path`, and `CancellationToken`. Use those in generated hooks instead of `HttpContext` so the same adapter can be driven by webhooks, polling, socket workers, or tests.
 
@@ -152,10 +162,10 @@ For package consumers, prefer the package-provided `Add...Bot(...)` overload rat
 
 ## Diagnostics
 
-The source generator currently reports diagnostics in the `HPDA001` through `HPDA011` range for adapter visibility, shape, and duplicate-handler errors. Treat diagnostics as source-generator feedback: fix the adapter shape, method visibility, attribute placement, or duplicate declaration before expecting generated registration to appear.
+The source generator currently reports diagnostics in the `HPDA001` through `HPDA011` range for adapter visibility, shape, and duplicate-handler errors. `HPDA004` and `HPDA006` relate to internal pre-1.0 markers and are not supported custom-adapter features. Treat the remaining diagnostics as source-generator feedback: fix the adapter shape, method visibility, attribute placement, or duplicate declaration before expecting generated registration to appear.
 
 ## Permission Handler Caveat
 
-Do not document `[HpdPermissionHandler]` as an implemented generator-routed permission workflow. Current source inspection shows the generator recognizes duplicate permission-handler declarations, but the coordinator-style permission flow described by the attribute comments is not implemented in the inspected generator path.
+`[HpdPermissionHandler]` is internal and is not an implemented generator-routed permission workflow. Current source inspection shows the generator recognizes duplicate permission-handler declarations, but the response-routing flow described by the earlier attribute comments is not implemented.
 
 Use platform adapter code and current runtime behavior for permission responses until that API is clarified.

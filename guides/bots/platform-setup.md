@@ -221,13 +221,22 @@ var app = builder.Build();
 app.MapTeamsBot();
 ```
 
+`AddTeamsBot()` registers the JWT bearer and authorization services used by
+`MapTeamsBot()`. The default bearer configuration validates Bot Service tokens
+against the configured `AppId` audience and reads optional overrides from the
+`TokenValidation` section. Pass `configureAuthentication` to `AddTeamsBot(...)`
+when the host supplies a different ASP.NET Core authentication scheme.
+
 Exactly one Teams auth method must be configured:
 
 - `AppPassword` for client-secret authentication.
 - `Certificate` for certificate authentication.
 - `Federated` for workload identity.
 
-`AppTenantId` is required for single-tenant bots. The host also needs the Microsoft 365 Agents SDK configuration sections such as token validation and service connections. Teams file uploads are downloaded by the Agents SDK attachment downloader and surfaced as HPD input files before the agent run.
+`AppTenantId` is required for single-tenant bots. The host also needs the
+Microsoft 365 Agents SDK outbound connection configuration. Teams file uploads
+are downloaded by the Agents SDK attachment downloader and surfaced as HPD input
+files before the agent run.
 
 Graph-backed Teams history is opt-in:
 

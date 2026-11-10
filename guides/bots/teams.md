@@ -32,6 +32,31 @@ app.MapTeamsBot();
 
 `MapTeamsBot()` maps the standard Agents SDK endpoints and the proactive endpoints discovered from Teams continuation handlers.
 
+`AddTeamsBot()` also registers the JWT bearer and authorization services required
+by the endpoint mapping. By default it validates Azure Bot Service tokens using
+the configured `AppId` audience and the Bot Framework OpenID metadata endpoint.
+The `TokenValidation` configuration section can override the audience, tenant,
+trusted issuers, cloud, and metadata URL.
+
+Use the `configureAuthentication` callback when the host supplies its own ASP.NET
+Core authentication scheme:
+
+```csharp
+builder.AddTeamsBot(
+    options =>
+    {
+        options.AppId = builder.Configuration["Teams:AppId"]!;
+        options.AppPassword = builder.Configuration["Teams:AppPassword"];
+        options.AppTenantId = builder.Configuration["Teams:TenantId"];
+        options.AppType = "SingleTenant";
+        options.AgentId = builder.Configuration["Agent:Id"] ?? "support-agent";
+    },
+    configureAuthentication: services =>
+    {
+        // Register the host's authentication and JWT bearer options.
+    });
+```
+
 ## Configuration
 
 | Option | Required | Notes |
@@ -51,7 +76,10 @@ Exactly one auth method should be configured: client secret, certificate, or fed
 
 ## Microsoft 365 Agents SDK Settings
 
-The host app must also provide the Agents SDK auth settings expected by `Microsoft.Agents.Hosting.AspNetCore`. The exact values depend on your tenant and app registration, but the shape mirrors Microsoft 365 Agents samples:
+The host app must also provide the outbound Agents SDK connection settings expected
+by `Microsoft.Agents.Hosting.AspNetCore`. The exact values depend on your tenant
+and app registration, but the shape mirrors Microsoft 365 Agents samples. The
+`TokenValidation` section is also read by HPD's default inbound bearer setup:
 
 ```json
 {

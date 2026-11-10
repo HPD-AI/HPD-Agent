@@ -27,7 +27,7 @@ The finish event has exactly one terminal outcome:
 
 `FinishedAt` records when the accepted input became terminal. The start and finish correlate through the same `ThreadExecutionId`.
 
-The coordinator releases ownership only after the finish event is durable. If finish persistence fails, ownership remains active; releasing it early could permit a second execution while the first has no durable outcome.
+The coordinator attempts to commit the finish event before releasing ownership. In `0.9.5`, release removes the in-process lease in a `finally` block even if finish persistence fails. A failed finish therefore leaves a committed start without a terminal fact; historical projection reports that execution as `Interrupted`, while the thread is available for new work.
 
 ## Live Ownership And Durable History
 
@@ -44,15 +44,15 @@ This separation matters for clients:
 
 ## Control An Active Execution Safely
 
-`SteeringInputEvent` and `InterruptionRequestEvent` carry the inherited `ThreadExecutionId`. The backend compares it with the current live execution before dispatching the control:
+Steering is a `UserMessagesInputEvent` with `Delivery = AgentInputDelivery.Steer` and the active `ThreadExecutionId`. Exact-execution cancellation is submitted through `IThreadExecutionController.CancelAsync(...)` with the same execution id. Both compare the requested id with the current live execution before dispatching:
 
-| Disposition | Meaning |
+| `AgentInputDisposition` | Meaning |
 | --- | --- |
-| `accepted` | The matching active execution owns the control. |
-| `no_active_execution` | The thread has no active execution. |
-| `active_execution_mismatch` | A different execution currently owns the thread. |
-| `active_input_not_steerable` | Steering targeted an active input that is not a message execution. |
-| `execution_finishing` | The active execution has closed steering acceptance. |
+| `Accepted` | The matching active execution owns the control. |
+| `NoActiveExecution` | The thread has no active execution. |
+| `ActiveExecutionMismatch` | A different execution currently owns the thread. |
+| `ActiveInputNotSteerable` | Steering targeted an active input that is not a message execution. |
+| `ExecutionFinishing` | The active execution has closed steering acceptance. |
 
 Do not automatically retry a mismatch. The reported active execution may be newer work started by another client.
 

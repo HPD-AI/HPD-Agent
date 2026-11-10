@@ -40,9 +40,9 @@ ValueTask<ThreadEventAppendResult> AppendThreadEventsAsync(
     ThreadAppendCondition condition = default,
     CancellationToken cancellationToken = default);
 
-ValueTask<ThreadJournalReplaceResult> ReplaceThreadJournalAsync(
+ValueTask<ThreadJournalReplaceResult> ReplaceThreadEventsAsync(
     ThreadKey thread,
-    IReadOnlyList<AgentEvent> replacement,
+    IReadOnlyList<AgentEvent> events,
     ThreadJournalCursor expectedCursor,
     CancellationToken cancellationToken = default);
 
@@ -55,7 +55,7 @@ IAsyncEnumerable<ThreadEventBatch> ObserveThreadEventsAsync(...);
 
 `ReadThreadEventsAsync` uses an exclusive cursor, optional inclusive sequence boundary within that generation, and a server-enforced batch count. `ObserveThreadEventsAsync` catches up from the cursor, registers without a missed-wakeup gap, and then waits for future commits.
 
-`ReplaceThreadJournalAsync` is an optimistic, atomic generation change. It validates the expected cursor, replaces the complete active journal, increments the generation, and wakes observers only after the replacement is readable. Observers attached to the prior generation receive `ThreadJournalReplacedException` and must rehydrate the new generation from sequence zero.
+`ReplaceThreadEventsAsync` is an optimistic, atomic generation change. It validates the expected cursor, replaces the complete active journal, increments the generation, and wakes observers only after the replacement is readable. Observers attached to the prior generation receive `ThreadJournalReplacedException` and must rehydrate the new generation from sequence zero.
 
 The commit notification is only a wakeup. Readers always reread the committed journal as the authoritative payload source.
 
@@ -88,6 +88,7 @@ sessions/{sessionId}/
     thread.descriptor.json
     journal.index
     journal/
+      generation
       segment-00000000000000000001.events
       segment-00000000000000001025.events
 ```

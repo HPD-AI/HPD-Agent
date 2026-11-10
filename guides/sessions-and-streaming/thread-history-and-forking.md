@@ -101,7 +101,7 @@ Hosted thread deletion uses a thread operation lock. A lock conflict means anoth
 
 ## Read Thread Events
 
-Hosted clients open the thread observation route with their last successfully applied position. The SSE stream first yields canonical catch-up events and then remains attached for future commits. Starting at `after=0` reconstructs the complete thread incrementally.
+Hosted clients open the thread observation route with their last successfully applied position. The SSE stream first yields canonical catch-up events and then remains attached for future commits. The cursor is `generation:sequence`; for example, `after=2:41` continues generation 2 after sequence 41. Omitting `after` starts at sequence zero of the current generation, where complete reconstruction begins.
 
 In-process consumers use `ISessionStore.ReadThreadEventsAsync(...)` for finite, bounded cursor reads or `ObserveThreadEventsAsync(...)` for catch-up plus future commits. Both surfaces decode the same canonical `AgentEvent` values in ascending order within one journal generation.
 

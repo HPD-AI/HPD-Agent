@@ -62,6 +62,8 @@ public sealed record EventNode(
 Choose the parent key from the most specific field available:
 
 ```csharp
+using HPD.MultiAgent;
+
 static string ProjectionKey(AgentEvent evt) =>
     evt switch
     {
@@ -106,7 +108,7 @@ Examples:
 
 ## Hosted Streams
 
-Hosted SSE sends committed event envelopes in sequence order as described in [Hosted Streaming API](../hosting/hosted-streaming-api.md). The projection rules are the same once the client has parsed each event.
+Hosted SSE sends committed event envelopes in sequence order as described in [Hosted Streaming API](../hosting/hosted-streaming-api.md). Resume with `after=generation:sequence` or the standard `Last-Event-ID` header. A sequence number without its journal generation is not a valid cursor. The projection rules are the same once the client has parsed each event.
 
 Use HTTP command routes to submit input or respond to bidirectional events such as permissions. Keep commands separate from observation so reconnecting the SSE stream cannot duplicate them.
 

@@ -97,7 +97,7 @@ new PreviousTokenBudgetLimit(2_000)
 
 The carried user messages receive new message identities while recording their source identities in the checkpoint. This supports a summary-plus-user-prompts shape without pretending that tool calls or assistant messages were preserved.
 
-Preserving turns keeps the complete semantic turn. Registered event and projection relationships—not a hard-coded list of tool event types—determine the associated history.
+Preserving turns keeps messages with the same `hpd.messageTurnId` together. Messages without that turn metadata are treated as individual one-message turns.
 
 ## Strategies
 
@@ -118,7 +118,7 @@ Strategy = new SummarizingCompaction
 {
     Summarizer = new ChatClientConfig
     {
-        ProviderKey = "openai",
+        Provider = new HPD.Agent.Providers.ProviderReference { Key = "openai" },
         ModelName = "gpt-4.1-mini"
     },
     Instructions = "Preserve decisions, file paths, failures, and exact next actions."

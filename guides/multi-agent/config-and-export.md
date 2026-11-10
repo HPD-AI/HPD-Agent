@@ -32,7 +32,7 @@ Multi-agent workflows have a serializable configuration shape for agents, edges,
     }
   ],
   "settings": {
-    "enableMetrics": true
+    "maxConcurrency": 4
   }
 }
 ```
@@ -41,7 +41,7 @@ Config can include:
 
 - workflow name, description, and version
 - agent node definitions
-- per-node output mode, timeout, retry, input/output keys, input template, and additional instructions
+- per-node output mode, timeout, retry, input/output keys, input template, and run configuration
 - routing edges and declarative conditions
 - workflow settings and iteration options
 - optional conversation routing settings
@@ -85,9 +85,11 @@ These pieces export cleanly:
 These pieces need care:
 
 - prebuilt agent object state is not serialized
-- predicate edge delegates are non-serializable runtime code
+- predicate edge delegates are non-serializable runtime code; export does not preserve the executable predicate, and re-importing the document does not restore it
 - executable harness dependencies and runtime configuration bindings are not serialized
 - a node's harness override requires a compatible harness registration in that node's built agent
+- inline-builder nodes are runtime-only and make `ExportConfigJson()` fail because they do not expose a declarative `AgentConfig`
+- prebuilt nodes can export only when their built agent exposes an `AgentConfig`
 - structured and union type names are represented, but workflows that depend on full `Type` restoration should verify import behavior in their target runtime
 - handoff target descriptions are not fully represented by the current node config shape
 - error/fallback settings exist in config/export, but execution wiring should be validated before relying on them as runtime policy
@@ -99,18 +101,18 @@ Prefer `IterationOptions` for cyclic and change-aware workflows:
 
 ```json
 {
-  "Settings": {
-    "IterationOptions": {
-      "MaxIterations": 10,
-      "UseChangeAwareIteration": true,
-      "EnableAutoConvergence": true,
-      "IgnoreFieldsForChangeDetection": ["timestamp"]
+  "settings": {
+    "iterationOptions": {
+      "maxIterations": 10,
+      "enableAutoConvergence": true,
+      "ignoreFieldsForChangeDetection": ["timestamp"],
+      "alwaysDirtyNodes": ["refresh"]
     }
   }
 }
 ```
 
-`WorkflowSettingsConfig.MaxIterations` also exists, but the clearest wired path is fluent `WithMaxIterations(...)` or `Settings.IterationOptions.MaxIterations`.
+In `0.9.5`, `settings.iterationOptions` and `settings.maxConcurrency` are wired into direct workflow execution. `settings.maxIterations`, `settings.defaultTimeout`, `settings.enableMetrics`, and `settings.streamingMode` are present in the config model but are not applied by `AgentWorkflowInstance`. Use fluent `WithMaxIterations(...)` and `WithTimeout(...)` when the direct runtime must honor those limits.
 
 ## Durable Execution
 

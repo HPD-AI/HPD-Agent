@@ -1,6 +1,6 @@
 # Checkpointing
 
-In HPD Agent 1.0, checkpointing and restart recovery are owned by HPD Base durable
+In HPD Agent 0.9.5, checkpointing and restart recovery are owned by HPD Base durable
 activations. The in-process `AgentWorkflowInstance` executes a graph but does not expose
 `WithCheckpointing` or an application-owned workflow checkpoint store.
 
@@ -20,6 +20,12 @@ Use a durable HPD Base activation when the run must survive worker restart, retr
 deferred scheduling:
 
 ```csharp
+using HPD.Agent.MultiAgent.HpdBase;
+using HPD.Base;
+using HPD.Base.AspNetCore;
+using HPD.Graph.Abstractions.Config;
+using HPD.Graph.Base;
+
 BaseGraphActivationDefinition definition =
     BaseGraphActivationRegistration.Create(
         graphConfig,
@@ -70,6 +76,8 @@ Application code can continue to consume the public live workflow events:
 - `WorkflowLayerCompletedEvent`
 - `WorkflowCompletedEvent`
 - `WorkflowDiagnosticEvent`
+- `WorkflowRecoveryEvent`
+- `WorkflowAttemptCompletedEvent`
 
 See [Workflow Events](workflow-events.md) and
 [ASP.NET Multi-Agent Workflows](../hosting/multiagent-aspnet.md).

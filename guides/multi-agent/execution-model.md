@@ -138,7 +138,7 @@ At runtime, HPD gives the router tools such as `handoff_to_math` and `handoff_to
 Node options include error-mode helpers:
 
 ```csharp
-.AddAgent("review", reviewConfig, node => node.OnErrorSkip())
+.AddAgent("review", reviewConfig, node => node.OnErrorSkipDependents())
 ```
 
 Workflow events expose the public outcome:

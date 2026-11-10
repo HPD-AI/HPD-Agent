@@ -35,9 +35,8 @@ If a node does not set an input key or template, HPD chooses an input using this
 3. `shared.input`
 4. `question`, `input`, `message`, `query`, `prompt`
 5. namespaced semantic keys such as `research.input`
-6. original workflow input
-7. first non-empty upstream string that is not `shared.*`
-8. empty string
+6. first non-empty upstream string that is not `shared.*`
+7. empty string
 
 The sharp edge is `shared.input`: it is the original workflow input, and it is available to all nodes. A downstream node can keep seeing the original request instead of a previous node's output unless you explicitly wire the data contract.
 
@@ -118,9 +117,9 @@ var workflow = await AgentWorkflow.Create()
 
 Node options can also affect each child agent run:
 
-- `WithInstructions(...)` appends node-specific system instructions.
 - `WithTimeout(...)` sets the child run timeout.
-- `WithContext(...)` provides runtime context instances for tool harnesses.
+- `RunConfig.SystemInstructions.Append` adds node-specific system instructions.
+- `RunConfig.Context.Properties` and `RunConfig.Context.ToolInstances` provide runtime context for the node run.
 - serializable `AgentRunConfig.Harnesses` entries patch that child agent's registered harness settings for the node run.
 - structured and union modes set structured-output options.
 - handoff mode injects generated handoff tools and requires a handoff tool call.

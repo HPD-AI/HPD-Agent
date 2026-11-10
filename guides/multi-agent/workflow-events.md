@@ -74,6 +74,8 @@ wrapper supplies those values automatically.
 | `WorkflowLayerStartedEvent` | Start a layer group in parallel or layer-based execution |
 | `WorkflowLayerCompletedEvent` | Complete a layer group |
 | `WorkflowDiagnosticEvent` | Render or log graph diagnostics |
+| `WorkflowRecoveryEvent` | Show a node recovering through an alternate path or agent |
+| `WorkflowAttemptCompletedEvent` | Show attempt-level completion status for recovery and retry views |
 
 Child agent events pass through as their normal event types. A workflow node can contain text deltas, reasoning events, tool call events, permission requests, structured result events, retries, and diagnostics.
 
@@ -123,6 +125,8 @@ The public workflow stream contains selected workflow events plus normal child a
 | parallel layer completes | `WorkflowLayerCompletedEvent` |
 | route is traversed | `WorkflowEdgeTraversedEvent` |
 | workflow diagnostic is emitted | `WorkflowDiagnosticEvent` |
+| node recovery is selected | `WorkflowRecoveryEvent` |
+| a node attempt completes | `WorkflowAttemptCompletedEvent` |
 | child agent emits an event | the child `AgentEvent` |
 
 Other lower-level runtime events are not projected into the public workflow stream.

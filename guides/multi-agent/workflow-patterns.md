@@ -131,6 +131,8 @@ Use approval when a node result needs an application or user decision before the
 Run with a `WorkflowEventCoordinator` when the app needs to approve or deny while streaming:
 
 ```csharp
+using HPD.Graph.Abstractions.Events;
+
 var coordinator = new WorkflowEventCoordinator();
 
 await foreach (var evt in workflow.ExecuteStreamingAsync(

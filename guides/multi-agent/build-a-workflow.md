@@ -142,12 +142,18 @@ The direct overloads accept an optional parent `IEventCoordinator` or `AgentMeta
 Node options control input, output, structured result handling, retry, timeout, context, approvals, and handoff targets.
 
 ```csharp
-.AddAgent("analyze", analyzerConfig, node => node
-    .WithInputKey("research")
-    .WithOutputKey("analysis")
-    .WithTimeout(TimeSpan.FromSeconds(30))
-    .WithRetry(maxAttempts: 3)
-    .WithInstructions("Prefer concrete evidence over speculation."))
+.AddAgent("analyze", analyzerConfig, node =>
+{
+    node
+        .WithInputKey("research")
+        .WithOutputKey("analysis")
+        .WithTimeout(TimeSpan.FromSeconds(30))
+        .WithRetry(maxAttempts: 3);
+    node.RunConfig.SystemInstructions = new SystemInstructionsRunConfig
+    {
+        Append = "Prefer concrete evidence over speculation."
+    };
+})
 ```
 
 `WithTimeout(...)` is applied to the graph node and the child agent run. `WithRetry(...)` is wired through the graph node retry policy.

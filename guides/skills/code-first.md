@@ -56,7 +56,7 @@ declarations report `HPDSKILL019` for invalid names; runtime and managed-package
 validation reject the same names during construction or installation.
 
 Skill activation lasts for the remainder of the current message turn. No other
-activation lifetime is exposed in 1.0.
+activation lifetime is exposed in 0.9.5.
 
 ## Optional Reinforcement
 

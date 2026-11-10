@@ -9,15 +9,12 @@ The examples below are grounded in the current `HPD-Agent.Evaluations` source: t
 For an app or test project that consumes packages:
 
 ```bash
-dotnet add package HPD-Agent.Evaluations --version 0.9.2
+dotnet add package HPD-Agent.Evaluations --version 0.9.5
 ```
-
-For source-tree development, reference the projects directly instead:
 
 ```xml
 <ItemGroup>
-  <ProjectReference Include="../src/HPD-Agent/HPD-Agent.csproj" />
-  <ProjectReference Include="../src/HPD-Agent.Evaluations/HPD-Agent.Evaluations.csproj" />
+  <PackageReference Include="HPD-Agent.Evaluations" Version="0.9.5" />
 </ItemGroup>
 ```
 

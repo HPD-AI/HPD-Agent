@@ -1,7 +1,7 @@
 # Middleware Hook Fields
 
 This reference lists the fields available to each `IAgentMiddleware` hook in
-HPD-Agent 1.0.0. The exact context types are public; middleware should depend on
+HPD-Agent 0.9.5. The exact context types are public; middleware should depend on
 the fields documented here rather than internal agent state.
 
 ## Shared Hook Context

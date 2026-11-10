@@ -27,8 +27,8 @@ See [Host Profiles And Agents](../concepts/host-profiles-and-agents.md) for the 
 ```bash
 dotnet new web -n HpdAgentHost
 cd HpdAgentHost
-dotnet add package HPD-Agent.AspNetCore --version 0.9.2
-dotnet add package HPD-Agent.Providers.OpenAI --version 0.9.2
+dotnet add package HPD-Agent.AspNetCore --version 0.9.5
+dotnet add package HPD-Agent.Providers.OpenAI --version 0.9.5
 ```
 
 Set an OpenAI API key:

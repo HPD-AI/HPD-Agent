@@ -1,12 +1,13 @@
 #:sdk Microsoft.NET.Sdk.Web
-#:package HPD-Agent.AspNetCore@0.5.5
-#:package HPD-Agent.Providers.OpenAI@0.5.5
+#:package HPD-Agent.AspNetCore@0.9.5
+#:package HPD-Agent.Providers.OpenAI@0.9.5
 #:property TargetFramework=net10.0
 
 // This sample hosts an HPD Agent as an ASP.NET Core API.
 
 using HPD.Agent;
 using HPD.Agent.AspNetCore;
+using HPD.Agent.Providers.OpenAI;
 
 var builder = WebApplication.CreateBuilder(args);
 

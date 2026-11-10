@@ -1,5 +1,5 @@
-#:package HPD-Agent.Framework@0.9.0
-#:package HPD-Agent.Providers.OpenAI@0.9.0
+#:package HPD-Agent.Framework@0.9.5
+#:package HPD-Agent.Providers.OpenAI@0.9.5
 #:property TargetFramework=net10.0
 
 // This sample shows typed harness settings, constructor DI, and a run override.

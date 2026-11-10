@@ -23,7 +23,7 @@ The envelope includes injected `version` and `type` fields. Built-in type names 
 
 Unknown or missing `type` values cannot be deserialized as known events. HTTP input treats invalid event envelopes as bad requests.
 
-The envelope version is strict. HPD Agent `1.0.0` accepts only `"version":
+The envelope version is strict. HPD Agent `0.9.5` accepts only `"version":
 "1.0"` and rejects missing or unsupported versions.
 
 The event catalog exposes a structural contract digest per discriminator. It

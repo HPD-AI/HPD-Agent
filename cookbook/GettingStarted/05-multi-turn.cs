@@ -1,5 +1,5 @@
-#:package HPD-Agent.Framework@0.5.5
-#:package HPD-Agent.Providers.OpenAI@0.5.5
+#:package HPD-Agent.Framework@0.9.5
+#:package HPD-Agent.Providers.OpenAI@0.9.5
 #:property TargetFramework=net10.0
 
 // This sample keeps conversation history by running turns in the same session and thread.

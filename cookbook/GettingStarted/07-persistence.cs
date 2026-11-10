@@ -1,24 +1,29 @@
-#:package HPD-Agent.Framework@0.5.5
-#:package HPD-Agent.Providers.OpenAI@0.5.5
+#:package HPD-Agent.Framework@0.9.5
+#:package HPD-Agent.Providers.OpenAI@0.9.5
 #:property TargetFramework=net10.0
 
 // This sample uses local file-backed stores for sessions, agent definitions, and content.
 
 using HPD.Agent;
 using HPD.Agent.Providers.OpenAI;
+using HPD.Agent.Serialization;
 
 // Put every durable artifact under one local folder so the sample can be
 // deleted or inspected easily after it runs.
 var dataRoot = Path.Combine(Directory.GetCurrentDirectory(), ".hpd-persistence");
 
-var sessionStore = new JsonSessionStore(Path.Combine(dataRoot, "sessions"));
+if (!AgentEventCompositionHost.TryGetDefaultApplication(out var events))
+    throw new InvalidOperationException("A generated application event composition is required.");
+
+var sessionStore = new FileSessionStore(Path.Combine(dataRoot, "sessions"), events.Codec);
 var agentStore = new JsonAgentStore(Path.Combine(dataRoot, "agents"));
 var contentStore = new LocalFileContentStore(Path.Combine(dataRoot, "content"));
+var contentScope = ContentScope.Create("cookbook-persistence-agent");
 
 // Seed a scoped knowledge item. The content store can later be queried by
 // scope, name, tags, or other metadata.
 var note = await contentStore.WriteTextAsync(
-    scope: "cookbook-persistence-agent",
+    scope: contentScope,
     text: "HPD Agent can persist sessions, stored agent definitions, and scoped content.",
     metadata: new ContentMetadata
     {
@@ -49,7 +54,7 @@ if (await sessionStore.LoadSessionAsync("cookbook-persistence") is null)
 // Because persistAfterTurn is enabled, this turn is saved after the run
 // completes and can be loaded by the next process.
 var result = await agent.RunAsync(
-    "Remember that my release target is HPD Agent 0.5.5.",
+    "Remember that my release target is HPD Agent 0.9.5.",
     sessionId: "cookbook-persistence",
     threadId: "main");
 
@@ -58,10 +63,17 @@ Console.WriteLine();
 
 // Read the persisted indexes back directly to show what the workspace captured.
 var sessionIds = await sessionStore.ListSessionIdsAsync();
-var threadIds = await sessionStore.ListThreadIdsAsync("cookbook-persistence");
+var threadIds = new List<string>();
+await foreach (var thread in sessionStore.ListThreadsAsync(
+                   "cookbook-persistence",
+                   new ThreadListRequest()))
+{
+    threadIds.Add(thread.Key.ThreadId);
+}
+
 var agentIds = await agentStore.ListIdsAsync();
 var knowledge = await contentStore.QueryAsync(
-    scope: "cookbook-persistence-agent",
+    scope: contentScope,
     query: new ContentQuery
     {
         Tags = new Dictionary<string, string> { ["kind"] = "knowledge" }
@@ -72,4 +84,4 @@ Console.WriteLine($"Threads: {string.Join(", ", threadIds)}");
 Console.WriteLine($"Stored agents: {string.Join(", ", agentIds)}");
 Console.WriteLine($"Knowledge items: {knowledge.Count}");
 Console.WriteLine($"Latest content item: {note.Name}");
-Console.WriteLine(await contentStore.ReadTextAsync("cookbook-persistence-agent", note.Id));
+Console.WriteLine(await contentStore.ReadTextAsync(note.Address));

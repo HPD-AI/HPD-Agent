@@ -10,8 +10,8 @@ The package targets .NET 8, .NET 9, and .NET 10.
 ## Install
 
 ```bash
-dotnet add package HPD-Agent.MCP
-dotnet add package HPD-Agent.Providers.OpenAI
+dotnet add package HPD-Agent.MCP --version 0.9.5
+dotnet add package HPD-Agent.Providers.OpenAI --version 0.9.5
 ```
 
 `HPD-Agent.MCP` brings in `HPD-Agent.Framework`. Install a provider package or

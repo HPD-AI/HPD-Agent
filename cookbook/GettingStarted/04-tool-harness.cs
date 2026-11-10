@@ -1,6 +1,6 @@
-#:package HPD-Agent.Framework@0.6.0
-#:package HPD-Agent.Providers.OpenAI@0.6.0
-#:package HPD-Agent.MultiAgent@0.6.0
+#:package HPD-Agent.Framework@0.9.5
+#:package HPD-Agent.Providers.OpenAI@0.9.5
+#:package HPD-Agent.MultiAgent@0.9.5
 #:property TargetFramework=net10.0
 
 // This sample registers a ToolHarness: a class that groups related agent capabilities.
@@ -70,6 +70,7 @@ public class SupportToolHarness
     // SubAgent lets the harness delegate a task to another agent.
     [SubAgent]
     public static SubAgent EscalationAgent() => SubAgent.FromConfig(
+        "support_escalation",
         "support_escalation",
         "Escalates complex support cases to a specialist agent.",
         new AgentConfig

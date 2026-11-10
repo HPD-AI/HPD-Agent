@@ -12,7 +12,7 @@ The package targets .NET 10.
 ## Install
 
 ```bash
-dotnet add package HPD-Agent.AspNetCore.OpenApi
+dotnet add package HPD-Agent.AspNetCore.OpenApi --version 0.9.5
 ```
 
 ## Registration

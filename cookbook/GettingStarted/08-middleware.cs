@@ -1,5 +1,5 @@
-#:package HPD-Agent.Framework@1.0.0
-#:package HPD-Agent.Providers.OpenAI@1.0.0
+#:package HPD-Agent.Framework@0.9.5
+#:package HPD-Agent.Providers.OpenAI@0.9.5
 #:property TargetFramework=net10.0
 
 // This sample uses middleware to add retrieved context before the agent answers.

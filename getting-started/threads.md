@@ -15,17 +15,19 @@ var agent = await new AgentBuilder()
     .WithInstructions("You are a concise product writing assistant.")
     .BuildAsync();
 
-var (sessionId, mainThreadId) = await agent.CreateSessionAsync("getting-started-threads");
+var sessionId = await agent.CreateSessionAsync("getting-started-threads");
+const string mainThreadId = "main";
 
 await agent.RunAsync(
     "We are launching a developer SDK for agent apps.",
     sessionId,
     mainThreadId);
 
-var forkThreadId = await agent.ForkThreadAsync(
+var fork = await agent.ForkThreadAsync(
     sessionId,
     sourceThreadId: mainThreadId,
-    name: "playful-draft");
+    newThreadId: "playful-draft");
+var forkThreadId = fork.Target.ThreadId;
 
 var direct = await agent.RunAsync(
     "Write the launch note in a direct professional tone.",
@@ -60,6 +62,8 @@ The main thread receives the direct professional request.
 The fork receives the warmer draft request.
 
 Each thread can continue independently after the fork.
+
+`CreateSessionAsync(...)` returns the session ID and creates the default `main` thread. `ForkThreadAsync(...)` requires an explicit new thread ID and returns a `ThreadForkResult`; use `fork.Target.ThreadId` for the authoritative forked thread ID.
 
 ## When Threads Help
 

@@ -15,7 +15,8 @@ var agent = await new AgentBuilder()
     .WithInstructions("You are a concise helpful assistant.")
     .BuildAsync();
 
-var (sessionId, threadId) = await agent.CreateSessionAsync("getting-started-chat-loop");
+var sessionId = await agent.CreateSessionAsync("getting-started-chat-loop");
+const string threadId = "main";
 
 using var output = agent.Subscribe<TextDeltaEvent>(evt => Console.Write(evt.Text));
 using var finished = agent.Subscribe<MessageTurnFinishedEvent>(_ => Console.WriteLine());
@@ -52,7 +53,7 @@ The second answer should refer to `Atlas`. That means the loop is reusing the sa
 
 ## What Happens
 
-`CreateSessionAsync(...)` creates the conversation container and default thread.
+`CreateSessionAsync(...)` returns the conversation container's session ID and creates its default thread named `main`.
 
 `Subscribe<TextDeltaEvent>(...)` prints text as it arrives.
 

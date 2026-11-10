@@ -22,17 +22,19 @@ await agent.RunAsync(
     sessionId: sessionId,
     threadId: "main");
 
-var forkId = await agent.ForkThreadAsync(
+var fork = await agent.ForkThreadAsync(
     sessionId,
     sourceThreadId: "main",
     newThreadId: "short-answer",
     fromMessageId: messageId);
+var forkId = fork.Target.ThreadId;
 ```
 
 Direct APIs require a configured session store. `CreateSessionAsync(...)` creates an initial
 `main` thread for convenience. When `RunAsync(...)` omits `threadId`, a one-thread session uses
 its sole thread, while an empty session creates `main`. Multiple threads make the omitted ID
-ambiguous. `ForkThreadAsync(...)` returns the new thread id and can also accept
+ambiguous. `ForkThreadAsync(...)` returns a `ThreadForkResult`; use
+`fork.Target.ThreadId` for the new thread id. It can also accept
 `ThreadForkOptions` for programmatic fork behavior such as fork compaction.
 
 ## ASP.NET Core Hosted Routes

@@ -15,12 +15,13 @@ var dataRoot = Path.Combine(Directory.GetCurrentDirectory(), ".hpd-data");
 var agent = await new AgentBuilder()
     .WithOpenAI(model: "gpt-5-mini")
     .WithInstructions("You are a concise helpful assistant.")
-    .WithSessionStore(Path.Combine(dataRoot, "sessions"))
+    .WithFileSessionStore(Path.Combine(dataRoot, "sessions"))
     .WithAgentStore(Path.Combine(dataRoot, "agents"))
     .WithContentStore(new LocalFileContentStore(Path.Combine(dataRoot, "content")))
     .BuildAsync();
 
-var (sessionId, threadId) = await agent.CreateSessionAsync("getting-started-persistence");
+var sessionId = await agent.CreateSessionAsync("getting-started-persistence");
+const string threadId = "main";
 
 var result = await agent.RunAsync(
     "Remember that my workspace name is Northstar.",
@@ -49,9 +50,11 @@ You should see files under `.hpd-data/sessions`, and possibly `.hpd-data/agents`
 
 ## What Happens
 
-`WithSessionStore(path)` creates a segmented `FileSessionStore`.
+`WithFileSessionStore(path)` creates a segmented `FileSessionStore` from the application's generated event codec.
 
 The session store saves session metadata and canonical thread journals. Messages, thread metadata, run lifecycle, and thread-scoped middleware state are projected from committed events. Explicitly configuring a session store enables canonical commit before hosted or replayable publication.
+
+`CreateSessionAsync(...)` returns the new session ID and creates the default `main` thread.
 
 `WithAgentStore(path)` creates a `JsonAgentStore`.
 

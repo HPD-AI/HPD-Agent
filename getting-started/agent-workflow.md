@@ -4,11 +4,15 @@ A workflow connects multiple agents into a graph.
 
 Use a workflow when the work is naturally split across roles, stages, or handoffs.
 
-This page is an orchestration detour after the single-agent basics. If you are still on the first path, finish [Save Sessions And State](persistence.md) and [ASP.NET Hosting](aspnet-hosting.md) first.
+This page is an orchestration detour after the single-agent basics. If you are still on the first path, finish [Save Sessions And State](persistence.md) first. This workflow sample runs in the console project, separate from the ASP.NET host created on the final first-path page.
+
+Continue in the console project used by the main getting-started path. Install the workflow package alongside the framework and provider packages:
 
 ## Add The Package
 
 ```bash
+dotnet add package HPD-Agent.Framework --version 0.9.5
+dotnet add package HPD-Agent.Providers.OpenAI --version 0.9.5
 dotnet add package HPD-Agent.MultiAgent --version 0.9.5
 ```
 

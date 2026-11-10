@@ -1,8 +1,8 @@
 # Multi-Turn Sessions
 
-A session gives the agent durable conversation state. Use a session when the next turn should remember earlier turns.
+A session gives the agent conversation state scoped to one workspace or conversation. It survives process restarts when you configure a durable session store. Use a session when the next turn should remember earlier turns.
 
-Continue in the same `HpdAgentQuickstart` folder from [Hello Agent](hello-agent.md). This page adds `CreateSessionAsync(...)` and passes the returned session and thread to each run.
+Continue in the same `HpdAgentQuickstart` folder from [Hello Agent](hello-agent.md). This page adds `CreateSessionAsync(...)` and passes the returned session ID and the default `main` thread to each run.
 
 ## Add Program.cs
 
@@ -15,7 +15,8 @@ var agent = await new AgentBuilder()
     .WithInstructions("You are a concise helpful assistant.")
     .BuildAsync();
 
-var (sessionId, threadId) = await agent.CreateSessionAsync("getting-started-chat");
+var sessionId = await agent.CreateSessionAsync("getting-started-chat");
+const string threadId = "main";
 
 var first = await agent.RunAsync(
     "My project is called Atlas. Remember that.",
@@ -44,7 +45,7 @@ The second answer should identify the project name as `Atlas`.
 
 ## What Happens
 
-`CreateSessionAsync(...)` creates a session and its default thread.
+`CreateSessionAsync(...)` returns the created session ID and also creates the default thread named `main`.
 
 The first `RunAsync(...)` writes a user turn and assistant turn into that thread.
 

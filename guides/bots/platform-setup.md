@@ -37,6 +37,26 @@ Then add one or more platform adapters. The adapter `AgentId` is the HPD agent d
 
 You can also call `app.MapHPDBots()` for generated adapters that registered an `IBotRegistryProvider`. For first integrations, explicit `MapSlackWebhook(...)`, `MapDiscordWebhook(...)`, and similar calls are easier to inspect and easier to expose through platform dashboards.
 
+### Multi-Platform Analyzer Packaging Caveat
+
+In the published `0.9.5` packages, each concrete bot package includes a copy of
+`HPD-Agent.Bots.SourceGenerator` as an analyzer. Referencing multiple concrete bot
+packages in one project can therefore run the generator more than once and produce
+duplicate `BotRegistry` and adapter registration types.
+
+Current workaround:
+
+```xml
+<PackageReference Include="HPD-Agent.Bots.Slack" Version="0.9.5" ExcludeAssets="analyzers" />
+<PackageReference Include="HPD-Agent.Bots.Discord" Version="0.9.5" ExcludeAssets="analyzers" />
+```
+
+Keep the analyzer from `HPD-Agent.Bots.Abstractions` once when the application defines
+its own `[HpdBot]` adapter, or exclude analyzers from all concrete platform packages when
+only their compiled adapters are consumed. This packaging issue should be fixed before
+the stable release so ordinary multi-platform package references work without manual
+asset exclusion.
+
 The rest of this page shows the minimal host shape for each platform. Use the provider pages for dashboard setup, config tables, platform limits, and troubleshooting:
 
 - [Slack Bots](slack.md)

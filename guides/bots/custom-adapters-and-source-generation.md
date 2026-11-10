@@ -14,9 +14,17 @@ using HPD.Agent.Bots;
 public sealed partial class ContosoBot
 {
 }
+
+public sealed class ContosoBotConfig
+{
+    public string? AgentId { get; set; }
+}
 ```
 
-The source generator emits a registration class for the adapter name. For a bot named `contoso`, the generated API shape includes methods named:
+The `{ClassName}Config` type is required by the generated registration. For an
+adapter class named `ContosoBot`, it must be `ContosoBotConfig` in the same
+namespace. The source generator emits a registration class for the adapter name.
+For a bot named `contoso`, the generated API shape includes methods named:
 
 ```csharp
 services.AddContosoBot(...);
@@ -44,15 +52,17 @@ Use `[HpdBotEventHandler("event-type")]` to mark methods that handle extracted p
 public sealed record ContosoMessage(string Text);
 
 [HpdBotEventHandler("message.created")]
-public Task HandleMessageAsync(
-    ContosoMessage payload,
-    CancellationToken cancellationToken)
+private Task<BotAdapterResponse> HandleMessageAsync(
+    BotRequestContext context,
+    ContosoMessage payload)
 {
-    return Task.CompletedTask;
+    return Task.FromResult(BotAdapterResponse.Ok());
 }
 ```
 
 `[HpdBotPayload]` currently applies to the payload type, not the handler parameter.
+Handlers must be private or internal, accept `(BotRequestContext, Payload)`, and
+return `Task<BotAdapterResponse>`.
 
 Use `[HpdHttpMethods(...)]` to declare allowed HTTP methods for the generated webhook route. Without it, the generated mapping defaults to POST.
 
@@ -104,7 +114,7 @@ Use `[ThreadId]` on the type that formats and parses platform thread keys:
 
 ```csharp
 [ThreadId("contoso:{WorkspaceId}:{ConversationId}")]
-public readonly record struct ContosoThreadId(
+public partial record ContosoThreadId(
     string WorkspaceId,
     string ConversationId);
 ```
@@ -116,6 +126,14 @@ The platform key produced by this type is what `PlatformSessionMapper` uses to f
 The generator emits `Add{Name}Bot(...)`, `Map{Name}Webhook(...)`, and neutral `IBotAdapter` dispatch for generated adapters. It can also emit assembly-local registry entries such as `BotRegistry.g.cs`.
 
 `MapHPDBots()` is a convenience mapper that enumerates registered `IBotRegistryProvider` services. Generated `BotRegistry.g.cs` alone is not sufficient unless a generated or hand-written provider is also registered by `Add{Name}Bot(...)` or package infrastructure. For custom generated adapters, individual `Map{Name}Webhook(...)` remains the source-confirmed mapping path.
+
+`MapHPDBots()` is in `HPD.Agent.Bots.AspNetCore.EndpointMapping`; include:
+
+```csharp
+using HPD.Agent.Bots.AspNetCore.EndpointMapping;
+
+app.MapHPDBots();
+```
 
 ## Package-Level Extensions
 

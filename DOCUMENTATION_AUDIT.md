@@ -18,8 +18,8 @@ published NuGet contracts.
 | Multi-Agent | Complete | `29e3938` | Corrected node option APIs, error helpers, input resolution, config casing, export boundaries, public recovery events, and HPD Base durability setup. |
 | Hosting And Clients | Complete | `6bfe2a3` | Corrected SSE envelopes and cursors, input/control routes, stored-definition config, OpenAPI versioning, and HPD Base-backed durable store setup. |
 | Runtime Systems | Complete | `35f5a95` | Corrected coding run-config usage, deprecated FileSystem guidance, content lifecycle references, document extraction ownership, FFI exports/subscriptions, and sandbox response imports. |
-| Audio | Next | — | — |
-| Bots | Pending | — | — |
+| Audio | Complete | `269f519` | Corrected provider references, realtime invocation, portable audio modes, hosted Audio-session boundaries, and managed LiveKit transport guidance. |
+| Bots | Next | — | — |
 | Evaluations | Pending | — | — |
 | Observability And UI | Pending | — | — |
 

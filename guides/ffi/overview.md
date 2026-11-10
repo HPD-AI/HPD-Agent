@@ -19,6 +19,17 @@ ping
 free_string
 create_agent_with_ToolHarnesses
 destroy_agent
+list_agent_operations
+cancel_agent_operation
+begin_provider_authorization
+complete_provider_authorization
+advance_provider_device_authorization
+get_provider_device_authorization_status
+cancel_provider_device_authorization
+get_provider_authorization_status
+disconnect_provider_account
+revoke_provider_account
+revoke_and_disconnect_provider_account
 create_conversation_thread
 destroy_conversation_thread
 get_thread_id
@@ -28,6 +39,8 @@ add_thread_message
 clear_thread
 run_agent
 run_agent_streaming
+hpd_agent_subscribe_events
+hpd_subscription_dispose
 respond_to_permission
 ```
 
@@ -61,6 +74,23 @@ free_string
 ```
 
 Streaming callbacks receive event pointers that are valid only during the callback. Do not store those pointers after the callback returns.
+
+## Thread-Routed Event Subscriptions
+
+`hpd_agent_subscribe_events` creates a persistent subscription rooted at one complete
+`(session_id, thread_id)` key. The hierarchy argument is one of the frozen
+`hpd_agent_event_hierarchy` values. The callback receives a UTF-8 JSON
+`AgentEventDelivery` envelope with `event` and `route`; the route identifies the origin
+thread, root-to-origin path, and optional thread execution id.
+
+The callback JSON buffer is borrowed and valid only for the callback. The returned
+`hpd_subscription*` is caller-owned and must be released with `hpd_subscription_dispose`.
+Disposing from inside that same callback is rejected with
+`HPD_SUBSCRIPTION_DISPOSE_FROM_CALLBACK`; schedule disposal after the callback returns.
+
+The checked-in native contract header is
+`dotnet/HPD-Agent.Framework/src/HPD-Agent.FFI/hpd_agent_events.h`. It defines the hierarchy
+enum, callback signature, subscription status values, and disposal status values.
 
 ## JSON Contracts
 

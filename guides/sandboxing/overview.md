@@ -113,6 +113,8 @@ terminal `PermissionResolvedEvent`.
 A host renders `PermissionRequestEvent` and returns:
 
 ```csharp
+using HPD.Agent.Permissions;
+
 new PermissionResponseEvent(
     request.PermissionId,
     request.SourceName,

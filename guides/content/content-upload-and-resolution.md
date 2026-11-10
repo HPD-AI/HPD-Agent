@@ -9,7 +9,7 @@ This split lets thread history keep stable references while each model turn stil
 
 ## Upload User Content
 
-`ContentUploadMiddleware` runs before the message turn. It scans the user message for `DataContent` with bytes, including typed content such as images, audio, documents, and video.
+`ContentLifecycleMiddleware` runs before the message turn. It scans the user message for `DataContent` with bytes, including typed content such as images, audio, documents, and video.
 
 ```csharp
 using HPD.Agent;
@@ -45,7 +45,7 @@ The upload path depends on the run and provider configuration:
 | Upload path | Resulting content |
 | --- | --- |
 | Hosted file client | `HostedFileContent` |
-| Framework content store | `UriContent(hpd-content://{contentId})` |
+| Framework content store | `StoredContentReferenceContent` over a `ContentAddress` |
 | No configured path or failed required path | Original `DataContent` remains |
 
 `AgentRunConfig.UploadStrategy` controls which path is required or preferred:
@@ -60,13 +60,13 @@ Hosted upload can come from a provider-created hosted-file client, `AgentRunConf
 
 ## Resolve Internal References
 
-`ContentReferenceResolverMiddleware` runs before the model iteration. It looks for internal HPD content references:
+The same `ContentLifecycleMiddleware` runs before each model iteration and looks for the internal runtime transport part `StoredContentReferenceContent`:
 
 ```text
-hpd-content://{contentId}
+ContentAddress = ContentScope + ContentId
 ```
 
-Providers should not receive that internal URI directly. The resolver turns it into the best provider-facing shape available for the current run:
+Providers should not receive that runtime transport part directly. The middleware turns it into the best provider-facing shape available for the current run:
 
 | Resolution path | Provider sees |
 | --- | --- |
@@ -74,7 +74,7 @@ Providers should not receive that internal URI directly. The resolver turns it i
 | Hosted file upload from the content stream | `HostedFileContent` |
 | Buffered fallback | `DataContent` |
 
-If resolution fails, the original internal reference is preserved and a failure event is emitted.
+If resolution fails, the stored reference is replaced in the model projection with a `TextContent` unavailable marker and `ContentReferenceResolutionFailedEvent` is emitted. The canonical stored reference remains in thread history.
 
 ## Why There Are Two Steps
 
@@ -85,7 +85,7 @@ Upload and resolution answer different questions:
 | Upload | Where should these user bytes live after the initial message? |
 | Resolution | What content shape can this provider consume right now? |
 
-This is especially useful for sessions and threads. A thread can persist `hpd-content://...` references, then later resolve them as direct URLs, hosted files, or buffered bytes depending on the provider and runtime environment.
+This is especially useful for sessions and threads. A thread persists the typed stored-content reference, then later resolves it as a direct URL, hosted file, or buffered bytes depending on the provider and runtime environment. Observation events use a synthetic `stored-content://{contentId}` address that is never sent to a provider.
 
 ## Thread Scope
 

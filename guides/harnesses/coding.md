@@ -100,7 +100,7 @@ Then run with that config:
 ```csharp
 var result = await agent.RunAsync(
     "Find where provider keys are documented.",
-    runConfig);
+    runConfig: runConfig);
 ```
 
 Workspace roots remain part of `AgentRunConfig.Context`; they are not `CodingHarnessConfig` settings. Harness configuration controls behavior, while the workspace selects the filesystem scope for the run.

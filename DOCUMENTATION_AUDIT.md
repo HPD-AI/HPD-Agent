@@ -13,10 +13,10 @@ published NuGet contracts.
 | Skills | Complete | `e9e9314` | All APIs current; activation lifetime version corrected to `0.9.5`. |
 | Events | Complete | `000ad37`, `ef7b1c2` | Replaced obsolete background-task events; corrected durability, request signatures, operation projections, and event diagnostics. |
 | Middleware | Complete | `16e75a1` | Corrected runtime middleware invocation, durable event publication, state persistence guarantees, streaming wrappers, service-owned harness middleware, and compile-checked permissions/error examples. |
-| Providers | Next | — | — |
-| Sessions And Streaming | Pending | — | — |
-| Multi-Agent | Pending | — | — |
-| Hosting And Clients | Pending | — | — |
+| Providers | Complete | `efcbce0` | Corrected provider references, authentication, family configuration, request options, and JSON shapes; all provider examples compile against `0.9.5`. |
+| Sessions And Streaming | Complete | `83defed` | Corrected journal replacement, generation-aware cursors, fork APIs, lifecycle controls, compaction identities, and event projection imports. |
+| Multi-Agent | Complete | `29e3938` | Corrected node option APIs, error helpers, input resolution, config casing, export boundaries, public recovery events, and HPD Base durability setup. |
+| Hosting And Clients | Next | — | — |
 | Runtime Systems | Pending | — | Includes harnesses, sandboxing, FFI, and content. |
 | Audio | Pending | — | — |
 | Bots | Pending | — | — |
@@ -44,3 +44,5 @@ client package.
 - `[MiddlewareState]` in the global namespace causes the 0.9.5 middleware-state source generator to
   emit invalid extension code. Documentation currently uses an explicit namespace; the generator
   still needs a framework fix.
+- `WorkflowSettingsConfig.MaxIterations`, `DefaultTimeout`, `EnableMetrics`, and `StreamingMode`
+  serialize but are not consumed by direct `AgentWorkflowInstance` execution in `0.9.5`.

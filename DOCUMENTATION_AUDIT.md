@@ -19,8 +19,8 @@ published NuGet contracts.
 | Hosting And Clients | Complete | `6bfe2a3` | Corrected SSE envelopes and cursors, input/control routes, stored-definition config, OpenAPI versioning, and HPD Base-backed durable store setup. |
 | Runtime Systems | Complete | `35f5a95` | Corrected coding run-config usage, deprecated FileSystem guidance, content lifecycle references, document extraction ownership, FFI exports/subscriptions, and sandbox response imports. |
 | Audio | Complete | `269f519` | Corrected provider references, realtime invocation, portable audio modes, hosted Audio-session boundaries, and managed LiveKit transport guidance. |
-| Bots | Next | — | — |
-| Evaluations | Pending | — | — |
+| Bots | Complete | `9c448ed` | Corrected custom adapter configuration, handler signatures, thread-id shape, mapper imports, and documented the multi-platform analyzer packaging workaround. |
+| Evaluations | Next | — | — |
 | Observability And UI | Pending | — | — |
 
 ## Verification Standard
@@ -46,3 +46,7 @@ client package.
   still needs a framework fix.
 - `WorkflowSettingsConfig.MaxIterations`, `DefaultTimeout`, `EnableMetrics`, and `StreamingMode`
   serialize but are not consumed by direct `AgentWorkflowInstance` execution in `0.9.5`.
+- Each concrete bot package embeds `HPD-Agent.Bots.SourceGenerator` as an analyzer. Referencing
+  multiple bot packages can run it multiple times and emit duplicate generated registries. The
+  docs include `ExcludeAssets="analyzers"` as the current workaround; package metadata still needs
+  a fix.

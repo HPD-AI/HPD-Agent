@@ -158,8 +158,6 @@ generic public `BackgroundHandle` API.
 | `AgentOperationNotificationQueuedEvent` | A terminal or selected transition was queued for model delivery. |
 | `AgentOperationNotificationDeliveredEvent` | Queued operation context reached a model turn. |
 | `AgentOperationNotificationSuppressedEvent` | Policy or integrity checks suppressed model delivery. |
-| `AgentOperationTombstonedEvent` | Retention compacted a terminal operation. |
-| `AgentOperationTombstoneEvictedEvent` | The retained tombstone expired. |
 
 Use these events to build operation timelines. Hosted clients can also read the authoritative
 operation projection from the active thread execution returned by runtime state and execution

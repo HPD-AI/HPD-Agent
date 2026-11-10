@@ -115,8 +115,6 @@ uses the unified `AgentOperation` events:
 - `AGENT_OPERATION_NOTIFICATION_QUEUED`
 - `AGENT_OPERATION_NOTIFICATION_DELIVERED`
 - `AGENT_OPERATION_NOTIFICATION_SUPPRESSED`
-- `AGENT_OPERATION_TOMBSTONED`
-- `AGENT_OPERATION_TOMBSTONE_EVICTED`
 
 Registered and transitioned events carry an `operation` snapshot with `operationId`, source kind,
 name, provider status, observation status, control capabilities, timestamps, completion or failure,

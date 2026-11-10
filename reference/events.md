@@ -152,8 +152,6 @@ subagent invocations, multi-agent workflows, remote MCP tasks, and client-owned 
 | `AgentOperationNotificationQueuedEvent` | A selected transition was queued as hidden model context. |
 | `AgentOperationNotificationDeliveredEvent` | Queued operation context reached a model turn. |
 | `AgentOperationNotificationSuppressedEvent` | Policy, deduplication, or integrity checks suppressed delivery. |
-| `AgentOperationTombstonedEvent` | Retention compacted a terminal operation. |
-| `AgentOperationTombstoneEvictedEvent` | The retained operation tombstone expired. |
 
 Operation snapshots carry the authoritative `OperationId`, optional provider operation ID, source
 kind, name, owning agent/session/thread, originating execution, optional function invocation,

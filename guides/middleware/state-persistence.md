@@ -12,6 +12,8 @@ Declare a sealed record, choose the persistence scope, then update it from a mid
 using HPD.Agent;
 using HPD.Agent.Middleware;
 
+namespace GettingStarted;
+
 [MiddlewareState(Persistent = true, Scope = StateScope.Thread)]
 public sealed record TurnCounterState
 {
@@ -60,6 +62,8 @@ Transient state is the default:
 ```csharp
 using HPD.Agent;
 
+namespace GettingStarted;
+
 [MiddlewareState]
 public sealed record AttemptWindowState
 {
@@ -71,22 +75,12 @@ Use transient state for data that should reset for each run: retry windows, batc
 
 Persistent state is for data the user or conversation should remember:
 
-Permission approvals use the framework-owned session state:
-
-```csharp
-using HPD.Agent;
-
-[MiddlewareState(Persistent = true, Scope = StateScope.Session, Version = 1)]
-public sealed record PermissionDecisionStateData
-{
-    public ImmutableArray<PermissionDecisionRecord> Decisions { get; init; } = [];
-}
-```
-
-`PermissionDecisionStateData` stores reusable approvals only. Denials and
-feedback are not persisted, and a denial never revokes an earlier approval. A
-record identifies the agent, authority, action, and policy descriptor, or a
-validated rule that the selected policy must revalidate before reuse.
+Permission approvals use framework-owned, session-scoped middleware state. The
+state type is internal to HPD Agent; applications do not declare or manipulate
+it directly. It stores reusable approvals only. Denials and feedback are not
+persisted, and a denial never revokes an earlier approval. A record identifies
+the agent, authority, action, and policy descriptor, or a validated rule that
+the selected policy must revalidate before reuse.
 
 After an approval candidate is created, the permission middleware marks state
 as pending. The runtime checkpoints that state through the existing session save
@@ -107,6 +101,10 @@ Built-in examples follow the same split:
 Use `StateScope.Session` for persistent state that belongs to the whole session and should be shared by every thread:
 
 ```csharp
+using HPD.Agent;
+
+namespace GettingStarted;
+
 [MiddlewareState(Persistent = true, Scope = StateScope.Session)]
 public sealed record UserPreferenceState
 {
@@ -119,6 +117,10 @@ Session-scoped state is loaded from `Session.MiddlewareState` and saved back to 
 Use `StateScope.Thread` for persistent state derived from the conversation path:
 
 ```csharp
+using HPD.Agent;
+
+namespace GettingStarted;
+
 [MiddlewareState(Persistent = true, Scope = StateScope.Thread)]
 public sealed record ThreadProgressState
 {
@@ -228,7 +230,14 @@ At the end of the message turn, after `AfterMessageTurnAsync`, the agent saves p
 - `StateScope.Thread` state is saved to the thread.
 - Thread middleware state may also be appended to the thread event store when one is configured.
 
-Persistence errors are caught and ignored by the agent loop. Do not use middleware state as the only durable record for business-critical side effects; store those in an application database or service you control.
+Session-state serialization failures at the turn-end state write are caught and
+ignored. Thread-scoped middleware state is a canonical projection fact: its
+thread-journal commit is not ignored and can fail the turn. Permission approval
+checkpoints are stricter still: a failed checkpoint prevents the approved body
+from executing.
+
+Do not use middleware state as the only durable record for business-critical
+side effects; store those in an application database or service you control.
 
 ## Fork Behavior
 
@@ -270,6 +279,6 @@ Middleware state is serialized into session or thread state. Store secret values
 
 ## Validation Notes
 
-This page is source/test-checked against the middleware state attribute, state container, update helpers, agent turn load/save path, fork path, and middleware persistence tests. The snippets are intended to be runnable candidates with the shown imports, but a clean external consumer project compile has not been run.
-
-Known source-doc mismatch to avoid repeating: some comments still describe plan-mode state as session-persistent or refer to session load/save, but the actual attribute is `[MiddlewareState(Persistent = true)]`, so it is thread-scoped by default.
+This page is source/test-checked against the middleware state attribute, state
+container, update helpers, agent turn load/save path, fork path, and middleware
+persistence tests.

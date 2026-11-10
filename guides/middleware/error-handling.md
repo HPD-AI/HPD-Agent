@@ -231,4 +231,5 @@ Error middleware improves recovery and presentation; it is not a transactional g
 
 Timeout cancellation depends on the function honoring cancellation or completing the awaited task. It prevents the middleware from waiting past the timeout, but it cannot guarantee cleanup of external side effects.
 
-The snippets above are source-checked example candidates. They have not been clean-compiled in a separate consumer project.
+The core composition and policy snippets on this page are compile-checked
+against the published `0.9.5` packages.

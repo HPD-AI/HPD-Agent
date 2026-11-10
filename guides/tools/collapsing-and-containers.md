@@ -157,6 +157,11 @@ For a declared middleware type that needs an explicit activation, use the exact-
 
 `OverrideMiddleware<TMiddleware>` replaces a middleware type already declared by the harness. It does not append an undeclared middleware.
 
+Middleware constructed from child-scope services must declare
+`[ToolHarnessMiddlewareLifetime(ToolHarnessMiddlewareOwnership.Services)]`.
+The generated harness validates that lifetime contract before an exact-type
+override can replace the activation.
+
 Middleware-owned settings can also bind directly to a section of the harness configuration:
 
 ```csharp

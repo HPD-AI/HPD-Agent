@@ -355,5 +355,6 @@ tool or host. For HPD's Coding sandbox escalations, the tool uses the shared
 permission event lifecycle documented in
 [Sandboxing Overview](../sandboxing/overview.md).
 
-The snippets above are documentation examples and are not compiled as a
-consumer project.
+The permission declaration, custom policy, request, response, and builder
+examples on this page are compile-checked against the published `0.9.5`
+packages.

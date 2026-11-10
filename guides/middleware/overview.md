@@ -81,7 +81,7 @@ Use runtime middleware when a single run needs extra behavior that should not be
 ```csharp
 var result = await agent.RunAsync(
     "Summarize this trace.",
-    new AgentRunConfig
+    runConfig: new AgentRunConfig
     {
         RuntimeMiddleware =
         [
@@ -313,7 +313,9 @@ public async Task BeforeFunctionAsync(
 }
 ```
 
-When the context has session and thread scope, `PublishAsync(...)` commits the event to the canonical journal before subscribers receive it. Without thread scope, publication is process-local.
+Durable events commit through the canonical journal before subscribers receive
+them. Live-only events remain process-local with `ThreadSequenceNumber == 0`,
+even when the context has session and thread scope.
 
 For a request/response interaction, emit a bidirectional event and wait for a response. Permissions use this pattern: middleware asks the host whether a sensitive action is allowed, and the host responds through the agent event coordinator.
 
@@ -336,7 +338,7 @@ HPD exposes several context surfaces. Choose the narrowest one that matches the 
 | `AgentRunConfig` | Per-run provider/model selection, harness setting overrides, runtime middleware, tool context instances, attachments, compaction controls, and temporary behavior. |
 | Middleware hook context | Turn, iteration, tool, function, thread, event, service, session, and thread data that belongs to the agent scheduler. |
 | `[MiddlewareState]` | Private middleware-owned state that should persist by session or thread. |
-| `FunctionExecutionContext` | Narrow tool/function access to event emission, bidirectional requests, services, content store, background tasks, struct events, and run metadata. |
+| `FunctionExecutionContext` | Narrow tool/function access to event emission, bidirectional requests, services, content store, runtime-owned operations, struct events, and run metadata. |
 | Application storage | Business records, secrets, large documents, embeddings, durable memory bodies, audit archives, and tenant policy. |
 
 Do not mutate scheduler-owned session or thread state from tool bodies. Tool functions receive `FunctionExecutionContext` so they can interact with the runtime without taking over middleware state management.

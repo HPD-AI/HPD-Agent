@@ -235,8 +235,11 @@ Middleware is the right place for app-owned memory and retrieval. The usual shap
 5. Store durable memory bodies in your application storage, and store only small ids or cursors in `[MiddlewareState]`.
 
 ```csharp
+using HPD.Agent;
 using HPD.Agent.Middleware;
 using Microsoft.Extensions.AI;
+
+namespace GettingStarted;
 
 [MiddlewareState(Persistent = true, Scope = StateScope.Thread)]
 public sealed record MemoryPointerState
@@ -288,7 +291,7 @@ public sealed class ModelUpdateCountingMiddleware : IAgentMiddleware
     public IAsyncEnumerable<AgentModelUpdate>? WrapModelTurnStreamingAsync(
         AgentModelTurnRequest request,
         Func<AgentModelTurnRequest, IAsyncEnumerable<AgentModelUpdate>> handler,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
+        CancellationToken cancellationToken)
     {
         return CountUpdatesAsync(request, handler, cancellationToken);
     }
@@ -316,7 +319,10 @@ public sealed class ModelUpdateCountingMiddleware : IAgentMiddleware
 For middleware-local state, define a record with `[MiddlewareState]` and update it through `UpdateMiddlewareState<TState>(...)`.
 
 ```csharp
+using HPD.Agent;
 using HPD.Agent.Middleware;
+
+namespace GettingStarted;
 
 [MiddlewareState(Persistent = false)]
 public sealed record TimingState

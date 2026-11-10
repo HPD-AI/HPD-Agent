@@ -56,4 +56,7 @@ ordered event stream
 
 For hierarchy, use the most specific correlation fields available: `MessageId` for message content, `CallId` for tools, request ids such as `PermissionId` for bidirectional flows, workflow node ids for workflows, agent metadata for child-agent labels, and trace/span fields for trace views.
 
-Thread-scoped projectable events commit to the canonical journal before publication. Process-local diagnostics, metrics, and high-volume samples use their dedicated runtime surfaces. Choose the publication surface according to whether the event must participate in replay and thread reconstruction.
+Durable thread-scoped projectable events commit to the canonical journal before publication.
+Live-only diagnostics, progress, metrics, and high-volume samples use their dedicated runtime
+surfaces. Choose `[DurableEvent]` only when the event must participate in replay and thread
+reconstruction.

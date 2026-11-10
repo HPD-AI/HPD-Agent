@@ -55,7 +55,7 @@ public async Task BeforeFunctionAsync(
 }
 ```
 
-Events published from middleware enter the current runtime context. Thread-scoped publication commits before subscriber delivery; process-local publication routes through the runtime coordinator. Subscriber handlers may process from their mailboxes asynchronously.
+Events published from middleware enter the current runtime context. Durable events use thread-scoped commit-before-publish semantics; live-only events route through the runtime coordinator and retain `ThreadSequenceNumber == 0`. Subscriber handlers may process from their mailboxes asynchronously.
 
 ## Publish From A Tool
 
@@ -99,7 +99,7 @@ public sealed class RetrievalTools
 
 `FunctionExecutionContext` is not shown to the model as a tool argument. The source generator treats it as a runtime parameter, excludes it from the generated tool schema and DTO, and supplies it when the agent invokes the function. Use it when the tool itself knows meaningful progress that middleware cannot infer from the outside.
 
-The context also carries the current function call id, function name, run config, result metadata, services, content store, background-task registry, and event coordinator. `PublishAsync(...)` stamps invocation scope and trace information, commits thread-scoped events, and returns the event value that was published.
+The context also carries the current function call id, function name, run config, result metadata, services, content store, operation registry, and event coordinator. `PublishAsync(...)` stamps invocation scope and trace information, commits thread-scoped events, and returns the event value that was published.
 
 ## Subscribe To It
 
@@ -195,7 +195,7 @@ It reports:
 
 | Diagnostic | Meaning |
 | --- | --- |
-| `HPD010` | Two custom events resolve to the same discriminator. Rename one event or add `[EventType("...")]`. |
+| `HPDAEVT005` | An inferred or explicit discriminator is invalid or duplicated in its serializer surface. Rename one event or add a distinct `[EventType("...")]`. |
 | `HPD011` | A custom event is generic. Create a concrete event type instead. |
 | `HPD012` | An abstract event inherits from `AgentEvent`; it is valid as a base type but is not registered. |
 
@@ -218,13 +218,15 @@ admitted to every application composition.
 
 ## Canonical Publication
 
-Publishing from a session-and-thread-scoped runtime context commits the custom
-event to the canonical thread journal before subscribers receive it. Replay,
-reconnect catch-up, simultaneous observers, and live subscribers therefore
-receive the same composed event type, payload, `EventId`, and
-`ThreadSequenceNumber`.
+Publishing a `[DurableEvent]` custom event from a session-and-thread-scoped
+runtime context commits it to the canonical thread journal before subscribers
+receive it. Replay, reconnect catch-up, simultaneous observers, and live
+subscribers therefore receive the same composed event type, payload, `EventId`,
+and `ThreadSequenceNumber`.
 
-Publishing without thread scope produces process-local output with `ThreadSequenceNumber == 0`. Use that mode for activity that does not belong in thread reconstruction.
+Live-only custom events remain process-local and use `ThreadSequenceNumber == 0`,
+even when published from a scoped context. Use `[DurableEvent]` only for activity
+that belongs in thread reconstruction and replay.
 
 Consumers should use one projection handler for both historical and live delivery. The delivery mode may change batching or animation cadence, but it does not change the event payload.
 

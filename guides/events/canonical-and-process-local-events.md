@@ -14,10 +14,11 @@ The live subscriber and later replay reader receive the same concrete event
 type from the selected composition, payload, `EventId`, scope, and thread
 position. Canonical append failure produces no live-only fact.
 
-Canonical families include text and reasoning streams, tool lifecycle, thread-run lifecycle, background task lifecycle, interactive requests and accepted responses, middleware state commits, and application-defined events published through the thread context.
+Canonical families include text and reasoning streams, tool lifecycle, thread-run lifecycle, agent-operation lifecycle, interactive requests and accepted responses, middleware state commits, and application-defined events published through the thread context.
 
-Custom canonical events use the selected composition's event codec and become
-durable when published through a thread-scoped runtime context.
+Custom canonical events use the selected composition's event codec. A custom
+event becomes durable only when it is marked `[DurableEvent]` and published
+through a thread-scoped runtime context. Otherwise it remains live-only.
 
 ## Process-Local Activity
 

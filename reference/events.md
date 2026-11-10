@@ -122,12 +122,12 @@ payload.
 | Thread execution | `ThreadExecutionStartedEvent`, `ThreadExecutionFinishedEvent` | control | canonical in thread scope |
 | Subagent delegation | `SubAgentInvocationStartedEvent`, `SubAgentInvocationCompletedEvent`, `SubAgentInvocationFailedEvent`, `SubAgentInvocationCancelledEvent` | control | canonical in the parent thread; identifies the durable child scope |
 | Message turn lifecycle | `MessageTurnStartedEvent`, `MessageTurnFinishedEvent`, `MessageTurnErrorEvent` | default/control | canonical in thread scope |
-| Agent turn lifecycle | `AgentTurnStartedEvent`, `AgentTurnFinishedEvent` | default | canonical or process-local according to publication scope |
+| Agent turn lifecycle | `AgentTurnStartedEvent`, `AgentTurnFinishedEvent` | default | started is live-only by default; finished is durable and canonical in thread scope |
 | Text streaming | `TextMessageStartEvent`, `TextDeltaEvent`, `TextMessageEndEvent` | streaming | canonical in thread scope |
 | Reasoning streaming | `ReasoningMessageStartEvent`, `ReasoningDeltaEvent`, `ReasoningMessageEndEvent` | streaming | canonical in thread scope |
 | Tool calls | `ToolCallStartEvent`, `ToolCallArgsEvent`, `ToolCallResultEvent`, `ToolCallEndEvent` | default/streaming | canonical in thread scope |
 | Workflow execution | `WorkflowStartedEvent`, `WorkflowAgentStartedEvent`, `WorkflowEdgeTraversedEvent`, `WorkflowCompletedEvent` | default/diagnostic | follows the workflow publication scope |
-| Background work | `BackgroundTaskStartedEvent`, `BackgroundTaskCompletedEvent`, `BackgroundHandleRegisteredEvent`, `BackgroundHandleStatusChangedEvent` | control/default | canonical in thread scope |
+| Agent operations | `AgentOperationRegisteredEvent`, `AgentOperationTransitionedEvent`, operation notification events | control/default | canonical in thread scope |
 | Interactive middleware | request events implementing `IAgentRequestEvent<TResponse>` and response events implementing `IAgentResponseEvent` | interactive | canonical in thread scope; answerable requests also appear in runtime state |
 | Retry and error policy | `FunctionRetryEvent`, `ModelCallRetryEvent`, middleware error events | diagnostic/default | follows publication scope |
 | Compaction observability | `CompactionEvent` | default/diagnostic | follows publication scope |
@@ -140,53 +140,48 @@ payload.
 
 `CompactionEvent` reports `Started`, `Skipped`, `Failed`, or `Completed`, plus its automatic, explicit, or fork origin. The successful semantic change is carried by the checkpoint event.
 
-## Background Work Notifications
+## Agent Operations And Notifications
 
-Runtime-owned background work emits lifecycle events when work starts and reaches a final state. Notification rules decide whether completed, cancelled, or faulted facts should wake the model.
+`AgentOperation` is the unified lifecycle for provider background responses, background tool and
+subagent invocations, multi-agent workflows, remote MCP tasks, and client-owned background work.
 
 | Event | Meaning |
 | --- | --- |
-| `BackgroundTaskStartedEvent` | Runtime-owned background work began. |
-| `BackgroundTaskCompletedEvent` | Background work completed successfully. |
-| `BackgroundTaskCancelledEvent` | Background work observed cancellation. |
-| `BackgroundTaskFaultedEvent` | Background work failed with an exception. |
-| `BackgroundTaskNotificationQueuedEvent` | A notification rule selected final-state facts for model delivery. |
-| `BackgroundTaskNotificationSuppressedEvent` | A notification rule or runtime integrity check suppressed model delivery. |
-| `BackgroundTaskNotificationDeliveredEvent` | The queued notification was delivered into a model turn. |
+| `AgentOperationRegisteredEvent` | The complete initial operation snapshot was committed. |
+| `AgentOperationTransitionedEvent` | A version-checked provider or observation transition was committed. |
+| `AgentOperationNotificationQueuedEvent` | A selected transition was queued as hidden model context. |
+| `AgentOperationNotificationDeliveredEvent` | Queued operation context reached a model turn. |
+| `AgentOperationNotificationSuppressedEvent` | Policy, deduplication, or integrity checks suppressed delivery. |
+| `AgentOperationTombstonedEvent` | Retention compacted a terminal operation. |
+| `AgentOperationTombstoneEvictedEvent` | The retained operation tombstone expired. |
 
-Background task events carry a `notification` rule. Current rule kinds are:
+Operation snapshots carry the authoritative `OperationId`, optional provider operation ID, source
+kind, name, owning agent/session/thread, originating execution, optional function invocation,
+provider status, observation status, control surface, completion or failure, protected recovery
+reference, version, and metadata.
 
-```json
-{ "kind": "none" }
-```
-
-```json
-{
-  "kind": "on_final_state",
-  "completed": true,
-  "faulted": true,
-  "cancelled": false
-}
-```
+`AgentOperationNotificationPolicy` controls semantic model delivery:
 
 ```json
 {
-  "kind": "strategy",
-  "name": "coding-command",
-  "parameters": {
-    "commandId": "cmd_123"
-  },
-  "fallback": {
-    "kind": "on_final_state",
-    "completed": true,
-    "faulted": true
-  }
+  "includeInputRequired": true,
+  "includeProgress": false,
+  "includeTerminal": true,
+  "deduplicationKey": null,
+  "minimumInterval": "00:00:05"
 }
 ```
 
-Queued background notifications are injected as hidden model context using `source: "BackgroundNotification"` and `visibility: "Hidden"`. Thread-run projections expose a compact `notification` summary instead of the full rule payload.
+Terminal notifications are delivered optimally during a matching active turn; otherwise HPD queues
+them as subsequent work. Delivered operation context uses `source: "BackgroundNotification"` and
+`visibility: "Hidden"` and must not be rendered as an assistant transcript row.
 
-For registration examples, suppression reasons, and TypeScript shapes, see [Background Tasks And Notifications](../concepts/background-tasks-and-notifications.md).
+Hosted runtime state exposes operations through `activeExecution.operations`. Execution projections
+include operation status, control capabilities, handle ID when present, completion summary,
+artifact references, failure, timestamps, and metadata.
+
+For registration, invocation modes, and hosted projections, see
+[Agent Operations, Background Work, And Notifications](../concepts/background-tasks-and-notifications.md).
 
 ## Struct Events
 

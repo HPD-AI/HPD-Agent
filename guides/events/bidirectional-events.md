@@ -51,18 +51,21 @@ why an unanswered request stopped being actionable.
 In direct in-process code, subscribe before the run starts. When a request arrives, answer it with `agent.AnswerRequestAsync(...)`:
 
 ```csharp
-using var permissions = agent.Subscribe<PermissionRequestEvent>(async request =>
-{
-    var allow = request.Choices.Single(choice => choice.Id == "allow_once");
-    var deny = request.Choices.First(choice => choice.Kind == PermissionDecisionKind.Deny);
-    var approved = await ui.ConfirmAsync($"Allow {request.FunctionName}?");
+using HPD.Agent.Permissions;
 
-    await agent.AnswerRequestAsync(new PermissionResponseEvent(
-        PermissionId: request.PermissionId,
-        SourceName: request.SourceName,
-        ChoiceId: approved ? allow.Id : deny.Id,
-        Feedback: approved ? null : "User denied"));
-});
+using var permissions = agent.Subscribe<PermissionRequestEvent>(
+    async Task (request) =>
+    {
+        var allow = request.Choices.Single(choice => choice.Id == "allow_once");
+        var deny = request.Choices.First(choice => choice.Kind == PermissionDecisionKind.Deny);
+        var approved = await ui.ConfirmAsync($"Allow {request.FunctionName}?");
+
+        await agent.AnswerRequestAsync(new PermissionResponseEvent(
+            PermissionId: request.PermissionId,
+            SourceName: request.SourceName,
+            ChoiceId: approved ? allow.Id : deny.Id,
+            Feedback: approved ? null : "User denied"));
+    });
 
 await agent.RunAsync("Clean up temporary files.");
 ```
@@ -83,6 +86,8 @@ ASP.NET Core hosted clients do not call `agent.Subscribe(...)` or `agent.AnswerR
 Middleware can author a full permission request and wait for its typed response:
 
 ```csharp
+using HPD.Agent.Permissions;
+
 var choices = new[]
 {
     new PermissionChoice("allow_once", "Allow once", PermissionDecisionKind.Allow),
@@ -110,6 +115,8 @@ if (response.ChoiceId != "allow_once")
 ```
 
 `RequestAsync(...)` is available from hook contexts, agent context, and `FunctionExecutionContext`.
+`FunctionExecutionContext` requires its invocation cancellation token; hook contexts supply their
+runtime lifetime internally.
 
 When no timeout is supplied, the request waits indefinitely while its owning
 execution remains valid. Supply an explicit timeout only when expiration is part
@@ -133,6 +140,7 @@ public async Task<string> BookMeeting(
             RequestId: requestId,
             SourceName: context.FunctionName,
             Question: "Which day should I book?"),
+        cancellationToken,
         timeout: TimeSpan.FromMinutes(2));
 
     return $"Booking {topic} for {response.Answer}.";
@@ -152,7 +160,7 @@ Responses sent through `agent.AnswerRequestAsync(...)`, `agent.TryAnswerRequestA
 | Clarification | `ClarificationRequestEvent` | `ClarificationResponseEvent` |
 | Client tools | `ClientToolInvokeRequestEvent` | `ClientToolInvokeOutcomeEvent` |
 
-Client tool outcomes are the immediate domain response to the request. `Completed`, `Failed`, and `Rejected` finish the tool call during the request session. `AcceptedBackground` resolves the request session because the client has accepted ownership of later work; the later work is then tracked by the background task lifecycle.
+Client tool outcomes are the immediate domain response to the request. `Completed`, `Failed`, and `Rejected` finish the tool call during the request session. `AcceptedBackground` resolves the request session because the client has accepted ownership of later work; the later work is then tracked by the agent-operation lifecycle.
 
 Built-in permission events are the shared authorization protocol. HPD's
 `PermissionMiddleware` uses the `ToolExecution` domain for function calls, and
@@ -211,7 +219,8 @@ var response = await context.RequestAsync<WorkspaceTrustRequestEvent, WorkspaceT
         RequestId: requestId,
         SourceName: "WorkspaceTrustMiddleware",
         WorkspacePath: workspacePath,
-        Reason: "The agent may read, edit, and execute files in this folder."));
+        Reason: "The agent may read, edit, and execute files in this folder."),
+    cancellationToken);
 
 if (!response.Trusted)
     throw new InvalidOperationException(response.Reason ?? "Workspace was not trusted.");
@@ -231,8 +240,6 @@ fallback, or surface a clear error.
 Do not block inside a direct event handler while holding UI state that the response path also needs. The handler should gather the decision and call `agent.AnswerRequestAsync(...)`. Hosted clients should post or send the response promptly while the thread runtime is still active.
 
 ## Hosted Response Route
-
-The route below is the response half of the hosted protocol. The current committed-stream limitation described above means its existence does not by itself make built-in hosted interactive prompts end-to-end usable.
 
 Hosted runtimes expose one response route for all standardized response events:
 

@@ -101,7 +101,9 @@ Use middleware for cross-cutting behavior around functions:
 - audit events
 - shared logging
 
-Middleware and tool code publish with `context.PublishAsync(...)`. Thread-scoped publication commits the event before subscribers receive it; publication without thread scope is process-local.
+Middleware and tool code publish with `context.PublishAsync(...)`. Durable events
+commit before subscribers receive them. Live-only events, including ordinary
+progress events, remain process-local with `ThreadSequenceNumber == 0`.
 
 `PublishAsync(...)` returns after canonical commit and publication, not after every subscriber mailbox has finished processing the event.
 
@@ -115,8 +117,7 @@ Middleware and tool code publish with `context.PublishAsync(...)`. Thread-scoped
 - `Services`, `ContentStore`, and runtime capabilities
 - `PublishAsync(...)`, `TryPublishAsync(...)`, and `RequestAsync(...)`
 - `StructEvents` for process-local realtime sample lanes
-- background task registration when the active runtime supports it
-- background handle registration when the active runtime supports controllable handles
+- `StartOperationAsync(...)` and `CancelOperationAsync(...)` for runtime-owned operations
 
 It does not expose mutable agent state or hook contexts. Use middleware when the behavior needs to mutate middleware state or wrap scheduler-owned phases.
 
@@ -124,46 +125,46 @@ It does not expose mutable agent state or hook contexts. Use middleware when the
 
 ## Background Work From Tools
 
-Use `RegisterBackgroundTask(...)` when a tool needs to return a normal tool result but keep runtime-owned work alive after the function body returns. This is useful for follow-up indexing, long-running cleanup, async provider jobs, or post-processing that should stay attached to the tool call.
+Use `StartOperationAsync(...)` when a tool needs to return promptly while keeping runtime-owned work alive after the function body returns. This is useful for follow-up indexing, long-running cleanup, async provider jobs, or post-processing that should stay attached to the tool call.
 
 ```csharp
 [AIFunction(Name = "start_indexing")]
-public Task<string> StartIndexing(
+public async Task<string> StartIndexing(
     string collection,
     FunctionExecutionContext context,
     CancellationToken cancellationToken)
 {
-    if (!context.CanRegisterBackgroundTasks)
-        return Task.FromResult("Indexing could not be started in the background.");
+    AgentOperationReceipt receipt = await context.StartOperationAsync(
+        "IndexDocuments",
+        new Dictionary<string, string> { ["collection"] = collection },
+        new AgentOperationNotificationPolicy { IncludeTerminal = true },
+        async (operationId, runtimeToken) =>
+        {
+            await indexer.RebuildAsync(collection, runtimeToken);
+            return new AgentOperationCompletion(
+                Summary: $"Finished indexing {collection}.");
+        },
+        cancellationToken);
 
-    context.RegisterBackgroundTask("index-documents", async (background, runtimeToken) =>
-    {
-        await indexer.RebuildAsync(collection, runtimeToken);
-    });
-
-    return Task.FromResult($"Started indexing {collection}.");
+    return $"Started indexing operation {receipt.OperationId}.";
 }
 ```
 
-The registered task receives a `BackgroundTaskContext` with an assigned task id, the task name, the original function invocation snapshot, event access, and services.
+The operation snapshot records the authoritative `OperationId`, source kind, owning agent/session/thread, original function invocation, provider and observation status, optional control surface, and notification policy.
 
-The runtime emits lifecycle events for registered background work:
+The runtime emits canonical lifecycle events for registered operations:
 
-- `BackgroundTaskStartedEvent`
-- `BackgroundTaskCompletedEvent`
-- `BackgroundTaskCancelledEvent`
-- `BackgroundTaskFaultedEvent`
+- `AgentOperationRegisteredEvent`
+- `AgentOperationTransitionedEvent`
+- `AgentOperationNotificationQueuedEvent`
+- `AgentOperationNotificationDeliveredEvent`
+- `AgentOperationNotificationSuppressedEvent`
 
-Group these events by `TaskId`, and use `Invocation.FunctionCallId` when you want to attach the background task back to the original tool call. The runtime waits for registered background tasks during cleanup and cancels them through the provided `CancellationToken` when the runtime is stopping.
+Group lifecycle events by `OperationId`, and use `Invocation.FunctionCallId` when attaching the operation to the original tool call. `StartOperationAsync(...)` transfers an owned tool harness execution scope and held client resources to the operation, and completion results can wake a started runtime according to `AgentOperationNotificationPolicy`.
 
-Use `RegisterBackgroundHandle(...)` when the background work also creates a live resource that can be operated later. Handles are for things such as command processes, browser sessions, file watchers, or long-running workflow jobs. A handle can advertise supported operations such as `Status`, `Read`, `Stop`, `Cancel`, `Artifacts`, or `Events`.
+Call `context.CancelOperationAsync(operationId, cancellationToken)` when the operation advertises the `Cancel` capability. A source-specific harness may expose additional status, read, stop, artifact, or process operations through its own tools. There is no generic public `BackgroundHandle` API.
 
-The runtime emits handle events separately from task lifecycle events:
-
-- `BackgroundHandleRegisteredEvent`
-- `BackgroundHandleStatusChangedEvent`
-
-Use task ids for lifecycle and notification. Use handle ids for control operations such as read, stop, or inspect artifacts.
+For provider-owned background responses, invocation-mode policies, control projections, and notification semantics, see [Agent Operations, Background Work, And Notifications](../../concepts/background-tasks-and-notifications.md).
 
 ## Related Pages
 

@@ -105,39 +105,48 @@ For example, background task notifications are sent to the model as `role: "syst
 
 The helper `mapThreadMessages(...)` filters hidden messages from the transcript read model. Use `projectThreadEventsToMessages(...)` directly when an app needs the complete projected thread state, including hidden model/runtime context.
 
-## Background Task Notification Rules
+## Agent Operation Projections
 
-Background task lifecycle events carry a `notification` rule. Older clients may remember this as a simple policy string; current events use a rule object so framework code can stay source-neutral while harnesses add richer behavior.
+Long-running work from providers, tools, subagents, workflows, MCP servers, and connected clients
+uses the unified `AgentOperation` events:
+
+- `AGENT_OPERATION_REGISTERED`
+- `AGENT_OPERATION_TRANSITIONED`
+- `AGENT_OPERATION_NOTIFICATION_QUEUED`
+- `AGENT_OPERATION_NOTIFICATION_DELIVERED`
+- `AGENT_OPERATION_NOTIFICATION_SUPPRESSED`
+- `AGENT_OPERATION_TOMBSTONED`
+- `AGENT_OPERATION_TOMBSTONE_EVICTED`
+
+Registered and transitioned events carry an `operation` snapshot with `operationId`, source kind,
+name, provider status, observation status, control capabilities, timestamps, completion or failure,
+and metadata. Group all operation activity by `operationId`.
+
+Notification queued events carry the bounded model notification payload. Delivered and suppressed
+events expose the notification ID or suppression reason, respectively. A delivered operation
+notification uses hidden `BackgroundNotification` model context and must not become a visible
+assistant transcript row.
+
+Runtime state also exposes operations on the active thread execution:
 
 ```typescript
-type BackgroundTaskNotificationRule =
-  | { kind: 'none' }
-  | {
-      kind: 'on_final_state';
-      completed?: boolean;
-      faulted?: boolean;
-      cancelled?: boolean;
-    }
-  | {
-      kind: 'strategy';
-      name: string;
-      parameters?: Record<string, string> | null;
-      fallback?: BackgroundTaskNotificationRule | null;
-    };
-```
+const state = await chat.getState();
 
-Use the rule as descriptive metadata for UI/debugging. Do not infer shell, process, or test-runner behavior from it. When a rule queues model input, the runtime emits `BackgroundTaskNotificationQueuedEvent`; when it suppresses input, it emits `BackgroundTaskNotificationSuppressedEvent`.
-
-Thread-execution API projections expose a smaller shape:
-
-```typescript
-interface ThreadExecutionBackgroundTaskNotification {
-  kind: string;
-  strategyName?: string | null;
+for (const operation of state?.activeExecution?.operations ?? []) {
+  operationsPanel.upsert({
+    id: operation.operationId,
+    name: operation.name,
+    status: operation.providerStatus,
+    observation: operation.observationStatus,
+    controlHandle: operation.controlHandleId,
+    summary: operation.completionSummary,
+    failure: operation.failureMessage,
+  });
 }
 ```
 
-That projection is for execution lists and status panes. Use live background task events when an app needs the full rule payload.
+Execution projections are useful for active-run status, cancellation capabilities, completion
+summaries, and artifacts. Use the operation events when the client needs a durable timeline.
 
 ## Typed Handlers And Projection
 

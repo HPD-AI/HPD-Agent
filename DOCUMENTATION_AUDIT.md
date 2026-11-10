@@ -16,8 +16,8 @@ published NuGet contracts.
 | Providers | Complete | `efcbce0` | Corrected provider references, authentication, family configuration, request options, and JSON shapes; all provider examples compile against `0.9.5`. |
 | Sessions And Streaming | Complete | `83defed` | Corrected journal replacement, generation-aware cursors, fork APIs, lifecycle controls, compaction identities, and event projection imports. |
 | Multi-Agent | Complete | `29e3938` | Corrected node option APIs, error helpers, input resolution, config casing, export boundaries, public recovery events, and HPD Base durability setup. |
-| Hosting And Clients | Next | — | — |
-| Runtime Systems | Pending | — | Includes harnesses, sandboxing, FFI, and content. |
+| Hosting And Clients | Complete | `6bfe2a3` | Corrected SSE envelopes and cursors, input/control routes, stored-definition config, OpenAPI versioning, and HPD Base-backed durable store setup. |
+| Runtime Systems | Next | — | Includes harnesses, sandboxing, FFI, and content. |
 | Audio | Pending | — | — |
 | Bots | Pending | — | — |
 | Evaluations | Pending | — | — |

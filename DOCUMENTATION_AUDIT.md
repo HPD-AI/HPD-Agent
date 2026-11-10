@@ -17,8 +17,8 @@ published NuGet contracts.
 | Sessions And Streaming | Complete | `83defed` | Corrected journal replacement, generation-aware cursors, fork APIs, lifecycle controls, compaction identities, and event projection imports. |
 | Multi-Agent | Complete | `29e3938` | Corrected node option APIs, error helpers, input resolution, config casing, export boundaries, public recovery events, and HPD Base durability setup. |
 | Hosting And Clients | Complete | `6bfe2a3` | Corrected SSE envelopes and cursors, input/control routes, stored-definition config, OpenAPI versioning, and HPD Base-backed durable store setup. |
-| Runtime Systems | Next | — | Includes harnesses, sandboxing, FFI, and content. |
-| Audio | Pending | — | — |
+| Runtime Systems | Complete | `35f5a95` | Corrected coding run-config usage, deprecated FileSystem guidance, content lifecycle references, document extraction ownership, FFI exports/subscriptions, and sandbox response imports. |
+| Audio | Next | — | — |
 | Bots | Pending | — | — |
 | Evaluations | Pending | — | — |
 | Observability And UI | Pending | — | — |

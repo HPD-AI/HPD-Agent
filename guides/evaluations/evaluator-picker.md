@@ -1,24 +1,27 @@
 # Evaluator Picker
 
-Draft boundary: this catalog is source-grounded against the evaluator classes under `HPD-Agent.Evaluations/Evaluators` and the corresponding evaluator tests. It is meant to help developers choose a first evaluator without reading source. It is not a complete API reference, and long-tail evaluators are grouped when that makes first use clearer.
+The concrete deterministic evaluator implementations are internal in `0.9.5`. Use the
+public `HPD.Agent.Evaluations.Eval` factory for deterministic assertions. Judge, safety,
+and composite evaluator classes documented here are public.
 
 ## Pick The Smallest Useful Evaluator
 
 | Need | Start with | Judge required | Gate in CI? | Trend instead? |
 | --- | --- | --- | --- | --- |
-| Exact expected answer | `EqualsGroundTruthEvaluator`, `OutputEqualsEvaluator` | No | Yes | Usually no |
-| Required phrase, prefix, regex, length | `OutputContainsEvaluator`, `ContainsAllEvaluator`, `StartsWithEvaluator`, `OutputMatchesRegexEvaluator`, `WordCountEvaluator` | No | Yes | Sometimes |
-| Valid JSON/XML/HTML/SQL shape | `JsonValidityEvaluator`, `XmlValidityEvaluator`, `HtmlShapeEvaluator`, `SqlShapeEvaluator` | No | Yes | Usually no |
-| JSON fields and light schema checks | `SchemaConformanceEvaluator`, `FieldCompletenessEvaluator`, `FieldAccuracyEvaluator` | No | Yes for contract tests | Track field completeness over time |
-| Tool behavior | `ToolWasCalledEvaluator`, `ToolCallCountEvaluator`, `ToolArgumentMatchesEvaluator`, `ToolResultContainsEvaluator`, `NoToolsCalledEvaluator`, `ToolCallOrderEvaluator`, `ToolCallF1Evaluator` | No | Yes when tool behavior is required | Use F1 as a trend when tool choice can vary |
-| Latency, tokens, cost, iterations | `MaxDurationEvaluator`, `MaxTokensEvaluator`, `MaxInputTokensEvaluator`, `MaxOutputTokensEvaluator`, `MaxCostEvaluator`, `MaxIterationsEvaluator`, `LatencyEvaluator` | No | Gate only hard limits | Trend latency/cost |
+| Exact expected answer | `Eval.EqualsGroundTruth()`, `Eval.OutputEquals(...)` | No | Yes | Usually no |
+| Required phrase, prefix, regex, length | `Eval.Contains(...)`, `Eval.ContainsAll(...)`, `Eval.StartsWith(...)`, `Eval.MatchesRegex(...)`, `Eval.WordCount(...)` | No | Yes | Sometimes |
+| Valid JSON/XML/HTML/SQL shape | `Eval.JsonValidity()`, `Eval.XmlValidity()`, `Eval.HtmlShape(...)`, `Eval.SqlShape()` | No | Yes | Usually no |
+| JSON fields and light schema checks | `Eval.SchemaConformance(...)`, `Eval.FieldCompleteness(...)`, `Eval.FieldAccuracy(...)` | No | Yes for contract tests | Track field completeness over time |
+| Tool behavior | `Eval.ToolCalled(...)`, `Eval.ToolCallCount(...)`, `Eval.ToolArgumentMatches(...)`, `Eval.ToolResultContains(...)`, `Eval.NoToolsCalled()`, `Eval.ToolCallOrder(...)`, `Eval.ToolCallF1(...)` | No | Yes when tool behavior is required | Use F1 as a trend when tool choice can vary |
+| Latency, tokens, cost, iterations | `Eval.MaxDuration(...)`, `Eval.MaxTokens(...)`, `Eval.MaxInputTokens(...)`, `Eval.MaxOutputTokens(...)`, `Eval.MaxCost(...)`, `Eval.MaxIterations(...)`, `Eval.Latency()` | No | Gate only hard limits | Trend latency/cost |
 | Semantic answer quality | `AnswerSimilarityEvaluator`, `GoalAccuracyEvaluator`, `TaskSuccessEvaluator`, `AspectCriticEvaluator`, `CustomJudgeEvaluator` | Yes | Only with owned thresholds/review | Yes |
 | Retrieval quality and hallucination | `ContextRelevanceEvaluator`, `HallucinationEvaluator`, `ContextRecallEvaluator`, `ContextPrecisionEvaluator` | Yes | Rarely | Yes |
 | Safety and policy review | Safety evaluators such as `PromptInjectionEvaluator`, `SensitiveDataLeakEvaluator`, `CodeSecurityRiskEvaluator`, `PolicyComplianceEvaluator` | Yes | Yes only after product policy defines thresholds | Yes for discovery and tuning |
 | Conversation and memory | `ConversationCoherenceEvaluator`, `GoalProgressionEvaluator`, `RepetitionDetectionEvaluator`, `MemoryAccuracyEvaluator` | Yes | Rarely | Yes |
-| Risk/autonomy monitoring | `TurnRiskEvaluator` plus `TurnAutonomyEvaluator` | Mixed: risk yes, autonomy no | Rarely | Yes |
+| Risk/autonomy monitoring | `TurnRiskEvaluator` plus `Eval.TurnAutonomy(...)` | Mixed: risk yes, autonomy no | Rarely | Yes |
 
-Default policy in batch evals is source-defined: deterministic evaluators are `MustAlwaysPass`; other evaluators default to `TrackTrend`. Live `AddEvaluator` defaults to `MustAlwaysPass`, so pass `policy: EvalPolicy.TrackTrend` explicitly for judge metrics you want to monitor rather than fail.
+Default policy in batch and live evaluation is deterministic evaluators use
+`MustAlwaysPass`; model-judged and custom evaluators use `TrackTrend`.
 
 For quick deterministic checks, `HPD.Agent.Evaluations.Eval` provides aliases over the same evaluator classes:
 
@@ -28,7 +31,9 @@ await agent.CheckAsync(
     Eval.Contains("Paris"));
 ```
 
-Use the concrete evaluator classes when you need constructor options not exposed by the alias, or when the class name is clearer in a reusable suite.
+Use public judge, safety, or composite classes when their typed options are part of your
+owned policy. Deterministic evaluator implementations remain internal so they can evolve
+without expanding the `1.0` API surface.
 
 ## CI Gate Or Trend Signal?
 
@@ -38,7 +43,7 @@ Use `TrackTrend` when the score is probabilistic, subjective, or depends on a ju
 
 There are two practical exceptions:
 
-- Wrap a numeric deterministic score with `ThresholdGate` when you need a hard gate, for example `new ThresholdGate(new ToolCallF1Evaluator("Search", "Fetch"), 0.8)`.
+- Wrap a numeric deterministic score with `ThresholdGate` when you need a hard gate, for example `new ThresholdGate(Eval.ToolCallF1("Search", "Fetch"), 0.8)`.
 - Safety evaluators emit both a numeric score and a `... Passed` boolean through `SafetyPolicy`. They can become gates after the application owns the policy, threshold, and review process.
 
 ## First Evaluator Families
@@ -47,19 +52,19 @@ There are two practical exceptions:
 
 Use these when the response text itself is the contract. They do not need a judge model.
 
-- `OutputContainsEvaluator`, `ContainsAnyEvaluator`, `ContainsAllEvaluator`, `CaseInsensitiveContainsEvaluator`, and `StartsWithEvaluator` check simple string presence or prefix rules.
-- `OutputMatchesRegexEvaluator` checks a regex against `modelResponse.Text`.
-- `OutputEqualsEvaluator` checks exact text; `EqualsGroundTruthEvaluator` checks exact text against `GroundTruthContext`.
-- `WordCountEvaluator` checks min, max, or exact word count and stores the observed count as metadata.
-- `RefusalEvaluator` detects common refusal phrases. Use `NotEvaluator(new RefusalEvaluator())` when refusal is a failure.
-- `KeywordCoverageEvaluator`, `ContentSimilarityEvaluator`, and `LevenshteinEvaluator` return numeric similarity or coverage scores. Gate them only with an explicit threshold.
+- `Eval.Contains`, `Eval.ContainsAny`, `Eval.ContainsAll`, `Eval.ContainsIgnoringCase`, and `Eval.StartsWith` check simple string presence or prefix rules.
+- `Eval.MatchesRegex` checks a regex against the response text.
+- `Eval.OutputEquals` checks exact text; `Eval.EqualsGroundTruth` checks exact text against `GroundTruthContext`.
+- `Eval.WordCount` checks min, max, or exact word count and stores the observed count as metadata.
+- `Eval.Refusal` detects common refusal phrases. Use `NotEvaluator(Eval.Refusal())` when refusal is a failure.
+- `Eval.KeywordCoverage`, `Eval.ContentSimilarity`, and `Eval.Levenshtein` return numeric similarity or coverage scores. Gate them only with an explicit threshold.
 
 ```csharp
 evaluators:
 [
-    new EqualsGroundTruthEvaluator(),
-    new ContainsAllEvaluator("Paris", "France"),
-    new OutputMatchesRegexEvaluator(@"\b\d{4}\b"),
+    Eval.EqualsGroundTruth(),
+    Eval.ContainsAll("Paris", "France"),
+    Eval.MatchesRegex(@"\b\d{4}\b"),
 ]
 ```
 
@@ -67,12 +72,12 @@ evaluators:
 
 Use these when the answer must be machine-readable.
 
-- `JsonValidityEvaluator` and `XmlValidityEvaluator` parse the response.
-- `HtmlShapeEvaluator` checks for plausible HTML tags and optional required tags. It is not W3C validation.
-- `SqlShapeEvaluator` checks plausible SQL statement shape, balanced parentheses, and balanced quotes. It is not dialect validation.
-- `SchemaConformanceEvaluator` validates a JSON schema subset: `type`, `required`, `properties`, `minLength`, `maxLength`, `minimum`, `maximum`, and `enum`.
-- `FieldCompletenessEvaluator` scores the fraction of named top-level JSON fields present and non-null.
-- `FieldAccuracyEvaluator` checks a top-level JSON field value with case-insensitive string comparison.
+- `Eval.JsonValidity` and `Eval.XmlValidity` parse the response.
+- `Eval.HtmlShape` checks for plausible HTML tags and optional required tags. It is not W3C validation.
+- `Eval.SqlShape` checks plausible SQL statement shape, balanced parentheses, and balanced quotes. It is not dialect validation.
+- `Eval.SchemaConformance` validates a JSON schema subset: `type`, `required`, `properties`, `minLength`, `maxLength`, `minimum`, `maximum`, and `enum`.
+- `Eval.FieldCompleteness` scores the fraction of named top-level JSON fields present and non-null.
+- `Eval.FieldAccuracy` checks a top-level JSON field value with case-insensitive string comparison.
 - `SemanticFieldEqualityEvaluator` is the judge-backed escape hatch when a field can be semantically right without matching exactly.
 
 ```csharp
@@ -89,9 +94,9 @@ var schema = """
 
 evaluators:
 [
-    new JsonValidityEvaluator(),
-    new SchemaConformanceEvaluator(schema),
-    new FieldAccuracyEvaluator("country", "France"),
+    Eval.JsonValidity(),
+    Eval.SchemaConformance(schema),
+    Eval.FieldAccuracy("country", "France"),
 ]
 ```
 
@@ -99,21 +104,21 @@ evaluators:
 
 Use these when success depends on how the agent acted, not only what it said. These evaluators require `TurnEvaluationContext`; live evaluation and batch runs through the HPD evaluation pipeline provide it.
 
-- `ToolWasCalledEvaluator` checks that a named tool was called at least once.
-- `ToolCallCountEvaluator` checks an exact count.
-- `ToolArgumentMatchesEvaluator` parses the tool call JSON arguments and compares one argument value exactly.
-- `ToolResultContainsEvaluator` checks a named tool result for expected text.
-- `NoToolsCalledEvaluator` asserts that no tools were used.
-- `ToolCallOrderEvaluator` checks that expected tools appear in order as a subsequence; extra calls may exist.
-- `ToolCallF1Evaluator` returns unordered precision/recall/F1 over expected tool names.
-- `HasMatchingSpanEvaluator` is the broader trace assertion for matching a `SpanQuery` against `TurnTrace`.
+- `Eval.ToolCalled` checks that a named tool was called at least once.
+- `Eval.ToolCallCount` checks an exact count.
+- `Eval.ToolArgumentMatches` parses the tool call JSON arguments and compares one argument value exactly.
+- `Eval.ToolResultContains` checks a named tool result for expected text.
+- `Eval.NoToolsCalled` asserts that no tools were used.
+- `Eval.ToolCallOrder` checks that expected tools appear in order as a subsequence; extra calls may exist.
+- `Eval.ToolCallF1` returns unordered precision/recall/F1 over expected tool names.
+- `Eval.HasMatchingSpan` is the broader trace assertion for matching a `SpanQuery` against `TurnTrace`.
 
 ```csharp
 evaluators:
 [
-    new ToolWasCalledEvaluator("Search"),
-    new ToolArgumentMatchesEvaluator("Search", "query", "capital of France"),
-    new ToolCallOrderEvaluator(["Search", "Summarize"]),
+    Eval.ToolCalled("Search"),
+    Eval.ToolArgumentMatches("Search", "query", "capital of France"),
+    Eval.ToolCallOrder("Search", "Summarize"),
 ]
 ```
 
@@ -121,9 +126,9 @@ evaluators:
 
 Use hard limits for regressions that should fail immediately. Use numeric trends for everything else.
 
-- `MaxDurationEvaluator`, `MaxIterationsEvaluator`, `MaxTokensEvaluator`, `MaxInputTokensEvaluator`, and `MaxOutputTokensEvaluator` return booleans.
-- `LatencyEvaluator` reports duration in seconds and `latency-ms` metadata.
-- `MaxCostEvaluator` looks for cost in turn metrics under `cost_usd`, `turn_cost_usd`, `estimated_cost_usd`, or `cost`. If no cost metric exists, it returns a warning diagnostic rather than inventing cost.
+- `Eval.MaxDuration`, `Eval.MaxIterations`, `Eval.MaxTokens`, `Eval.MaxInputTokens`, and `Eval.MaxOutputTokens` return booleans.
+- `Eval.Latency` reports duration in seconds and `latency-ms` metadata.
+- `Eval.MaxCost` looks for cost in turn metrics under `cost_usd`, `turn_cost_usd`, `estimated_cost_usd`, or `cost`. If no cost metric exists, it returns a warning diagnostic rather than inventing cost.
 
 These also require `TurnEvaluationContext`.
 
@@ -131,9 +136,9 @@ These also require `TurnEvaluationContext`.
 
 Use these when you need deterministic overlap metrics against references. They are better for summaries, translations, or extraction-style tasks than open-ended assistant quality.
 
-- `BleuEvaluator`, `GleuEvaluator`, and `TextF1Evaluator` wrap Microsoft NLP evaluators.
-- `RougeEvaluator` supports `Rouge1`, `Rouge2`, `RougeL`, and `RougeS`.
-- `MeteorEvaluator` is a lightweight dependency-free METEOR-style unigram alignment score with configurable `MeteorEvaluatorOptions`.
+- `Eval.Bleu`, `Eval.Gleu`, and `Eval.TextF1` wrap deterministic NLP metrics.
+- `Eval.Rouge` supports `Rouge1`, `Rouge2`, `RougeL`, and `RougeS`.
+- `Eval.Meteor` is a lightweight dependency-free METEOR-style unigram alignment score with configurable `MeteorEvaluatorOptions`.
 
 Treat these as trends unless your dataset and threshold are already calibrated.
 
@@ -163,7 +168,10 @@ var report = await RunEvals.ExecuteAsync(
     {
         JudgeConfig = new EvaluationJudgeRunConfig
         {
-            Chat = new ChatClientConfig { Override = new ClientOverride<IChatClient> { Client = judgeChatClient } },
+            Chat = new ChatClientConfig
+            {
+                Override = ClientOverride<IChatClient>.Borrow(judgeChatClient)
+            },
         },
     });
 ```
@@ -208,7 +216,7 @@ These are useful signals for live evaluation and longer-running agents. Most sho
 
 - Conversation: `ConversationCoherenceEvaluator`, `GoalProgressionEvaluator`, `RepetitionDetectionEvaluator`, and `MemoryAccuracyEvaluator`.
 - Reasoning: `ReasoningCoherenceEvaluator`, `ReasoningGroundednessEvaluator`, and `ReasoningEfficiencyEvaluator`. They depend on reasoning context or captured turn reasoning text.
-- Risk/autonomy: `TurnRiskEvaluator` judges potential harm on a 1-10 scale; `TurnAutonomyEvaluator` deterministically scores autonomy from iteration count, permission-denied rate, stop kind, and duration.
+- Risk/autonomy: `TurnRiskEvaluator` judges potential harm on a 1-10 scale; `Eval.TurnAutonomy(...)` deterministically scores autonomy from iteration count, permission-denied rate, stop kind, and duration.
 - Specialty: `SqlSemanticEquivalenceEvaluator` judges whether generated SQL is equivalent to reference SQL for a schema; `NoiseSensitivityEvaluator` compares a noisy-response run against a baseline response.
 
 Use these to compare prompts, models, tool permissions, or releases. Do not use them as hard gates until the team has calibrated scores against reviewed examples.
@@ -224,8 +232,12 @@ Use composition after individual metrics are already useful.
 ```csharp
 evaluators:
 [
-    new ThresholdGate(new RougeEvaluator(reference, RougeVariant.RougeL), 0.75),
-    new NotEvaluator(new OutputContainsEvaluator("internal_secret")),
+    new ThresholdGate(
+        Eval.Rouge(
+            reference,
+            HPD.Agent.Evaluations.Evaluators.Nlp.RougeVariant.RougeL),
+        0.75),
+    new NotEvaluator(Eval.Contains("internal_secret")),
 ]
 ```
 

@@ -6,7 +6,7 @@ Live evaluation scores real agent runs after the agent response has returned. Us
 
 ```csharp
 using HPD.Agent;
-using HPD.Agent.Evaluations.Evaluators.Deterministic;
+using HPD.Agent.Evaluations;
 using HPD.Agent.Evaluations.Integration;
 using HPD.Agent.Evaluations.Storage;
 
@@ -15,7 +15,7 @@ var store = new InMemoryScoreStore();
 var agent = await new AgentBuilder()
     .WithChatClient(chatClient)
     .UseScoreStore(store)
-    .AddEvaluator(new OutputContainsEvaluator("approved"))
+    .AddEvaluator(Eval.Contains("approved"))
     .BuildAsync();
 ```
 
@@ -41,10 +41,15 @@ Live evaluation is not a request gate. If the response must be blocked, changed,
 Use run config overrides when a specific turn needs extra scoring:
 
 ```csharp
-var runConfig = new AgentRunConfig()
-    .WithAdditionalEvaluators(new OutputContainsEvaluator("approved"));
+var runConfig = new AgentRunConfig
+{
+    Evaluations = new EvaluationRunConfig
+    {
+        AdditionalEvaluators = [Eval.Contains("approved")]
+    }
+};
 
-await agent.RunAsync("Draft the approval note.", runConfig);
+await agent.RunAsync("Draft the approval note.", runConfig: runConfig);
 ```
 
 ## Observe Live Eval Events

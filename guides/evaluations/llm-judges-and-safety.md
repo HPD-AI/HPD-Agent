@@ -26,7 +26,10 @@ var report = await RunEvals.ExecuteAsync(
     {
         JudgeConfig = new EvaluationJudgeRunConfig
         {
-            Chat = new ChatClientConfig { Override = new ClientOverride<IChatClient> { Client = judgeChatClient } },
+            Chat = new ChatClientConfig
+            {
+                Override = ClientOverride<IChatClient>.Borrow(judgeChatClient)
+            },
         },
     },
     experimentName: "judge-smoke");
@@ -104,7 +107,10 @@ var report = await RunEvals.ExecuteAsync(
     {
         JudgeConfig = new EvaluationJudgeRunConfig
         {
-            Chat = new ChatClientConfig { Override = new ClientOverride<IChatClient> { Client = judge } },
+            Chat = new ChatClientConfig
+            {
+                Override = ClientOverride<IChatClient>.Borrow(judge)
+            },
         },
     },
     experimentName: "fake-judge-test");
@@ -140,7 +146,7 @@ options.JudgeConfig = new EvaluationJudgeRunConfig
     Inheritance = ClientFamilyInheritanceMode.UseOwn,
     Chat = new ChatClientConfig
     {
-        ProviderKey = "openai",
+        Provider = new HPD.Agent.Providers.ProviderReference { Key = "openai" },
         ModelName = "gpt-5-mini",
         Temperature = 0
     },
@@ -169,7 +175,10 @@ Timeouts default to 30 seconds. Set `Timeout` higher for slower judge providers 
 ```csharp
 new EvaluationJudgeRunConfig
 {
-    Chat = dedicatedJudgeChat,
+    Chat = new ChatClientConfig
+    {
+        Override = ClientOverride<IChatClient>.Borrow(dedicatedJudgeChat)
+    },
     Timeout = TimeSpan.FromSeconds(120),
 };
 ```
@@ -238,7 +247,10 @@ var agent = await new AgentBuilder()
         judgeConfig: new EvaluationJudgeRunConfig
         {
             Inheritance = ClientFamilyInheritanceMode.UseOwn,
-            Chat = dedicatedJudgeChat
+            Chat = new ChatClientConfig
+            {
+                Override = ClientOverride<IChatClient>.Borrow(dedicatedJudgeChat)
+            }
         })
     .BuildAsync();
 ```
@@ -261,7 +273,9 @@ Judge calls cost latency and tokens. Live evaluation runs after each sampled tur
 
 `Safety evaluator always passes` can happen when the judge returns low scores and no blocked action. Check the stored metric metadata: `safety-severity`, `safety-confidence`, `safety-recommended-action`, `safety-passed`, and `safety-evidence`.
 
-`Live evaluator never calls my judge` can mean the run used `DisableEvaluators = true` or `IsInternalEvalJudgeCall = true`, or the evaluator is deterministic and does not need judge chat configuration.
+`Live evaluator never calls my judge` can mean the run is suppressed for batch execution
+or as an internal judge call, or the evaluator is deterministic and does not need judge
+chat configuration.
 
 `Judge prompt is missing from traces` can happen when trace capture is not installed.
 Add `WithEvalJudgeTraceCapture()` to capture the post-middleware judge request.

@@ -96,7 +96,7 @@ var datasetStore = new InMemoryDatasetStore();
 var report = await RunEvals.ExecuteAsync(
     agent,
     dataset,
-    evaluators: [new EqualsGroundTruthEvaluator()],
+    evaluators: [Eval.EqualsGroundTruth()],
     options: new RunEvalsOptions<string>
     {
         DatasetStore = datasetStore,
@@ -105,6 +105,39 @@ var report = await RunEvals.ExecuteAsync(
 ```
 
 `InMemoryDatasetStore` is for local runs and tests. Use application storage for durable dataset history.
+
+## Durable HPD Base Stores
+
+Use `HPD-Agent.Evaluations.HpdBase` with an HPD Base provider when score, run, and dataset
+history must survive process restart:
+
+```csharp
+using HPD.Agent.Evaluations.HpdBase;
+using HPD.Agent.Evaluations.Storage;
+using HPD.Base;
+using HPD.Base.Sqlite;
+using System.Text.Json.Serialization;
+
+services.AddHPDBase(hpd => hpd
+    .AddHpdEvaluationStores()
+    .UseStore(SqliteStore.Configure(options =>
+    {
+        options.DataSource = "data/hpd-evals.db";
+    })));
+
+services.AddHpdBaseEvaluationStore();
+services.AddHpdBaseDatasetStore(options =>
+    options.AddCodec(new DatasetCodec<string>(
+        EvalDatasetJsonContext.Default.String)));
+
+[JsonSerializable(typeof(string))]
+internal partial class EvalDatasetJsonContext : JsonSerializerContext;
+```
+
+`AddHpdBaseEvaluationStore()` registers the durable `IScoreStore`.
+`AddHpdBaseDatasetStore(...)` requires a `DatasetCodec<TInput>` for every typed dataset
+input the application stores. The codec supplies generated JSON type metadata plus any
+evaluator serialization needed for restart-safe recovery.
 
 ## Compare Dataset Versions
 

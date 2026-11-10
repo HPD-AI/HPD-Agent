@@ -46,7 +46,7 @@ var agent = await new AgentBuilder()
 
 var report = await agent.EvaluateAsync(
     [("What is the capital of France?", "Paris")],
-    [new EqualsGroundTruthEvaluator(), Eval.Contains("Paris")],
+    [Eval.EqualsGroundTruth(), Eval.Contains("Paris")],
     experimentName: "local-smoke");
 
 report.Print();
@@ -122,13 +122,15 @@ var dataset = new Dataset<string>
 var report = await RunEvals.ExecuteAsync(
     agent,
     dataset,
-    evaluators: [new EqualsGroundTruthEvaluator(), Eval.Contains("Paris")],
+    evaluators: [Eval.EqualsGroundTruth(), Eval.Contains("Paris")],
     experimentName: "local-smoke");
 ```
 
 ## Fail CI On Regressions
 
-Deterministic evaluators derive from the deterministic evaluator base and default to `MustAlwaysPass` in batch runs. That means a failed `OutputContainsEvaluator`, `EqualsGroundTruthEvaluator`, tool-call assertion, JSON shape assertion, or similar built-in deterministic evaluator adds a policy violation.
+Deterministic evaluators default to `MustAlwaysPass` in batch runs. That means a
+failed `Eval.Contains`, `Eval.EqualsGroundTruth`, tool-call assertion, JSON shape
+assertion, or similar built-in deterministic evaluator adds a policy violation.
 
 xUnit style:
 
@@ -139,7 +141,7 @@ public async Task Capital_eval_still_passes()
     var report = await RunEvals.ExecuteAsync(
         agent,
         dataset,
-        evaluators: [new EqualsGroundTruthEvaluator(), new OutputContainsEvaluator("Paris")],
+        evaluators: [Eval.EqualsGroundTruth(), Eval.Contains("Paris")],
         experimentName: "capital-ci");
 
     Assert.Empty(report.Failures);
@@ -215,7 +217,7 @@ var agent = await new AgentBuilder()
 var report = await RunEvals.ExecuteAsync(
     agent,
     dataset,
-    evaluators: [new OutputContainsEvaluator("refund policy")],
+    evaluators: [Eval.Contains("refund policy")],
     options: new RunEvalsOptions<string>
     {
         BaseRunConfig = new AgentRunConfig
@@ -224,7 +226,7 @@ var report = await RunEvals.ExecuteAsync(
             {
                 Chat = new ChatClientConfig
                 {
-                    ProviderKey = "openai",
+                    Provider = new HPD.Agent.Providers.ProviderReference { Key = "openai" },
                     ModelName = "gpt-5-mini"
                 }
             },
@@ -247,7 +249,7 @@ var store = new InMemoryScoreStore();
 var report = await RunEvals.ExecuteAsync(
     agent,
     dataset,
-    evaluators: [new OutputContainsEvaluator("Paris")],
+    evaluators: [Eval.Contains("Paris")],
     options: new RunEvalsOptions<string>
     {
         PersistResults = true,
@@ -275,7 +277,10 @@ var report = await RunEvals.ExecuteAsync(
     {
         JudgeConfig = new EvaluationJudgeRunConfig
         {
-            Chat = new ChatClientConfig { Override = new ClientOverride<IChatClient> { Client = judgeChatClient } },
+            Chat = new ChatClientConfig
+            {
+                Override = ClientOverride<IChatClient>.Borrow(judgeChatClient)
+            },
         },
     },
     experimentName: "judge-smoke");

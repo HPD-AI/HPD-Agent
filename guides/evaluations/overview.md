@@ -54,4 +54,39 @@ Judge evaluators call another model or agent, so treat them as quality signals u
 
 ## Storage
 
-Use `InMemoryScoreStore` for local runs, tests, and examples. It is not durable storage. For production score history, wire `IScoreStore` to application storage.
+Use `InMemoryScoreStore` for local runs, tests, and examples. It is not durable storage.
+For production, `HPD-Agent.Evaluations.HpdBase` provides restart-durable score, run, and
+dataset stores backed by HPD Base. The dataset store requires a `DatasetCodec<TInput>` for
+each stored input type.
+
+## HTTP API
+
+`HPD-Agent.AspNetCore.Evaluations` exposes the optional `/evals` surface:
+
+```csharp
+using HPD.Agent.AspNetCore.Evaluations;
+using HPD.Agent.Evaluations.Storage;
+
+builder.Services.AddHPDAgentEvaluations();
+
+var app = builder.Build();
+app.MapHPDAgentEvaluationApi();
+```
+
+The catalog routes work without storage:
+
+```text
+GET /evals/evaluators/catalog
+GET /evals/red-team/plugins
+GET /evals/red-team/strategies
+```
+
+Score, analytics, run, dataset, and persisted red-team routes require registered
+`IScoreStore` and/or `IDatasetStore` services and return `503` when the needed store is
+missing. `/evals/evaluators/catalog` returns the complete built-in evaluator registry,
+including stable ids, metric names, default policies, judge requirements, and required
+evaluation contexts.
+
+The HTTP dataset registry accepts string-input datasets only. Typed datasets remain an
+in-process API. The package does not choose authentication; apply the host's normal
+authorization policy to the mapped evaluation route group.

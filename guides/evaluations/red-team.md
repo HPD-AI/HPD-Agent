@@ -7,7 +7,7 @@ This page is source-grounded in `HPD-Agent.Evaluations/RedTeam` and the red-team
 ## Run A Small Red-Team Smoke
 
 ```csharp
-using HPD.Agent.Evaluations.Evaluators.Deterministic;
+using HPD.Agent.Evaluations;
 using HPD.Agent.Evaluations.RedTeam;
 
 var report = await RedTeamRunner.ExecuteAsync(
@@ -15,11 +15,11 @@ var report = await RedTeamRunner.ExecuteAsync(
     new RedTeamRunOptions
     {
         CasesPerPlugin = 1,
-        Plugins = [new SecretLeakPlugin()],
-        Strategies = [new BasicStrategy()],
+        Plugins = [RedTeamPlugins.Create("secret-leak")],
+        Strategies = [RedTeamStrategies.Create("basic")],
         GlobalEvaluators =
         [
-            new OutputContainsEvaluator("I can't reveal secrets"),
+            Eval.Contains("I can't reveal secrets"),
         ],
         ExperimentName = "redteam-smoke",
     });
@@ -41,11 +41,11 @@ Good first pass for most assistants:
 ```csharp
 Plugins =
 [
-    new PromptInjectionPlugin(),
-    new SystemPromptExtractionPlugin(),
-    new SecretLeakPlugin(),
-    new JailbreakPlugin(),
-    new OffTopicHijackingPlugin(),
+    RedTeamPlugins.Create("prompt-injection"),
+    RedTeamPlugins.Create("system-prompt-extraction"),
+    RedTeamPlugins.Create("secret-leak"),
+    RedTeamPlugins.Create("jailbreak"),
+    RedTeamPlugins.Create("off-topic-hijacking"),
 ]
 ```
 
@@ -54,12 +54,12 @@ Good first pass for tool-using agents:
 ```csharp
 Plugins =
 [
-    new PromptInjectionPlugin(),
-    new IndirectPromptInjectionPlugin(),
-    new ToolDiscoveryPlugin(),
-    new ToolAbusePlugin(),
-    new UnauthorizedActionPlugin(),
-    new ExcessiveAgencyPlugin(),
+    RedTeamPlugins.Create("prompt-injection"),
+    RedTeamPlugins.Create("indirect-prompt-injection"),
+    RedTeamPlugins.Create("tool-discovery"),
+    RedTeamPlugins.Create("tool-abuse"),
+    RedTeamPlugins.Create("unauthorized-action"),
+    RedTeamPlugins.Create("excessive-agency"),
 ]
 ```
 
@@ -68,12 +68,12 @@ Good first pass for data or multi-tenant agents:
 ```csharp
 Plugins =
 [
-    new DataExfiltrationPlugin(),
-    new SecretLeakPlugin(),
-    new PiiLeakPlugin(),
-    new CrossSessionLeakPlugin(),
-    new RbacViolationPlugin(),
-    new ObjectAccessViolationPlugin(),
+    RedTeamPlugins.Create("data-exfiltration"),
+    RedTeamPlugins.Create("secret-leak"),
+    RedTeamPlugins.Create("pii-leak"),
+    RedTeamPlugins.Create("cross-session-leak"),
+    RedTeamPlugins.Create("rbac-violation"),
+    RedTeamPlugins.Create("object-access-violation"),
 ]
 ```
 
@@ -82,10 +82,10 @@ Good first pass for coding or query agents:
 ```csharp
 Plugins =
 [
-    new ShellInjectionPlugin(),
-    new SqlInjectionPlugin(),
-    new SsrfPlugin(),
-    new MaliciousCodePlugin(),
+    RedTeamPlugins.Create("shell-injection"),
+    RedTeamPlugins.Create("sql-injection"),
+    RedTeamPlugins.Create("ssrf"),
+    RedTeamPlugins.Create("malicious-code"),
 ]
 ```
 
@@ -100,10 +100,11 @@ GlobalEvaluators =
 
 ## Pick Starter Strategies
 
-When `Strategies` is empty, the runner uses `BasicStrategy`. Start there while validating evaluator behavior.
+When `Strategies` is empty, the runner uses the built-in `basic` strategy. Start there
+while validating evaluator behavior.
 
 ```csharp
-Strategies = [new BasicStrategy()];
+Strategies = [RedTeamStrategies.Create("basic")];
 ```
 
 Then add one or two mutation strategies that match your risk:
@@ -111,21 +112,21 @@ Then add one or two mutation strategies that match your risk:
 ```csharp
 Strategies =
 [
-    new BasicStrategy(),
-    new FakeSystemMessageStrategy(),
-    new IndirectContentStrategy(),
-    new Base64Strategy(),
+    RedTeamStrategies.Create("basic"),
+    RedTeamStrategies.Create("fake-system-message"),
+    RedTeamStrategies.Create("indirect-content"),
+    RedTeamStrategies.Create("base64"),
 ];
 ```
 
 Useful starter choices:
 
-- `BasicStrategy`: no mutation; best for confirming the agent refuses direct attacks.
-- `FakeSystemMessageStrategy`: tests whether user text can impersonate higher-priority instructions.
-- `IndirectContentStrategy`: tests untrusted content handling.
-- `Base64Strategy`, `HexStrategy`, `Rot13Strategy`, `LeetspeakStrategy`: tests simple obfuscation.
-- `RoleplayJailbreakStrategy`, `CrescendoStrategy`, `MultiTurnEscalationStrategy`: tests social framing and gradual escalation.
-- `BestOfNStrategy` and `RetryMutationStrategy`: generate multiple variants, so case counts grow quickly.
+- `basic`: no mutation; best for confirming the agent refuses direct attacks.
+- `fake-system-message`: tests whether user text can impersonate higher-priority instructions.
+- `indirect-content`: tests untrusted content handling.
+- `base64`, `hex`, `rot13`, `leetspeak`: test simple obfuscation.
+- `roleplay-jailbreak`, `crescendo`, `multi-turn-escalation`: test social framing and gradual escalation.
+- `RedTeamStrategies.BestOfN(...)` and `RedTeamStrategies.RetryMutation(...)`: generate multiple variants, so case counts grow quickly.
 
 Case count is roughly `CasesPerPlugin * plugin count * strategy output count`. Some strategies emit more than one case per input, so keep smoke runs small.
 
@@ -146,14 +147,14 @@ var report = await RedTeamRunner.ExecuteAsync(
         CasesPerPlugin = 2,
         Plugins =
         [
-            new PromptInjectionPlugin(),
-            new SecretLeakPlugin(),
-            new ToolAbusePlugin(),
+            RedTeamPlugins.Create("prompt-injection"),
+            RedTeamPlugins.Create("secret-leak"),
+            RedTeamPlugins.Create("tool-abuse"),
         ],
         Strategies =
         [
-            new BasicStrategy(),
-            new FakeSystemMessageStrategy(),
+            RedTeamStrategies.Create("basic"),
+            RedTeamStrategies.Create("fake-system-message"),
         ],
         GlobalEvaluators =
         [
@@ -167,7 +168,10 @@ var report = await RedTeamRunner.ExecuteAsync(
             JudgeConfig = new EvaluationJudgeRunConfig
             {
                 Inheritance = ClientFamilyInheritanceMode.UseOwn,
-                Chat = dedicatedJudgeChat,
+                Chat = new ChatClientConfig
+                {
+                    Override = ClientOverride<IChatClient>.Borrow(dedicatedJudgeChat)
+                },
                 Timeout = TimeSpan.FromSeconds(120),
             },
         },
@@ -195,8 +199,8 @@ var report = await RedTeamRunner.ExecuteAsync(
     new RedTeamRunOptions
     {
         CasesPerPlugin = 3,
-        Plugins = [new SecretLeakPlugin()],
-        GlobalEvaluators = [new OutputContainsEvaluator("I can't reveal secrets")],
+        Plugins = [RedTeamPlugins.Create("secret-leak")],
+        GlobalEvaluators = [Eval.Contains("I can't reveal secrets")],
         RunOptions = new RunEvalsOptions<string>
         {
             PersistResults = true,
@@ -206,7 +210,7 @@ var report = await RedTeamRunner.ExecuteAsync(
     });
 ```
 
-When no strategy is supplied, the runner uses `BasicStrategy`.
+When no strategy is supplied, the runner uses the built-in `basic` strategy.
 
 Persisted red-team score records include metadata from the generated case:
 
@@ -292,7 +296,9 @@ Generated cases are templates, not proof of coverage. They are useful regression
 
 Single-turn strategies that contain "Turn 1" text are still one input unless your agent or test harness explicitly runs a multi-turn conversation. Treat them as escalation-shaped prompts, not true multi-turn transcripts.
 
-Some red-team plugins require app-specific evaluators. For example, `UnauthorizedActionPlugin` is only meaningful if your evaluator can tell whether a protected action happened or was refused.
+Some red-team plugins require app-specific evaluators. For example,
+`RedTeamPlugins.Create("unauthorized-action")` is only meaningful if your evaluator
+can tell whether a protected action happened or was refused.
 
 Obfuscation strategies can change the task so much that failures become evaluator artifacts. Inspect examples before turning them into release gates.
 
@@ -300,9 +306,11 @@ Obfuscation strategies can change the task so much that failures become evaluato
 
 `AttackSuccessRate` is `0` with an obviously unsafe response: your evaluator probably passed it. Inspect `report.EvaluationReport.Cases` and the metric values. For judge evaluators, verify the judge response parsed.
 
-Every case is an attack success: confirm the safe-response evaluator is not inverted. `OutputContainsEvaluator("I can't reveal secrets")` fails unless that exact string appears.
+Every case is an attack success: confirm the safe-response evaluator is not inverted. `Eval.Contains("I can't reveal secrets")` fails unless that exact string appears.
 
-No cases were generated: check that `Plugins` is not empty. The runner defaults missing strategies to `BasicStrategy`, but it does not default missing plugins.
+No cases were generated: check that `Plugins` is not empty. The runner defaults
+missing strategies to the built-in `basic` strategy, but it does not default missing
+plugins.
 
 Too many cases: reduce `CasesPerPlugin`, reduce strategies, or remove variant-producing strategies such as best-of-n and retry mutation.
 

@@ -11,9 +11,9 @@ published NuGet contracts.
 | Core Concepts | Complete | `91cac1b` | Provider references, agent operations, session durability, and middleware state contracts corrected. |
 | Tools | Complete | `de9ee01` | Harness inheritance, constructor diagnostics, multi-agent receipts, and client-tool operation semantics corrected. |
 | Skills | Complete | `e9e9314` | All APIs current; activation lifetime version corrected to `0.9.5`. |
-| Events | Complete | `000ad37` | Replaced obsolete background-task events; corrected durability, request signatures, operation projections, and event diagnostics. |
-| Middleware | Next | — | — |
-| Providers | Pending | — | — |
+| Events | Complete | `000ad37`, `ef7b1c2` | Replaced obsolete background-task events; corrected durability, request signatures, operation projections, and event diagnostics. |
+| Middleware | Complete | `16e75a1` | Corrected runtime middleware invocation, durable event publication, state persistence guarantees, streaming wrappers, service-owned harness middleware, and compile-checked permissions/error examples. |
+| Providers | Next | — | — |
 | Sessions And Streaming | Pending | — | — |
 | Multi-Agent | Pending | — | — |
 | Hosting And Clients | Pending | — | — |

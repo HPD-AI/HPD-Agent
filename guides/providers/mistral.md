@@ -26,10 +26,12 @@ The equivalent `Clients.Chat` shape is:
 
 ```json
 {
-  "Clients": {
-    "Chat": {
-      "ProviderKey": "mistral",
-      "ModelName": "mistral-large-latest"
+  "clients": {
+    "chat": {
+      "provider": {
+        "key": "mistral"
+      },
+      "modelName": "mistral-large-latest"
     }
   }
 }
@@ -79,7 +81,7 @@ var run = new AgentRunConfig
     {
         Chat = new ChatClientConfig
         {
-            ProviderKey = "mistral",
+            Provider = new HPD.Agent.Providers.ProviderReference { Key = "mistral" },
             ModelName = "mistral-large-latest",
             ProviderOptions = new MistralChatRequestOptions
             {

@@ -28,10 +28,12 @@ The equivalent `Clients.Chat` shape is:
 
 ```json
 {
-  "Clients": {
-    "Chat": {
-      "ProviderKey": "deepseek",
-      "ModelName": "deepseek-v4-flash"
+  "clients": {
+    "chat": {
+      "provider": {
+        "key": "deepseek"
+      },
+      "modelName": "deepseek-v4-flash"
     }
   }
 }

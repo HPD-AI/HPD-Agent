@@ -83,10 +83,12 @@ The equivalent `Clients.Chat` shape is:
 
 ```json
 {
-  "Clients": {
-    "Chat": {
-      "ProviderKey": "google-ai",
-      "ModelName": "gemini-2.0-flash"
+  "clients": {
+    "chat": {
+      "provider": {
+        "key": "google-ai"
+      },
+      "modelName": "gemini-2.0-flash"
     }
   }
 }
@@ -96,11 +98,13 @@ With provider configuration:
 
 ```json
 {
-  "Clients": {
-    "Chat": {
-      "ProviderKey": "google-ai",
-      "ModelName": "gemini-2.0-flash",
-      "ProviderConfig": {
+  "clients": {
+    "chat": {
+      "provider": {
+        "key": "google-ai"
+      },
+      "modelName": "gemini-2.0-flash",
+      "providerConfig": {
         "platform": "VertexAI",
         "projectId": "my-project",
         "region": "us-central1",

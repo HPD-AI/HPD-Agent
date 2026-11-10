@@ -71,10 +71,12 @@ JSON or configuration setup is useful when agent definitions are stored outside 
 
 ```json
 {
-  "Clients": {
-    "Chat": {
-      "ProviderKey": "anthropic",
-      "ModelName": "claude-3-5-sonnet-latest"
+  "clients": {
+    "chat": {
+      "provider": {
+        "key": "anthropic"
+      },
+      "modelName": "claude-3-5-sonnet-latest"
     }
   }
 }
@@ -82,7 +84,7 @@ JSON or configuration setup is useful when agent definitions are stored outside 
 
 Provider-specific construction and transport options live on the same family config through `ProviderConfig`. For example, audio providers use provider configuration for voice, output format, speech speed, transcript options, and realtime provider ids. Chat providers use provider configuration only for controls that are native to that provider or SDK.
 
-Provider and model selection uses `AgentRunConfig.Clients.Chat.ProviderKey` and `ModelName`. Runtime chat behavior uses `ChatClientConfig`: temperature, top-p, max output tokens, stop sequences, response format, tools, tool mode, seed, and generic reasoning options. Agent-level defaults belong in `AgentConfig.Clients.Chat`; per-run replacements belong in `AgentRunConfig.Clients.Chat`.
+Provider and model selection uses `AgentRunConfig.Clients.Chat.Provider.Key` and `ModelName`. Runtime chat behavior uses `ChatClientConfig`: temperature, top-p, max output tokens, stop sequences, response format, tools, tool mode, seed, and generic reasoning options. Agent-level defaults belong in `AgentConfig.Clients.Chat`; per-run replacements belong in `AgentRunConfig.Clients.Chat`.
 
 In C# code, use the provider's typed config with `SetProviderConfig(...)` when available. In stored JSON, use the `ProviderConfig` object.
 

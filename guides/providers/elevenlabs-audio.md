@@ -58,9 +58,9 @@ using HPD.Agent.Providers.Audio.ElevenLabs;
 var agent = await new AgentBuilder()
     .WithElevenLabsSpeechToText(
         model: "scribe_v2",
-        configure: options =>
+        language: "en",
+        configureOptions: options =>
         {
-            options.LanguageCode = "en";
             options.Diarize = true;
         })
     .BuildAsync();
@@ -70,16 +70,19 @@ The helper selects the speech-to-text client family. Audio runtime attachment st
 
 ElevenLabs also supports realtime speech-to-text through the same `ISpeechToTextClient` streaming method. This is not the `Clients.Realtime` model family and should not be configured as the agent realtime transport. Use it when the app wants live transcript updates from ElevenLabs, then passes committed text into the agent flow.
 
-ElevenLabs STT options use `ElevenLabsSttConfig` through `ProviderConfig`:
+STT selection uses portable family fields, `ElevenLabsSttConfig` for client
+acquisition, and `ElevenLabsSttOptions` for request operations:
 
 ```json
 {
-  "Clients": {
-    "SpeechToText": {
-      "ProviderKey": "elevenlabs",
-      "ModelName": "scribe_v2",
-      "ProviderConfig": {
-        "languageCode": "en",
+  "clients": {
+    "speechToText": {
+      "provider": {
+        "key": "elevenlabs"
+      },
+      "modelName": "scribe_v2",
+      "speechLanguage": "en",
+      "providerOptions": {
         "diarize": true,
         "timestampsGranularity": "word"
       }
@@ -88,16 +91,12 @@ ElevenLabs STT options use `ElevenLabsSttConfig` through `ProviderConfig`:
 }
 ```
 
-Source-confirmed STT provider configuration:
+Source-confirmed STT options:
 
 | Option | Use it for |
 | --- | --- |
-| `apiKey` | Provider-specific API key override. |
-| `baseUrl` | HTTP API base URL override. |
-| `webSocketBaseUrl` | WebSocket API base URL override for realtime STT. |
-| `defaultModelId` | Default Scribe model when `ModelName` is not set. |
+| `SpeechLanguage` | Portable family field selecting the input/output language. |
 | `realtimeModelId` | Default realtime Scribe model, usually `scribe_v2_realtime`. |
-| `languageCode` | Default language code. |
 | `diarize` | Speaker diarization toggle. |
 | `tagAudioEvents` | Audio-event tagging toggle. |
 | `timestampsGranularity` | Timestamp granularity, such as `word`. |
@@ -113,6 +112,10 @@ Source-confirmed STT provider configuration:
 | `minSilenceDurationMilliseconds` | Minimum silence duration for VAD. |
 | `enableLogging` | Provider-side logging toggle. |
 | `streamingChunkSizeBytes` | Client-side chunk size for streaming audio. |
+
+`ElevenLabsSttConfig.ProviderConfig` contains only `webSocketBaseUrl`. API keys
+are selected through `Provider.Authentication`, and HTTP endpoints use the
+family `Endpoint` field.
 
 ## Text To Speech
 
@@ -132,7 +135,7 @@ var agent = await new AgentBuilder()
         model: "eleven_turbo_v2_5",
         voice: "21m00Tcm4TlvDq8ikWAM",
         outputFormat: "mp3_44100_128",
-        configure: options =>
+        configureOptions: options =>
         {
             options.Stability = 0.5;
             options.SimilarityBoost = 0.75;
@@ -146,13 +149,15 @@ var agent = await new AgentBuilder()
 
 ```json
 {
-  "Clients": {
-    "TextToSpeech": {
-      "ProviderKey": "elevenlabs",
-      "ModelName": "eleven_turbo_v2_5",
-      "ProviderConfig": {
-        "defaultVoiceId": "21m00Tcm4TlvDq8ikWAM",
-        "outputFormat": "mp3_44100_128",
+  "clients": {
+    "textToSpeech": {
+      "provider": {
+        "key": "elevenlabs"
+      },
+      "modelName": "eleven_turbo_v2_5",
+      "voiceId": "21m00Tcm4TlvDq8ikWAM",
+      "audioFormat": "mp3_44100_128",
+      "providerOptions": {
         "stability": 0.5,
         "similarityBoost": 0.75
       }
@@ -161,16 +166,13 @@ var agent = await new AgentBuilder()
 }
 ```
 
-Source-confirmed provider configuration:
+Source-confirmed TTS options:
 
 | Option | Use it for |
 | --- | --- |
-| `apiKey` | Provider-specific API key override. |
-| `baseUrl` | HTTP API base URL override. |
-| `webSocketBaseUrl` | WebSocket API base URL override. |
-| `defaultModelId` | Default TTS model when `ModelName` is not set. |
-| `defaultVoiceId` | Default ElevenLabs voice id. |
-| `outputFormat` | Output format, such as `mp3_44100_128`. |
+| `VoiceId` | Portable family field for the ElevenLabs voice id. |
+| `AudioFormat` | Portable family field for output format, such as `mp3_44100_128`. |
+| `Speed` | Portable family field for playback speed. |
 | `stability` | Voice stability. |
 | `similarityBoost` | Voice similarity boost. |
 | `style` | Voice style. |
@@ -183,6 +185,10 @@ Source-confirmed provider configuration:
 | `syncAlignment` | Alignment synchronization. |
 | `inactivityTimeout` | Streaming inactivity timeout. |
 
+`ElevenLabsTtsConfig.ProviderConfig` contains only `webSocketBaseUrl` and
+`enablePushTextStreaming`. API keys are selected through
+`Provider.Authentication`, and HTTP endpoints use the family `Endpoint` field.
+
 Manual typed config is still useful when you are dynamically composing family configs or loading part of the setup outside normal builder code:
 
 ```csharp
@@ -194,19 +200,17 @@ using HPD.Agent.Providers.Audio.ElevenLabs;
 ```csharp
 var tts = new TextToSpeechClientConfig
 {
-    ProviderKey = "elevenlabs",
-    ModelName = "eleven_turbo_v2_5"
-};
-
-tts.SetProviderConfig(
-    new ElevenLabsTtsConfig
+    Provider = new HPD.Agent.Providers.ProviderReference { Key = "elevenlabs" },
+    ModelName = "eleven_turbo_v2_5",
+    VoiceId = "21m00Tcm4TlvDq8ikWAM",
+    AudioFormat = "mp3_44100_128",
+    ProviderConfig = new ElevenLabsTtsConfig(),
+    ProviderOptions = new ElevenLabsTtsOptions
     {
-        DefaultVoiceId = "21m00Tcm4TlvDq8ikWAM",
-        OutputFormat = "mp3_44100_128",
         Stability = 0.5,
         SimilarityBoost = 0.75
-    },
-    ProviderClientFamily.TextToSpeech);
+    }
+};
 ```
 
 ## Use With Audio Output

@@ -74,10 +74,12 @@ The equivalent family config is:
 
 ```json
 {
-  "Clients": {
-    "Embeddings": {
-      "ProviderKey": "cohere",
-      "ModelName": "embed-english-v3.0"
+  "clients": {
+    "embeddings": {
+      "provider": {
+        "key": "cohere"
+      },
+      "modelName": "embed-english-v3.0"
     }
   }
 }

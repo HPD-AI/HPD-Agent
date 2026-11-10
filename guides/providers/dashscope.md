@@ -73,10 +73,12 @@ The equivalent family config is:
 
 ```json
 {
-  "Clients": {
-    "Embeddings": {
-      "ProviderKey": "dashscope",
-      "ModelName": "text-embedding-v4"
+  "clients": {
+    "embeddings": {
+      "provider": {
+        "key": "dashscope"
+      },
+      "modelName": "text-embedding-v4"
     }
   }
 }

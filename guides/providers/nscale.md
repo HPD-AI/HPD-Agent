@@ -28,10 +28,12 @@ The equivalent `Clients.Chat` shape is:
 
 ```json
 {
-  "Clients": {
-    "Chat": {
-      "ProviderKey": "nscale",
-      "ModelName": "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8"
+  "clients": {
+    "chat": {
+      "provider": {
+        "key": "nscale"
+      },
+      "modelName": "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8"
     }
   }
 }

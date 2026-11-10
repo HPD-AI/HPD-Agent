@@ -29,13 +29,16 @@ explicit orchestration policy.
 `AgentRunConfig.Clients.Chat` is the complete per-run chat replacement:
 
 ```csharp
-await agent.RunAsync("Use OpenAI", new AgentRunConfig
+using HPD.Agent;
+using HPD.Agent.Providers;
+
+await agent.RunAsync("Use OpenAI", runConfig: new AgentRunConfig
 {
     Clients = new AgentClientsConfig
     {
         Chat = new ChatClientConfig
         {
-            ProviderKey = "openai",
+            Provider = new ProviderReference { Key = "openai" },
             ModelName = "gpt-5-mini",
             Temperature = 0.2,
             MaxOutputTokens = 2048
@@ -43,13 +46,13 @@ await agent.RunAsync("Use OpenAI", new AgentRunConfig
     }
 });
 
-await agent.RunAsync("Use Anthropic", new AgentRunConfig
+await agent.RunAsync("Use Anthropic", runConfig: new AgentRunConfig
 {
     Clients = new AgentClientsConfig
     {
         Chat = new ChatClientConfig
         {
-            ProviderKey = "anthropic",
+            Provider = new ProviderReference { Key = "anthropic" },
             ModelName = "claude-sonnet-4-5"
         }
     }
@@ -77,7 +80,7 @@ For example, Anthropic request options remain attached to the Anthropic selectio
 ```csharp
 var chat = new ChatClientConfig
 {
-    ProviderKey = "anthropic",
+    Provider = new ProviderReference { Key = "anthropic" },
     ModelName = "claude-sonnet-4-5",
     ProviderOptions = new AnthropicChatRequestOptions
     {
@@ -100,7 +103,9 @@ payloads remain siblings:
 {
   "clients": {
     "chat": {
-      "providerKey": "anthropic",
+      "provider": {
+        "key": "anthropic"
+      },
       "modelName": "claude-sonnet-4-5",
       "temperature": 0.2,
       "providerConfig": {},
@@ -115,7 +120,8 @@ payloads remain siblings:
 ```yaml
 clients:
   chat:
-    providerKey: anthropic
+    provider:
+      key: anthropic
     modelName: claude-sonnet-4-5
     temperature: 0.2
     providerConfig: {}
@@ -124,14 +130,16 @@ clients:
 ```
 
 Provider profiles can supply reusable provider-owned payloads. The outer profile key
-is the provider identity, so nested payloads do not repeat it:
+is explicit because `providerProfiles` is an array of provider/backend baselines:
 
 ```yaml
 providerProfiles:
-  anthropic:
-    chat:
-      providerOptions:
-        thinkingBudgetTokens: 4096
+  - providerKey: anthropic
+    backendKey: platform
+    clients:
+      chat:
+        providerOptions:
+          thinkingBudgetTokens: 4096
 ```
 
 Use `HpdAgentConfigSerializer` with the generated composition. Plain source-generated
@@ -144,68 +152,71 @@ secret through `ISecretResolver`, such as `openai:ApiKey` or
 `anthropic:ApiKey`. Environment aliases, application configuration, and registered
 secret sources continue to participate in that resolver chain.
 
-For a one-off in-process run, put the direct key on the family config:
+The fluent provider overload accepts a literal in-process key. It copies the
+characters into process-local, clearable storage and never serializes them:
 
 ```csharp
-await agent.RunAsync("One-off call", new AgentRunConfig
+var agent = await new AgentBuilder()
+    .WithOpenAI(model: "gpt-5-mini", apiKey: temporaryKey)
+    .BuildAsync();
+```
+
+For a portable key reference, select the secret-resolver key rather than the
+secret value:
+
+```csharp
+await agent.RunAsync("Use work", runConfig: new AgentRunConfig
 {
     Clients = new AgentClientsConfig
     {
         Chat = new ChatClientConfig
         {
-            ProviderKey = "openai",
-            ModelName = "gpt-5-mini",
-            ApiKey = temporaryKey
+            Provider = new ProviderReference
+            {
+                Key = "openai",
+                Authentication = new ApiKeyProviderAuthentication
+                {
+                    SecretKey = "openai:work:ApiKey"
+                }
+            },
+            ModelName = "gpt-5-mini"
         }
     }
 });
 ```
 
-`ApiKey` is never serialized. Its client identity is isolated from reusable
-credential-backed clients and disposed when its lease ends.
+Only the secret key is serialized. The receiving host must install an
+`ISecretResolver` that can resolve it.
 
-## Several Credentials For One Provider
-
-Named registrations let a host expose several independently selectable API keys:
-
-```csharp
-var authentication = new InMemoryProviderAuthenticationRegistry();
-authentication.Register(new ProviderAuthenticationRegistration
-{
-    Key = "openai-personal",
-    ProviderKey = "openai",
-    SecretKey = "openai:personal:ApiKey"
-});
-authentication.Register(new ProviderAuthenticationRegistration
-{
-    Key = "openai-work",
-    ProviderKey = "openai",
-    SecretKey = "openai:work:ApiKey",
-    IsDefault = true
-});
-```
-
-Select one by its opaque name on the same family config:
+For a runtime-only explicit key in a later run, register it on the builder before
+building and attach the returned authentication selection to the run:
 
 ```csharp
-await agent.RunAsync("Use work", new AgentRunConfig
+var builder = new AgentBuilder();
+var authentication = builder.RegisterExplicitApiKey(temporaryKey);
+var agent = await builder.BuildAsync();
+
+await agent.RunAsync("Use the explicit runtime credential", runConfig: new AgentRunConfig
 {
     Clients = new AgentClientsConfig
     {
         Chat = new ChatClientConfig
         {
-            ProviderKey = "openai",
-            ModelName = "gpt-5-mini",
-            AuthenticationKey = "openai-work"
+            Provider = new ProviderReference
+            {
+                Key = "openai",
+                Authentication = authentication
+            },
+            ModelName = "gpt-5-mini"
         }
     }
 });
 ```
 
-Only `AuthenticationKey` is serialized. A receiving host must have a compatible
-registration and secret resolver. HPD never chooses arbitrarily among multiple
-compatible registrations: select one explicitly or mark exactly one as the host
-default.
+Portable authentication also supports `OAuthProviderAuthentication` for a durable
+provider account and `ExternalIdentityProviderAuthentication` for an SDK-native
+identity registered by the host. Authentication values are never placed in
+`ProviderConfig` or custom headers.
 
 ## Provider Composition And Serialization
 
@@ -225,7 +236,7 @@ composition so per-run payloads are preserved.
 ## Client Reuse And Ownership
 
 Equivalent construction identities share a lazily created client. Provider, model,
-authentication registration, endpoint, normalized headers, typed provider config,
+authentication selection, endpoint, normalized headers, typed provider config,
 and client-bound settings contribute to that identity. Request-only provider options
 do not.
 
@@ -233,5 +244,5 @@ Concurrent first use is single-flight. Failed construction is evicted for retry,
 cached clients are disposed with their owner, and explicitly overridden clients are
 borrowed.
 
-OAuth is intentionally outside this static-authentication model for now. Existing
-MCP OAuth remains a separate subsystem.
+Provider OAuth account selection is part of `ProviderReference.Authentication`.
+MCP OAuth remains a separate subsystem for MCP servers.

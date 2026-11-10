@@ -46,7 +46,7 @@ var agent = await new AgentBuilder()
         options =>
         {
             options.Providers = ["cuda", "cpu"];
-            options.ProviderOptions = new Dictionary<string, Dictionary<string, string>>
+            options.ExecutionProviderOptions = new Dictionary<string, Dictionary<string, string>>
             {
                 ["cuda"] = new()
                 {
@@ -63,7 +63,7 @@ The provider-config path can also resolve `ONNX_MODEL_PATH` when `ModelPath` is 
 | --- | --- |
 | `ModelPath` | ONNX Runtime GenAI model directory. |
 | `Providers` | Ordered ONNX Runtime execution providers, such as `cuda`, `cpu`, `dml`, `qnn`, `openvino`, `trt`, or `webgpu`. |
-| `ProviderOptions` | ONNX Runtime's provider-specific execution options passed to `Config.SetProviderOption`. This typed SDK property is nested inside HPD's outer `ProviderConfig` configuration plane. |
+| `ExecutionProviderOptions` | ONNX Runtime's provider-specific execution options passed to `Config.SetProviderOption`. This typed SDK property is nested inside HPD's outer `ProviderConfig` configuration plane. |
 | `HardwareDeviceType` | Decoder hardware device type applied to configured providers. |
 | `HardwareDeviceId` | Decoder hardware device id applied to configured providers. |
 | `HardwareVendorId` | Decoder hardware vendor id applied to configured providers. |

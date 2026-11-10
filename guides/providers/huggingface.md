@@ -30,10 +30,12 @@ The equivalent `Clients.Chat` shape is:
 
 ```json
 {
-  "Clients": {
-    "Chat": {
-      "ProviderKey": "huggingface",
-      "ModelName": "meta-llama/Meta-Llama-3-8B-Instruct"
+  "clients": {
+    "chat": {
+      "provider": {
+        "key": "huggingface"
+      },
+      "modelName": "meta-llama/Meta-Llama-3-8B-Instruct"
     }
   }
 }
@@ -43,7 +45,7 @@ The default endpoint is `https://router.huggingface.co/`. Pass `endpoint` to `Wi
 
 ## Runtime Chat Options
 
-Use `AgentRunConfig.Clients.Chat.ProviderKey` and `ModelName` for selection. Use `ChatClientConfig` for shared model-call behavior such as temperature, top-p, max output tokens, stop sequences, seed, frequency penalty, presence penalty, response format, and tools. Put agent-level defaults in `AgentConfig.Clients.Chat`; use `AgentRunConfig.Clients.Chat` for complete per-run replacements.
+Use `AgentRunConfig.Clients.Chat.Provider.Key` and `ModelName` for selection. Use `ChatClientConfig` for shared model-call behavior such as temperature, top-p, max output tokens, stop sequences, seed, frequency penalty, presence penalty, response format, and tools. Put agent-level defaults in `AgentConfig.Clients.Chat`; use `AgentRunConfig.Clients.Chat` for complete per-run replacements.
 
 Use `HuggingFaceChatRequestOptions` only for Hugging Face-specific request fields:
 
@@ -72,7 +74,7 @@ var runConfig = new AgentRunConfig
     {
         Chat = new ChatClientConfig
         {
-            ProviderKey = "huggingface",
+            Provider = new HPD.Agent.Providers.ProviderReference { Key = "huggingface" },
             ModelName = "mistralai/Mistral-7B-Instruct-v0.2",
             MaxOutputTokens = 512
         }

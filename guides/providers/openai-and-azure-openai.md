@@ -33,10 +33,12 @@ The equivalent `Clients.Chat` shape is:
 
 ```json
 {
-  "Clients": {
-    "Chat": {
-      "ProviderKey": "openai",
-      "ModelName": "gpt-4o"
+  "clients": {
+    "chat": {
+      "provider": {
+        "key": "openai"
+      },
+      "modelName": "gpt-4o"
     }
   }
 }
@@ -50,7 +52,7 @@ The OpenAI provider package also contributes image generation, embeddings, and h
 
 Use HPD `ChatClientConfig` for normal model-call behavior. Agent-level defaults belong in `AgentConfig.Clients.Chat`; complete per-run replacements belong in `AgentRunConfig.Clients.Chat`.
 
-Use `AgentRunConfig.Clients.Chat.ProviderKey` and `ModelName` for selection. Use runtime chat options for temperature, top-p, max output tokens, stop sequences, response format, tools, tool mode, seed, background responses, conversation id, and generic reasoning options.
+Use `AgentRunConfig.Clients.Chat.Provider.Key` and `ModelName` for selection. Use runtime chat options for temperature, top-p, max output tokens, stop sequences, response format, tools, tool mode, seed, background responses, conversation id, and generic reasoning options.
 
 ## OpenAI Construction Options
 
@@ -85,11 +87,13 @@ In stored config:
 
 ```json
 {
-  "Clients": {
-    "Chat": {
-      "ProviderKey": "openai",
-      "ModelName": "gpt-4.1",
-      "ProviderConfig": {
+  "clients": {
+    "chat": {
+      "provider": {
+        "key": "openai"
+      },
+      "modelName": "gpt-4.1",
+      "providerConfig": {
         "chatApi": "ChatCompletions"
       }
     }
@@ -127,11 +131,13 @@ The equivalent `Clients.Chat` shape is:
 
 ```json
 {
-  "Clients": {
-    "Chat": {
-      "ProviderKey": "azure-openai",
-      "Endpoint": "https://YOUR-RESOURCE.openai.azure.com/",
-      "ModelName": "YOUR-DEPLOYMENT-NAME"
+  "clients": {
+    "chat": {
+      "provider": {
+        "key": "azure-openai"
+      },
+      "endpoint": "https://YOUR-RESOURCE.openai.azure.com/",
+      "modelName": "YOUR-DEPLOYMENT-NAME"
     }
   }
 }
@@ -139,8 +145,9 @@ The equivalent `Clients.Chat` shape is:
 
 Serializable `Clients.Chat` configuration deliberately contains no API key. Resolve
 `azure-openai:ApiKey` through configuration or a secret resolver, use the
-`AZURE_OPENAI_API_KEY` alias, or select a host-registered static credential with
-`AuthenticationKey`.
+`AZURE_OPENAI_API_KEY` alias, or set `Provider.Authentication` to an
+`ApiKeyProviderAuthentication` whose `SecretKey` points at the desired resolver
+entry.
 
 `azure-openai` means traditional Azure OpenAI. It is not the Azure AI Foundry-first path. Azure AI Projects / Foundry uses the `azure-ai` provider key and has different endpoint/auth requirements.
 
@@ -178,12 +185,14 @@ Stored config uses the same names:
 
 ```json
 {
-  "Clients": {
-    "Chat": {
-      "ProviderKey": "azure-openai",
-      "Endpoint": "https://YOUR-RESOURCE.openai.azure.com/",
-      "ModelName": "YOUR-DEPLOYMENT-NAME",
-      "ProviderConfig": {
+  "clients": {
+    "chat": {
+      "provider": {
+        "key": "azure-openai"
+      },
+      "endpoint": "https://YOUR-RESOURCE.openai.azure.com/",
+      "modelName": "YOUR-DEPLOYMENT-NAME",
+      "providerConfig": {
         "chatApi": "ChatCompletions",
         "serviceVersion": "V2025_04_01_Preview",
         "userAgentApplicationId": "hpdos",

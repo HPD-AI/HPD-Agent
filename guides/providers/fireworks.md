@@ -30,10 +30,12 @@ The equivalent `Clients.Chat` shape is:
 
 ```json
 {
-  "Clients": {
-    "Chat": {
-      "ProviderKey": "fireworks",
-      "ModelName": "accounts/fireworks/models/llama-v3p1-8b-instruct"
+  "clients": {
+    "chat": {
+      "provider": {
+        "key": "fireworks"
+      },
+      "modelName": "accounts/fireworks/models/llama-v3p1-8b-instruct"
     }
   }
 }

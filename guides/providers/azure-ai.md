@@ -15,16 +15,24 @@ export AZURE_AI_ENDPOINT="https://YOUR-ACCOUNT.services.ai.azure.com/api/project
 For Azure AI Projects / Foundry endpoints, use OAuth through `DefaultAzureCredential`. Configure your normal Azure identity for the host environment.
 
 ```csharp
+using Azure.Identity;
 using HPD.Agent;
+using HPD.Agent.Providers;
 using HPD.Agent.Providers.AzureAI;
 
-var agent = await new AgentBuilder()
+var builder = new AgentBuilder()
+    .AddProviderExternalIdentity(
+        new ProviderExternalIdentityRegistration<DefaultAzureCredential>(
+            "azure-default",
+            () => new DefaultAzureCredential()));
+
+var agent = await builder
     .WithAzureAI(
         endpoint: "https://YOUR-ACCOUNT.services.ai.azure.com/api/projects/YOUR-PROJECT",
         model: "YOUR-DEPLOYMENT-NAME",
-        configure: azure =>
+        authentication: new ExternalIdentityProviderAuthentication
         {
-            azure.AuthMode = AzureAIAuthMode.DefaultAzureCredential;
+            CredentialName = "azure-default"
         })
     .BuildAsync();
 
@@ -36,14 +44,17 @@ The equivalent `Clients.Chat` shape is:
 
 ```json
 {
-  "Clients": {
-    "Chat": {
-      "ProviderKey": "azure-ai",
-      "Endpoint": "https://YOUR-ACCOUNT.services.ai.azure.com/api/projects/YOUR-PROJECT",
-      "ModelName": "YOUR-DEPLOYMENT-NAME",
-      "ProviderConfig": {
-        "authMode": "DefaultAzureCredential"
-      }
+  "clients": {
+    "chat": {
+      "provider": {
+        "key": "azure-ai",
+        "authentication": {
+          "type": "external-identity",
+          "credentialName": "azure-default"
+        }
+      },
+      "endpoint": "https://YOUR-ACCOUNT.services.ai.azure.com/api/projects/YOUR-PROJECT",
+      "modelName": "YOUR-DEPLOYMENT-NAME"
     }
   }
 }
@@ -51,13 +62,13 @@ The equivalent `Clients.Chat` shape is:
 
 ## Authentication
 
-`AzureAIProviderConfig.AuthMode` controls provider authentication:
+Authentication is selected atomically on `Provider.Authentication`:
 
-| Value | Behavior |
+| Selection | Behavior |
 | --- | --- |
-| `Auto` | Uses an API key when one is configured; otherwise uses `DefaultAzureCredential`. |
-| `ApiKey` | Requires `apiKey` or `AZURE_AI_API_KEY`. Only valid for direct Azure OpenAI-compatible endpoints. |
-| `DefaultAzureCredential` | Always uses Azure Identity OAuth. Required for Azure AI Projects / Foundry endpoints. |
+| `ExternalIdentityProviderAuthentication` | Selects a host-registered SDK credential such as `DefaultAzureCredential`. Required for Azure AI Projects / Foundry endpoints. |
+| `ApiKeyProviderAuthentication` | Selects a resolver key such as `azure-ai:ApiKey`. Only valid for direct Azure OpenAI-compatible endpoints. |
+| Fluent literal API-key overload | Copies a runtime-only key into process-local storage for direct Azure OpenAI-compatible endpoints. |
 
 Azure AI Projects / Foundry endpoints use `services.ai.azure.com` with `/api/projects/` and require OAuth. Passing an API key for that endpoint shape is invalid.
 
@@ -65,20 +76,26 @@ Azure AI Projects / Foundry endpoints use `services.ai.azure.com` with `/api/pro
 
 Use HPD `ChatClientConfig` for normal model-call behavior. Agent-level defaults belong in `AgentConfig.Clients.Chat`; complete per-run replacements belong in `AgentRunConfig.Clients.Chat`.
 
-Use `AgentRunConfig.Clients.Chat.ProviderKey` and `ModelName` for selection. Use runtime chat options for temperature, top-p, max output tokens, stop sequences, response format, tools, tool mode, seed, and generic reasoning options.
+Use `AgentRunConfig.Clients.Chat.Provider.Key` and `ModelName` for selection. Use runtime chat options for temperature, top-p, max output tokens, stop sequences, response format, tools, tool mode, seed, and generic reasoning options.
 
 Azure AI uses the Azure OpenAI chat-completions client through Microsoft.Extensions.AI. `Reasoning.Effort` is the portable reasoning option on this path. Reasoning summary output is a Responses-client feature and is not exposed by this provider path.
 
 ```csharp
 var agent = await new AgentBuilder()
+    .AddProviderExternalIdentity(
+        new ProviderExternalIdentityRegistration<DefaultAzureCredential>(
+            "azure-workload",
+            () => new DefaultAzureCredential()))
     .WithAzureAI(
         endpoint: "https://YOUR-ACCOUNT.services.ai.azure.com/api/projects/YOUR-PROJECT",
         model: "YOUR-DEPLOYMENT-NAME",
+        authentication: new ExternalIdentityProviderAuthentication
+        {
+            CredentialName = "azure-workload"
+        },
         configure: azure =>
         {
-            azure.AuthMode = AzureAIAuthMode.DefaultAzureCredential;
         })
-
     .BuildAsync();
 ```
 
@@ -88,7 +105,6 @@ var agent = await new AgentBuilder()
 
 | Option | Purpose |
 | --- | --- |
-| `AuthMode` | Selects API key vs `DefaultAzureCredential` behavior. |
 | `ProjectServiceVersion` | Selects the Azure AI Projects SDK service version. |
 | `OpenAIServiceVersion` | Selects the downstream Azure OpenAI SDK service version. |
 | `OpenAIConnectionId` | Selects the project connection id used to locate the Azure OpenAI connection. |
@@ -101,12 +117,19 @@ var agent = await new AgentBuilder()
 
 ```csharp
 var agent = await new AgentBuilder()
+    .AddProviderExternalIdentity(
+        new ProviderExternalIdentityRegistration<DefaultAzureCredential>(
+            "azure-workload",
+            () => new DefaultAzureCredential()))
     .WithAzureAI(
         endpoint: "https://YOUR-ACCOUNT.services.ai.azure.com/api/projects/YOUR-PROJECT",
         model: "YOUR-DEPLOYMENT-NAME",
+        authentication: new ExternalIdentityProviderAuthentication
+        {
+            CredentialName = "azure-workload"
+        },
         configure: azure =>
         {
-            azure.AuthMode = AzureAIAuthMode.DefaultAzureCredential;
             azure.ProjectServiceVersion = AzureAIProjectServiceVersion.V1;
             azure.OpenAIServiceVersion = AzureAIOpenAIServiceVersion.V2025_04_01_Preview;
             azure.OpenAIConnectionId = "Azure.AI.OpenAI.AzureOpenAIClient";
@@ -121,13 +144,18 @@ Stored config uses the same option names:
 
 ```json
 {
-  "Clients": {
-    "Chat": {
-      "ProviderKey": "azure-ai",
-      "Endpoint": "https://YOUR-ACCOUNT.services.ai.azure.com/api/projects/YOUR-PROJECT",
-      "ModelName": "YOUR-DEPLOYMENT-NAME",
-      "ProviderConfig": {
-        "authMode": "DefaultAzureCredential",
+  "clients": {
+    "chat": {
+      "provider": {
+        "key": "azure-ai",
+        "authentication": {
+          "type": "external-identity",
+          "credentialName": "azure-workload"
+        }
+      },
+      "endpoint": "https://YOUR-ACCOUNT.services.ai.azure.com/api/projects/YOUR-PROJECT",
+      "modelName": "YOUR-DEPLOYMENT-NAME",
+      "providerConfig": {
         "projectServiceVersion": "V1",
         "openAIServiceVersion": "V2025_04_01_Preview",
         "openAIConnectionId": "Azure.AI.OpenAI.AzureOpenAIClient",
@@ -154,10 +182,7 @@ var agent = await new AgentBuilder()
     .WithAzureAI(
         endpoint: "https://YOUR-RESOURCE.openai.azure.com/",
         model: "YOUR-DEPLOYMENT-NAME",
-        configure: azure =>
-        {
-            azure.AuthMode = AzureAIAuthMode.Auto;
-        })
+        apiKey: Environment.GetEnvironmentVariable("AZURE_AI_API_KEY"))
     .BuildAsync();
 ```
 

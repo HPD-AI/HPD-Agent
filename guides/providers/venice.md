@@ -28,10 +28,12 @@ The equivalent `Clients.Chat` shape is:
 
 ```json
 {
-  "Clients": {
-    "Chat": {
-      "ProviderKey": "venice",
-      "ModelName": "venice-uncensored"
+  "clients": {
+    "chat": {
+      "provider": {
+        "key": "venice"
+      },
+      "modelName": "venice-uncensored"
     }
   }
 }

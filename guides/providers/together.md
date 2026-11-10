@@ -30,10 +30,12 @@ The equivalent `Clients.Chat` shape is:
 
 ```json
 {
-  "Clients": {
-    "Chat": {
-      "ProviderKey": "together",
-      "ModelName": "meta-llama/Llama-3.3-70B-Instruct-Turbo"
+  "clients": {
+    "chat": {
+      "provider": {
+        "key": "together"
+      },
+      "modelName": "meta-llama/Llama-3.3-70B-Instruct-Turbo"
     }
   }
 }
@@ -56,10 +58,12 @@ The equivalent family config is:
 
 ```json
 {
-  "Clients": {
-    "Embeddings": {
-      "ProviderKey": "together",
-      "ModelName": "BAAI/bge-large-en-v1.5"
+  "clients": {
+    "embeddings": {
+      "provider": {
+        "key": "together"
+      },
+      "modelName": "BAAI/bge-large-en-v1.5"
     }
   }
 }
@@ -100,7 +104,7 @@ var runConfig = new AgentRunConfig
     {
         Chat = new ChatClientConfig
         {
-            ProviderKey = "together",
+            Provider = new HPD.Agent.Providers.ProviderReference { Key = "together" },
             ModelName = "deepseek-ai/DeepSeek-R1",
             Reasoning = new ReasoningOptions
             {

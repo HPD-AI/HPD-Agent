@@ -70,34 +70,32 @@ Source defaults include:
 
 The provider metadata also lists newer TTS model ids such as `tts-1-hd` and `gpt-4o-mini-tts`.
 
-Provider-specific TTS options use `OpenAITtsConfig` through `ProviderConfig`:
+TTS defaults live on the portable `TextToSpeechClientConfig` family fields:
 
 ```json
 {
-  "Clients": {
-    "TextToSpeech": {
-      "ProviderKey": "openai",
-      "ModelName": "tts-1",
-      "ProviderConfig": {
-        "defaultVoiceId": "nova",
-        "outputFormat": "mp3",
-        "speed": 1.0
-      }
+  "clients": {
+    "textToSpeech": {
+      "provider": {
+        "key": "openai"
+      },
+      "modelName": "tts-1",
+      "voiceId": "nova",
+      "audioFormat": "mp3",
+      "speed": 1.0
     }
   }
 }
 ```
 
-Source-confirmed TTS provider configuration:
+Source-confirmed portable TTS defaults:
 
 | Option | Use it for |
 | --- | --- |
-| `apiKey` | Provider-specific API key override. |
-| `baseUrl` | Provider-specific base URL override. |
-| `defaultModelId` | Default TTS model when `ModelName` is not set. |
-| `defaultVoiceId` | Default voice id. |
-| `outputFormat` | Default output format. |
-| `speed` | Speech speed. |
+| `ModelName` | TTS model; defaults to `tts-1` when omitted. |
+| `VoiceId` | Default voice id; the provider default is `nova`. |
+| `AudioFormat` | Default output format. |
+| `Speed` | Speech speed. |
 
 ## Speech To Text
 
@@ -131,15 +129,17 @@ The provider metadata also lists `gpt-4o-transcribe` and `gpt-4o-mini-transcribe
 
 Finite audio input uses HPD audio runtime wiring; see [Speech To Text Input](../audio/speech-to-text-input.md).
 
-Provider-specific STT options use `OpenAISttConfig` through `ProviderConfig`:
+Provider request options use `OpenAISttOptions` through `providerOptions`:
 
 ```json
 {
-  "Clients": {
-    "SpeechToText": {
-      "ProviderKey": "openai",
-      "ModelName": "whisper-1",
-      "ProviderConfig": {
+  "clients": {
+    "speechToText": {
+      "provider": {
+        "key": "openai"
+      },
+      "modelName": "whisper-1",
+      "providerOptions": {
         "prompt": "Technical support call",
         "responseFormat": "json"
       }
@@ -148,18 +148,18 @@ Provider-specific STT options use `OpenAISttConfig` through `ProviderConfig`:
 }
 ```
 
-Source-confirmed STT provider configuration:
+Source-confirmed STT request options:
 
 | Option | Use it for |
 | --- | --- |
-| `apiKey` | Provider-specific API key override. |
-| `baseUrl` | Provider-specific base URL override. |
-| `defaultModelId` | Default STT model when `ModelName` is not set. |
+| `ModelName` | STT model; defaults to `whisper-1` when omitted. |
 | `prompt` | Provider transcription prompt. |
 | `temperature` | Provider transcription temperature. |
 | `responseFormat` | Provider response format. |
 | `timestampGranularities` | Timestamp granularities. |
 | `includeLogprobs` | Include log probabilities when supported. |
+| `keywords` | Literal vocabulary hints for retained realtime transcription. |
+| `realtimeDelay` | Retained transcription delay. |
 
 ## Realtime
 
@@ -188,11 +188,13 @@ Provider-specific realtime options use `OpenAIRealtimeConfig` through `ProviderC
 
 ```json
 {
-  "Clients": {
-    "Realtime": {
-      "ProviderKey": "openai",
-      "ModelName": "gpt-realtime",
-      "ProviderConfig": {
+  "clients": {
+    "realtime": {
+      "provider": {
+        "key": "openai"
+      },
+      "modelName": "gpt-realtime",
+      "providerConfig": {
         "organizationId": "org_...",
         "projectId": "proj_..."
       }
@@ -205,9 +207,6 @@ Source-confirmed realtime provider configuration:
 
 | Option | Use it for |
 | --- | --- |
-| `apiKey` | Provider-specific API key override. |
-| `baseUrl` | Provider-specific base URL override. |
-| `defaultModelId` | Default realtime model when `ModelName` is not set. |
 | `organizationId` | OpenAI organization id. |
 | `projectId` | OpenAI project id. |
 
@@ -224,18 +223,12 @@ using HPD.Agent.Providers.Audio.OpenAI;
 ```csharp
 var tts = new TextToSpeechClientConfig
 {
-    ProviderKey = "openai",
-    ModelName = "tts-1"
+    Provider = new HPD.Agent.Providers.ProviderReference { Key = "openai" },
+    ModelName = "tts-1",
+    VoiceId = "nova",
+    AudioFormat = "mp3",
+    Speed = 1.0f
 };
-
-tts.SetProviderConfig(
-    new OpenAITtsConfig
-    {
-        DefaultVoiceId = "nova",
-        OutputFormat = "mp3",
-        Speed = 1.0f
-    },
-    ProviderClientFamily.TextToSpeech);
 ```
 
 ## Live Verification

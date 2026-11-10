@@ -64,11 +64,13 @@ The equivalent `Clients.Chat` shape is:
 
 ```json
 {
-  "Clients": {
-    "Chat": {
-      "ProviderKey": "bedrock",
-      "ModelName": "anthropic.claude-3-5-sonnet-20240620-v1:0",
-      "ProviderConfig": {
+  "clients": {
+    "chat": {
+      "provider": {
+        "key": "bedrock"
+      },
+      "modelName": "anthropic.claude-3-5-sonnet-20240620-v1:0",
+      "providerConfig": {
         "region": "us-east-1",
         "profileName": "hpd-dev",
         "serviceUrl": "https://vpce-xxx.bedrock-runtime.us-east-1.vpce.amazonaws.com",

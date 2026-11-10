@@ -24,10 +24,12 @@ The equivalent `Clients.Chat` shape is:
 
 ```json
 {
-  "Clients": {
-    "Chat": {
-      "ProviderKey": "lmstudio",
-      "ModelName": "local-model"
+  "clients": {
+    "chat": {
+      "provider": {
+        "key": "lmstudio"
+      },
+      "modelName": "local-model"
     }
   }
 }

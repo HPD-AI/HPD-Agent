@@ -10,7 +10,7 @@ Set an API key:
 export REPLICATE_API_KEY="..."
 ```
 
-`REPLICATE_API_TOKEN` is also registered as an alias. The default endpoint is `https://api.replicate.com/v1/`. Pass `endpoint` to `WithReplicateImageGeneration(...)`, or set `Endpoint` in `ChatClientConfig`, when you need a compatible proxy.
+`REPLICATE_API_TOKEN` is also registered as an alias. The default endpoint is `https://api.replicate.com/v1/`. Pass `endpoint` to `WithReplicateImageGeneration(...)`, or set `Endpoint` in `ImageGenerationClientConfig`, when you need a compatible proxy.
 
 Use fluent image setup:
 
@@ -21,7 +21,7 @@ using HPD.Agent.Providers.Replicate;
 var agent = await new AgentBuilder()
     .WithReplicateImageGeneration(
         model: "black-forest-labs/flux-schnell",
-        configure: options =>
+        configureOptions: options =>
         {
             options.Input = new()
             {
@@ -36,10 +36,12 @@ The equivalent family config is:
 
 ```json
 {
-  "Clients": {
-    "ImageGeneration": {
-      "ProviderKey": "replicate",
-      "ModelName": "black-forest-labs/flux-schnell"
+  "clients": {
+    "imageGeneration": {
+      "provider": {
+        "key": "replicate"
+      },
+      "modelName": "black-forest-labs/flux-schnell"
     }
   }
 }
@@ -47,13 +49,13 @@ The equivalent family config is:
 
 ## Configuration
 
-`ReplicateProviderConfig.Input` passes model-specific input fields to Replicate along with the prompt supplied in the image generation request:
+`ReplicateImageOptions.Input` passes model-specific input fields to Replicate along with the prompt supplied in the image generation request:
 
 ```csharp
 var agent = await new AgentBuilder()
     .WithReplicateImageGeneration(
         model: "black-forest-labs/flux-schnell",
-        configure: options =>
+        configureOptions: options =>
         {
             options.Input = new()
             {
@@ -66,7 +68,9 @@ var agent = await new AgentBuilder()
     .BuildAsync();
 ```
 
-If you want to store the owner separately, set `ModelOwner` and use only the model name in `ModelName`.
+If you want to store the owner separately, set `ModelOwner` in `ReplicateProviderConfig` and use only the model name in `ModelName`.
+
+`ReplicateProviderConfig` is for construction-level settings such as `ModelOwner`. Pass it through `configureClient`; pass model predictions and polling controls through `configureOptions`.
 
 ## Caveats
 

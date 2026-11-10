@@ -26,10 +26,12 @@ The equivalent `Clients.Chat` shape is:
 
 ```json
 {
-  "Clients": {
-    "Chat": {
-      "ProviderKey": "anthropic",
-      "ModelName": "claude-3-5-sonnet-latest"
+  "clients": {
+    "chat": {
+      "provider": {
+        "key": "anthropic"
+      },
+      "modelName": "claude-3-5-sonnet-latest"
     }
   }
 }
@@ -50,7 +52,7 @@ var agent = await new AgentBuilder()
     .BuildAsync();
 ```
 
-Use `AgentRunConfig.Clients.Chat.ProviderKey` and `ModelName` for selection. Use runtime chat options for temperature, top-p, max output tokens, stop sequences, response format, tools, tool mode, seed, and generic reasoning options.
+Use `AgentRunConfig.Clients.Chat.Provider.Key` and `ModelName` for selection. Use runtime chat options for temperature, top-p, max output tokens, stop sequences, response format, tools, tool mode, seed, and generic reasoning options.
 
 ## Anthropic Chat Request Options
 
@@ -101,7 +103,7 @@ var runConfig = new AgentRunConfig
     {
         Chat = new ChatClientConfig
         {
-            ProviderKey = "anthropic",
+            Provider = new HPD.Agent.Providers.ProviderReference { Key = "anthropic" },
             ModelName = "claude-3-5-sonnet-latest",
             Reasoning = new ReasoningOptions
             {
@@ -123,11 +125,13 @@ In stored config, put Anthropic request options in the typed `providerOptions` p
 
 ```json
 {
-  "Clients": {
-    "Chat": {
-      "ProviderKey": "anthropic",
-      "ModelName": "claude-3-5-sonnet-latest",
-      "ProviderOptions": {
+  "clients": {
+    "chat": {
+      "provider": {
+        "key": "anthropic"
+      },
+      "modelName": "claude-3-5-sonnet-latest",
+      "providerOptions": {
         "serviceTier": "auto",
         "thinkingBudgetTokens": 4096,
         "thinkingDisplay": "summarized",

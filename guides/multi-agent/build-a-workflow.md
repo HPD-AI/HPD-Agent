@@ -135,7 +135,10 @@ await foreach (var evt in workflow.ExecuteStreamingAsync(
 
 `ExecuteStreamingAsync(...)` emits workflow graph events and child agent events. `RunAsync(...)` drains the workflow and returns a `WorkflowResult`.
 
-The direct overloads accept an optional parent `IEventCoordinator` or `AgentMetadata`. When the workflow is generated as a `[MultiAgent]` tool, the wrapper supplies this parent context internally.
+The workflow stream yields `AgentEvent` values, so application code does not need to
+reference `HPD.Events`. When the workflow is generated as a `[MultiAgent]` tool, the
+wrapper supplies parent event context internally. Use `WorkflowEventCoordinator` when
+the application needs to approve or deny a request while streaming.
 
 ## Runtime Options
 

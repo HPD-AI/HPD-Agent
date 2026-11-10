@@ -57,9 +57,10 @@ await foreach (var _ in workflow.ExecuteStreamingAsync(
 The returned async stream and workflow subscriptions expose the same public projection. Render from one path, or de-duplicate if you use both.
 
 Use `RunAsync(...)` when you only need the final workflow result. Use
-`ExecuteStreamingAsync(...)` when you need streaming iteration. Direct overloads can also
-accept a parent `IEventCoordinator` and `AgentMetadata`; the generated `[MultiAgent]`
-wrapper supplies those values automatically.
+`ExecuteStreamingAsync(...)` when you need streaming iteration. The workflow stream
+yields `AgentEvent` values, so application code does not need to reference
+`HPD.Events`. The generated `[MultiAgent]` wrapper supplies parent event context
+automatically.
 
 ## Event Families
 

@@ -21,7 +21,7 @@ published NuGet contracts.
 | Audio | Complete | `269f519` | Corrected provider references, realtime invocation, portable audio modes, hosted Audio-session boundaries, and managed LiveKit transport guidance. |
 | Bots | Complete | `9c448ed` | Corrected custom adapter configuration, handler signatures, thread-id shape, mapper imports, and documented the multi-platform analyzer packaging workaround. |
 | Evaluations | Complete | `ec9637b` | Restricted deterministic evaluator and red-team implementation guidance to public factories, corrected judge config, live run overrides, HTTP catalog/storage contracts, and HPD Base eval stores. |
-| Observability And UI | Next | — | — |
+| Observability And UI | Complete | `0611ec4` | Corrected TUI app targets, hosted compositions, run-config wrappers, transcript checkpoints, tracing spans, and typed steering/cancellation contracts; all C# examples compile against `0.9.5`. |
 
 ## Verification Standard
 

@@ -2,6 +2,8 @@
 
 A derived harness inherits capabilities from its base and is registered as one concrete owner. The generator activates the derived type, composes inherited middleware and instructions, and binds inherited tools to that same owner.
 
+The base harness class and base settings record must not be sealed. Declare them as `public class` and `public record` when another harness or settings contract derives from them.
+
 ## Define The Derived Harness
 
 ```csharp

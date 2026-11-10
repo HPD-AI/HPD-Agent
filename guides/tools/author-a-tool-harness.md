@@ -125,7 +125,7 @@ public async Task<string> SearchDocuments(
 }
 ```
 
-Use the context for sanctioned runtime access such as events, services, content, background tasks, and bidirectional requests.
+Use the context for sanctioned runtime access such as events, services, content, runtime-owned operations, and bidirectional requests.
 
 ## Constructor Rules
 
@@ -133,7 +133,7 @@ Use the context for sanctioned runtime access such as events, services, content,
 - Settings are accepted through `IHarnessConfig<T>`.
 - Services use normal dependency parameters.
 - The generic registration no longer requires `new()`.
-- Multiple public constructors produce `HPDACT001`.
+- A missing public constructor produces `HPDHIN009`; multiple public constructors produce `HPDHIN010`.
 - There is no constructor-selection attribute or compatibility overload path.
 
 ## Explicit Instances
@@ -166,7 +166,7 @@ The project defining the harness must reference the source generator. A referenc
 
 ## Troubleshooting
 
-`HPDACT001` means the harness does not have exactly one public constructor.
+`HPDHIN009` means the harness has no public constructor. `HPDHIN010` means it has more than one; generated activation requires exactly one.
 
 `HPDCFG001` means the settings type contains an unsupported mutable or unverifiable shape.
 

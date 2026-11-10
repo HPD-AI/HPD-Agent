@@ -195,7 +195,8 @@ declaration.
 
 Important source-generation diagnostics:
 
-- `HPDACT001`: harness does not have exactly one public constructor.
+- `HPDHIN009`: harness has no public constructor.
+- `HPDHIN010`: harness has multiple public constructors.
 - `HPDCFG001`: unsupported or unverifiable immutable settings shape.
 - `HPDCFG002`: invalid middleware settings section projection.
 - `HPD020`: unsupported runtime parameter; use `FunctionExecutionContext` when appropriate.

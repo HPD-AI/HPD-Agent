@@ -76,7 +76,7 @@ Policies:
 | `BackgroundOnly` | `input` | Background launch receipt |
 | `ModelChoice` | `input`, `invocationMode` | Final workflow text or background launch receipt |
 
-For background calls, the workflow starts as runtime-owned background work. The immediate tool result is a structured receipt with the background `taskId`; the final workflow text is delivered later through background task notifications.
+For background calls, the workflow starts as runtime-owned background work. The immediate tool result is an `AgentOperationReceipt` with the authoritative `OperationId`; the final workflow text is delivered later through agent-operation notifications.
 
 The generated function metadata marks the capability as multi-agent:
 

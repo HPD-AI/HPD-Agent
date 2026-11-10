@@ -131,7 +131,7 @@ Use these fields to control visibility:
 - `startCollapsed`: hides the harness behind a container when true.
 - `description`: tells the model when to expand the container. It is required for collapsed harnesses.
 - `functionResult`: returned once when the container is expanded.
-- `systemPrompt`: injected persistently after expansion.
+- `systemPrompt`: active as container instructions while the harness is expanded.
 - `expandedContainers`: starts named harnesses expanded.
 - `hiddenTools`: hides named tools for the run.
 
@@ -152,7 +152,7 @@ The TypeScript client observes `CLIENT_TOOL_INVOKE_REQUEST` on committed SSE and
 
 Applications usually do not need to handle these events manually. If a matching handler is registered, the TypeScript client answers the request automatically. Use explicit event projection only when the UI needs to render, audit, or approve the external tool request.
 
-If the outcome is `AcceptedBackground`, the request session is resolved immediately because the client accepted ownership of later work. The client later sends `CLIENT_TOOL_BACKGROUND_OPERATION_OUTCOME` as runtime input with `state` set to `Completed`, `Faulted`, or `Cancelled`. HPD turns that terminal input into the generic background task lifecycle and notification flow.
+If the outcome is `AcceptedBackground`, the request session is resolved immediately because the client accepted ownership of later work. The client later sends `CLIENT_TOOL_BACKGROUND_OPERATION_OUTCOME` as runtime input with `state` set to `Completed`, `Faulted`, or `Cancelled`. `Unknown` is a fail-closed terminal state for lost or unverifiable work and must not be replayed. HPD maps that terminal input into the client tool's `AgentOperation` lifecycle and emits the normal operation-transition and notification events.
 
 ## Boundary
 

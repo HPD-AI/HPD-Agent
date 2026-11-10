@@ -9,7 +9,7 @@ Use configuration when the whole harness needs behavior settings. Keep executabl
 ```csharp
 using HPD.Agent;
 
-public sealed record SearchSettings : IHarnessSettingsValidator
+public record SearchSettings : IHarnessSettingsValidator
 {
     [HarnessRunSetting]
     public int MaxResults { get; init; } = 10;
@@ -26,7 +26,7 @@ public sealed record SearchSettings : IHarnessSettingsValidator
     }
 }
 
-public sealed class SearchHarness(
+public class SearchHarness(
     IHarnessConfig<SearchSettings> configuration)
 {
     [AIFunction]

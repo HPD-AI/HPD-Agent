@@ -4,7 +4,7 @@ Client tools are model-visible tools whose implementation runs in a connected cl
 
 The connected client can be a TypeScript UI, desktop app, mobile app, editor extension, local worker, or another SDK runtime. From the model's perspective, the tool is an ordinary function declaration. From HPD's perspective, the call is a bidirectional event exchange:
 
-1. The client sends tool harness definitions in `runConfig.clientToolInput`.
+1. The client sends tool harness definitions in `runConfig.tools.clientInput`.
 2. HPD adds those tools to the model-visible tool list.
 3. The model calls one of the tools.
 4. HPD emits a `CLIENT_TOOL_INVOKE_REQUEST` event.
@@ -12,7 +12,7 @@ The connected client can be a TypeScript UI, desktop app, mobile app, editor ext
 6. The client sends `CLIENT_TOOL_INVOKE_OUTCOME` back to HPD.
 7. HPD either resumes the tool call with the returned result or starts observing accepted background work.
 
-Registering a handler tells the client how to execute a tool if HPD asks for it. Supplying `clientToolInput.clientToolHarnesses` tells HPD which external tools should be visible to the agent for that run.
+Registering a handler tells the client how to execute a tool if HPD asks for it. Supplying `tools.clientInput.clientToolHarnesses` tells HPD which external tools should be visible to the agent for that run.
 
 ## Register A UI Tool Harness
 
@@ -21,9 +21,8 @@ Use a client tool harness when the agent needs to invoke capabilities that only 
 ```typescript
 import {
   AgentClient,
+  ClientToolRegistry,
   createCollapsedToolHarness,
-  completeClientToolWithText,
-  failClientTool,
 } from '@hpd-research/hpd-agent-client';
 
 const client = new AgentClient({
@@ -60,18 +59,21 @@ const uiHarness = createCollapsedToolHarness(
   }
 );
 
-client.tools.registerToolHarness(uiHarness, async (request) => {
+const tools = new ClientToolRegistry().registerHarness(uiHarness, async (request) => {
   switch (request.toolName) {
     case 'open_command_menu':
       app.ui.openCommandMenu();
-      return completeClientToolWithText(request.requestId, 'Command menu opened.');
+      return 'Command menu opened.';
 
     case 'show_toast':
       app.ui.showToast(String(request.arguments.message ?? ''));
-      return completeClientToolWithText(request.requestId, 'Toast shown.');
+      return 'Toast shown.';
 
     default:
-      return failClientTool(request.requestId, `Unknown UI tool: ${request.toolName}`);
+      return {
+        outcome: 'Failed',
+        errorMessage: `Unknown UI tool: ${request.toolName}`,
+      };
   }
 });
 ```
@@ -80,47 +82,46 @@ The handler runs in the TypeScript client process. It can call application APIs,
 
 ## Expose The Harness For A Run
 
-Open the chat scope, observe canonical events, then include the registered harnesses in the run config:
+Create the session and thread, observe with the local registry, then include the registered harnesses in the run config:
 
 ```typescript
-const chat = await client.chat.open({
+const { thread } = await client.sessions.create({
   agentId: 'assistant',
-  threadId: 'main',
-  session: {
-    create: {
-      metadata: { title: 'UI assistant' },
-    },
-  },
+  metadata: { title: 'UI assistant' },
 });
 
-await chat.subscribeLive();
+const observation = await thread.observe({
+  clientTools: { registry: tools },
+});
 
-await chat.submitMessage({
-  contents: [{ $type: 'text', text: 'Open the command menu.' }],
-}, {
+await thread.send('Open the command menu.', {
   runConfig: {
-    clientToolInput: {
-      clientToolHarnesses: client.tools.clientToolHarnesses,
+    tools: {
+      clientInput: {
+        clientToolHarnesses: tools.clientToolHarnesses,
+      },
     },
   },
 });
+
+await observation.close();
 ```
 
-`client.tools.registerToolHarness(...)` stores the local handler and the harness definition. `client.tools.clientToolHarnesses` is the schema surface sent to HPD for the run.
+`registerHarness(...)` stores the local handler and the harness definition. The SDK exposes the model schema through `clientToolHarnesses`, and answers matching invocation events through the observed thread.
 
 ## Collapsed Client Harnesses
 
 Client tool harnesses can start collapsed. A collapsed harness gives the model one container tool first; the underlying client tools become visible when the model expands the container.
 
 ```typescript
-await chat.submitMessage({
-  contents: [{ $type: 'text', text: 'Help me navigate this UI.' }],
-}, {
+await thread.send('Help me navigate this UI.', {
   runConfig: {
-    clientToolInput: {
-      clientToolHarnesses: [uiHarness],
-      expandedContainers: [],
-      hiddenTools: ['show_toast'],
+    tools: {
+      clientInput: {
+        clientToolHarnesses: [uiHarness],
+        expandedContainers: [],
+        hiddenTools: ['show_toast'],
+      },
     },
   },
 });
@@ -138,10 +139,14 @@ Use these fields to control visibility:
 Tool outcomes can also return an augmentation that changes the client tool surface before the next iteration:
 
 ```typescript
-return completeClientToolWithText(request.requestId, 'Advanced UI tools are now visible.', {
-  expandToolHarnesses: ['ui'],
-  showTools: ['show_toast'],
-});
+return {
+  outcome: 'Completed',
+  content: [{ type: 'text', text: 'Advanced UI tools are now visible.' }],
+  augmentation: {
+    expandToolHarnesses: ['ui'],
+    showTools: ['show_toast'],
+  },
+};
 ```
 
 Augmentation can inject or remove harnesses, expand or collapse harnesses, hide or show tools, add or remove context, and update client-owned state.

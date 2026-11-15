@@ -8,7 +8,7 @@ This package consumes an external API contract. To publish HPD Agent's own HTTP
 API as OpenAPI 3.1, use
 [ASP.NET OpenAPI Contracts](../hosting/openapi-contract.md).
 
-The package targets .NET 8, .NET 9, and .NET 10.
+The package targets .NET 10 and .NET 11.
 
 ## Install
 

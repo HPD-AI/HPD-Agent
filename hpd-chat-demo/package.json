@@ -1,0 +1,22 @@
+{
+  "name": "hpd-chat-demo",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 4173",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hpd-research/hpd-agent-client": "file:../vendor/HPD-AI-Framework/typescript/hpd-agent-client",
+    "@hpd-research/hpd-agent-headless-ui": "file:../vendor/HPD-AI-Framework/typescript/hpd-agent-headless-ui"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.1",
+    "@types/node": "26.2.0",
+    "tailwindcss": "4.3.1",
+    "typescript": "5.9.3",
+    "vite": "6.4.6"
+  }
+}

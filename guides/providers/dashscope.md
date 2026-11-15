@@ -2,7 +2,7 @@
 
 The DashScope provider uses provider key `dashscope` and the `HPD-Agent.Providers.DashScope` package. `ModelName` is a DashScope or Qwen chat model id for chat, or a DashScope embedding model id for embeddings.
 
-The provider package is currently `net10.0` only. It uses the Cnblogs DashScope Microsoft.Extensions.AI adapter, which targets `net8.0` and depends on `Microsoft.Extensions.AI.Abstractions` 10.7.0.
+The provider package targets `net10.0` and `net11.0`. It uses the Cnblogs DashScope Microsoft.Extensions.AI adapter and depends on `Microsoft.Extensions.AI.Abstractions` 10.7.0.
 
 Set an API key with the primary environment variable:
 

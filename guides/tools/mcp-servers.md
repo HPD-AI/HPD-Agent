@@ -5,7 +5,7 @@ capabilities. MCP tools, resources, and prompts become HPD-managed
 `AIFunction`s and participate in the same visibility, permission, retry, and
 operation systems as native tools.
 
-The package targets .NET 8, .NET 9, and .NET 10.
+The package targets .NET 10 and .NET 11.
 
 ## Install
 

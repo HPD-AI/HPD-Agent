@@ -53,7 +53,7 @@ The FFI project is configured as a Native AOT shared library.
 A validated macOS arm64 publish shape is:
 
 ```bash
-dotnet restore src/HPD-Agent.FFI/HPD-Agent.FFI.csproj -r osx-arm64 -p:TargetFramework=net10.0
+dotnet restore src/HPD-Agent.FFI/HPD-Agent.FFI.csproj -r osx-arm64 -p:TargetFramework=net11.0
 dotnet restore src/HPD-Agent.SourceGenerator/HPD-Agent.SourceGenerator.csproj
 dotnet publish src/HPD-Agent.FFI/HPD-Agent.FFI.csproj \
   -f net10.0 \

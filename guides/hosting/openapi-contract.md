@@ -7,7 +7,7 @@ runtime; it does not host Swagger UI, Scalar, or ReDoc.
 This package publishes HPD's own API. To consume an external REST API as agent
 tools, use [OpenAPI Tools](../tools/openapi-tools.md).
 
-The package targets .NET 10.
+The package targets .NET 10 and .NET 11.
 
 ## Install
 

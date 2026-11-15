@@ -13,10 +13,27 @@ import { AgentClient, type EventHandlers } from '@hpd-research/hpd-agent-client'
 
 const client = new AgentClient({
   baseUrl: 'http://localhost:5135',
+  timeoutMs: 60_000,
+  abortSignal: applicationSignal,
 });
 ```
 
 The client uses HTTP for commands and control state, plus resumable SSE for canonical thread observation.
+
+Every network operation also accepts per-request options:
+
+```typescript
+const controller = new AbortController();
+
+await thread.send('Investigate this case', {
+  signal: controller.signal,
+  timeoutMs: 120_000,
+  headers: { 'x-request-id': requestId },
+});
+```
+
+The client-wide signal and per-call signal compose. Client-wide and per-call request
+timeouts cover JSON, multipart, binary, and SSE connection work.
 
 ## Open a session and observe its thread
 
@@ -52,6 +69,84 @@ supplies no agent override, the thread's default agent receives the input.
 Observation resolves when the stream opens. Pass an `AbortSignal` to stop
 observation when the UI disconnects, and monitor `observation.done` for terminal
 stream or handler failures.
+
+## Agents, sessions, threads, and content
+
+The session-first handles cover the common application lifecycle:
+
+```typescript
+const agents = await client.agents.list();
+const agent = await client.agents.get('assistant');
+
+const { session, thread } = await client.sessions.create({
+  agentId: agent.id,
+});
+
+await session.update({ metadata: { title: 'Billing issue' } });
+await thread.update({
+  name: 'Billing investigation',
+  description: null,
+  tags: ['billing'],
+});
+
+const content = await thread.content.upload(file, file.name);
+const attachment = content.toMessageContent(file.name);
+const files = await thread.content.list();
+const bytes = await thread.content.download(content.contentId);
+
+await thread.content.delete(content.contentId);
+```
+
+Thread-owned execution methods are available through `thread.executions`:
+
+```typescript
+const executions = await thread.executions.list();
+await thread.executions.startQueuedWork();
+
+const graph = await thread.graph();
+const subagents = await thread.subagents();
+const usage = await thread.contextUsage();
+```
+
+`client.api` retains every generated endpoint for administrative or newly generated operations.
+
+## Finite history
+
+`thread.history()` replays the canonical journal through the runtime's current
+observed head and returns a finite protocol-level message projection:
+
+```typescript
+const history = await thread.history({ signal });
+
+for (const message of history.messages) {
+  renderMessage({
+    id: message.id,
+    role: message.role,
+    text: message.text,
+    reasoning: message.reasoning,
+    toolCalls: message.toolCalls,
+    visibility: message.visibility,
+  });
+}
+```
+
+The returned `appliedCursor` can be passed to `thread.observe({ after })` for
+live continuation. The richer timeline, work-group, and interaction projection
+remains in the headless UI package.
+
+## Evaluations
+
+Common evaluation reads have a curated facade:
+
+```typescript
+const catalog = await client.evaluations.catalog();
+const summary = await client.evaluations.summary({ from, to });
+const scores = await client.evaluations.scores('relevance', { from, to });
+const runs = await client.evaluations.runs({ executionName });
+```
+
+Dataset administration and specialist red-team operations remain available
+under `client.api.evaluations`.
 
 ## Message Policy And Transcript Visibility
 

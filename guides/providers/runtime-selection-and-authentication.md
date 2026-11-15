@@ -246,3 +246,30 @@ borrowed.
 
 Provider OAuth account selection is part of `ProviderReference.Authentication`.
 MCP OAuth remains a separate subsystem for MCP servers.
+
+## Distributed Response Caching
+
+`WithDistributedCaching(...)` wraps the selected chat client with Microsoft.Extensions.AI's
+`DistributedCachingChatClient`. Cache the response only when the complete request is represented by
+the model-visible messages and `ChatOptions`.
+
+```csharp
+services.AddDistributedMemoryCache();
+
+var agent = await new AgentBuilder()
+    .WithServiceProvider(services)
+    .WithOpenAI("gpt-5-mini")
+    .WithDistributedCaching()
+    .BuildAsync();
+```
+
+The registered `IDistributedCache` owns expiration and storage policy. Pass an explicit cache
+instance through the first argument or configure the wrapper through the second argument when the
+application needs response coalescing, JSON settings, or additional cache-key values.
+
+The cache stores model responses only. HPD still executes tools, applies middleware, commits thread
+events, and publishes live observations when a model response comes from the cache.
+
+Requests with `ConversationId`, background-response mode, or a continuation token bypass the cache.
+Those requests depend on state held by the provider, so a serialized cached response is not enough
+to reconstruct their execution semantics.

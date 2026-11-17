@@ -31,7 +31,6 @@ using HPD.Agent.Audio;
 ```csharp
 var agent = await new AgentBuilder()
     .WithChatClient(chatClient)
-    .WithContentStore(new InMemoryContentStore())
     .WithAudioRuntimeAttachment(audio =>
     {
         audio.AssistantOutputSynthesisMode = AssistantOutputSynthesisMode.FinalText;
@@ -62,15 +61,7 @@ If no TTS client can be resolved, the turn completes text-only. If synthesis fai
 
 ## Artifacts
 
-Content-store artifact capture is the default assistant-output artifact policy. Configure an `IContentStore` when you want synthesized audio artifacts:
-
-```csharp
-var agent = await new AgentBuilder()
-    .WithChatClient(chatClient)
-    .WithContentStore(contentStore)
-    .WithAudio()
-    .BuildAsync();
-```
+Content-store artifact capture is the default assistant-output artifact policy. The builder's default `InMemoryContentStore` can hold synthesized audio artifacts for the life of the process. Use `WithContentStore(...)` to supply a different store.
 
 Captured assistant audio artifacts are stored with metadata such as output flow id, response id, provider, model, and voice. If content-store artifact capture is requested but no content store is configured, the runtime falls back to text-only with a missing-content-store reason.
 

@@ -8,15 +8,10 @@ using HPD.Agent;
 using HPD.Agent.Sandbox;
 using HPD.Environment.HostProcess;
 using HPD.Agent.ToolHarness.Coding;
-using HPD.Environment.Contracts;
 
 var agent = await new AgentBuilder()
     .WithPermissions()
-    .WithSandbox(new HostProcessProviderModule(), new SandboxSessionRequest
-    {
-        Isolation = ProcessIsolationPolicy.Default,
-        Workspaces = [SandboxWorkspaceRequest.HostDirectory(workspacePath)],
-    })
+    .WithSandbox(new HostProcessProviderModule(), HostProcessSandbox.ForDirectory(workspacePath))
     .WithToolHarness<CodingToolHarness>()
     .BuildAsync();
 ```

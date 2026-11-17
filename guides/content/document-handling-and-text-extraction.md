@@ -38,7 +38,6 @@ var document = await DocumentContent.FromFileAsync("report.pdf");
 
 var agent = await new AgentBuilder()
     .WithChatClient(chatClient)
-    .WithContentStore(new InMemoryContentStore())
     .BuildAsync();
 
 await agent.RunAsync(new UserMessagesInputEvent
@@ -58,8 +57,7 @@ await agent.RunAsync(new UserMessagesInputEvent
 ```
 
 The `TextContent` makes extracted text available to the model. `DocumentContent` preserves
-the original bytes as an attachment. `WithContentStore(...)` enables local content
-lifecycle persistence and provider-boundary materialization. If the selected provider can
+the original bytes as an attachment. The default in-memory content store supports local content handling and provider-boundary materialization. If the selected provider can
 consume the original document directly, keep the attachment. Otherwise, pass only the
 extracted text.
 

@@ -198,17 +198,12 @@ isolation policy.
 ```csharp
 using HPD.Agent;
 using HPD.Agent.Sandbox;
-using HPD.Environment.Contracts;
 using HPD.Environment.HostProcess;
 using HPD.Agent.ToolHarness.Coding;
 
 var agent = await new AgentBuilder()
     .WithPermissions()
-    .WithSandbox(new HostProcessProviderModule(), new SandboxSessionRequest
-    {
-        Isolation = ProcessIsolationPolicy.Default,
-        Workspaces = [SandboxWorkspaceRequest.HostDirectory(workspacePath)],
-    })
+    .WithSandbox(new HostProcessProviderModule(), HostProcessSandbox.ForDirectory(workspacePath))
     .WithToolHarness<CodingToolHarness>()
     .BuildAsync();
 ```
@@ -219,8 +214,9 @@ Host Containers runs coding tools and commands inside one retained sandbox
 container.
 
 ```csharp
+using HPD.Agent;
 using HPD.Agent.Sandbox;
-using HPD.Environment.Contracts;
+using HPD.Agent.ToolHarness.Coding;
 using HPD.Environment.HostContainers;
 
 var provider = new HostContainersProviderModule(new HostContainersProviderOptions
@@ -231,11 +227,7 @@ var provider = new HostContainersProviderModule(new HostContainersProviderOption
 
 var agent = await new AgentBuilder()
     .WithPermissions()
-    .WithSandbox(provider, new SandboxSessionRequest
-    {
-        Isolation = containerIsolation,
-        Workspaces = [SandboxWorkspaceRequest.HostDirectory(workspacePath, executionPath: "/workspace")],
-    })
+    .WithSandbox(provider, HostContainersSandbox.ForDirectory(workspacePath))
     .WithToolHarness<CodingToolHarness>()
     .BuildAsync();
 ```
@@ -243,23 +235,28 @@ var agent = await new AgentBuilder()
 ### Apple Virtualization
 
 Apple Virtualization runs commands and filesystem operations through a guest
-process and signed virtualization helper.
+process and signed virtualization helper. The current guest process policy
+requires unrestricted guest network egress, which the factory opts into
+explicitly.
 
 ```csharp
+using HPD.Agent;
 using HPD.Agent.Sandbox;
-using HPD.Environment.Contracts;
+using HPD.Agent.ToolHarness.Coding;
 using HPD.Environment.Virtualization.Apple;
 
 var agent = await new AgentBuilder()
     .WithPermissions()
-    .WithSandbox(new AppleVirtualizationProviderModule(appleOptions), new SandboxSessionRequest
-    {
-        Isolation = guestIsolation,
-        Workspaces = guestWorkspaces,
-    })
+    .WithSandbox(
+        new AppleVirtualizationProviderModule(appleOptions),
+        AppleVirtualizationSandbox.ForDirectoryWithGuestNetwork(workspacePath))
     .WithToolHarness<CodingToolHarness>()
     .BuildAsync();
 ```
+
+Each factory accepts `readOnly: true`. Import `HPD.Environment.Contracts`
+to construct a custom `SandboxSessionRequest` for multiple roots or
+provider-supported isolation policies.
 
 ## What The Backend Owns
 

@@ -17,7 +17,6 @@ using Microsoft.Extensions.AI;
 
 var agent = await new AgentBuilder()
     .WithChatClient(chatClient)
-    .WithContentStore(new InMemoryContentStore())
     .BuildAsync();
 
 var image = new DataContent(await File.ReadAllBytesAsync("diagram.png"), "image/png")
@@ -56,7 +55,7 @@ The upload path depends on the run and provider configuration:
 | `Hosted` | Require a hosted file client. |
 | `Local` | Require an `IContentStore`. |
 
-Hosted upload can come from a provider-created hosted-file client, `AgentRunConfig.OverrideHostedFileClient`, or the agent's resolved client set. Local upload requires `WithContentStore(...)`.
+Hosted upload can come from a provider-created hosted-file client, `AgentRunConfig.OverrideHostedFileClient`, or the agent's resolved client set. Local upload uses the builder's in-memory content store by default. Use `WithContentStore(...)` to select a different store.
 
 ## Resolve Internal References
 

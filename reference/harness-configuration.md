@@ -12,6 +12,7 @@ This reference describes the common configuration and activation contract used b
 | `HarnessRunSettingAttribute` | Marks a property as run-overridable |
 | `HarnessConfigurationSectionAttribute` | Projects a harness settings section into middleware |
 | `ToolHarnessDependencyAttribute` | Declares an agent-owned default dependency |
+| `ToolHarnessAgentResourceAttribute` | Declares an agent-lifetime resource available to harness middleware |
 | `HarnessRunOverride` | Portable serialized run override entry |
 | `SubAgentRunConfig` | Per-input run overrides for direct child agents |
 | `SubAgentRunDefaults` | Explicit portable defaults for further descendants |
@@ -186,6 +187,17 @@ Runtime configuration handles, built-agent tokens, dependency instances, middlew
 | Explicit harness instance | Caller |
 
 Agent-owned harness objects are released before agent-owned resources.
+
+### Middleware resources
+
+`[ToolHarnessAgentResource(typeof(TImplementation))]` declares a resource
+contract for generated harness middleware activation. The generator creates
+the implementation with a parameterless constructor. Resources are created
+once per built Agent that selects the declaring harness, can be requested by
+middleware constructors using the declared contract, and are disposed with the
+Agent after its owned harness objects. This is separate from
+`[ToolHarnessDependency]`, which supplies a constructor dependency to the
+harness itself through the normal dependency resolver.
 
 ## Deferred
 

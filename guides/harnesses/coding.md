@@ -6,24 +6,23 @@ The coding harness gives an agent workspace-aware coding tools. Use it for agent
 
 ```csharp
 using HPD.Agent;
+using HPD.Agent.Providers.OpenRouter;
 using HPD.Agent.Sandbox;
 using HPD.Environment.HostProcess;
 using HPD.Agent.ToolHarness.Coding;
-using HPD.Environment.Contracts;
 
 var agent = await new AgentBuilder()
+    .WithOpenRouter(model, apiKey)
     .WithInstructions("Inspect before editing. Stay inside the configured workspace.")
     .WithPermissions()
-    .WithSandbox(new HostProcessProviderModule(), new SandboxSessionRequest
-    {
-        Isolation = ProcessIsolationPolicy.Default,
-        Workspaces = [SandboxWorkspaceRequest.HostDirectory(Path.GetFullPath("sample-workspace"))],
-    })
+    .WithSandbox(new HostProcessProviderModule(), HostProcessSandbox.ForDirectory(Path.GetFullPath("sample-workspace")))
     .WithToolHarness<CodingToolHarness>()
     .BuildAsync();
 ```
 
-`WithPermissions()` gives mutation and command tools an approval path.
+The full coding harness requires `WithPermissions()`. Connect your app's
+approval handler before running protected tools, or use the default approval
+dialog in the [Coding TUI](coding-tui.md).
 `WithSandbox(...)` publishes the process and workspace bindings used by
 the Environment-backed coding tools.
 
@@ -61,8 +60,8 @@ See [Configure A Tool Harness](../tools/configure-a-tool-harness.md) and [Config
 ## Provide A Workspace
 
 A fixed workspace is configured on the builder. For a workspace picker, pass
-a host-owned resolver to `WithSandbox` and select a registered workspace with
-`AgentRunConfig.Workspace`:
+a host-owned resolver to `WithSandbox` before building. Select a registered
+workspace with `AgentRunConfig.Workspace` when you run the agent.
 
 ```csharp
 builder.WithSandbox(environment, resolveWorkspace: resolveWorkspace);
@@ -79,8 +78,19 @@ var result = await agent.RunAsync(
 ```
 
 The resolver authorizes the selection and returns a `SandboxSessionRequest`.
-The coding tools use the resulting workspace binding. The workspace reference
-is a host catalog ID and carries no host path or permissions.
+It can use the same provider factory as a fixed workspace. The coding tools
+use the resulting workspace and process bindings.
+
+The serialized run config contains the host's workspace ID.
+
+```json
+{
+  "workspace": { "id": "repo-a" }
+}
+```
+
+The host owns the directory paths and access rules. A saved run config can
+use the workspace as long as its host can still resolve and authorize the ID.
 
 ## Command Execution
 
@@ -92,10 +102,10 @@ that must come from the same selected runtime:
 - optional `IEnvironmentRuntime`;
 - the authorized `TargetHandle<ExecutionUnit>`.
 
-`WithSandbox(...)` publishes a complete Host Process binding. The
-Coding harness does not look up an `IProcessProvider` separately and does not
-manufacture an execution target. If the selected runtime does not publish the
-complete binding, command execution fails closed as a setup error.
+`WithSandbox(...)` publishes the bindings for the selected provider.
+Command approvals and execution use the same resolved workspace, working
+directory, shell, and isolation policy. File and shell tools require their
+respective runtime bindings.
 
 Sandbox enforcement is platform-dependent. Use permissions and narrow workspace roots even when sandboxing is enabled.
 

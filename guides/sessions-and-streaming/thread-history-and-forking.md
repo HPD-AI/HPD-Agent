@@ -30,7 +30,7 @@ var fork = await agent.ForkThreadAsync(
 var forkId = fork.Target.ThreadId;
 ```
 
-Direct APIs require a configured session store. `CreateSessionAsync(...)` creates an initial
+Direct APIs use the builder's in-memory session store by default. `CreateSessionAsync(...)` creates an initial
 `main` thread for convenience. When `RunAsync(...)` omits `threadId`, a one-thread session uses
 its sole thread, while an empty session creates `main`. Multiple threads make the omitted ID
 ambiguous. `ForkThreadAsync(...)` returns a `ThreadForkResult`; use

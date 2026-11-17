@@ -56,8 +56,10 @@ Judge evaluators call another model or agent, so treat them as quality signals u
 
 Use `InMemoryScoreStore` for local runs, tests, and examples. It is not durable storage.
 For production, `HPD-Agent.Evaluations.HpdBase` provides restart-durable score, run, and
-dataset stores backed by HPD Base. The dataset store requires a `DatasetCodec<TInput>` for
-each stored input type.
+dataset stores backed by HPD Base. `AddHpdBaseEvaluationStore()` registers the `IScoreStore`
+for scores and runs; `AddHpdBaseDatasetStore(...)` registers the `IDatasetStore` for datasets.
+The dataset store requires a `DatasetCodec<TInput>` for each stored input type. See
+[Datasets and Reports](datasets-and-reports.md#durable-hpd-base-stores) for the setup example.
 
 ## HTTP API
 

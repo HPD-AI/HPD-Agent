@@ -50,11 +50,7 @@ reliable physical path containment, symlink protection, or safe shell isolation.
 var agent = await new AgentBuilder()
     .WithInstructions("Stay inside the configured workspace.")
     .WithPermissions()
-    .WithSandbox(new HostProcessProviderModule(), new SandboxSessionRequest
-    {
-        Isolation = ProcessIsolationPolicy.Default,
-        Workspaces = [SandboxWorkspaceRequest.HostDirectory(workspacePath)],
-    })
+    .WithSandbox(new HostProcessProviderModule(), HostProcessSandbox.ForDirectory(workspacePath))
     .WithToolHarness<CodingToolHarness>()
     .BuildAsync();
 ```

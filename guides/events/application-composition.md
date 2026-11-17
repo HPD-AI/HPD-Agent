@@ -178,12 +178,10 @@ var composition = AgentEventComposition.Create([...]);
 
 await using var agent = await new AgentBuilder(agentConfig)
     .WithEventComposition(composition)
-    .WithSessionStore(new InMemorySessionStore(composition.Codec))
     .BuildAsync();
 ```
 
-Do not create a separate session-store codec for the same agent. The builder
-validates that a configured store owns the selected composition's codec.
+The builder creates the default in-memory session store with the selected composition's codec. If you supply a custom store, the builder validates that it uses the same codec instance.
 
 ## Serialization
 

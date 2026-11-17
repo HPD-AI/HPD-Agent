@@ -141,7 +141,7 @@ Each named profile owns its own:
 - content store
 - hosting service facade
 
-If `SessionStorePath` is configured, hosting creates a segmented `FileSessionStore`. Otherwise, the default session store is `InMemorySessionStore`. The default agent store is also in-memory.
+Each profile defaults to `InMemorySessionStore`, `InMemoryAgentStore`, and `InMemoryContentStore`. Set `SessionStorePath` to use a segmented `FileSessionStore`, or supply a custom implementation for any store.
 
 `GET /storage` reports whether each store was explicitly configured or selected as the default
 fallback, plus whether the implementation declares `Ephemeral` or `RestartDurable` persistence.
@@ -151,7 +151,8 @@ store is acceptable.
 ### HPD Base-Backed Stores
 
 For restart-durable session journals and stored agent definitions, use
-`HPD-Agent.Stores.HpdBase` with an HPD Base store provider such as SQLite:
+`HPD-Agent.Stores.HpdBase` with HPD Base. The example below selects HPD Base's SQLite
+provider and writes its database to `data/hpd-agent.db`:
 
 ```csharp
 using HPD.Agent.Hosting.Configuration;
@@ -182,9 +183,30 @@ builder.Services.AddOptions<HPDAgentHostOptions>("assistant")
     });
 ```
 
+HPD Base is the storage layer; SQLite is the concrete provider selected here. HPD Agent's
+adapter translates its session and agent-store contracts into HPD Base collections, while
+HPD Base handles persistence through the selected provider. The first startup may create or
+update the schema for the registered collections. Keep the database file in persistent
+application storage and include it in the application's backup plan.
+
+This SQLite setup stores session metadata, thread records, canonical event blocks and
+identities, progressive thread deltas, and stored agent definitions. It does not store
+uploaded content or generated artifacts: those use the host's separate `IContentStore`.
+
 The HPD Base session store must use the same `AgentEventCodec` as the host's event composition.
 Use this path when restart durability, centralized storage, or HPD Base-backed backup and
 inspection matter; use `SessionStorePath` for a simple local filesystem deployment.
+
+SQLite is the provider shown in the current HPD Agent setup. Other HPD Base providers can be
+selected through the same `UseStore(...)` boundary as they become available; the HPD Agent
+store adapters are designed to sit above that provider choice.
+
+This package covers `ISessionStore` and `IAgentStore`. HPD Base adapters for evaluation
+scores/runs (`IScoreStore`) and datasets (`IDatasetStore`) are provided separately by
+`HPD-Agent.Evaluations.HpdBase`; see [Datasets and Reports](../evaluations/datasets-and-reports.md#durable-hpd-base-stores).
+The packages do not currently provide an HPD Base `IContentStore` adapter. Configure a
+file-backed or application-provided content store when uploaded or generated content must
+survive restarts.
 
 `PersistAfterTurn` defaults to `true` for `HPDAgentHostOptions`. After a completed turn, the hosted
 agent saves session metadata and ensures the active thread descriptor exists. Canonical thread

@@ -35,6 +35,10 @@ var agent = await new AgentBuilder()
 ```
 
 To expose one function instead, use `WithTool<WeatherTools>("get_weather")`.
+This selects that generated function as the harness's tool entry point. Use
+`WithToolHarness<T>()` to register the harness and its generated capability
+catalog. For the selection behavior and supported combinations, see
+[Selective Registration](selective-registration-and-config.md).
 
 ## Add Configuration
 
@@ -188,6 +192,16 @@ builder.WithToolHarness(tools);
 ```
 
 The supplied harness and its captured dependencies retain their current state. Registration-time configuration and dependency customization are rejected for an explicit instance.
+
+## Shared Agent-owned resources
+
+Harness middleware can use a resource shared for the lifetime of the built
+Agent. Declare the resource on its contract with
+`[ToolHarnessAgentResource(typeof(ResourceImplementation))]`, then accept the
+contract in a declared middleware constructor. HPD generates resource creation
+and cleanup. The implementation must have an accessible parameterless
+constructor. See [Agent-owned resources in the middleware guide](../middleware/tool-harness-middleware.md#agent-owned-resources)
+for a complete example and lifecycle details.
 
 ## Generated Contract
 

@@ -321,6 +321,45 @@ builder.WithToolHarness<RepositoryTools>(options =>
 `OverrideMiddleware<T>()` replaces a declared middleware type. It does not add
 an undeclared middleware.
 
+### Agent-owned resources
+
+Use an agent-owned resource when harness middleware needs a shared service that
+must live across accepted inputs, such as a registry or dispatcher. Declare
+the resource contract with `ToolHarnessAgentResource`, then accept that
+contract in the middleware constructor:
+
+```csharp
+[ToolHarnessAgentResource(typeof(RepositorySessionRegistry))]
+public interface IRepositorySessionRegistry : IAsyncDisposable
+{
+    // Shared registry operations.
+}
+
+public sealed class RepositorySessionRegistry : IRepositorySessionRegistry
+{
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+}
+
+public sealed class RepositorySessionMiddleware(
+    IRepositorySessionRegistry sessions) : IToolHarnessMiddleware
+{
+    // Use the shared registry from middleware hooks.
+}
+```
+
+The source generator creates one resource instance for each built Agent that
+selects the declaring harness. The resource implementation needs an accessible
+parameterless constructor. HPD disposes the resource when the Agent is disposed,
+after agent-owned harness objects. Middleware instances remain execution-local
+and receive the shared resource through their constructor. Use
+`ToolHarnessMiddlewareLifetime(Services)` for a middleware instance resolved
+from an input child scope instead.
+
+The resource declaration may also be placed on a concrete class when that
+class itself is the middleware dependency. Resources are constructed by the
+generated factory, so register dependencies for middleware separately through
+the input child scope when they need per-input lifetimes.
+
 ## Declaration Rules
 
 - A harness must be selected with `WithToolHarness<T>()` before its middleware

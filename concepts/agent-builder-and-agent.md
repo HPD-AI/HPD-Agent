@@ -19,6 +19,10 @@ The basic flow is:
 
 Build-time configuration and run-time execution are separate. `BuildAsync()` creates a configured agent. `RunAsync(...)` performs a message turn.
 
+## Storage Defaults
+
+`BuildAsync()` supplies an in-memory session store and content store by default. Stored agent definitions use an in-memory agent store when needed. Supply your own stores for durable history, content, or agent definitions. See [Default Stores](../getting-started/persistence.md#default-stores).
+
 ## Provider
 
 A chat provider supplies the model client used for the run. In the first quickstart, `.WithOpenAI(model: "gpt-5-mini")` configures the default chat model. The local alternative uses `.WithOllama(model: "llama3.2")`.

@@ -39,7 +39,7 @@ Filesystem and coding tools can mutate files or run processes. Start with:
 
 - an explicit workspace root
 - `WithPermissions()`
-- `WithHostProcessSandbox()` when command execution is available
+- `WithSandbox(...)` when command execution is available
 - shell disabled unless the workflow truly needs it
 
 Do not use the legacy `HPD-Agent.ToolHarness.FileSystem` package as a sandbox. Its
@@ -50,7 +50,11 @@ reliable physical path containment, symlink protection, or safe shell isolation.
 var agent = await new AgentBuilder()
     .WithInstructions("Stay inside the configured workspace.")
     .WithPermissions()
-    .WithHostProcessSandbox()
+    .WithSandbox(new HostProcessProviderModule(), new SandboxSessionRequest
+    {
+        Isolation = ProcessIsolationPolicy.Default,
+        Workspaces = [SandboxWorkspaceRequest.HostDirectory(workspacePath)],
+    })
     .WithToolHarness<CodingToolHarness>()
     .BuildAsync();
 ```

@@ -5,6 +5,10 @@ Agent runtime owns tool calls and the shared permission interaction. HPD
 Environment owns process placement, workspace projection, provider enforcement,
 and cleanup.
 
+The `HPD-Agent.Framework` package includes `WithSandbox(...)` in the
+`HPD.Agent.Sandbox` namespace. Add the HPD Environment provider package
+for the backend your application uses.
+
 Sandbox capability authorization answers a different question from function
 permission:
 
@@ -193,12 +197,18 @@ isolation policy.
 
 ```csharp
 using HPD.Agent;
-using HPD.Agent.Sandbox.HostProcess;
+using HPD.Agent.Sandbox;
+using HPD.Environment.Contracts;
+using HPD.Environment.HostProcess;
 using HPD.Agent.ToolHarness.Coding;
 
 var agent = await new AgentBuilder()
     .WithPermissions()
-    .WithHostProcessSandbox()
+    .WithSandbox(new HostProcessProviderModule(), new SandboxSessionRequest
+    {
+        Isolation = ProcessIsolationPolicy.Default,
+        Workspaces = [SandboxWorkspaceRequest.HostDirectory(workspacePath)],
+    })
     .WithToolHarness<CodingToolHarness>()
     .BuildAsync();
 ```
@@ -209,16 +219,23 @@ Host Containers runs coding tools and commands inside one retained sandbox
 container.
 
 ```csharp
-using HPD.Agent.Sandbox.HostContainers;
+using HPD.Agent.Sandbox;
+using HPD.Environment.Contracts;
+using HPD.Environment.HostContainers;
+
+var provider = new HostContainersProviderModule(new HostContainersProviderOptions
+{
+    SandboxImage = "hpd/coding-toolchain@sha256:...",
+    EngineSocketPath = "/var/run/docker.sock",
+});
 
 var agent = await new AgentBuilder()
     .WithPermissions()
-    .WithHostContainersSandbox(
-        new HostContainersSandboxOptions
-        {
-            Image = "hpd/coding-toolchain@sha256:...",
-            EngineSocketPath = "/var/run/docker.sock",
-        })
+    .WithSandbox(provider, new SandboxSessionRequest
+    {
+        Isolation = containerIsolation,
+        Workspaces = [SandboxWorkspaceRequest.HostDirectory(workspacePath, executionPath: "/workspace")],
+    })
     .WithToolHarness<CodingToolHarness>()
     .BuildAsync();
 ```
@@ -229,11 +246,17 @@ Apple Virtualization runs commands and filesystem operations through a guest
 process and signed virtualization helper.
 
 ```csharp
-using HPD.Agent.Sandbox.VirtualMachine;
+using HPD.Agent.Sandbox;
+using HPD.Environment.Contracts;
+using HPD.Environment.Virtualization.Apple;
 
 var agent = await new AgentBuilder()
     .WithPermissions()
-    .WithAppleVirtualizationSandbox(appleOptions)
+    .WithSandbox(new AppleVirtualizationProviderModule(appleOptions), new SandboxSessionRequest
+    {
+        Isolation = guestIsolation,
+        Workspaces = guestWorkspaces,
+    })
     .WithToolHarness<CodingToolHarness>()
     .BuildAsync();
 ```

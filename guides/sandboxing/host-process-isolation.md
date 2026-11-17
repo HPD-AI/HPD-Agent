@@ -5,31 +5,24 @@ and publishes the process and workspace bindings consumed by Agent tools.
 
 ```csharp
 using HPD.Agent;
-using HPD.Agent.Sandbox.HostProcess;
+using HPD.Agent.Sandbox;
+using HPD.Environment.HostProcess;
 using HPD.Agent.ToolHarness.Coding;
 using HPD.Environment.Contracts;
 
 var agent = await new AgentBuilder()
     .WithPermissions()
-    .WithHostProcessSandbox(new HostProcessSandboxOptions
+    .WithSandbox(new HostProcessProviderModule(), new SandboxSessionRequest
     {
-        Workspaces =
-        [
-            new HostProcessWorkspaceOptions
-            {
-                RootId = "workspace",
-                Path = workspacePath,
-                Access = AccessMode.ReadWrite,
-            },
-        ],
+        Isolation = ProcessIsolationPolicy.Default,
+        Workspaces = [SandboxWorkspaceRequest.HostDirectory(workspacePath)],
     })
     .WithToolHarness<CodingToolHarness>()
     .BuildAsync();
 ```
 
-The Host Process adapter does not contain the operating-system sandbox
-implementation. It composes `HPD-Environment.HostProcess`, creates a real host
-and execution unit, and publishes one `RuntimeProcessExecutionBinding`.
+The Environment provider supplies operating-system isolation. The shared Agent
+sandbox publishes the process and workspace bindings for the selected session.
 
 Low-level Environment hosts may use `IProcessProvider` or
 `IEnvironmentRuntime` directly when they already own an authorized execution

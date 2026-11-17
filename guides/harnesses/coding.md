@@ -6,31 +6,25 @@ The coding harness gives an agent workspace-aware coding tools. Use it for agent
 
 ```csharp
 using HPD.Agent;
-using HPD.Agent.Sandbox.HostProcess;
+using HPD.Agent.Sandbox;
+using HPD.Environment.HostProcess;
 using HPD.Agent.ToolHarness.Coding;
 using HPD.Environment.Contracts;
 
 var agent = await new AgentBuilder()
     .WithInstructions("Inspect before editing. Stay inside the configured workspace.")
     .WithPermissions()
-    .WithHostProcessSandbox(new HostProcessSandboxOptions
+    .WithSandbox(new HostProcessProviderModule(), new SandboxSessionRequest
     {
-        Workspaces =
-        [
-            new HostProcessWorkspaceOptions
-            {
-                RootId = "default",
-                Path = Path.GetFullPath("sample-workspace"),
-                Access = AccessMode.ReadWrite,
-            },
-        ],
+        Isolation = ProcessIsolationPolicy.Default,
+        Workspaces = [SandboxWorkspaceRequest.HostDirectory(Path.GetFullPath("sample-workspace"))],
     })
     .WithToolHarness<CodingToolHarness>()
     .BuildAsync();
 ```
 
 `WithPermissions()` gives mutation and command tools an approval path.
-`WithHostProcessSandbox()` publishes the process and workspace bindings used by
+`WithSandbox(...)` publishes the process and workspace bindings used by
 the Environment-backed coding tools.
 
 ## Configure The Harness
@@ -66,86 +60,27 @@ See [Configure A Tool Harness](../tools/configure-a-tool-harness.md) and [Config
 
 ## Provide A Workspace
 
-To select a workspace for a run, pass a `CodingWorkspace` in
-`AgentRunConfig.Context.Properties`. It tells the coding harness which
-directories to use for workspace-aware file operations. Provide one or more
-roots, each with an ID, an existing directory path, and an access mode. The
-default root ID selects the base directory for unqualified relative paths.
-
-`Context.Properties` holds [application-defined run data](../tools/author-a-tool-harness.md#pass-application-data-for-one-run).
-The coding harness uses `CodingWorkspace.ContextKey` (the string
-`"workspace"`) to find the workspace description.
+A fixed workspace is configured on the builder. For a workspace picker, pass
+a host-owned resolver to `WithSandbox` and select a registered workspace with
+`AgentRunConfig.Workspace`:
 
 ```csharp
-var workspacePath = Path.GetFullPath("sample-workspace");
-Directory.CreateDirectory(workspacePath);
-
-var workspace = new CodingWorkspace(
-    "default",
-    workspacePath,
-    [
-        new CodingWorkspaceRoot(
-            "default",
-            workspacePath,
-            CodingWorkspaceAccess.ReadWrite,
-            "Sample workspace")
-    ]);
+builder.WithSandbox(environment, resolveWorkspace: resolveWorkspace);
 
 var runConfig = new AgentRunConfig
 {
-    Context = new AgentContextRunConfig
-    {
-        Properties = new Dictionary<string, object>
-        {
-            [CodingWorkspace.ContextKey] = workspace,
-        }
-    },
+    Workspace = new AgentWorkspaceReference("repo-a"),
 };
-```
 
-Then run with that config:
-
-```csharp
 var result = await agent.RunAsync(
     "Find where provider keys are documented.",
+    sessionId,
     runConfig: runConfig);
 ```
 
-For a workspace selected dynamically per run, the Host Process sandbox needs
-to expose the same roots for file and command operations.
-`WorkspaceOptionsFactory` receives the run config, and
-`CodingWorkspace.From(runConfig)` reads and validates the same
-`"workspace"` entry set above. The callback converts each root to a
-`HostProcessWorkspaceOptions` so the sandbox can expose it. When the callback
-receives a run config, the workspace entry is required.
-
-```csharp
-.WithHostProcessSandbox(new HostProcessSandboxOptions
-{
-    WorkspaceOptionsFactory = runConfig =>
-    {
-        if (runConfig is null)
-        {
-            return [];
-        }
-
-        CodingWorkspace workspace = CodingWorkspace.From(runConfig);
-        return workspace.Roots.Select(root =>
-            new HostProcessWorkspaceOptions
-            {
-                RootId = root.Id,
-                Path = root.Path,
-                DisplayName = root.Label,
-                Access = root.Access == CodingWorkspaceAccess.ReadWrite
-                    ? AccessMode.ReadWrite
-                    : AccessMode.ReadOnly,
-            }).ToArray();
-    },
-})
-```
-
-The resulting Environment session publishes one `RuntimeWorkspaceBinding`.
-Coding file tools never resolve the host path themselves.
+The resolver authorizes the selection and returns a `SandboxSessionRequest`.
+The coding tools use the resulting workspace binding. The workspace reference
+is a host catalog ID and carries no host path or permissions.
 
 ## Command Execution
 
@@ -157,7 +92,7 @@ that must come from the same selected runtime:
 - optional `IEnvironmentRuntime`;
 - the authorized `TargetHandle<ExecutionUnit>`.
 
-`WithHostProcessSandbox()` publishes a complete Host Process binding. The
+`WithSandbox(...)` publishes a complete Host Process binding. The
 Coding harness does not look up an `IProcessProvider` separately and does not
 manufacture an execution target. If the selected runtime does not publish the
 complete binding, command execution fails closed as a setup error.
@@ -174,6 +109,21 @@ Command permission, automatic function approval, and process isolation are
 independent. Changing `AgentRunConfig.Security.Approval` does not change
 `Security.Sandbox`; configure sandbox isolation and capabilities separately.
 See [Sandboxing Overview](../sandboxing/overview.md).
+
+## Debugging
+
+Registering `CodingToolHarness` also enables `Debug`. Install an adapter
+for the language you want to debug in the selected execution environment,
+such as `netcoredbg` for .NET or `debugpy` in an installed Python
+environment. Make the adapter command discoverable on that environment's
+`PATH`. The harness matches the target to its built-in adapter catalog
+and probes for an installed adapter when needed.
+
+The app handles debugger approvals through the same permission flow used
+for editing and commands. Use a session store and run with a session ID
+so permission decisions have a thread journal. Debugger sessions can continue across turns in
+the same session and thread. The operations available for a live session
+depend on the adapter's capabilities.
 
 ## Search And Ripgrep
 

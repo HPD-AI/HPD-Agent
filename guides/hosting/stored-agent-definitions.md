@@ -40,6 +40,21 @@ new requirement needs another agent definition or another isolated profile.
 Create and update validate the supplied `AgentConfig`. `POST /agents` requires an explicit
 `agentId`; a duplicate id returns `409 Conflict`.
 
+Core validation enforces structural validity, such as positive turn counts, nonnegative
+delays, valid URIs, and unique names. It does not impose fixed upper limits on operating
+budgets such as turns, retries, or circuit-breaker thresholds. An application that protects
+shared compute, billing, or availability can set `HPDAgentHostOptions.ValidationLimits`;
+those host limits are enforced when definitions are created, updated, materialized, or built.
+Omit `ValidationLimits` when the agent definition should own those choices.
+
+```csharp
+options.ValidationLimits = new AgentConfigValidationLimits
+{
+    MaximumAgenticIterations = 50,
+    MaximumRetries = 10
+};
+```
+
 ## Summary Versus Full Definition
 
 `AgentSummaryDto` is intended for list views and omits the full config. `StoredAgentDto` includes the stored config and metadata for detail/editing views.

@@ -66,20 +66,28 @@ See [Configure A Tool Harness](../tools/configure-a-tool-harness.md) and [Config
 
 ## Provide A Workspace
 
-Pass an `AgentWorkspace` in run context:
+To select a workspace for a run, pass a `CodingWorkspace` in
+`AgentRunConfig.Context.Properties`. It tells the coding harness which
+directories to use for workspace-aware file operations. Provide one or more
+roots, each with an ID, an existing directory path, and an access mode. The
+default root ID selects the base directory for unqualified relative paths.
+
+`Context.Properties` holds [application-defined run data](../tools/author-a-tool-harness.md#pass-application-data-for-one-run).
+The coding harness uses `CodingWorkspace.ContextKey` (the string
+`"workspace"`) to find the workspace description.
 
 ```csharp
 var workspacePath = Path.GetFullPath("sample-workspace");
 Directory.CreateDirectory(workspacePath);
 
-var workspace = new AgentWorkspace(
+var workspace = new CodingWorkspace(
     "default",
     workspacePath,
     [
-        new AgentWorkspaceRoot(
+        new CodingWorkspaceRoot(
             "default",
             workspacePath,
-            AgentWorkspaceAccess.ReadWrite,
+            CodingWorkspaceAccess.ReadWrite,
             "Sample workspace")
     ]);
 
@@ -89,7 +97,7 @@ var runConfig = new AgentRunConfig
     {
         Properties = new Dictionary<string, object>
         {
-            [AgentWorkspace.ContextKey] = workspace,
+            [CodingWorkspace.ContextKey] = workspace,
         }
     },
 };
@@ -103,11 +111,13 @@ var result = await agent.RunAsync(
     runConfig: runConfig);
 ```
 
-Workspace roots remain part of `AgentRunConfig.Context`; they are not `CodingHarnessConfig` settings. Harness configuration controls behavior, while the workspace selects the filesystem scope for the run.
-
-The sandbox provider must expose the same root to process and file operations.
-For a workspace selected dynamically per run, map the run's `AgentWorkspace`
-through `WorkspaceOptionsFactory`:
+For a workspace selected dynamically per run, the Host Process sandbox needs
+to expose the same roots for file and command operations.
+`WorkspaceOptionsFactory` receives the run config, and
+`CodingWorkspace.From(runConfig)` reads and validates the same
+`"workspace"` entry set above. The callback converts each root to a
+`HostProcessWorkspaceOptions` so the sandbox can expose it. When the callback
+receives a run config, the workspace entry is required.
 
 ```csharp
 .WithHostProcessSandbox(new HostProcessSandboxOptions
@@ -119,14 +129,14 @@ through `WorkspaceOptionsFactory`:
             return [];
         }
 
-        AgentWorkspace workspace = AgentWorkspace.From(runConfig);
+        CodingWorkspace workspace = CodingWorkspace.From(runConfig);
         return workspace.Roots.Select(root =>
             new HostProcessWorkspaceOptions
             {
                 RootId = root.Id,
                 Path = root.Path,
                 DisplayName = root.Label,
-                Access = root.Access == AgentWorkspaceAccess.ReadWrite
+                Access = root.Access == CodingWorkspaceAccess.ReadWrite
                     ? AccessMode.ReadWrite
                     : AccessMode.ReadOnly,
             }).ToArray();

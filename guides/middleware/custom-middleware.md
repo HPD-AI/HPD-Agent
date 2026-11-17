@@ -224,6 +224,18 @@ public Task BeforeFunctionAsync(
 
 Use `BeforeParallelBatchAsync` when the policy is about the whole batch, such as "no more than three network tools at once" or "ask once for approval before this batch runs." The built-in permission flow uses this hook to evaluate a parallel batch before individual function hooks.
 
+## Read Caller-Supplied Run Context
+
+Callers can pass application data with `AgentRunConfig.Context.Properties`.
+In hooks that expose `RunConfig`, such as `BeforeFunctionAsync`, read the
+entry from `context.RunConfig.Context?.Properties` and check its type before
+using it. Runtime lifecycle hooks can have a null `RunConfig`, so use
+`context.RunConfig?.Context?.Properties` there.
+
+See [Pass Application Data For One Run](../tools/author-a-tool-harness.md#pass-application-data-for-one-run)
+for an example of setting and reading a context value and the rules for
+passing custom objects.
+
 ## Memory And Context Pattern
 
 Middleware is the right place for app-owned memory and retrieval. The usual shape is:

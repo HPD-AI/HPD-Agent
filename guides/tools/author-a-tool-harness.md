@@ -127,6 +127,50 @@ public async Task<string> SearchDocuments(
 
 Use the context for sanctioned runtime access such as events, services, content, runtime-owned operations, and bidirectional requests.
 
+## Pass Application Data For One Run
+
+Use `AgentRunConfig.Context.Properties` to pass named values from the caller
+to a tool or middleware for one run. The consumer defines the key and the
+expected value type. Use [per-run harness configuration](configure-a-harness-per-run.md)
+to override declared harness settings.
+
+```csharp
+var runConfig = new AgentRunConfig
+{
+    Context = new AgentContextRunConfig
+    {
+        Properties = new Dictionary<string, object>
+        {
+            ["search.collection"] = "product-docs",
+        },
+    },
+};
+
+var result = await agent.RunAsync("Find the setup instructions.", runConfig: runConfig);
+```
+
+Inside a tool function that takes a `FunctionExecutionContext context`
+parameter, read the value by key and handle a missing or unexpected value.
+
+```csharp
+var properties = context.RunConfig.Context?.Properties;
+var collection = properties is not null &&
+    properties.TryGetValue("search.collection", out var value) &&
+    value is string name
+        ? name
+        : "general-docs";
+```
+
+HPD captures context when the run starts. Supported values include strings,
+numbers, JSON values, and supported collections. Custom values can implement
+`IAgentImmutableContextValue` or `IAgentContextSnapshotValue`. The host can
+also explicitly share concurrency-safe values by listing their keys in
+`AgentContextRunConfig.SharedProperties`.
+
+See [Custom Middleware](../middleware/custom-middleware.md#read-caller-supplied-run-context)
+for reading the same data in hooks and the [Coding harness](../harnesses/coding.md#provide-a-workspace)
+for an example using a structured value.
+
 ## Constructor Rules
 
 - A harness has exactly one public constructor.

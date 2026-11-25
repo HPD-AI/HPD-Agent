@@ -19,7 +19,7 @@ Use the boundary that matches the failure:
 | Function body exception | Function wrappers, `MiddlewareErrorEvent`, `OnErrorAsync`, then `AfterFunctionAsync` formatting | `OnErrorAsync` receives `ErrorSource.ToolCall` before result formatting. |
 | Slow function | `FunctionTimeoutMiddleware` | Put timeout inside retry for per-attempt timeout. |
 | Repeated tool errors or loops | `ErrorTrackingMiddleware`, `TotalErrorThresholdIterationMiddleware`, `CircuitBreakerMiddleware` | These are iteration safety policies, not exception formatters. |
-| Whole turn failure | `OnErrorAsync`, `MessageTurnErrorEvent`, and the exception from `RunAsync(...)` | `OnErrorAsync` receives `ErrorSource.MessageTurn`; the original failure still propagates. |
+| Whole turn failure | `OnErrorAsync`, `MessageTurnErrorEvent`, and the exception from `RunAsync(...)` | `OnErrorAsync` receives `ErrorSource.MessageTurn`; the original failure still propagates. Client setup failures also expose `MessageTurnErrorEvent.ClientSetup` and implement `IClientSetupFailure` at the direct-call boundary. |
 
 ## Recommended Wrapper Order
 
@@ -232,4 +232,4 @@ Error middleware improves recovery and presentation; it is not a transactional g
 Timeout cancellation depends on the function honoring cancellation or completing the awaited task. It prevents the middleware from waiting past the timeout, but it cannot guarantee cleanup of external side effects.
 
 The core composition and policy snippets on this page are compile-checked
-against the published `0.9.5` packages.
+against the published `0.9.7` packages.

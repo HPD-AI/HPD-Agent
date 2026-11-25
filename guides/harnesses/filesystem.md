@@ -1,6 +1,6 @@
 # FileSystem Harness
 
-The `HPD-Agent.ToolHarness.FileSystem` package is deprecated in `0.9.5`.
+The `HPD-Agent.ToolHarness.FileSystem` package is deprecated in `0.9.7`.
 `FileSystemTools` and `FileSystemContext` compile with `CS0618`, do not receive new
 features, and are not a supported workspace-isolation or command-execution security
 boundary.

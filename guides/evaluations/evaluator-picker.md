@@ -1,6 +1,6 @@
 # Evaluator Picker
 
-The concrete deterministic evaluator implementations are internal in `0.9.5`. Use the
+The concrete deterministic evaluator implementations are internal in `0.9.7`. Use the
 public `HPD.Agent.Evaluations.Eval` factory for deterministic assertions. Judge, safety,
 and composite evaluator classes documented here are public.
 

@@ -27,7 +27,7 @@ The finish event has exactly one terminal outcome:
 
 `FinishedAt` records when the accepted input became terminal. The start and finish correlate through the same `ThreadExecutionId`.
 
-The coordinator attempts to commit the finish event before releasing ownership. In `0.9.5`, release removes the in-process lease in a `finally` block even if finish persistence fails. A failed finish therefore leaves a committed start without a terminal fact; historical projection reports that execution as `Interrupted`, while the thread is available for new work.
+The coordinator attempts to commit the finish event before releasing ownership. In `0.9.7`, release removes the in-process lease in a `finally` block even if finish persistence fails. A failed finish therefore leaves a committed start without a terminal fact; historical projection reports that execution as `Interrupted`, while the thread is available for new work.
 
 ## Live Ownership And Durable History
 

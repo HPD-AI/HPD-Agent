@@ -13,8 +13,8 @@ The provider reads the API key from the environment. Use environment variables o
 ```bash
 dotnet new console -n HpdAgentQuickstart
 cd HpdAgentQuickstart
-dotnet add package HPD-Agent.Framework --version 0.9.5
-dotnet add package HPD-Agent.Providers.OpenAI --version 0.9.5
+dotnet add package HPD-Agent.Framework --version 0.9.7
+dotnet add package HPD-Agent.Providers.OpenAI --version 0.9.7
 ```
 
 Set an OpenAI API key in the environment:
@@ -89,8 +89,8 @@ Use Ollama when you want a local, no-cloud first run. This is an optional provid
 ```bash
 ollama pull llama3.2
 ollama serve
-dotnet add package HPD-Agent.Framework --version 0.9.5
-dotnet add package HPD-Agent.Providers.Ollama --version 0.9.5
+dotnet add package HPD-Agent.Framework --version 0.9.7
+dotnet add package HPD-Agent.Providers.Ollama --version 0.9.7
 ```
 
 Use this `Program.cs`:
@@ -119,6 +119,25 @@ If the run says no chat model is configured, make sure the builder includes a pr
 If OpenAI configuration is invalid or a required OpenAI secret is missing, set `OPENAI_API_KEY` in the same shell where you run `dotnet run`.
 
 If the Ollama run fails at runtime, confirm the server is running and the model has been pulled.
+
+Client setup is resolved when the run needs the client, not during `BuildAsync()`. A direct `RunAsync(...)` call throws a typed setup exception. If the host should continue after a missing key, model, provider, or provider configuration, catch `IClientSetupFailure`:
+
+```csharp
+using HPD.Agent.Providers;
+
+try
+{
+    var result = await agent.RunAsync("Say hello in one sentence.");
+    Console.WriteLine(result.Text);
+}
+catch (Exception exception) when (exception is IClientSetupFailure setupFailure)
+{
+    var diagnostic = setupFailure.Diagnostic;
+    Console.Error.WriteLine($"[{diagnostic.Code}] {diagnostic.Message}");
+    if (!string.IsNullOrWhiteSpace(diagnostic.Guidance))
+        Console.Error.WriteLine(diagnostic.Guidance);
+}
+```
 
 ## Next
 

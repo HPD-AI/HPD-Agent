@@ -21,11 +21,24 @@ using var finished = agent.Subscribe<MessageTurnFinishedEvent>(evt =>
 
 using var failed = agent.Subscribe<MessageTurnErrorEvent>(evt =>
 {
-    timeline.FailTurn(evt.TraceId, evt.ErrorMessage);
+    if (evt.ClientSetup is { } setup)
+    {
+        timeline.FailClientSetup(
+            evt.TraceId,
+            setup.Code,
+            setup.Message,
+            setup.Guidance);
+    }
+    else
+    {
+        timeline.FailTurn(evt.TraceId, evt.ErrorMessage);
+    }
 });
 ```
 
 Use message-turn events for whole-run activity. Use text, reasoning, and tool events for the details inside the turn.
+
+`ClientSetup` is present when provider or client resolution prevents the run from reaching a model call. Its fields include the stable failure code, safe guidance, client family, and any known provider, backend, model, configuration path, or provider validation issues. A direct `RunAsync(...)` caller still receives the original typed exception; the event does not replace host exception handling.
 
 ## Agent Turn Lifecycle
 

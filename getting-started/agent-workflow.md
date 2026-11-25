@@ -11,9 +11,9 @@ Continue in the console project used by the main getting-started path. Install t
 ## Add The Package
 
 ```bash
-dotnet add package HPD-Agent.Framework --version 0.9.5
-dotnet add package HPD-Agent.Providers.OpenAI --version 0.9.5
-dotnet add package HPD-Agent.MultiAgent --version 0.9.5
+dotnet add package HPD-Agent.Framework --version 0.9.7
+dotnet add package HPD-Agent.Providers.OpenAI --version 0.9.7
+dotnet add package HPD-Agent.MultiAgent --version 0.9.7
 ```
 
 ## Add Program.cs

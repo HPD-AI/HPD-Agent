@@ -13,8 +13,8 @@ The package targets .NET 10 and .NET 11.
 ## Install
 
 ```bash
-dotnet add package HPD-Agent.OpenApi --version 0.9.5
-dotnet add package HPD-Agent.Providers.OpenAI --version 0.9.5
+dotnet add package HPD-Agent.OpenApi --version 0.9.7
+dotnet add package HPD-Agent.Providers.OpenAI --version 0.9.7
 ```
 
 `HPD-Agent.OpenApi` brings in `HPD-Agent.Framework`. Install a provider package or

@@ -12,7 +12,7 @@ The package targets .NET 10 and .NET 11.
 ## Install
 
 ```bash
-dotnet add package HPD-Agent.AspNetCore.OpenApi --version 0.9.5
+dotnet add package HPD-Agent.AspNetCore.OpenApi --version 0.9.7
 ```
 
 ## Registration
@@ -138,7 +138,7 @@ rebase, event-union, or client-tool runtime behavior.
   Probe-only routes produce valid OpenAPI but do not describe the real runtime.
 - Treat `/openapi/hpd-agent-v1.json` as the canonical machine contract and YAML
   as an equivalent representation.
-- Hosted operation IDs and route names are part of the documented `0.9.5` contract.
+- Hosted operation IDs and route names are part of the documented `0.9.7` contract.
 - A security scheme must be updated with the deployment's actual authentication
   boundary and token issuer.
 - The application event composition must be available before the document is

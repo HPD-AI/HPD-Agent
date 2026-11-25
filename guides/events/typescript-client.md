@@ -110,6 +110,31 @@ const usage = await thread.contextUsage();
 
 `client.api` retains every generated endpoint for administrative or newly generated operations.
 
+## Client Setup Failures
+
+Hosted `MESSAGE_TURN_ERROR` events can include `clientSetup` when provider or client resolution fails before a model call:
+
+```typescript
+const handlers = {
+  MESSAGE_TURN_ERROR: ({ event }) => {
+    if (event.clientSetup) {
+      showSetupFailure({
+        code: event.clientSetup.code,
+        message: event.clientSetup.message,
+        guidance: event.clientSetup.guidance,
+        provider: event.clientSetup.providerKey,
+        model: event.clientSetup.modelName,
+      });
+      return;
+    }
+
+    showRunFailure(event.errorMessage);
+  },
+} satisfies EventHandlers;
+```
+
+Use `clientSetup.code` for stable behavior and `clientSetup.guidance` for safe display text. Do not parse the provider's error message to decide which setup action to offer.
+
 ## Finite history
 
 `thread.history()` replays the canonical journal through the runtime's current

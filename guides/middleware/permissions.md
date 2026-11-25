@@ -361,5 +361,5 @@ permission event lifecycle documented in
 [Sandboxing Overview](../sandboxing/overview.md).
 
 The permission declaration, custom policy, request, response, and builder
-examples on this page are compile-checked against the published `0.9.5`
+examples on this page are compile-checked against the published `0.9.7`
 packages.

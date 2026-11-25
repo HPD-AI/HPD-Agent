@@ -1,6 +1,6 @@
 # Checkpointing
 
-In HPD Agent 0.9.5, checkpointing and restart recovery are owned by HPD Base durable
+In HPD Agent 0.9.7, checkpointing and restart recovery are owned by HPD Base durable
 activations. The in-process `AgentWorkflowInstance` executes a graph but does not expose
 `WithCheckpointing` or an application-owned workflow checkpoint store.
 

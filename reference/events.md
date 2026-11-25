@@ -23,7 +23,7 @@ The envelope includes injected `version` and `type` fields. Built-in type names 
 
 Unknown or missing `type` values cannot be deserialized as known events. HTTP input treats invalid event envelopes as bad requests.
 
-The envelope version is strict. HPD Agent `0.9.5` accepts only `"version":
+The envelope version is strict. HPD Agent `0.9.7` accepts only `"version":
 "1.0"` and rejects missing or unsupported versions.
 
 The event catalog exposes a structural contract digest per discriminator. It
@@ -121,7 +121,7 @@ payload.
 | Input | `UserMessagesInputEvent`; hosted routes also accept command bodies and interruption requests | upstream/control | command plane |
 | Thread execution | `ThreadExecutionStartedEvent`, `ThreadExecutionFinishedEvent` | control | canonical in thread scope |
 | Subagent delegation | `SubAgentInvocationStartedEvent`, `SubAgentInvocationCompletedEvent`, `SubAgentInvocationFailedEvent`, `SubAgentInvocationCancelledEvent` | control | canonical in the parent thread; identifies the durable child scope |
-| Message turn lifecycle | `MessageTurnStartedEvent`, `MessageTurnFinishedEvent`, `MessageTurnErrorEvent` | default/control | canonical in thread scope |
+| Message turn lifecycle | `MessageTurnStartedEvent`, `MessageTurnFinishedEvent`, `MessageTurnErrorEvent` | default/control | canonical in thread scope; client setup failures include structured `ClientSetup` details |
 | Agent turn lifecycle | `AgentTurnStartedEvent`, `AgentTurnFinishedEvent` | default | started is live-only by default; finished is durable and canonical in thread scope |
 | Text streaming | `TextMessageStartEvent`, `TextDeltaEvent`, `TextMessageEndEvent` | streaming | canonical in thread scope |
 | Reasoning streaming | `ReasoningMessageStartEvent`, `ReasoningDeltaEvent`, `ReasoningMessageEndEvent` | streaming | canonical in thread scope |

@@ -5,7 +5,7 @@ Built-in harnesses are ready-made tool groups for common agent capabilities.
 | Harness | Use it for | Status |
 | --- | --- | --- |
 | Coding | Workspace-aware read, search, edit, and command workflows | Use with permissions and sandboxing |
-| FileSystem | Legacy explicit filesystem operations | Deprecated in `0.9.5`; migrate to Coding or an application-owned harness |
+| FileSystem | Legacy explicit filesystem operations | Deprecated in `0.9.7`; migrate to Coding or an application-owned harness |
 | Coding TUI | TUI renderers and controls for coding harness events | Compose into the TUI registry |
 | WebSearch | Public web search through Tavily | Use with an explicit Tavily key or `Tavily:ApiKey` configuration |
 
@@ -43,7 +43,7 @@ Filesystem and coding tools can mutate files or run processes. Start with:
 - shell disabled unless the workflow truly needs it
 
 Do not use the legacy `HPD-Agent.ToolHarness.FileSystem` package as a sandbox. Its
-`FileSystemTools` and `FileSystemContext` types are obsolete in `0.9.5` and do not provide
+`FileSystemTools` and `FileSystemContext` types are obsolete in `0.9.7` and do not provide
 reliable physical path containment, symlink protection, or safe shell isolation.
 
 ```csharp

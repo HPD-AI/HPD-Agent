@@ -112,7 +112,7 @@ Prefer `IterationOptions` for cyclic and change-aware workflows:
 }
 ```
 
-In `0.9.5`, `settings.iterationOptions` and `settings.maxConcurrency` are wired into direct workflow execution. `settings.maxIterations`, `settings.defaultTimeout`, `settings.enableMetrics`, and `settings.streamingMode` are present in the config model but are not applied by `AgentWorkflowInstance`. Use fluent `WithMaxIterations(...)` and `WithTimeout(...)` when the direct runtime must honor those limits.
+In `0.9.7`, `settings.iterationOptions` and `settings.maxConcurrency` are wired into direct workflow execution. `settings.maxIterations`, `settings.defaultTimeout`, `settings.enableMetrics`, and `settings.streamingMode` are present in the config model but are not applied by `AgentWorkflowInstance`. Use fluent `WithMaxIterations(...)` and `WithTimeout(...)` when the direct runtime must honor those limits.
 
 ## Durable Execution
 

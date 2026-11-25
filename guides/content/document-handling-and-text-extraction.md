@@ -1,7 +1,7 @@
 # Document Handling And Text Extraction
 
 HPD Agent can carry document bytes as attachments, but document text extraction is not
-built into `HPD-Agent.Framework` `0.9.5`. Applications that need extracted text in model
+built into `HPD-Agent.Framework` `0.9.7`. Applications that need extracted text in model
 context use `HPD-Extract` or another extractor before submission, or add an
 application-owned middleware that performs extraction before the model iteration.
 
@@ -11,7 +11,7 @@ Use HPD Extract for decoding the document.
 ## Packages
 
 ```bash
-dotnet add package HPD-Agent.Framework --version 0.9.5
+dotnet add package HPD-Agent.Framework --version 0.9.7
 dotnet add package HPD-Extract --version 0.1.0
 ```
 
@@ -93,6 +93,6 @@ also use a configured OCR executor for scanned or low-quality pages.
 ## Boundaries
 
 - Registered decoder families do not guarantee useful output for every file variant.
-- HPD Agent `0.9.5` has no `WithDocumentHandling()` middleware or automatic
+- HPD Agent `0.9.7` has no `WithDocumentHandling()` middleware or automatic
   `DocumentProcessedEvent` injection into model context.
 - Validate the exact PDF, Office, HTML, and image fixtures used by the application.

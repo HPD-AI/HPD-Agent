@@ -152,6 +152,32 @@ Configuration capitalization is mechanical. Prefer the exact provider key in doc
 
 Secret resolution happens when a run first needs a provider client, not while the agent is built. This means an application can build an agent without a provider or credential, and a configured default that is never selected never contacts its provider.
 
+## Setup Failures
+
+Client setup failures use the same structured contract across providers. A provider configuration, model, local model path, client-family, or payload problem throws `ClientSetupException`. Credential and authorization failures throw `ProviderAuthenticationException`. Both implement `IClientSetupFailure` and expose a `ClientSetupDiagnostic`.
+
+The diagnostic includes a stable `Code`, safe `Message`, optional `Guidance`, and relevant context such as the client family, provider, backend, model, configuration path, and individual provider validation issues. Read those fields directly; do not classify failures by matching message text.
+
+`RunAsync(...)` still throws these failures to a direct caller after recording the turn failure. A console or other direct host must catch the exception when it wants to remain alive:
+
+```csharp
+using HPD.Agent.Providers;
+
+try
+{
+    await agent.RunAsync("Say hello.");
+}
+catch (Exception exception) when (exception is IClientSetupFailure setupFailure)
+{
+    var diagnostic = setupFailure.Diagnostic;
+    Console.Error.WriteLine($"[{diagnostic.Code}] {diagnostic.Message}");
+    if (!string.IsNullOrWhiteSpace(diagnostic.Guidance))
+        Console.Error.WriteLine(diagnostic.Guidance);
+}
+```
+
+Hosted event observers receive the same safe details on `MessageTurnErrorEvent.ClientSetup`. Provider authors return `ProviderValidationIssue` values from `ValidateConfiguration(...)`; each issue has a stable code, configuration path, safe message, and optional guidance.
+
 ## Selecting A Static Credential
 
 Use the portable authentication union on `ProviderReference` when a host has independently selectable credentials such as personal, work, or tenant-specific API keys. The selection contains a secret-resolver key, never the secret value:
@@ -192,7 +218,7 @@ Provider creation can resolve secrets from environment variables or configuratio
 | Bedrock | Region env such as `AWS_REGION` / `AWS_DEFAULT_REGION` is accepted; credentials normally flow through the AWS SDK default credential chain. |
 | Ollama | `OLLAMA_ENDPOINT` / `OLLAMA_HOST` apply to fluent `.WithOllama(...)`; JSON/config setup should include `Endpoint` when not using localhost. |
 
-Keep an explicit credential diagnostic in application code when you need a friendlier error before the first run.
+Catch `IClientSetupFailure` at a direct host boundary and present its `ClientSetupDiagnostic`. Do not add a second provider-specific diagnostic system or infer missing credentials from an opaque custom client.
 
 ## Related Guides
 

@@ -39,7 +39,7 @@ You can also call `app.MapHPDBots()` for generated adapters that registered an `
 
 ### Multi-Platform Analyzer Packaging Caveat
 
-In the published `0.9.5` packages, each concrete bot package includes a copy of
+In the published `0.9.7` packages, each concrete bot package includes a copy of
 `HPD-Agent.Bots.SourceGenerator` as an analyzer. Referencing multiple concrete bot
 packages in one project can therefore run the generator more than once and produce
 duplicate `BotRegistry` and adapter registration types.
@@ -47,8 +47,8 @@ duplicate `BotRegistry` and adapter registration types.
 Current workaround:
 
 ```xml
-<PackageReference Include="HPD-Agent.Bots.Slack" Version="0.9.5" ExcludeAssets="analyzers" />
-<PackageReference Include="HPD-Agent.Bots.Discord" Version="0.9.5" ExcludeAssets="analyzers" />
+<PackageReference Include="HPD-Agent.Bots.Slack" Version="0.9.7" ExcludeAssets="analyzers" />
+<PackageReference Include="HPD-Agent.Bots.Discord" Version="0.9.7" ExcludeAssets="analyzers" />
 ```
 
 Keep the analyzer from `HPD-Agent.Bots.Abstractions` once when the application defines

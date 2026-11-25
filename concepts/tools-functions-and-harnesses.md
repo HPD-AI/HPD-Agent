@@ -1,5 +1,6 @@
 # Tools, Functions, And Harnesses
 
+
 HPD Agent exposes work to a model as functions. A function is a callable `AIFunction` with a name, description, JSON argument schema, execution delegate, and HPD metadata.
 
 A tool is the model-facing callable capability. In native .NET code, a tool is usually a public method marked with `[AIFunction]`. The method becomes an `AIFunction` during agent build.
@@ -80,9 +81,9 @@ Policies:
 | --- | --- | --- |
 | `SynchronousOnly` | Original function schema | Final function result |
 | `BackgroundOnly` | Original function schema | Background launch receipt |
-| `ModelChoice` | Original function schema plus `invocationMode` | Final function result or background launch receipt |
+| `ModelChoice` | `arguments` and `invocation.mode` envelope | Final function result or background launch receipt |
 
-When `ModelChoice` is used, the model can pass `"invocationMode": "background"` to start the work and continue immediately. HPD strips `invocationMode` before binding method parameters, registers runtime-owned background work, and delivers the completion later through [Background Tasks And Notifications](background-tasks-and-notifications.md).
+With `ModelChoice`, the model places the original tool arguments in `arguments` and selects `"background"` using `invocation.mode`. HPD unwraps the arguments before binding method parameters, registers runtime-owned background work, and delivers the completion later through [Background Tasks And Notifications](background-tasks-and-notifications.md).
 
 Most functions should use the default `SynchronousOnly`. Use background invocation only when the function can safely continue without the parent model waiting on the call.
 

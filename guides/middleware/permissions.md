@@ -1,8 +1,9 @@
 # Permissions Middleware
 
+
 Permissions are HPD's call-level authorization gate. A function can be admitted
 only after HPD resolves its effective permission binding, evaluates the exact
-validated invocation, records the decision, and issues an invocation-bound
+prepared invocation, records the decision, and issues an invocation-bound
 grant.
 
 Permissions answer one question:
@@ -128,11 +129,11 @@ function:
 ```csharp
 using HPD.Agent.Permissions;
 
-[PermissionPolicyDefinition("acme.reports.write.v1")]
+[PermissionPolicyDefinition("acme.reports.write.v1", SemanticVersion = "1")]
 public sealed class ReportWritePolicy : IPermissionPolicy
 {
     public ValueTask<PermissionPolicyResult> EvaluateAsync(
-        ValidatedPermissionInput input,
+        PreparedPermissionInput input,
         PermissionEvaluationContext context,
         CancellationToken cancellationToken)
     {
@@ -176,6 +177,10 @@ public Task WriteReport(string path, string body)
     // Tool body.
 }
 ```
+
+`PreparedPermissionInput` provides `EffectiveArguments`, `InputContractKind`, `Validation`, and `IngressProvenance` so policies can check the evidence available for the call. For an external tool, `StructuralOnly` means HPD checked the argument structure; it does not mean HPD validated the external schema. Policies can require stronger evidence when needed.
+
+Declare a stable `SemanticVersion` to offer reusable approvals, and change it when the policy's authorization semantics change. Without a version, reusable approval choices are filtered out. Policies implementing `IValidatedPermissionRulePolicy` receive `PreparedPermissionInput` in `MatchesStoredDecision` as well.
 
 An Ask result is validated before it is shown:
 

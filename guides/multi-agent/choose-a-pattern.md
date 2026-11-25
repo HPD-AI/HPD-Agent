@@ -1,5 +1,6 @@
 # Choose A Composition Pattern
 
+
 HPD gives you several ways to compose capabilities. Pick the smallest surface that gives the application the control it needs.
 
 ## Quick Choice
@@ -109,7 +110,7 @@ public sealed class WorkflowTools
 }
 ```
 
-The parent sees one workflow tool with an `input` argument. With `ModelChoice`, the schema also exposes `invocationMode` so the parent can choose `"synchronous"` or `"background"` per call. Synchronous calls return the final workflow text as the tool result. Background calls return a launch receipt immediately, then deliver completion through background task notifications.
+The parent sees one workflow tool with an `input` argument. With `ModelChoice`, the schema wraps the input in `arguments` and exposes `invocation.mode` so the parent can choose `"synchronous"` or `"background"` per call. Synchronous calls return the final workflow text as the tool result. Background calls return a launch receipt immediately, then deliver completion through background task notifications.
 
 See [Multi-Agent Capabilities](../tools/multi-agent-capabilities.md).
 

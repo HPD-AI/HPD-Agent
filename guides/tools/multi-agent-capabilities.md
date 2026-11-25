@@ -1,5 +1,6 @@
 # Multi-Agent Capabilities
 
+
 `[MultiAgent]` lets a tool harness expose a workflow as a model-callable capability. The parent agent sees a normal tool. When the tool runs synchronously, HPD executes the workflow and can stream workflow and child-agent events through the parent event path.
 
 Use this page when a parent agent should decide whether to run a workflow. Use [Build A Multi-Agent Workflow](../multi-agent/build-a-workflow.md) when application code should run the workflow directly.
@@ -74,7 +75,7 @@ Policies:
 | --- | --- | --- |
 | `SynchronousOnly` | `input` | Final workflow text |
 | `BackgroundOnly` | `input` | Background launch receipt |
-| `ModelChoice` | `input`, `invocationMode` | Final workflow text or background launch receipt |
+| `ModelChoice` | `arguments.input`, `invocation.mode` | Final workflow text or background launch receipt |
 
 For background calls, the workflow starts as runtime-owned background work. The immediate tool result is an `AgentOperationReceipt` with the authoritative `OperationId`; the final workflow text is delivered later through agent-operation notifications.
 

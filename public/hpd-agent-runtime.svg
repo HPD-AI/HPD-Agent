@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="520" viewBox="0 0 920 520" fill="none">
+  <defs>
+    <linearGradient id="surface" x1="138" y1="34" x2="805" y2="493" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#14263A"/>
+      <stop offset="1" stop-color="#0D1723"/>
+    </linearGradient>
+    <linearGradient id="agent" x1="265" y1="136" x2="552" y2="328" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1E4161"/>
+      <stop offset="1" stop-color="#173149"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="260" y1="108" x2="481" y2="367" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#55D5C6"/>
+      <stop offset="1" stop-color="#79A8FF"/>
+    </linearGradient>
+    <filter id="shadow" x="0" y="0" width="920" height="520" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="20" stdDeviation="22" flood-color="#07111B" flood-opacity=".34"/>
+    </filter>
+  </defs>
+  <rect x="30" y="28" width="860" height="464" rx="28" fill="url(#surface)" stroke="#36516B"/>
+  <path d="M31 93H889" stroke="#36516B"/>
+  <circle cx="62" cy="61" r="6" fill="#FF6C67"/>
+  <circle cx="84" cy="61" r="6" fill="#E9B44B"/>
+  <circle cx="106" cy="61" r="6" fill="#4CCB8A"/>
+  <text x="137" y="66" fill="#A9BDD0" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="700" letter-spacing="1.2">HPD AGENT · LIVE RUN</text>
+  <rect x="708" y="46" width="151" height="30" rx="15" fill="#173F3E"/>
+  <circle cx="725" cy="61" r="4" fill="#54D6B3"/>
+  <text x="738" y="65" fill="#A9E7D3" font-family="Inter,Arial,sans-serif" font-size="11" font-weight="700">SESSION ACTIVE</text>
+
+  <rect x="65" y="126" width="197" height="92" rx="16" fill="#182A3C" stroke="#38526B"/>
+  <text x="84" y="153" fill="#8FA9BF" font-family="Inter,Arial,sans-serif" font-size="10" font-weight="700" letter-spacing="1.3">YOUR APPLICATION</text>
+  <text x="84" y="181" fill="#F3F7FA" font-family="Inter,Arial,sans-serif" font-size="16" font-weight="700">User request</text>
+  <text x="84" y="200" fill="#9EB3C5" font-family="Inter,Arial,sans-serif" font-size="12">“Plan a weekend in Chicago”</text>
+
+  <path d="M262 172H302" stroke="#5CCFC1" stroke-width="2"/>
+  <circle cx="282" cy="172" r="4" fill="#5CCFC1"/>
+
+  <g filter="url(#shadow)">
+  <rect x="342" y="126" width="393" height="218" rx="20" fill="url(#agent)" stroke="#4E718D"/>
+    <rect x="366" y="148" width="36" height="36" rx="11" fill="#1C5361"/>
+    <path d="M384 155L387 164L396 167L387 170L384 179L381 170L372 167L381 164L384 155Z" fill="url(#accent)"/>
+    <text x="414" y="161" fill="#8EABBF" font-family="Inter,Arial,sans-serif" font-size="10" font-weight="700" letter-spacing="1.3">AGENT RUNTIME</text>
+    <text x="414" y="181" fill="#F5F8FA" font-family="Inter,Arial,sans-serif" font-size="16" font-weight="700">Trip planning assistant</text>
+    <path d="M366 198H711" stroke="#3B5D78"/>
+    <text x="368" y="222" fill="#C8D7E2" font-family="Inter,Arial,sans-serif" font-size="12">I’ll check the forecast and look for nearby events.</text>
+    <rect x="366" y="240" width="181" height="39" rx="10" fill="#12273A" stroke="#3A5E78"/>
+    <circle cx="384" cy="259" r="5" fill="#70B3FF"/>
+    <text x="397" y="256" fill="#88A8C0" font-family="Inter,Arial,sans-serif" font-size="9" font-weight="700" letter-spacing="1">TOOL CALL</text>
+    <text x="397" y="270" fill="#E1EAF0" font-family="Inter,Arial,sans-serif" font-size="11" font-weight="600">get_weather(Chicago)</text>
+    <rect x="556" y="240" width="155" height="39" rx="10" fill="#19363D" stroke="#3F7777"/>
+    <circle cx="574" cy="259" r="5" fill="#62D3B3"/>
+    <text x="587" y="256" fill="#90C8BB" font-family="Inter,Arial,sans-serif" font-size="9" font-weight="700" letter-spacing="1">CONVERSATION</text>
+    <text x="587" y="270" fill="#D8E8E3" font-family="Inter,Arial,sans-serif" font-size="11" font-weight="600">Session · Thread</text>
+    <rect x="366" y="293" width="345" height="31" rx="9" fill="#142B3C"/>
+    <circle cx="382" cy="309" r="4" fill="#58D4B8"/>
+    <text x="394" y="313" fill="#B1C8D8" font-family="Inter,Arial,sans-serif" font-size="11">Streaming response and tool activity</text>
+  </g>
+
+  <path d="M538 344V376M538 376H120M538 376H798M120 376V393M290 376V393M460 376V393M630 376V393M800 376V393" stroke="#49677E" stroke-width="1.5" stroke-dasharray="4 5"/>
+  <circle cx="538" cy="376" r="4" fill="#66BDBA"/>
+  <rect x="48" y="393" width="144" height="68" rx="14" fill="#182A3C" stroke="#38526B"/>
+  <text x="62" y="417" fill="#79A9D3" font-family="Inter,Arial,sans-serif" font-size="9" font-weight="700" letter-spacing="1">MODEL</text>
+  <text x="62" y="441" fill="#F1F5F8" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="600">Hosted or local</text>
+  <rect x="218" y="393" width="144" height="68" rx="14" fill="#182A3C" stroke="#38526B"/>
+  <text x="232" y="417" fill="#79D2C1" font-family="Inter,Arial,sans-serif" font-size="9" font-weight="700" letter-spacing="1">ACTIONS</text>
+  <text x="232" y="441" fill="#F1F5F8" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="600">Tools and services</text>
+  <rect x="388" y="393" width="144" height="68" rx="14" fill="#182A3C" stroke="#38526B"/>
+  <text x="402" y="417" fill="#C1A7F3" font-family="Inter,Arial,sans-serif" font-size="9" font-weight="700" letter-spacing="1">CONTEXT</text>
+  <text x="402" y="441" fill="#F1F5F8" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="600">Sessions · threads</text>
+  <rect x="558" y="393" width="144" height="68" rx="14" fill="#182A3C" stroke="#38526B"/>
+  <text x="572" y="417" fill="#F1B775" font-family="Inter,Arial,sans-serif" font-size="9" font-weight="700" letter-spacing="1">CONTROL</text>
+  <text x="572" y="441" fill="#F1F5F8" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="600">Middleware · policy</text>
+  <rect x="728" y="393" width="144" height="68" rx="14" fill="#182A3C" stroke="#38526B"/>
+  <text x="742" y="417" fill="#71D6C1" font-family="Inter,Arial,sans-serif" font-size="9" font-weight="700" letter-spacing="1">EVALUATE</text>
+  <text x="742" y="441" fill="#F1F5F8" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="600">Quality · safety</text>
+</svg>

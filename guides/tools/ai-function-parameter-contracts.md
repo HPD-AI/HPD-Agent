@@ -1,5 +1,6 @@
 # AI Function Parameter Contracts
 
+
 An `[AIFunction]` method is a compiled protocol between the model and the tool implementation. HPD's source generator emits the model-facing JSON Schema, a strict argument binder, the typed argument carrier, and the invocation adapter from the same C# signature.
 
 Use this page when deciding how to represent tool parameters. For harness registration and construction, see [Author A Tool Harness](author-a-tool-harness.md). For generation and Native AOT behavior, see [Source Generation, AOT, And Trimming](source-generation-aot-and-trimming.md).
@@ -240,7 +241,7 @@ Use `FunctionExecutionContext` for call metadata, events, services, content stor
 
 ## Framework Invocation Mode Is Separate
 
-`AgentInvocationModePolicy.ModelChoice` adds a framework control named `invocationMode`. It decides whether HPD waits for the function result or registers runtime-owned background work.
+`AgentInvocationModePolicy.ModelChoice` exposes the framework control `invocation.mode` in a model-facing envelope. It decides whether HPD waits for the function result or registers runtime-owned background work.
 
 It is not a normal method parameter, and it is not the same as a domain parameter such as a command's `executionMode`.
 
@@ -253,12 +254,12 @@ The model may call it with:
 
 ```json
 {
-  "path": "src",
-  "invocationMode": "background"
+  "arguments": { "path": "src" },
+  "invocation": { "mode": "background" }
 }
 ```
 
-HPD removes the framework control before generated argument binding.
+HPD unwraps the envelope before generated argument binding. Host-selected modes do not require this model-facing envelope. Schemas with references or identifiers that cannot be safely embedded are rejected for model choice.
 
 ## Strict Binding Rules
 

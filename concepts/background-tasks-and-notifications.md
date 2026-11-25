@@ -1,5 +1,6 @@
 # Agent Operations, Background Work, And Notifications
 
+
 HPD uses `AgentOperation` as the common model for work that can outlive the call that started
 it. The same aggregate describes provider background responses, background tool invocations,
 subagents, workflows, MCP tasks, and other long-running operations.
@@ -67,7 +68,7 @@ The policies are:
 | --- | --- |
 | `SynchronousOnly` | Wait for the result before continuing the model turn. |
 | `BackgroundOnly` | Register the work and immediately return an operation receipt. |
-| `ModelChoice` | Expose `invocationMode` so the model chooses synchronous or background execution. |
+| `ModelChoice` | Expose `invocation.mode` in the model-facing envelope so the model chooses synchronous or background execution. |
 
 Background invocation returns an `AgentOperationReceipt` to the model instead of waiting for the
 function or child-agent result. HPD commits an `AgentOperationRegisteredEvent` before the work

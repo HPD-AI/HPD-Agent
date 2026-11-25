@@ -1,5 +1,6 @@
 # Coding Harness
 
+
 The coding harness gives an agent workspace-aware coding tools. Use it for agents that inspect files, edit files, search a repository, or run commands.
 
 ## Register The Harness
@@ -171,7 +172,7 @@ Use `executionMode: "Background"` on the `run` branch for long-running commands 
 }
 ```
 
-`executionMode` controls the spawned process. It is separate from the framework-level `invocationMode` control used by functions configured with `AgentInvocationModePolicy.ModelChoice`.
+`executionMode` controls the spawned process. It is separate from the framework-level `invocation.mode` control used by functions configured with `AgentInvocationModePolicy.ModelChoice`.
 
 Background command results include:
 

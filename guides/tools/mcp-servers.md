@@ -1,5 +1,6 @@
 # MCP Servers
 
+
 Use `HPD-Agent.MCP` to consume Model Context Protocol servers as HPD Agent
 capabilities. MCP tools, resources, and prompts become HPD-managed
 `AIFunction`s and participate in the same visibility, permission, retry, and
@@ -311,8 +312,9 @@ Local invocation policy is configured per server or exact tool:
 ```
 
 Policies are `synchronousOnly`, `backgroundOnly`, and `modelChoice`. In
-`modelChoice`, HPD adds an `invocationMode` field and removes it before calling
-the server.
+`modelChoice`, HPD wraps tool arguments in `arguments` and exposes an
+`invocation.mode` control to the model. HPD unwraps the envelope before calling
+the server, preserving the server’s own argument names.
 
 Remote MCP Tasks are inert until explicitly enabled:
 

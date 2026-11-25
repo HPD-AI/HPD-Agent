@@ -1,5 +1,6 @@
 # Subagents
 
+
 A subagent is a real HPD agent exposed to a parent agent as a tool. The parent model sees one generated function with an `input` argument. By default, when the model calls it, HPD builds or loads the child agent, creates an agent-owned child thread using the configured context policy, streams child events through the parent event path, and returns the child answer as the tool result.
 
 Use subagents when the parent should delegate to a specialist during normal tool calling. Use multi-agent workflows when the whole task should follow an explicit graph of roles and routes.
@@ -186,14 +187,14 @@ Policies:
 | --- | --- | --- |
 | `SynchronousOnly` | `input` | Final child text |
 | `BackgroundOnly` | `input` | Background launch receipt |
-| `ModelChoice` | `input`, `invocationMode` | Final child text or background launch receipt |
+| `ModelChoice` | `arguments.input`, `invocation.mode` | Final child text or background launch receipt |
 
 For `ModelChoice`, the model can pass:
 
 ```json
 {
-  "input": "Review this draft.",
-  "invocationMode": "background"
+  "arguments": { "input": "Review this draft." },
+  "invocation": { "mode": "background" }
 }
 ```
 

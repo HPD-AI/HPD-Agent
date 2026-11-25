@@ -40,11 +40,24 @@ toolHarnesses:
         defaultTimeout: "00:02:00"
       glob:
         maxTraversalEntries: 20000
+      editFile:
+        maxEdits: 20
+        maxRecoveryCandidates: 20
+        maxReplacementCandidates: 20000
+        recovery:
+          quoteNormalization: true
+          indentationOnlyBlock: true
+      files:
+        maxMutableFileBytes: 52428800
+        maxEventSnapshotChars: 500000
+        maxEventHunks: 200
       languageServer:
         enabled: true
 ```
 
-Command and glob settings are run-overridable. Environment and language-server settings are construction-only unless their contract marks a nested field otherwise.
+Command, glob, edit, and file-mutation settings are run-overridable. Environment and language-server settings are construction-only unless their contract marks a nested field otherwise.
+
+Edit settings control batch and candidate limits plus optional deterministic recovery strategies. File settings apply to both `EditFile` and `WriteFile` and control mutation size and event/diff budgets. Read-before-edit enforcement, source-version validation, overlap protection, and atomic failure behavior remain mandatory and cannot be disabled through settings.
 
 For one run:
 

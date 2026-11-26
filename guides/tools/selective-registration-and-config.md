@@ -124,17 +124,30 @@ toolHarnesses:
 
 The middleware constructor declares that section with `[HarnessConfigurationSection]`. Consumers do not configure the middleware implementation directly.
 
-`middlewareConfigs` remains a compatibility path for middleware without a typed harness section:
+`middlewareConfigs` remains the older constructor-config lane for harness-owned
+middleware without a typed harness section:
 
 ```yaml
 toolHarnesses:
   - name: DatabaseToolHarness
     middlewareConfigs:
-      LegacyDatabaseMiddleware:
+      DatabaseRateLimitMiddleware:
+        requestsPerMinute: 20
+      DatabaseAuditMiddleware:
         auditLevel: detailed
 ```
 
-Supplying both the typed section and a legacy `middlewareConfigs` value for the same middleware fails with `HarnessConfigurationConflict`.
+Each key must identify middleware owned by the selected ToolHarness. It is not
+a built-in middleware name or a framework-version selector. Replace the sample
+names with the actual middleware classes and fields from your provider or
+harness package.
+
+This is agent construction configuration. It is not available through
+`AgentRunConfig.Harnesses` or `SubAgentRunConfig.Harnesses`; those run-level
+surfaces patch typed harness settings instead.
+
+Supplying both the typed section and a `middlewareConfigs` value for the same
+middleware fails with `HarnessConfigurationConflict`.
 
 ## Composition
 

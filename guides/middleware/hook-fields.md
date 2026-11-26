@@ -18,7 +18,7 @@ Turn, iteration, function, thread-fork, and error hooks derive from
 | `MessageTurnId` | Durable message-turn identity |
 | `Config` | Agent-level configuration |
 | `ClientSet` | Resolved client-family instances |
-| `SubAgentRunConfig` | Direct subagent run configuration, when applicable |
+| `SubAgentRunConfigs` | Shared and exact direct-child run configurations, when applicable |
 | `Session`, `SessionId` | Session metadata and identity |
 | `Thread`, `ThreadId` | Current thread and identity |
 | `Services` | Agent/input child-scope service provider |
@@ -145,7 +145,7 @@ usage updates.
 | --- | --- |
 | `Function`, `FunctionName`, `CallId` | Invocation identity |
 | `Arguments` | Immutable argument dictionary |
-| `State`, `RunConfig`, `SubAgentRunConfig` | Agent and run context |
+| `State`, `RunConfig`, `SubAgentRunConfigs` | Agent and run context |
 | `Invocation`, `InvocationMode` | Batch and action/invocation-mode facts |
 | `PermissionGrant`, `PermissionRequired` | Permission admission facts |
 | `ResultMetadata` | Mutable per-call metadata side channel |

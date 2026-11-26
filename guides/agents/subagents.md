@@ -82,12 +82,14 @@ Availability is enforced both in the model-facing tool projection and again duri
 
 ## Configure Direct Child Runs
 
-`SubAgentRunConfig` is the per-input configuration for every direct child
-invoked while processing that parent input:
+`SubAgentRunConfig` entries are supplied as one per-input collection. Use
+`SubAgentTarget.All` for a shared direct-child baseline and an exact target
+when only one declaration should receive the overlay:
 
 ```csharp
 var childRun = new SubAgentRunConfig
 {
+    Target = SubAgentTarget.All,
     SystemInstructions = new SystemInstructionsRunConfig
     {
         Append = "Report concrete review findings first."
@@ -100,20 +102,125 @@ var childRun = new SubAgentRunConfig
 
 await parentAgent.RunAsync(
     "Review the current change.",
-    subAgentRunConfig: childRun);
+    subAgentRunConfigs: [childRun]);
 ```
 
-The child still owns its complete `AgentConfig`. `SubAgentRunConfig` provides
-per-invocation values, and parent and child security authority is intersected
-so a child cannot silently broaden the controller's permissions.
+Target one source declaration by its owning harness type and declaration
+member:
+
+```csharp
+var sharedSecurity = new AgentSecurityRunConfig
+{
+    Approval = AgentApprovalPolicy.ReviewProtectedActions
+};
+
+var reviewerSecurity = new AgentSecurityRunConfig
+{
+    Approval = AgentApprovalPolicy.ReviewProtectedActions,
+    Sandbox = new AgentSandboxRunConfig
+    {
+        Escape = AgentSandboxEscapePolicy.Deny
+    }
+};
+
+await parentAgent.RunAsync(
+    "Review the current change.",
+    subAgentRunConfigs:
+    [
+        new SubAgentRunConfig
+        {
+            Target = SubAgentTarget.All,
+            Security = sharedSecurity
+        },
+        new SubAgentRunConfig
+        {
+            Target = SubAgentTarget.Declared<CodingToolHarness>(
+                nameof(CodingToolHarness.Reviewer)),
+            Security = reviewerSecurity
+        }
+    ]);
+```
+
+An exact entry overlays the shared baseline only for that declaration. Use
+`SubAgentTarget.Agent("coding/worker")` only when that `AgentId` identifies one
+direct-child declaration; ambiguous identifiers fail and require the
+declaration target. Model-facing action names are not target identities.
+
+### Target Identity
+
+The public targeting surface is deliberately limited to:
+
+- `SubAgentTarget.All`
+- `SubAgentTarget.Agent(agentId)`
+- `SubAgentTarget.Declared<T>(nameof(Member))`
+
+Declaration identity combines the owning ToolHarness activation identity with
+the `[SubAgent]` source member. Changing the model-facing action or description
+does not change that identity. Renaming or moving the declaration member does.
+Capability IDs are internal and are not accepted by the authoring API.
+
+The complete declaration catalog is validated before parent input admission.
+Unknown, duplicate, malformed, and ambiguous targets fail before a child
+creation reservation or dispatch. Important codes include:
+
+- `subagent_target_not_found`
+- `subagent_target_ambiguous`
+- `subagent_target_duplicate`
+- `subagent_target_catalog_required`
+
+The child still owns its complete `AgentConfig`. Parent and child security
+authority is intersected so a child cannot silently broaden the controller's
+permissions.
+
+Direct children inherit every configured parent client family through ordinary
+immediate-parent fallback, including families the parent has not constructed
+yet. To exclude one inherited family, opt out explicitly for that target:
+
+```csharp
+var reviewerRun = new SubAgentRunConfig
+{
+    Target = SubAgentTarget.Declared<CodingToolHarness>(
+        nameof(CodingToolHarness.Reviewer)),
+    ClientInheritance = new AgentClientInheritance
+    {
+        ImageGeneration = ClientFamilyInheritanceMode.UseOwn
+    },
+    Clients = new AgentClientsConfig
+    {
+        Chat = reviewerChat
+    }
+};
+```
+
+`UseOwn` removes only the named family's parent fallback. An explicit selection
+for that family still applies. Provider payloads and operation options are
+snapshotted through the generated provider contract and restored before the
+child executes.
+
+Inheritance applies to all client families, not only Chat: realtime, image
+generation, embeddings, speech, hosted files, voice activity, and end-of-turn
+detection follow the same immediate-parent rule. A configured parent family is
+visible to the child even if no client has been constructed yet.
+
+A provider profile by itself is a baseline, not a selection. A profile is used
+when the family has an explicit provider or a matching provider default. An
+unselected profile-only family remains absent instead of guessing a provider.
+
+Provider-owned payloads are durable for child execution. Process-local client
+overrides and credentials are not. Runtime-only payload members, such as ONNX
+`PromptFormatter`, fail child admission with a portability diagnostic rather
+than being silently dropped.
 
 There is no implicit inheritance of the parent's full `AgentRunConfig`. Pass
-only the portable child behavior the invocation should receive.
+only the portable non-client child behavior the invocation should receive.
 
 `AgentRunConfig.Harnesses` is not inherited implicitly. Configure direct child harness settings explicitly through `SubAgentRunConfig.Harnesses`:
 
 ```csharp
-var childRun = new SubAgentRunConfig();
+var childRun = new SubAgentRunConfig
+{
+    Target = SubAgentTarget.All
+};
 
 childRun.Harnesses
     .For<SearchHarness>()
@@ -124,7 +231,7 @@ childRun.Harnesses
 
 await parentAgent.RunAsync(
     "Research this question",
-    subAgentRunConfig: childRun);
+    subAgentRunConfigs: [childRun]);
 ```
 
 The override is resolved against the child's registered harness owner. It does not copy the parent's harness identity or configuration handle. The child keeps its own dependencies, middleware, construction settings, and configuration baseline.
@@ -150,16 +257,90 @@ var childRun = new SubAgentRunConfig
 The equivalent serialized direct-child setting is:
 
 ```yaml
-subAgentRunConfig:
-  harnesses:
-    - name: SearchHarness
-      config:
-        maxResults: 5
+subAgentRunConfigs:
+  - target:
+      kind: all
+    harnesses:
+      - name: SearchHarness
+        config:
+          maxResults: 5
 ```
+
+### Descendant Overrides
+
+`DescendantDefaults` carries explicit behavior to further descendants. Exact
+target settings overlay the shared `All` descendant settings field by field, so
+an exact target can change one descendant policy without erasing unrelated
+shared defaults.
+
+Chat propagation is a separate, Chat-only control:
+
+```csharp
+var forcedChat = new SubAgentRunConfig
+{
+    Target = SubAgentTarget.All,
+    Clients = new AgentClientsConfig { Chat = coordinatedChat },
+    ClientPropagation = SubAgentClientPropagation.ThroughDepth(3)
+};
+```
+
+Depth counts from the override origin:
+
+- `DirectChildren`
+- `ThroughDepth(n)`
+- `EntireTree`
+
+An explicit propagated Chat selection wins over stored child defaults while
+the scope is active. When several authorized overrides overlap, the nearer
+override wins for its admitted depth. Its scope can then expire while an outer
+scope resumes. These ordered scopes are persisted through continuation and
+supported recovery.
+
+Other client families are never forced through this Chat-only control. They
+continue to use ordinary immediate-parent fallback.
 
 The child must register the named harness. Missing or ambiguous owners fail with a child-specific configuration path before a child harness tool executes.
 
 For synchronous calls, the tool result is the child agent's text response. HPD also records subagent metadata on the tool result, including `subAgentStatus`, `subAgentSessionId`, `subAgentThreadId`, `subAgentName`, and `invocationId`.
+
+## Execution And Definition Updates
+
+The targeted collection is normalized and snapshotted when the parent input is
+admitted. Mutating, clearing, or reordering the caller's collection afterward
+does not alter the admitted run.
+
+Each admitted child execution freezes the effective provider selections,
+provider payloads, target provenance, security authority, and propagation
+scopes it will use. A durable retry uses that admitted policy or fails
+explicitly; it does not silently replace it with newer settings.
+
+Managed agent updates follow the main-agent runtime lifecycle:
+
+- An active execution keeps the runtime it acquired and finishes consistently.
+- A subsequent execution acquires a new runtime from the updated definition.
+- Obsolete builds that began before an update are discarded.
+- Runtime pins keep retired runtimes alive until active work and pending
+  interactions settle.
+
+Update definitions through `AgentManager`:
+
+```csharp
+await agentManager.UpdateDefinitionIfUnchangedAsync(
+    agentId,
+    expectedDefinition,
+    updatedConfig);
+```
+
+Writing directly through `IAgentStore.SaveAsync(...)` stores the definition but
+does not notify `AgentManager`, increment its runtime version, or invalidate
+cached runtimes. Hosts that inject an external store must route definition
+changes through the manager or provide their own coherent invalidation.
+
+Inline and parent-derived subagent definitions are materialized only when
+missing. A runtime build will not overwrite a newer authoritative stored
+definition; explicit management uses a concurrency-checked update instead.
+A `FromAgentId(...)` reference resolves the stored definition without writing
+over it.
 
 ## Invocation Mode
 
@@ -208,11 +389,15 @@ A subagent has three configuration sources. Every source still requires a stable
 
 | Source | Use When | What Happens |
 | --- | --- | --- |
-| `SubAgent.FromConfig(...)` | The specialist is defined next to the parent harness. | HPD builds a child agent from the inline `AgentConfig`. If the child config does not specify its own chat provider, it can inherit the parent chat client. |
+| `SubAgent.FromConfig(...)` | The specialist is defined next to the parent harness. | HPD builds a child agent from the inline `AgentConfig`. Missing client families use ordinary immediate-parent inheritance, including configured families not yet constructed. |
 | `SubAgent.FromParent(...)` | The specialist should use the effective parent configuration. | HPD stores an immutable serializable snapshot of the parent configuration as the child definition. Child harnesses can still extend it. |
 | `SubAgent.FromAgentId(...)` | The specialist is stored, managed, or reused outside this harness. | HPD loads the stored agent definition through the parent agent store, then runs it with the selected context, availability, and run-configuration policies. |
 
-Registering the parent tool harness materializes its supplied and parent-derived child definitions into `IAgentStore`. The definition records its owning harness/member and configuration fingerprint. Reusing one `AgentId` with a different owner or definition fails instead of silently replacing the agent. Inline config is best for local specialists that belong to one product surface. Stored agents are better when specialists are user-created, versioned, administered, or shared across parent agents.
+Registering the parent tool harness materializes its supplied and parent-derived child definitions into `IAgentStore`. The definition records its owning harness/member and configuration fingerprint. Reusing one `AgentId` with a different owner fails. Existing content with a different authoritative fingerprint is not overwritten during a runtime build; it must be updated through the agent definition manager.
+
+Inline config is best for local specialists that belong to one product surface.
+Stored agents are better when specialists are user-created, versioned,
+administered, or shared across parent agents.
 
 ## Add Child Tools
 
@@ -320,6 +505,7 @@ the direct child run:
 ```csharp
 var childRun = new SubAgentRunConfig
 {
+    Target = SubAgentTarget.All,
     HandoffCompaction = new CompactionSpecification
     {
         Point = new CompactAtCurrentHead(),
@@ -337,11 +523,62 @@ before invocation, so later caller mutation does not change an admitted child.
 
 See [Compaction](../sessions-and-streaming/compaction.md).
 
-## Permissions
+## Security And Permissions
 
-Subagent tools require permission by default because they can run another agent, call child tools, and write durable history. Treat permission prompts as a parent-level decision: the parent is asking to delegate work to the named specialist.
+`AgentSecurityRunConfig` controls approval and host isolation. It does not
+select a provider account; provider authentication remains under
+`Clients.<Family>.Provider.Authentication`.
 
-If you build a custom permission middleware, you can approve at whatever level your product needs: the subagent tool call, the generated input, the child's own tools, or a higher-level command signature stored in middleware state.
+```csharp
+var security = new AgentSecurityRunConfig
+{
+    Approval = AgentApprovalPolicy.ReviewProtectedActions,
+    Sandbox = new AgentSandboxRunConfig
+    {
+        Mode = AgentSandboxPolicy.Enforced,
+        Escape = AgentSandboxEscapePolicy.Deny,
+        Capabilities = new AgentSandboxConfiguration
+        {
+            Filesystem =
+            [
+                new AgentSandboxPathGrant
+                {
+                    Path = "src",
+                    Access = AgentSandboxPathAccess.Read
+                }
+            ],
+            Network = NetworkEgressPolicy.Blocked
+        }
+    }
+};
+```
+
+The security fields are:
+
+- `Approval`: prompt for protected operations or auto-approve them.
+- `Sandbox.Mode`: enforce host isolation or disable it.
+- `Sandbox.Escape`: ask for a narrow capability or deny anything outside the
+  active grants.
+- `Sandbox.Capabilities`: filesystem, network, and interactive process grants.
+- `PermissionOverrides`: per-function/action/authority decisions.
+- `CapabilityCeiling`: trusted runtime-only host authority; it cannot be
+  provided by serialized configuration.
+
+Subagent authority is intersected, not replaced:
+
+- A review requirement in any applicable layer remains required.
+- An enforced sandbox remains enforced.
+- A `Deny` escape policy remains denied.
+- Filesystem and interactive capabilities can only become narrower.
+- A target cannot use an exact override to broaden controller authority.
+
+Subagent tools also require permission by default because they can run another
+agent, call child tools, and write durable history. Treat prompts as a
+parent-level decision, while retaining the child’s own tool permission gate.
+
+If you build custom permission middleware, it may approve at the subagent tool,
+generated input, child tool, or a higher-level signed command boundary. It must
+not bypass the common function permission gate or expand admitted security.
 
 See [Permissions](../middleware/permissions.md) and [Bidirectional Events](../events/bidirectional-events.md).
 
@@ -362,6 +599,23 @@ Use multi-agent workflows when:
 - you want to run the workflow directly from app code or expose the whole graph through `[MultiAgent]`
 
 See [Multi-Agent Overview](../multi-agent/overview.md) and [Multi-Agent Capabilities](../tools/multi-agent-capabilities.md).
+
+## Pre-1.0 Contract
+
+There is one current subagent configuration format:
+
+- Inputs use `subAgentRunConfigs`; the previous singular broadcast parameter is
+  not retained.
+- Target values use `All`, `Agent(...)`, or `Declared<T>(...)`; raw capability
+  IDs are not public authoring inputs.
+- The current execution-policy and provider payload contracts are read
+  directly.
+- There are no legacy readers, compatibility revisions, migrations, or
+  retrofit paths.
+
+A new contract replaces the current one in a pre-1.0 cutover. Existing durable
+records from an incompatible earlier contract fail explicitly rather than being
+silently translated.
 
 ## Boundaries
 

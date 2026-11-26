@@ -268,7 +268,11 @@ Consumers configure that section:
 }
 ```
 
-`middlewareConfigs` remains available for legacy middleware without a typed harness section. Do not configure the same middleware through both paths.
+`middlewareConfigs` remains available for older harness middleware that has a
+config-constructor contract but no typed harness settings section. It is
+agent-construction configuration, not a run-level or subagent override. Prefer
+the typed harness `config` section, and do not configure the same middleware
+through both paths.
 
 ## Built-In Helpers
 

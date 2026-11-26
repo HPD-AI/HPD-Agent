@@ -14,7 +14,7 @@ This reference describes the common configuration and activation contract used b
 | `ToolHarnessDependencyAttribute` | Declares an agent-owned default dependency |
 | `ToolHarnessAgentResourceAttribute` | Declares an agent-lifetime resource available to harness middleware |
 | `HarnessRunOverride` | Portable serialized run override entry |
-| `SubAgentRunConfig` | Per-input run overrides for direct child agents |
+| `SubAgentRunConfigs` | Per-input shared and exact direct-child run overrides |
 | `SubAgentRunDefaults` | Explicit portable defaults for further descendants |
 
 ## Constructor Contract
@@ -70,14 +70,39 @@ toolHarnesses:
       maxResults: 20
     metadata:
       provider: internal
-    middlewareConfigs:
-      LegacyMiddleware:
-        enabled: true
 ```
 
-The property names are case-sensitive camelCase. `functions`, `metadata`, and `middlewareConfigs` are optional.
+The property names are case-sensitive camelCase. `functions`, `metadata`, and
+`middlewareConfigs` are optional.
 
-`middlewareConfigs` is the compatibility path for middleware outside a typed harness settings section. A typed section and a legacy config for the same middleware conflict.
+### Middleware Construction Configs
+
+Prefer the typed harness `config` section when the middleware declares a
+`[HarnessConfigurationSection]` contract.
+
+`middlewareConfigs` is the older supported construction lane for harness-owned
+middleware that has its own config-constructor contract but no typed harness
+settings section:
+
+```yaml
+toolHarnesses:
+  - name: DatabaseToolHarness
+    middlewareConfigs:
+      DatabaseRateLimitMiddleware:
+        requestsPerMinute: 20
+```
+
+The dictionary key is the middleware simple type name or a matching full-name
+suffix. Its value is passed to the middleware's generated
+config-constructor factory. The middleware must belong to the selected
+ToolHarness and expose a generated configuration contract.
+
+This is agent construction configuration, not a per-run override. It cannot be
+patched through `AgentRunConfig.Harnesses` or `SubAgentRunConfig.Harnesses`.
+Configure typed harness settings for run-level and targeted-child overrides.
+
+A typed harness settings value and a `middlewareConfigs` value for the same
+middleware conflict and fail with `HarnessConfigurationConflict`.
 
 ## Run Wire Shape
 
@@ -157,10 +182,15 @@ JSON and YAML configuration errors include line and column information.
 
 ## Subagent Overrides
 
-`SubAgentRunConfig` uses the same portable `harnesses` envelope for direct children:
+`SubAgentRunConfig` entries use the same portable `harnesses` envelope. Entries
+are supplied through `subAgentRunConfigs`; each entry must target the shared
+baseline or one exact declaration:
 
 ```csharp
-var childRun = new SubAgentRunConfig();
+var childRun = new SubAgentRunConfig
+{
+    Target = SubAgentTarget.All
+};
 
 childRun.Harnesses
     .For<SearchHarness>()
@@ -171,6 +201,27 @@ childRun.Harnesses
 ```
 
 The child binds the entry against its own registered owner catalog and creates a new runtime configuration binding. Matching the parent's harness type or display name is insufficient.
+
+An exact target overlays the `SubAgentTarget.All` entry field by field only for
+that declaration:
+
+```csharp
+var reviewerRun = new SubAgentRunConfig
+{
+    Target = SubAgentTarget.Declared<SearchToolHarness>(
+        nameof(SearchToolHarness.Researcher))
+};
+
+reviewerRun.Harnesses
+    .For<SearchHarness>()
+    .Override(new SearchSettingsOverrides
+    {
+        MaxResults = 5
+    });
+```
+
+Use the generated `.For<T>()` override helper so the harness identity and JSON
+shape are generated rather than handwritten.
 
 `SubAgentRunDefaults.Harnesses` carries explicit defaults to further descendants. Parent `AgentRunConfig.Harnesses` never propagates implicitly. Descendant defaults and a more specific child override are applied in that order using the normal patch and reset rules.
 

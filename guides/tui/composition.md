@@ -151,7 +151,7 @@ To configure direct child runs, set the second constructor argument:
 ```csharp
 tui.SetRunConfigComposer(context => new AgentTuiInputRunConfig(
     RunConfig: childRunConfig,
-    SubAgentRunConfig: new SubAgentRunConfig()));
+    SubAgentRunConfigs: [new SubAgentRunConfig { Target = SubAgentTarget.All }]));
 ```
 
 Return `null` when a prompt should use the runtime's existing defaults.

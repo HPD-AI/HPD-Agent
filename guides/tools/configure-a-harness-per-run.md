@@ -111,7 +111,10 @@ Reset pointers use RFC 6901 syntax. A reset cannot overlap a supplied value or a
 `SubAgentRunConfig.Harnesses` applies to direct child agents. It uses the same generated override types and patch rules as `AgentRunConfig.Harnesses`, but each named harness is resolved in the invoked child agent's registry:
 
 ```csharp
-var childRun = new SubAgentRunConfig();
+var childRun = new SubAgentRunConfig
+{
+    Target = SubAgentTarget.All
+};
 
 childRun.Harnesses
     .For<SearchHarness>()
@@ -122,7 +125,7 @@ childRun.Harnesses
 
 await parentAgent.RunAsync(
     "Research the request",
-    subAgentRunConfig: childRun);
+    subAgentRunConfigs: [childRun]);
 ```
 
 To give descendants of that child an explicit default, use `SubAgentRunDefaults.Harnesses`:
@@ -146,11 +149,13 @@ var childRun = new SubAgentRunConfig
 The same portable shape is available in serialized run configuration:
 
 ```yaml
-subAgentRunConfig:
-  harnesses:
-    - name: SearchHarness
-      config:
-        maxResults: 5
+subAgentRunConfigs:
+  - target:
+      kind: all
+    harnesses:
+      - name: SearchHarness
+        config:
+          maxResults: 5
 ```
 
 Parent `AgentRunConfig.Harnesses` is never forwarded automatically. The child must register the named owner and has its own construction settings, dependencies, middleware, and runtime configuration binding.
@@ -162,7 +167,7 @@ Parent `AgentRunConfig.Harnesses` is never forwarded automatically. The child mu
 - A handle from a different built agent or harness owner is rejected.
 - Run overrides do not replace constructor dependencies.
 - Run overrides do not recreate shared middleware resources.
-- Parent harness overrides do not propagate implicitly to a child; use `subAgentRunConfig` for an explicit child setting.
+- Parent harness overrides do not propagate implicitly to a child; use `subAgentRunConfigs` for an explicit targeted child setting.
 - `SubAgentRunDefaults.Harnesses` provides explicit defaults for further descendants.
 - The internal agent and harness binding is runtime-only and is not serialized.
 

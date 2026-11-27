@@ -262,7 +262,7 @@ export default defineConfig({
   lastUpdated: true,
 
   themeConfig: {
-    logo: '/logo.svg',
+    logo: { light: '/logo.svg', dark: '/logo-dark.svg', alt: 'HPD-AI' },
 
     nav: [
       link('Start', '/getting-started/'),
@@ -319,8 +319,9 @@ export default defineConfig({
   },
 
   head: [
-    ['link', { rel: 'icon', href: '/favicon.ico' }],
-    ['meta', { name: 'theme-color', content: '#0f766e' }],
+    ['link', { rel: 'icon', href: '/favicon.svg', type: 'image/svg+xml' }],
+    ['link', { rel: 'icon', href: '/favicon.ico', sizes: '32x32' }],
+    ['meta', { name: 'theme-color', content: '#1766d7' }],
     ['meta', { property: 'og:title', content: 'HPD Agent' }],
     ['meta', { property: 'og:description', content: 'Build production-ready agent applications in .NET' }]
   ]

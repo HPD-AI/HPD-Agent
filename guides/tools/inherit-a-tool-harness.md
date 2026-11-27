@@ -7,14 +7,14 @@ The base harness class and base settings record must not be sealed. Declare them
 ## Define The Derived Harness
 
 ```csharp
-public sealed record StrategySearchSettings : SearchSettings
+public sealed record StrategySearchConfig : SearchConfig
 {
-    [HarnessRunSetting]
+    [RunOverridable]
     public bool PreferRecent { get; init; } = true;
 }
 
 public sealed class StrategySearchHarness(
-    IHarnessConfig<StrategySearchSettings> configuration,
+    IConfig<StrategySearchConfig> configuration,
     ISearchClient client)
     : SearchHarness(configuration, client)
 {
@@ -35,7 +35,7 @@ The inherited `SearchHarness` tools and the derived `Strategy` tool execute unde
 
 ## Shared Configuration View
 
-`IHarnessConfig<T>` is covariant. A base constructor can receive `IHarnessConfig<StrategySearchSettings>` as `IHarnessConfig<SearchSettings>`.
+`IConfig<T>` is covariant. A base constructor can receive `IConfig<StrategySearchConfig>` as `IConfig<SearchConfig>`.
 
 Both views resolve the same captured concrete-owner snapshot:
 
@@ -44,8 +44,8 @@ Concrete owner:
   StrategySearchHarness
 
 Settings snapshot:
-  StrategySearchSettings
-    ├── inherited SearchSettings fields
+  StrategySearchConfig
+    ├── inherited SearchConfig fields
     └── derived PreferRecent field
 
 Consumers:
@@ -64,7 +64,7 @@ Override the concrete owner:
 ```csharp
 runConfig.Harnesses
     .For<StrategySearchHarness>()
-    .Override(new StrategySearchSettingsOverrides
+    .Override(new StrategySearchConfigOverrides
     {
         MaxResults = 5,
         PreferRecent = true

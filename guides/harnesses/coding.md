@@ -29,7 +29,7 @@ the Environment-backed coding tools.
 
 ## Configure The Harness
 
-`CodingToolHarness` uses the common `IHarnessConfig<CodingHarnessConfig>` contract. Its portable settings cover command limits, glob traversal, environment selection, and language-server policy.
+`CodingToolHarness` uses the common `IConfig<CodingHarnessConfig>` contract. Its portable settings cover command limits, glob traversal, environment selection, and language-server policy.
 
 ```yaml
 toolHarnesses:

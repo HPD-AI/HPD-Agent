@@ -45,14 +45,14 @@ catalog. For the selection behavior and supported combinations, see
 Configuration is a separate immutable contract:
 
 ```csharp
-public sealed record WeatherSettings : IHarnessSettingsValidator
+public sealed record WeatherConfig : IConfigValidator
 {
-    [HarnessRunSetting]
+    [RunOverridable]
     public int ResultLimit { get; init; } = 5;
 
     public string Units { get; init; } = "metric";
 
-    public void ValidateSettings()
+    public void Validate()
     {
         if (ResultLimit < 1)
             throw new AgentRunConfigurationException(
@@ -63,7 +63,7 @@ public sealed record WeatherSettings : IHarnessSettingsValidator
 }
 
 public sealed class WeatherTools(
-    IHarnessConfig<WeatherSettings> configuration)
+    IConfig<WeatherConfig> configuration)
 {
     [AIFunction]
     public string GetWeather(
@@ -78,7 +78,7 @@ public sealed class WeatherTools(
 
 `configuration.AgentDefaults` is the construction setting. `configuration.For(context)` returns the effective setting for the current execution.
 
-`[HarnessRunSetting]` opts a property into per-run overrides. Unmarked properties are construction-only.
+`[RunOverridable]` opts a property into per-run overrides. Unmarked properties are construction-only.
 
 See [Configure A Tool Harness](configure-a-tool-harness.md) and [Configure A Harness Per Run](configure-a-harness-per-run.md).
 
@@ -88,7 +88,7 @@ Dependencies are ordinary constructor parameters:
 
 ```csharp
 public sealed class WeatherTools(
-    IHarnessConfig<WeatherSettings> configuration,
+    IConfig<WeatherConfig> configuration,
     IWeatherClient client)
 {
 }
@@ -104,7 +104,7 @@ Or override a dependency for this registration:
 
 ```csharp
 builder.WithToolHarness<WeatherTools>(options => options
-    .Configure(new WeatherSettings { Units = "imperial" })
+    .Configure(new WeatherConfig { Units = "imperial" })
     .UseDependency<IWeatherClient>(customClient));
 ```
 
@@ -178,7 +178,7 @@ for an example using a structured value.
 ## Constructor Rules
 
 - A harness has exactly one public constructor.
-- Settings are accepted through `IHarnessConfig<T>`.
+- Settings are accepted through `IConfig<T>`.
 - Services use normal dependency parameters.
 - The generic registration no longer requires `new()`.
 - A missing public constructor produces `HPDHIN009`; multiple public constructors produce `HPDHIN010`.
@@ -228,7 +228,7 @@ The project defining the harness must reference the source generator. A referenc
 
 `HPDCFG001` means the settings type contains an unsupported mutable or unverifiable shape.
 
-`HPDCFG002` means a middleware section projection does not match the owning immutable settings contract.
+`HPDCFG002` means configurable harness middleware is missing a `[Middleware("name")]` identity.
 
 `ToolHarness '...' not found in ToolHarnessRegistry.All` usually means the harness is not publicly accessible, has no recognized capability, or was compiled without the source generator.
 

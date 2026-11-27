@@ -112,47 +112,24 @@ The harness must declare a compatible metadata contract. Metadata affects capabi
 
 ## Middleware Configuration
 
-A harness-owned middleware setting belongs in the harness settings section:
+Settings for middleware a harness declares go in the harness `config`, addressed by the middleware's identity:
 
 ```yaml
 toolHarnesses:
   - name: DatabaseToolHarness
     config:
-      rateLimit:
-        requestsPerMinute: 20
+      middlewares:
+        - name: databaseRateLimit
+          config:
+            requestsPerMinute: 20
 ```
 
-The middleware constructor declares that section with `[HarnessConfigurationSection]`. Consumers do not configure the middleware implementation directly.
-
-`middlewareConfigs` remains the older constructor-config lane for harness-owned
-middleware without a typed harness section:
-
-```yaml
-toolHarnesses:
-  - name: DatabaseToolHarness
-    middlewareConfigs:
-      DatabaseRateLimitMiddleware:
-        requestsPerMinute: 20
-      DatabaseAuditMiddleware:
-        auditLevel: detailed
-```
-
-Each key must identify middleware owned by the selected ToolHarness. It is not
-a built-in middleware name or a framework-version selector. Replace the sample
-names with the actual middleware classes and fields from your provider or
-harness package.
-
-This is agent construction configuration. It is not available through
-`AgentRunConfig.Harnesses` or `SubAgentRunConfig.Harnesses`; those run-level
-surfaces patch typed harness settings instead.
-
-Supplying both the typed section and a `middlewareConfigs` value for the same
-middleware fails with `HarnessConfigurationConflict`.
+The entry configures declared middleware only; it does not activate or reorder it. Harness-owned settings sit beside `middlewares` in the same `config` object.
 
 ## Composition
 
 - A builder-selected harness and its serialized reference resolve to one exact owner.
-- A builder `.Configure(...)` replaces the serialized construction config.
+- A builder `.Configure(...)` replaces serialized harness-owned settings. Serialized `middlewares` entries are kept.
 - A run override patches the effective agent setting.
 - Duplicate harness entries and duplicate builder owner registrations fail.
 - Explicit instances retain their existing settings and dependencies.

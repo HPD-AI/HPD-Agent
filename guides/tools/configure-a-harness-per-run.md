@@ -34,7 +34,7 @@ Effective endpoint   = https://search.internal
 Effective maxResults = 5
 ```
 
-Only properties marked `[HarnessRunSetting]` can be supplied. Construction-only properties fail before execution:
+Only properties marked `[RunOverridable]` can be supplied. Construction-only properties fail before execution:
 
 ```text
 HarnessRunOverrideNotSupported
@@ -51,7 +51,7 @@ var runConfig = new AgentRunConfig();
 
 runConfig.Harnesses
     .For<SearchHarness>()
-    .Override(new SearchSettingsOverrides
+    .Override(new SearchConfigOverrides
     {
         MaxResults = 5
     });
@@ -91,7 +91,7 @@ Typed equivalent:
 runConfig.Harnesses
     .For<SearchHarness>()
     .Override(
-        new SearchSettingsOverrides(),
+        new SearchConfigOverrides(),
         "/maxResults");
 ```
 
@@ -106,6 +106,34 @@ Effective run   = 10
 
 Reset pointers use RFC 6901 syntax. A reset cannot overlap a supplied value or another reset on the same path or an ancestor/descendant path.
 
+## Middleware
+
+Middleware a harness declares is patched inside that harness entry, by identity:
+
+```yaml
+harnesses:
+  - name: DatabaseHarness
+    config:
+      middlewares:
+        - name: rateLimit
+          config:
+            requestsPerMinute: 5
+```
+
+```csharp
+runConfig.Harnesses.For<DatabaseHarness>().Middleware<RateLimitMiddleware>()
+    .Override(new RateLimitConfigOverrides { RequestsPerMinute = 5 });
+```
+
+Global middleware uses a top-level `middlewares` list with the same entry shape and rules:
+
+```csharp
+runConfig.Middlewares.For<RateLimitMiddleware>()
+    .Override(new RateLimitConfigOverrides { RequestsPerMinute = 20 });
+```
+
+The middleware instance is not rebuilt; it reads the run's value with `config.For(context)`.
+
 ## Configure Child Harnesses
 
 `SubAgentRunConfig.Harnesses` applies to direct child agents. It uses the same generated override types and patch rules as `AgentRunConfig.Harnesses`, but each named harness is resolved in the invoked child agent's registry:
@@ -118,7 +146,7 @@ var childRun = new SubAgentRunConfig
 
 childRun.Harnesses
     .For<SearchHarness>()
-    .Override(new SearchSettingsOverrides
+    .Override(new SearchConfigOverrides
     {
         MaxResults = 5
     });
@@ -135,7 +163,7 @@ var descendantDefaults = new SubAgentRunDefaults();
 
 descendantDefaults.Harnesses
     .For<SearchHarness>()
-    .Override(new SearchSettingsOverrides
+    .Override(new SearchConfigOverrides
     {
         MaxResults = 3
     });

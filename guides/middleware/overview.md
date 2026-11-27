@@ -94,7 +94,7 @@ Runtime middleware is applied outside the configured middleware for that run. Th
 
 ## Agent Config
 
-Use config registration when middleware belongs to a deployable agent definition. Config middleware is resolved through the generated middleware registry at build time, so custom middleware must be available to the app and marked with `[Middleware]`.
+Use config registration when middleware belongs to a deployable agent definition. Config middleware is resolved through the generated middleware registry at build time, so custom middleware must be available to the app and declared with `[Middleware("stableName")]`.
 
 ```csharp
 [Middleware("RateLimit")]
@@ -109,7 +109,7 @@ public sealed class RateLimitMiddleware : IAgentMiddleware
 }
 ```
 
-If you do not pass a custom name to `[Middleware]`, use the class name in config.
+The declared identity is the exact, case-sensitive name used in configuration.
 
 Simple config:
 
@@ -240,18 +240,21 @@ var agent = await new AgentBuilder()
 
 The override replaces the middleware at its declared position. It cannot add an undeclared type.
 
-Middleware-owned settings belong to the harness's immutable configuration:
+Configurable middleware takes `IConfig<T>` and declares its identity once. Declaring it on a harness adds its configuration to the harness configuration; the harness config record does not repeat it:
 
 ```csharp
+[Middleware("databaseRateLimit")]
 public sealed class DatabaseRateLimitMiddleware(
-    [HarnessConfigurationSection(nameof(DatabaseToolHarnessConfig.RateLimit))]
-    DatabaseRateLimitSettings settings)
+    IConfig<DatabaseRateLimitConfig> config)
     : IToolHarnessMiddleware
 {
 }
+
+[ToolHarnessMiddleware(typeof(DatabaseRateLimitMiddleware))]
+public partial class DatabaseToolHarness;
 ```
 
-Consumers configure that section:
+Consumers configure it with the same `name` and `config` entry used globally:
 
 ```json
 {
@@ -259,20 +262,19 @@ Consumers configure that section:
     {
       "name": "DatabaseToolHarness",
       "config": {
-        "rateLimit": {
-          "requestsPerMinute": 20
-        }
+        "middlewares": [
+          {
+            "name": "databaseRateLimit",
+            "config": { "requestsPerMinute": 20 }
+          }
+        ]
       }
     }
   ]
 }
 ```
 
-`middlewareConfigs` remains available for older harness middleware that has a
-config-constructor contract but no typed harness settings section. It is
-agent-construction configuration, not a run-level or subagent override. Prefer
-the typed harness `config` section, and do not configure the same middleware
-through both paths.
+A harness entry only configures middleware the harness declares. See [Harness Configuration](../../reference/harness-configuration.md) for run overrides and resets.
 
 ## Built-In Helpers
 

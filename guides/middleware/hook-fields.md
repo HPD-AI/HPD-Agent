@@ -16,7 +16,8 @@ Turn, iteration, function, thread-fork, and error hooks derive from
 | `TraceId` | Trace identity shared by the turn |
 | `ThreadExecutionId` | Accepted execution identity, when available |
 | `MessageTurnId` | Durable message-turn identity |
-| `Config` | Agent-level configuration |
+| `AgentConfig` | The agent definition the agent was built from |
+| `ComponentConfig` | Configuration captured for this run; components read it through `IConfig<T>.For(context)` |
 | `ClientSet` | Resolved client-family instances |
 | `SubAgentRunConfigs` | Shared and exact direct-child run configurations, when applicable |
 | `Session`, `SessionId` | Session metadata and identity |
@@ -40,7 +41,7 @@ Shared methods:
 `BeforeStartContext`, `AfterStartedContext`, `BeforeStopContext`, and
 `AfterStoppedContext` derive from `RuntimeHookContext`.
 
-Shared runtime fields: `AgentName`, `Config`, `RunConfig`, `ClientSet`, `Services`,
+Shared runtime fields: `AgentName`, `AgentConfig`, `RunConfig`, `ClientSet`, `Services`,
 `EventCoordinator`, `ThreadEvents`, `EventFlows`, `StructEvents`, `ContentStore`,
 `RuntimeCapabilities`, `RuntimeId`, `CreatedAt`, `RuntimeCancellationToken`, and
 `HasActiveRuntimeInputs`.
@@ -194,15 +195,12 @@ all handlers complete.
 
 | Hook | Fields |
 | --- | --- |
-| `OnHarnessActivatedAsync` | `HarnessIdentity`, `InputExecutionId`, `HarnessConfiguration`, `Services`, `RunConfig`, `SessionId`, `ThreadId` |
+| `OnHarnessActivatedAsync` | `HarnessIdentity`, `InputExecutionId`, `ComponentConfig`, `Services`, `RunConfig`, `SessionId`, `ThreadId` |
 | `OnHarnessExpandedAsync` | `HarnessIdentity`, `InputExecutionId`, `Reason`, `ExpansionCallId`, `RevealedFunctions` |
 | `OnHarnessDeactivatingAsync` | `HarnessIdentity`, `InputExecutionId`, `Reason` |
 
 `ToolHarnessActivationContext` also provides:
 
-- `GetHarnessConfiguration<T>()`
-- `GetConfiguration<T>(...)`
-- `GetConfigurationOrDefault<T>(...)`
 - `GetService<T>()` and `GetRequiredService<T>()`
 - `GetRequiredServicesOwned<TMiddleware>()`
 - `GetRequiredAgentResource<T>()`

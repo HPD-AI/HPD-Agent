@@ -224,7 +224,7 @@ var childRun = new SubAgentRunConfig
 
 childRun.Harnesses
     .For<SearchHarness>()
-    .Override(new SearchSettingsOverrides
+    .Override(new SearchConfigOverrides
     {
         MaxResults = 5
     });
@@ -243,7 +243,7 @@ var descendantDefaults = new SubAgentRunDefaults();
 
 descendantDefaults.Harnesses
     .For<SearchHarness>()
-    .Override(new SearchSettingsOverrides
+    .Override(new SearchConfigOverrides
     {
         MaxResults = 3
     });

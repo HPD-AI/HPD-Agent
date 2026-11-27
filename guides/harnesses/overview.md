@@ -14,7 +14,7 @@ Use built-in harnesses the same way you use your own harnesses: register them on
 Built-in harnesses follow the common native harness contract:
 
 - exactly one public constructor;
-- typed `IHarnessConfig<T>` settings where the harness requires configuration;
+- typed `IConfig<T>` settings where the harness requires configuration;
 - ordinary dependency injection for executable services;
 - optional per-run settings for fields the library marks run-overridable.
 

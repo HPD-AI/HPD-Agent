@@ -390,22 +390,33 @@ already-active eager group at expansion.
 See [ToolHarness Middleware](tool-harness-middleware.md) for lifecycle hooks,
 ordering, configuration, and ownership.
 
-Middleware declared by a tool harness can consume an immutable section of that harness configuration:
+Configurable middleware declares a config record and takes an `IConfig<T>` handle. The generator emits the codec, so no `JsonSerializerContext` is needed:
 
 ```csharp
-public sealed class SearchCacheMiddleware(
-    [HarnessConfigurationSection(nameof(SearchHarnessConfig.Cache))]
-    SearchCacheSettings settings)
-    : IToolHarnessMiddleware
+public sealed record SearchCacheConfig
 {
+    [RunOverridable] public int MaxEntries { get; init; } = 100;
 }
+
+[Middleware("searchCache")]
+public sealed class SearchCacheMiddleware(IConfig<SearchCacheConfig> config) : IToolHarnessMiddleware
+{
+    public Task BeforeFunctionAsync(BeforeFunctionContext context, CancellationToken cancellationToken)
+    {
+        var current = config.For(context);   // this run's effective configuration
+        return Task.CompletedTask;
+    }
+}
+
+[ToolHarnessMiddleware(typeof(SearchCacheMiddleware))]
+public partial class SearchHarness;
 ```
 
-The section must exist in the owning `IHarnessConfig<T>` contract and have a compatible type. Consumers configure the harness section instead of using the middleware implementation name.
+Read `config.For(context)` in run hooks and `config.AgentDefaults` in the constructor and start or stop hooks. The identity and config definition are the same whether the middleware is registered globally or declared by a harness. In a harness, consumers set `config.middlewares[]` entries named `searchCache`; globally, `middlewares[]` entries. Register it in code with `WithMiddleware<SearchCacheMiddleware>(config)` or `ConfigureMiddleware<SearchCacheMiddleware>(config)` on a harness; passing an instance fails, because only the framework can supply the handle.
 
 Use `OverrideMiddleware<TMiddleware>(...)` when the declared middleware needs an explicit per-execution activation. It replaces the declared middleware at its generated position; it does not append an undeclared middleware.
 
-Typed harness sections and legacy `MiddlewareConfigs` are mutually exclusive for the same middleware. See [Configure A Tool Harness](../tools/configure-a-tool-harness.md) and [Collapsing And Containers](../tools/collapsing-and-containers.md).
+See [Configure A Tool Harness](../tools/configure-a-tool-harness.md) and [Collapsing And Containers](../tools/collapsing-and-containers.md).
 
 ## What Not To Use Middleware For
 

@@ -162,18 +162,21 @@ Middleware constructed from child-scope services must declare
 The generated harness validates that lifetime contract before an exact-type
 override can replace the activation.
 
-Middleware-owned settings can also bind directly to a section of the harness configuration:
+Configurable middleware contributes its configuration to the harness configuration:
 
 ```csharp
+[Middleware("databaseRateLimit")]
 public sealed class DatabaseRateLimitMiddleware(
-    [HarnessConfigurationSection(nameof(DatabaseToolsConfig.RateLimit))]
-    DatabaseRateLimitSettings settings)
+    IConfig<DatabaseRateLimitConfig> config)
     : IToolHarnessMiddleware
 {
 }
+
+[Collapse("Database operations", Middlewares = [typeof(DatabaseRateLimitMiddleware)])]
+public partial class DatabaseTools;
 ```
 
-The section must exist in the owning `IHarnessConfig<T>` contract and have the same type, or an explicitly declared projection. Consumers then set the harness section rather than the middleware type name.
+Consumers set a `config.middlewares[]` entry named `databaseRateLimit`. Expansion-gated and eager middleware are configured the same way.
 
 Expansion-gated pipelines are instantiated when the container expands. Eager
 harness pipelines are instantiated at accepted-input admission. Both route
@@ -184,9 +187,7 @@ closest to functions owned by that harness. A subagent may receive only an
 allowlisted subset of the expanded harness, but those visible functions still
 use the same harness middleware pipeline.
 
-The source generator emits codecs for settings nested in the owning immutable harness contract. Do not create a second JSON context for the same typed section.
-
-Do not provide the same settings through both the typed harness section and legacy `MiddlewareConfigs`; that conflict fails before activation.
+The source generator emits one codec per config record, shared by every component that uses it.
 
 ## Persistence Caveat
 

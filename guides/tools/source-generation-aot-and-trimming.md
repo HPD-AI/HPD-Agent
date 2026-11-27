@@ -43,7 +43,7 @@ A native harness has exactly one public constructor.
 
 ```csharp
 public sealed class SearchHarness(
-    IHarnessConfig<SearchSettings> configuration,
+    IConfig<SearchConfig> configuration,
     ISearchClient client)
 {
 }
@@ -58,7 +58,7 @@ The generator emits `context => new SearchHarness(...)` and resolves each constr
 ```csharp
 [ToolHarnessDependency(typeof(ISearchClient), typeof(SearchClient))]
 public sealed class SearchHarness(
-    IHarnessConfig<SearchSettings> configuration,
+    IConfig<SearchConfig> configuration,
     ISearchClient client)
 {
 }
@@ -71,9 +71,9 @@ The generated catalog can create `SearchClient` when application DI has no regis
 The harness settings type is an immutable data contract:
 
 ```csharp
-public sealed record SearchSettings
+public sealed record SearchConfig
 {
-    [HarnessRunSetting]
+    [RunOverridable]
     public int MaxResults { get; init; } = 10;
 
     public string Endpoint { get; init; } = "https://search.example";

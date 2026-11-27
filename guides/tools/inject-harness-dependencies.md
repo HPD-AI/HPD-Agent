@@ -6,7 +6,7 @@ Tool harness dependencies use ordinary constructor parameters. The source genera
 
 ```csharp
 public sealed class SearchHarness(
-    IHarnessConfig<SearchSettings> configuration,
+    IConfig<SearchConfig> configuration,
     ISearchClient client)
 {
     [AIFunction]
@@ -17,7 +17,7 @@ public sealed class SearchHarness(
 
 A harness has exactly one public constructor. It may mix:
 
-- one `IHarnessConfig<T>` settings parameter;
+- one `IConfig<T>` settings parameter;
 - ordinary service parameters;
 - optional parameters with valid compile-time defaults.
 
@@ -68,7 +68,7 @@ Objects created by DI belong to the DI container. HPD does not dispose them.
 ```csharp
 [ToolHarnessDependency(typeof(ISearchClient), typeof(SearchClient))]
 public sealed class SearchHarness(
-    IHarnessConfig<SearchSettings> configuration,
+    IConfig<SearchConfig> configuration,
     ISearchClient client)
 {
 }

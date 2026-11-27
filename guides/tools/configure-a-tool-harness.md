@@ -1,6 +1,6 @@
 # Configure A Tool Harness
 
-A configured tool harness receives an immutable, typed settings contract through `IHarnessConfig<T>`. The source generator emits the binding, schema, validation path, JSON codecs, and per-run patch contract from that type.
+A configured tool harness receives an immutable, typed settings contract through `IConfig<T>`. The source generator emits the binding, schema, validation path, JSON codecs, and per-run patch contract from that type.
 
 Use configuration when the whole harness needs behavior settings. Keep executable dependencies in ordinary constructor parameters; see [Inject Harness Dependencies](inject-harness-dependencies.md).
 
@@ -9,14 +9,14 @@ Use configuration when the whole harness needs behavior settings. Keep executabl
 ```csharp
 using HPD.Agent;
 
-public record SearchSettings : IHarnessSettingsValidator
+public record SearchConfig : IConfigValidator
 {
-    [HarnessRunSetting]
+    [RunOverridable]
     public int MaxResults { get; init; } = 10;
 
     public string Endpoint { get; init; } = "https://search.example";
 
-    public void ValidateSettings()
+    public void Validate()
     {
         if (MaxResults < 1)
             throw new AgentRunConfigurationException(
@@ -27,7 +27,7 @@ public record SearchSettings : IHarnessSettingsValidator
 }
 
 public class SearchHarness(
-    IHarnessConfig<SearchSettings> configuration)
+    IConfig<SearchConfig> configuration)
 {
     [AIFunction]
     public string Search(string query)
@@ -40,15 +40,15 @@ public class SearchHarness(
 
 The public parameterless constructor supplies the library defaults. Settings properties are init-only and use the supported immutable shapes described below.
 
-`[HarnessRunSetting]` opts a property into the per-run patch contract. Properties without it remain construction-only.
+`[RunOverridable]` opts a property into the per-run patch contract. Properties without it remain construction-only.
 
-`IHarnessSettingsValidator` is optional. It handles semantic rules that the generated type and shape checks cannot express. Throw `AgentRunConfigurationException` for a stable error code and property path.
+`IConfigValidator` is optional. It handles semantic rules that the generated type and shape checks cannot express. Throw `AgentRunConfigurationException` for a stable error code and property path.
 
 ## Configure In C#
 
 ```csharp
 builder.WithToolHarness<SearchHarness>(options => options
-    .Configure(new SearchSettings
+    .Configure(new SearchConfig
     {
         MaxResults = 20,
         Endpoint = "https://search.internal"
